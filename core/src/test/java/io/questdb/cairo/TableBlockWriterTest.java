@@ -5,6 +5,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.questdb.cairo.TableReplicationRecordCursorFactory.TableReplicationRecordCursor;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -558,23 +559,35 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     private void replicateTable(String sourceTableName, String destTableName, long nFirstRow, boolean commit) {
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName);
+                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);
                 TableBlockWriter blockWriter = new TableBlockWriter(configuration)) {
+
             blockWriter.of(writer);
+
+            final int columnCount = writer.getMetadata().getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                int columnType = writer.getMetadata().getColumnType(columnIndex);
+                if (columnType == ColumnType.SYMBOL) {
+                    SymbolMapReader symReader = reader.getSymbolMapReader(columnIndex);
+                    int nSourceSymbols = symReader.size();
+                    int nDestinationSymbols = writer.getSymbolMapWriter(columnIndex).getSymbolCount();
+
+                    if (nSourceSymbols > nDestinationSymbols) {
+                        long address = symReader.symbolCharsAddressOf(nDestinationSymbols);
+                        long addressHi = symReader.symbolCharsAddressOf(nSourceSymbols);
+                        blockWriter.appendSymbolCharsBlock(columnIndex, addressHi - address, address);
+                    }
+                }
+            }
+
             TableReplicationRecordCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, nFirstRow);
             PageFrame frame;
-            final int columnCount = writer.getMetadata().getColumnCount();
             while ((frame = cursor.next()) != null) {
                 long firstTimestamp = frame.getFirstTimestamp();
                 long lastTimestamp = frame.getLastTimestamp();
                 long pageRowCount = frame.getPageValueCount(0);
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    int columnType = writer.getMetadata().getColumnType(columnIndex);
-                    if (columnType == ColumnType.SYMBOL) {
-                        long pageAddress = frame.getSymbolCharsPageAddress(columnIndex);
-                        long blockLength = frame.getSymbolCharsPageLength(columnIndex);
-                        blockWriter.appendSymbolCharsBlock(columnIndex, blockLength, pageAddress);
-                    }
                     long pageAddress = frame.getPageAddress(columnIndex);
                     long blockLength = frame.getPageLength(columnIndex);
                     blockWriter.appendBlock(firstTimestamp, columnIndex, blockLength, pageAddress);
@@ -584,6 +597,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 }
             }
         }
+
     }
 
     private String select(CharSequence selectSql) throws SqlException {
