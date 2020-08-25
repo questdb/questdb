@@ -45,6 +45,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private long maxOffset;
     private int symbolCapacity;
     private boolean nullValue;
+    private long charMemLength;
 
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         of(configuration, path, name, symbolCount);
@@ -195,10 +196,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
             this.charMem.grow(lastSymbolOffset + 4);
-            this.charMem.grow(lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2 + 4);
+            charMemLength = lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2 + 4;
         } else {
-            this.charMem.grow(0);
+            charMemLength = 0;
         }
+        this.charMem.grow(charMemLength);
     }
 
     private CharSequence uncachedValue(int key) {
@@ -211,10 +213,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolIndex));
             return charMem.addressOf(offset);
         } else if (symbolIndex == symbolCount) {
-            long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
-            long symLen = charMem.getInt(offset);
-            offset += symLen * Character.BYTES + Integer.BYTES;
-            return charMem.addressOf(offset);
+            return charMem.addressOf(charMemLength);
         }
 
         return -1;
