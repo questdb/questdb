@@ -165,17 +165,25 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     private void newRow(short event) {
         if (enabled) {
-            final TableWriter.Row row = writer.newRow(clock.getTicks());
-            row.putShort(1, event);
-            row.putShort(2, TelemetryOrigin.INTERNAL);
-            row.append();
+            try {
+                final TableWriter.Row row = writer.newRow(clock.getTicks());
+                row.putShort(1, event);
+                row.putShort(2, TelemetryOrigin.INTERNAL);
+                row.append();
+            } catch (CairoException e) {
+                LOG.error().$("Failed to insert new row in telemetry table [error=").$(e.getMessage()).$("]").$();
+            }
         }
     }
 
     private void newRowConsumer(TelemetryTask telemetryRow) {
-        final TableWriter.Row row = writer.newRow(telemetryRow.created);
-        row.putShort(1, telemetryRow.event);
-        row.putShort(2, telemetryRow.origin);
-        row.append();
+        try {
+            final TableWriter.Row row = writer.newRow(telemetryRow.created);
+            row.putShort(1, telemetryRow.event);
+            row.putShort(2, telemetryRow.origin);
+            row.append();
+        } catch (CairoException e) {
+            LOG.error().$("Failed to insert new row in telemetry table [error=").$(e.getMessage()).$("]").$();
+        }
     }
 }
