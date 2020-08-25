@@ -95,6 +95,16 @@
         "code",
         "doc"
       ]
+    },
+    {
+      "login": "shantanoo-desai",
+      "name": "Shan Desai",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/12070966?v=4",
+      "profile": "https://shantanoo-desai.github.io",
+      "contributions": [
+        "blog",
+        "example"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
