@@ -171,7 +171,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 row.putShort(2, TelemetryOrigin.INTERNAL);
                 row.append();
             } catch (CairoException e) {
-                LOG.error().$("Failed to insert new row in telemetry table [error=").$(e.getMessage()).$("]").$();
+                LOG.error().$("Could not insert a new row in telemetry table [error=").$(e.getMessage()).$("]").$();
             }
         }
     }
@@ -183,7 +183,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             row.putShort(2, telemetryRow.origin);
             row.append();
         } catch (CairoException e) {
-            LOG.error().$("Failed to insert new row in telemetry table [error=").$(e.getMessage()).$("]").$();
+            LOG.error().$("Could not insert a new row in telemetry table [error=").$(e.getMessage()).$("]").$();
         }
     }
 }
