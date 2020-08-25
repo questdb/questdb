@@ -1438,6 +1438,13 @@ class SqlOptimiser {
             }
         }
 
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        if (joinModels.size() > 1) {
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                moveTimestampToChooseModel(joinModels.getQuick(i));
+            }
+        }
+
         nested = model.getUnionModel();
         if (nested != null) {
             moveTimestampToChooseModel(nested);
