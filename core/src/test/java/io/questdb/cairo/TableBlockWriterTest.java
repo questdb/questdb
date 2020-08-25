@@ -12,6 +12,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.LongList;
 import io.questdb.test.tools.TestUtils;
 
 public class TableBlockWriterTest extends AbstractGriffinTest {
@@ -549,6 +550,85 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testAddColumn1() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            compiler.compile("ALTER TABLE source ADD COLUMN str STRING",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+
+            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts);", sqlExecutionContext);
+            replicateTable("source", "dest");
+
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
+
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testAddColumn2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            compiler.compile("ALTER TABLE source ADD COLUMN str STRING",
+                    sqlExecutionContext);
+            compiler.compile("INSERT INTO source(ts, l, str) " +
+                    "SELECT" +
+                    " timestamp_sequence(5000000000, 500000000) ts," +
+                    " rnd_long(-55, 9009, 2) l," +
+                    " rnd_str(3,3,2) str" +
+                    " from long_sequence(5)" +
+                    ";",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+
+            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts);", sqlExecutionContext);
+            replicateTable("source", "dest");
+
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
+
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testAddColumnPartitioned() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(200)" +
+                    ") TIMESTAMP (ts) PARTITION BY DAY;",
+                    sqlExecutionContext);
+            compiler.compile("ALTER TABLE source ADD COLUMN str STRING",
+                    sqlExecutionContext);
+            compiler.compile("INSERT INTO source(ts, l, str) " +
+                    "SELECT" +
+                    " timestamp_sequence(400000000000, 500000000) ts," +
+                    " rnd_long(-55, 9009, 2) l," +
+                    " rnd_str(3,3,2) str" +
+                    " from long_sequence(250)" +
+                    ";",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+
+            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts) PARTITION BY DAY;", sqlExecutionContext);
+            replicateTable("source", "dest");
+
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
+
+            engine.releaseInactive();
+        });
+    }
+
     private void replicateTable(String sourceTableName, String destTableName) {
         replicateTable(sourceTableName, destTableName, 0);
     }
@@ -583,6 +663,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
             TableReplicationRecordCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, nFirstRow);
             PageFrame frame;
+            LongList columnTops = new LongList(columnCount);
             while ((frame = cursor.next()) != null) {
                 long firstTimestamp = frame.getFirstTimestamp();
                 long lastTimestamp = frame.getLastTimestamp();
@@ -591,9 +672,10 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     long pageAddress = frame.getPageAddress(columnIndex);
                     long blockLength = frame.getPageLength(columnIndex);
                     blockWriter.appendBlock(firstTimestamp, columnIndex, blockLength, pageAddress);
+                    columnTops.setQuick(columnIndex, frame.getColumnTop(columnIndex));
                 }
                 if (commit) {
-                    blockWriter.commitAppendedBlock(firstTimestamp, lastTimestamp, pageRowCount);
+                    blockWriter.commitAppendedBlock(firstTimestamp, lastTimestamp, pageRowCount, columnTops);
                 }
             }
         }

@@ -7,6 +7,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
@@ -54,9 +55,9 @@ public class TableBlockWriter implements Closeable {
         writer.getSymbolMapWriter(columnIndex).appendSymbolCharsBlock(blockLength, sourceAddress);
     }
 
-    public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
+    public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded, LongList columnTops) {
         LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
-        writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded);
+        writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded, columnTops);
         reset();
     }
 

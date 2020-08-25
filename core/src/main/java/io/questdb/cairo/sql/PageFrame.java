@@ -33,6 +33,10 @@ public interface PageFrame {
         throw new UnsupportedOperationException();
     }
 
+    default long getColumnTop(int columnIndex) {
+        return 0;
+    }
+
     default long getFirstTimestamp() {
         throw new UnsupportedOperationException();
     }

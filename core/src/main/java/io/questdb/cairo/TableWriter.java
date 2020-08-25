@@ -2715,9 +2715,13 @@ public class TableWriter implements Closeable {
     }
 
     private void writeColumnTop(CharSequence name) {
+        writeColumnTop(name, transientRowCount);
+    }
+
+    private void writeColumnTop(CharSequence name, long columnTop) {
         long fd = openAppend(path.concat(name).put(".top").$());
         try {
-            Unsafe.getUnsafe().putLong(tempMem8b, transientRowCount);
+            Unsafe.getUnsafe().putLong(tempMem8b, columnTop);
             if (ff.append(fd, tempMem8b, 8) != 8) {
                 throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
             }
@@ -2750,7 +2754,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
+    void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded, LongList blockColumnTops) {
         bumpMasterRef();
         if (txPartitionCount == 0) {
             openFirstPartition(firstTimestamp);
@@ -2763,16 +2767,39 @@ public class TableWriter implements Closeable {
         // Entire block must be in the same partition
         assert lastTimestamp < partitionHi;
 
-        // Add binary and string indexes
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = metadata.getColumnType(columnIndex);
+
+            // Handle column tops
+            long blockColumnTop = blockColumnTops.getQuick(columnIndex);
+            long columnTop = columnTops.getQuick(columnIndex);
+            if (blockColumnTop != columnTop) {
+                try {
+                    assert columnTop == 0;
+                    assert blockColumnTop > 0;
+                    TableUtils.setPathForPartition(path, partitionBy, firstTimestamp);
+                    columnTops.setQuick(columnIndex, blockColumnTop);
+                    writeColumnTop(getMetadata().getColumnName(columnIndex), blockColumnTop);
+                } finally {
+                    path.trimTo(rootLen);
+                }
+            }
+
+            long colNRowsAdded;
+            if (columnTop <= transientRowCount) {
+                colNRowsAdded = nRowsAdded;
+            } else {
+                colNRowsAdded = nRowsAdded - (columnTop - transientRowCount);
+            }
+
+            // Add binary and string indexes
             switch (columnType) {
                 case ColumnType.STRING: {
                     AppendMemory mem = getPrimaryColumn(columnIndex);
                     AppendMemory imem = getSecondaryColumn(columnIndex);
 
                     long offset = mem.getAppendOffset();
-                    for (int row = 0; row < nRowsAdded; row++) {
+                    for (int row = 0; row < colNRowsAdded; row++) {
                         imem.putLong(offset);
                         mem.jumpTo(offset);
                         int strLen = mem.getStrLen(offset);
@@ -2791,7 +2818,7 @@ public class TableWriter implements Closeable {
                     AppendMemory imem = getSecondaryColumn(columnIndex);
 
                     long offset = mem.getAppendOffset();
-                    for (int row = 0; row < nRowsAdded; row++) {
+                    for (int row = 0; row < colNRowsAdded; row++) {
                         imem.putLong(offset);
                         mem.jumpTo(offset);
                         long binLen = mem.getBinLen(offset);
@@ -2810,7 +2837,7 @@ public class TableWriter implements Closeable {
                     int nSymbols = 0;
                     long offset = mem.getAppendOffset();
                     // TODO: Use vector instructions (vector) to find max
-                    for (int row = 0; row < nRowsAdded; row++) {
+                    for (int row = 0; row < colNRowsAdded; row++) {
                         int symIndex = mem.getInt(offset);
                         offset += Integer.BYTES;
                         nSymbols = Math.max(nSymbols, symIndex);

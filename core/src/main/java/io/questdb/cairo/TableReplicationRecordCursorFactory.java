@@ -74,6 +74,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     public static class TableReplicationRecordCursor implements PageFrameCursor {
         private final LongList columnFrameAddresses = new LongList();
         private final LongList columnFrameLengths = new LongList();
+        private final LongList columnTops = new LongList();
         private final ReplicationPageFrame frame = new ReplicationPageFrame();
         private TableReader reader;
         private int partitionIndex;
@@ -116,6 +117,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             timestampColumnIndex = reader.getMetadata().getTimestampIndex();
             columnFrameAddresses.ensureCapacity(columnCount);
             columnFrameLengths.ensureCapacity(columnCount);
+            columnTops.ensureCapacity(columnCount);
             toTop();
             return this;
         }
@@ -129,56 +131,67 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                     final long maxRows = reader.getPartitionRowCount(partitionIndex);
                     for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                         final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex));
-                        assert col.getPageCount() == 1;
-                        long columnPageAddress = col.getPageAddress(0);
-                        long columnPageLength;
+                        assert col.getPageCount() <= 1;
+                        final long columnTop = reader.getColumnTop(base, columnIndex);
+                        final long colFirstRow = nFirstFrameRow - columnTop;
+                        final long colNRows = nFrameRows - columnTop;
+                        final long colMaxRows = maxRows - columnTop;
 
-                        int columnType = reader.getMetadata().getColumnType(columnIndex);
-                        switch (columnType) {
-                            case ColumnType.STRING: {
-                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
-                                columnPageLength = calculateStringPagePosition(col, strLenCol, nFrameRows, maxRows);
+                        if (col.getPageCount() > 0 && colNRows > 0) {
+                            long columnPageAddress = col.getPageAddress(0);
+                            long columnPageLength;
 
-                                if (nFirstFrameRow > 0) {
-                                    long columnPageBegin = calculateStringPagePosition(col, strLenCol, nFirstFrameRow, maxRows);
-                                    columnPageAddress += columnPageBegin;
-                                    columnPageLength -= columnPageBegin;
+                            int columnType = reader.getMetadata().getColumnType(columnIndex);
+                            switch (columnType) {
+                                case ColumnType.STRING: {
+                                    final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
+                                    columnPageLength = calculateStringPagePosition(col, strLenCol, colNRows, colMaxRows);
+
+                                    if (colFirstRow > 0) {
+                                        long columnPageBegin = calculateStringPagePosition(col, strLenCol, colFirstRow, colMaxRows);
+                                        columnPageAddress += columnPageBegin;
+                                        columnPageLength -= columnPageBegin;
+                                    }
+
+                                    break;
                                 }
 
-                                break;
-                            }
+                                case ColumnType.BINARY: {
+                                    final ReadOnlyColumn binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
+                                    columnPageLength = calculateBinaryPagePosition(col, binLenCol, colNRows, colMaxRows);
 
-                            case ColumnType.BINARY: {
-                                final ReadOnlyColumn binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
-                                columnPageLength = calculateBinaryPagePosition(col, binLenCol, nFrameRows, maxRows);
+                                    if (colFirstRow > 0) {
+                                        long columnPageBegin = calculateBinaryPagePosition(col, binLenCol, colFirstRow, colMaxRows);
+                                        columnPageAddress += columnPageBegin;
+                                        columnPageLength -= columnPageBegin;
+                                    }
 
-                                if (nFirstFrameRow > 0) {
-                                    long columnPageBegin = calculateBinaryPagePosition(col, binLenCol, nFirstFrameRow, maxRows);
-                                    columnPageAddress += columnPageBegin;
-                                    columnPageLength -= columnPageBegin;
+                                    break;
                                 }
 
-                                break;
-                            }
-
-                            default: {
-                                int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(columnIndex)));
-                                columnPageLength = nFrameRows << columnSizeBinaryPower;
-                                if (nFirstFrameRow > 0) {
-                                    long columnPageBegin = nFirstFrameRow << columnSizeBinaryPower;
-                                    columnPageAddress += columnPageBegin;
-                                    columnPageLength -= columnPageBegin;
+                                default: {
+                                    int columnSizeBinaryPower = Numbers.msb(ColumnType.sizeOf(reader.getMetadata().getColumnType(columnIndex)));
+                                    columnPageLength = colNRows << columnSizeBinaryPower;
+                                    if (colFirstRow > 0) {
+                                        long columnPageBegin = colFirstRow << columnSizeBinaryPower;
+                                        columnPageAddress += columnPageBegin;
+                                        columnPageLength -= columnPageBegin;
+                                    }
                                 }
                             }
+
+                            columnFrameAddresses.setQuick(columnIndex, columnPageAddress);
+                            columnFrameLengths.setQuick(columnIndex, columnPageLength);
+
+                            if (timestampColumnIndex == columnIndex) {
+                                firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
+                                lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress + columnPageLength - Long.BYTES);
+                            }
+                        } else {
+                            columnFrameAddresses.setQuick(columnIndex, -1);
+                            columnFrameLengths.setQuick(columnIndex, 0);
                         }
-
-                        columnFrameAddresses.setQuick(columnIndex, columnPageAddress);
-                        columnFrameLengths.setQuick(columnIndex, columnPageLength);
-
-                        if (timestampColumnIndex == columnIndex) {
-                            firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
-                            lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress + columnPageLength - Long.BYTES);
-                        }
+                        columnTops.setQuick(columnIndex, columnTop);
                     }
 
                     nFrameRows -= nFirstFrameRow;
@@ -270,6 +283,11 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public long getPageLength(int columnIndex) {
                 return columnFrameLengths.getQuick(columnIndex);
+            }
+
+            @Override
+            public long getColumnTop(int columnIndex) {
+                return columnTops.getQuick(columnIndex);
             }
         }
     }
