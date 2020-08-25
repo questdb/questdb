@@ -623,6 +623,7 @@ public class SqlCodeGenerator implements Mutable {
         RecordCursorFactory master = null;
         CharSequence masterAlias = null;
 
+        executionContext.pushTimestampRequiredFlag(true);
         try {
             int n = ordered.size();
             assert n > 0;
@@ -816,6 +817,8 @@ public class SqlCodeGenerator implements Mutable {
         } catch (CairoException | SqlException e) {
             Misc.free(master);
             throw e;
+        } finally {
+            executionContext.popTimestampRequiredFlag();
         }
     }
 
@@ -1452,6 +1455,7 @@ public class SqlCodeGenerator implements Mutable {
                             metadata.isSymbolTableStatic(timestampIndex)
                     )
             );
+            selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);

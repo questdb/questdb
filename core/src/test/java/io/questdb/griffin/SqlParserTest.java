@@ -2748,6 +2748,23 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinTimestampPropagationWhenTimestampNotSelected() throws SqlException {
+        assertQuery(
+                "select-distinct id from (select-choose [id] id from ((select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [id, created] from (select-choose [id] id, created, event, timestamp from ((select-choose [id, created] id, created, event, timestamp from (select [id, created, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) _xQdbA7) timestamp (created)) a lt join select [id, created] from (select-choose [id] id, created, event, timestamp from ((select-choose [id, created] id, created, event, timestamp from (select [id, created, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) _xQdbA4) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000)) _xQdbA1))",
+                "with \n" +
+                        "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
+                        "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
+                        "\n" +
+                        "select distinct id from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
+                modelOf("telemetry_users")
+                        .col("id", ColumnType.LONG256)
+                        .col("created", ColumnType.TIMESTAMP)
+                        .col("event", ColumnType.SHORT)
+                        .timestamp()
+        );
+    }
+
+    @Test
     public void testJoinTriangle() throws Exception {
         assertQuery(
                 "select-choose o.a a, o.b b, o.c c, c.c c1, c.d d, c.e e, d.b b1, d.d d1, d.quantity quantity from (select [a, b, c] from orders o join select [c, d, e] from customers c on c.c = o.c join select [b, d, quantity] from orderDetails d on d.d = c.d and d.b = o.b)",
