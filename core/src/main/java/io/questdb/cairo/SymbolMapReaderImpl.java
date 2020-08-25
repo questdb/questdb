@@ -194,6 +194,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private void growCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
+            this.charMem.grow(lastSymbolOffset + 4);
             this.charMem.grow(lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2 + 4);
         } else {
             this.charMem.grow(0);
