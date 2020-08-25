@@ -97,7 +97,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
         if (fd > -1) {
             halt();
             if (nf.close(fd) != 0) {
-                LOG.error().$("failed to close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
             } else {
                 LOG.info().$("closed [fd=").$(fd).$(']').$();
             }

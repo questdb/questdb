@@ -39,7 +39,7 @@ public class LineTCPProtoSender extends LineProtoSender {
     protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
         long fd = nf.socketTcp(true);
         if (nf.connect(fd, sockaddr) != 0) {
-            throw NetworkError.instance(nf.errno(), "failed to connect");
+            throw NetworkError.instance(nf.errno(), "could not connect to ").ip(interfaceIPv4Address);
         }
         int orgSndBufSz = nf.getSndBuf(fd);
         nf.setSndBuf(fd, 2 * capacity);
