@@ -403,7 +403,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAllTypesParitionedResumeBlock() throws Exception {
+    public void testAllTypesPartitionedResumeBlock() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int nConsecuriveRows = 50;
             long tsStart = 0;

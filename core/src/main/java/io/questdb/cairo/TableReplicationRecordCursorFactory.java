@@ -126,6 +126,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                 nFrameRows = reader.openPartition(partitionIndex);
                 if (nFrameRows > nFirstFrameRow) {
                     final int base = reader.getColumnBase(partitionIndex);
+                    final long maxRows = reader.getPartitionRowCount(partitionIndex);
                     for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                         final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex));
                         assert col.getPageCount() == 1;
@@ -136,10 +137,10 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                         switch (columnType) {
                             case ColumnType.STRING: {
                                 final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
-                                columnPageLength = calculateStringPagePosition(col, strLenCol, nFrameRows);
+                                columnPageLength = calculateStringPagePosition(col, strLenCol, nFrameRows, maxRows);
 
                                 if (nFirstFrameRow > 0) {
-                                    long columnPageBegin = calculateStringPagePosition(col, strLenCol, nFirstFrameRow);
+                                    long columnPageBegin = calculateStringPagePosition(col, strLenCol, nFirstFrameRow, maxRows);
                                     columnPageAddress += columnPageBegin;
                                     columnPageLength -= columnPageBegin;
                                 }
@@ -149,10 +150,10 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
                             case ColumnType.BINARY: {
                                 final ReadOnlyColumn binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
-                                columnPageLength = calculateBinaryPagePosition(col, binLenCol, nFrameRows);
+                                columnPageLength = calculateBinaryPagePosition(col, binLenCol, nFrameRows, maxRows);
 
                                 if (nFirstFrameRow > 0) {
-                                    long columnPageBegin = calculateBinaryPagePosition(col, binLenCol, nFirstFrameRow);
+                                    long columnPageBegin = calculateBinaryPagePosition(col, binLenCol, nFirstFrameRow, maxRows);
                                     columnPageAddress += columnPageBegin;
                                     columnPageLength -= columnPageBegin;
                                 }
@@ -189,7 +190,14 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             return null;
         }
 
-        private long calculateBinaryPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn binLenCol, long row) {
+        private long calculateBinaryPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn binLenCol, long row, long maxRows) {
+            assert row > 0;
+
+            if (row < (maxRows - 1)) {
+                long binLenOffset = row << 3;
+                return binLenCol.getLong(binLenOffset);
+            }
+
             long columnPageLength;
             long lastBinLenOffset = (row - 1) << 3;
             long lastBinOffset = binLenCol.getLong(lastBinLenOffset);
@@ -201,7 +209,14 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             return columnPageLength;
         }
 
-        private long calculateStringPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn strLenCol, long row) {
+        private long calculateStringPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn strLenCol, long row, long maxRows) {
+            assert row > 0;
+
+            if (row < (maxRows - 1)) {
+                long strLenOffset = row << 3;
+                return strLenCol.getLong(strLenOffset);
+            }
+
             long columnPageLength;
             long lastStrLenOffset = (row - 1) << 3;
             long lastStrOffset = strLenCol.getLong(lastStrLenOffset);
