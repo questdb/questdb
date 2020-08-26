@@ -12,10 +12,13 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.test.tools.TestUtils;
 
 public class TableBlockWriterTest extends AbstractGriffinTest {
+    private static final Log LOG = LogFactory.getLog(TableBlockWriterTest.class);
 
     @Test
     public void testSimple() throws Exception {
@@ -39,14 +42,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     @Test
     public void testSimpleResumeBlock() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int nConsecuriveRows = 50;
+            int nConsecutiveRows = 50;
             long tsStart = 0;
             long tsInc = 1000000000;
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT" +
                     " rnd_long(100,200,2) j," +
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
+                    " from long_sequence(" + nConsecutiveRows + ")" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
@@ -58,16 +61,16 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             String actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);
 
-            tsStart += nConsecuriveRows * tsInc;
+            tsStart += nConsecutiveRows * tsInc;
             compiler.compile("INSERT INTO source(j, ts) " +
                     "SELECT" +
                     " rnd_long(100,200,2) j," +
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
+                    " from long_sequence(" + nConsecutiveRows + ")" +
                     ";",
                     sqlExecutionContext);
             expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", nConsecuriveRows);
+            replicateTable("source", "dest", nConsecutiveRows);
             actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);
 
@@ -78,14 +81,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     @Test
     public void testSimpleResumeBlockWithRetry() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int nConsecuriveRows = 10;
+            int nConsecutiveRows = 10;
             long tsStart = 0;
             long tsInc = 1000000000;
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT" +
                     " rnd_long(100,200,2) j," +
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
+                    " from long_sequence(" + nConsecutiveRows + ")" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
@@ -97,19 +100,19 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             String actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);
 
-            tsStart += nConsecuriveRows * tsInc;
+            tsStart += nConsecutiveRows * tsInc;
             compiler.compile("INSERT INTO source(j, ts) " +
                     "SELECT" +
                     " rnd_long(100,200,2) j," +
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
+                    " from long_sequence(" + nConsecutiveRows + ")" +
                     ";",
                     sqlExecutionContext);
-            replicateTable("source", "dest", nConsecuriveRows, false);
+            replicateTable("source", "dest", nConsecutiveRows, false, Long.MAX_VALUE);
             actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);
 
-            replicateTable("source", "dest", nConsecuriveRows, true);
+            replicateTable("source", "dest", nConsecutiveRows, true, Long.MAX_VALUE);
             actual = select("SELECT * FROM dest");
             expected = select("SELECT * FROM source");
             Assert.assertEquals(expected, actual);
@@ -335,6 +338,15 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAllTypesResumeBlock() throws Exception {
+        testAllTypesResumeBlock(Long.MAX_VALUE);
+    }
+
+    @Test
+    public void testAllTypesResumeBlockFragmentedFrames() throws Exception {
+        testAllTypesResumeBlock(4);
+    }
+
+    public void testAllTypesResumeBlock(long maxRowsPerFrame) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int nConsecuriveRows = 50;
             long tsStart = 0;
@@ -405,6 +417,15 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAllTypesPartitionedResumeBlock() throws Exception {
+        testAllTypesPartitionedResumeBlock(Long.MAX_VALUE);
+    }
+
+    @Test
+    public void testAllTypesPartitionedResumeBlockFragmentedFrames() throws Exception {
+        testAllTypesPartitionedResumeBlock(3);
+    }
+
+    private void testAllTypesPartitionedResumeBlock(long maxRowsPerFrame) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int nConsecuriveRows = 50;
             long tsStart = 0;
@@ -437,7 +458,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             compiler.compile(
                     "CREATE TABLE dest (ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts) PARTITION BY DAY;",
                     sqlExecutionContext);
-            replicateTable("source", "dest");
+            replicateTable("source", "dest", 0, true, maxRowsPerFrame);
 
             String actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);
@@ -467,7 +488,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     ";",
                     sqlExecutionContext);
             expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", nConsecuriveRows);
+            replicateTable("source", "dest", nConsecuriveRows, true, maxRowsPerFrame);
 
             engine.releaseInactive();
         });
@@ -537,12 +558,12 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     ";",
                     sqlExecutionContext);
 
-            replicateTable("source", "dest", nConsecuriveRows, false);
+            replicateTable("source", "dest", nConsecuriveRows, false, Long.MAX_VALUE);
             actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);
 
             expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", nConsecuriveRows, true);
+            replicateTable("source", "dest", nConsecuriveRows, true, Long.MAX_VALUE);
             actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);
 
@@ -634,11 +655,12 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void replicateTable(String sourceTableName, String destTableName, long nFirstRow) {
-        replicateTable(sourceTableName, destTableName, nFirstRow, true);
+        replicateTable(sourceTableName, destTableName, nFirstRow, true, Long.MAX_VALUE);
     }
 
-    private void replicateTable(String sourceTableName, String destTableName, long nFirstRow, boolean commit) {
-        try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName);
+    private void replicateTable(String sourceTableName, String destTableName, long nFirstRow, boolean commit, long maxRowsPerFrame) {
+        LOG.info().$("Replicating table from row ").$(nFirstRow).$();
+        try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);
                 TableBlockWriter blockWriter = new TableBlockWriter(configuration)) {
@@ -661,6 +683,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 }
             }
 
+            int nFrames = 0;
             TableReplicationRecordCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, nFirstRow);
             PageFrame frame;
             LongList columnTops = new LongList(columnCount);
@@ -677,9 +700,10 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 if (commit) {
                     blockWriter.commitAppendedBlock(firstTimestamp, lastTimestamp, pageRowCount, columnTops);
                 }
+                nFrames++;
             }
+            LOG.info().$("Replication finished in ").$(nFrames).$(" frames per row").$();
         }
-
     }
 
     private String select(CharSequence selectSql) throws SqlException {
@@ -691,8 +715,8 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         return sink.toString();
     }
 
-    private TableReplicationRecordCursorFactory createReplicatingRecordCursorFactory(String tableName) {
-        return new TableReplicationRecordCursorFactory(engine, tableName);
+    private TableReplicationRecordCursorFactory createReplicatingRecordCursorFactory(String tableName, long maxRowsPerFrame) {
+        return new TableReplicationRecordCursorFactory(engine, tableName, maxRowsPerFrame);
     }
 
     @BeforeClass

@@ -19,6 +19,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     private final TableReplicationRecordCursor cursor;
     private final CairoEngine engine;
     private final CharSequence tableName;
+    private final long maxRowsPerFrame;
     private final IntList columnIndexes;
     private final IntList columnSizes;
 
@@ -28,8 +29,9 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         }
     }
 
-    public TableReplicationRecordCursorFactory(CairoEngine engine, CharSequence tableName) {
+    public TableReplicationRecordCursorFactory(CairoEngine engine, CharSequence tableName, long maxRowsPerFrame) {
         super(createMetadata(engine, tableName));
+        this.maxRowsPerFrame = maxRowsPerFrame;
         this.cursor = new TableReplicationRecordCursor();
         this.engine = engine;
         this.tableName = tableName;
@@ -47,7 +49,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public TableReplicationRecordCursor getPageFrameCursor(SqlExecutionContext executionContext) {
-        return cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), columnIndexes, columnSizes);
+        return cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), maxRowsPerFrame, columnIndexes, columnSizes);
     }
 
     public TableReplicationRecordCursor getPageFrameCursorFrom(SqlExecutionContext executionContext, long nFirstRow) {
@@ -62,11 +64,11 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             partitionIndex++;
             nFirstRow -= partitionRowCount;
         }
-        return cursor.of(reader, columnIndexes, columnSizes, partitionIndex, nFirstRow);
+        return cursor.of(reader, maxRowsPerFrame, columnIndexes, columnSizes, partitionIndex, nFirstRow);
     }
 
-    public TableReplicationRecordCursor getPageFrameCursor(int partitionIndex, long paritionRowCount) {
-        return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName), columnIndexes, columnSizes, partitionIndex, paritionRowCount);
+    public TableReplicationRecordCursor getPageFrameCursor(int partitionIndex, long partitionRowCount) {
+        return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName), maxRowsPerFrame, columnIndexes, columnSizes, partitionIndex, partitionRowCount);
     }
 
     @Override
@@ -90,18 +92,23 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         private final LongList columnTops = new LongList();
         private final ReplicationPageFrame frame = new ReplicationPageFrame();
 
+        private TableReader reader;
+        private long maxRowsPerFrame;
         private IntList columnIndexes;
         private IntList columnSizes;
         private int columnCount;
 
-        private TableReader reader;
+        private boolean moveToNextPartition;
         private int partitionIndex;
         private int partitionCount;
         private int timestampColumnIndex;
-        private long nFirstFrameRow;
+        private long frameFirstRow;
         private long nFrameRows;
+        private long nPartitionRows;
         private long firstTimestamp = Long.MIN_VALUE;
         private long lastTimestamp = Numbers.LONG_NaN;;
+        private int columnBase;
+        private boolean checkNFrameRowsForColumnTops;
 
         public TableReplicationRecordCursor() {
             super();
@@ -122,16 +129,17 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             return reader.getSymbolMapReader(columnIndex);
         }
 
-        private TableReplicationRecordCursor of(TableReader reader, IntList columnIndexes, IntList columnSizes, int partitionIndex, long partitionRowCount) {
-            of(reader, columnIndexes, columnSizes);
+        private TableReplicationRecordCursor of(TableReader reader, long maxRowsPerFrame, IntList columnIndexes, IntList columnSizes, int partitionIndex, long partitionRowCount) {
+            of(reader, maxRowsPerFrame, columnIndexes, columnSizes);
             this.partitionIndex = partitionIndex - 1;
-            nFirstFrameRow = partitionRowCount;
+            frameFirstRow = partitionRowCount;
 
             return this;
         }
 
-        public TableReplicationRecordCursor of(TableReader reader, IntList columnIndexes, IntList columnSizes) {
+        public TableReplicationRecordCursor of(TableReader reader, long maxRowsPerFrame, IntList columnIndexes, IntList columnSizes) {
             this.reader = reader;
+            this.maxRowsPerFrame = maxRowsPerFrame;
             this.columnIndexes = columnIndexes;
             this.columnSizes = columnSizes;
             columnCount = columnIndexes.size();
@@ -145,82 +153,119 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public @Nullable ReplicationPageFrame next() {
-            while (++partitionIndex < partitionCount) {
-                nFrameRows = reader.openPartition(partitionIndex);
-                if (nFrameRows > nFirstFrameRow) {
-                    final int base = reader.getColumnBase(partitionIndex);
-                    final long maxRows = reader.getPartitionRowCount(partitionIndex);
+            while (!moveToNextPartition || ++partitionIndex < partitionCount) {
+                if (moveToNextPartition) {
+                    nPartitionRows = reader.openPartition(partitionIndex);
+                    if (nPartitionRows <= frameFirstRow) {
+                        frameFirstRow = 0;
+                        continue;
+                    }
+                    columnBase = reader.getColumnBase(partitionIndex);
+                    checkNFrameRowsForColumnTops = false;
                     for (int i = 0; i < columnCount; i++) {
                         int columnIndex = columnIndexes.get(i);
-                        final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex));
-                        assert col.getPageCount() <= 1;
-                        final long columnTop = reader.getColumnTop(base, columnIndex);
-                        final long colFirstRow = nFirstFrameRow - columnTop;
-                        final long colNRows = nFrameRows - columnTop;
-                        final long colMaxRows = maxRows - columnTop;
-
-                        if (col.getPageCount() > 0 && colNRows > 0) {
-                            long columnPageAddress = col.getPageAddress(0);
-                            long columnPageLength;
-
-                            int columnType = reader.getMetadata().getColumnType(columnIndex);
-                            switch (columnType) {
-                                case ColumnType.STRING: {
-                                    final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
-                                    columnPageLength = calculateStringPagePosition(col, strLenCol, colNRows, colMaxRows);
-
-                                    if (colFirstRow > 0) {
-                                        long columnPageBegin = calculateStringPagePosition(col, strLenCol, colFirstRow, colMaxRows);
-                                        columnPageAddress += columnPageBegin;
-                                        columnPageLength -= columnPageBegin;
-                                    }
-
-                                    break;
-                                }
-
-                                case ColumnType.BINARY: {
-                                    final ReadOnlyColumn binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndex) + 1);
-                                    columnPageLength = calculateBinaryPagePosition(col, binLenCol, colNRows, colMaxRows);
-
-                                    if (colFirstRow > 0) {
-                                        long columnPageBegin = calculateBinaryPagePosition(col, binLenCol, colFirstRow, colMaxRows);
-                                        columnPageAddress += columnPageBegin;
-                                        columnPageLength -= columnPageBegin;
-                                    }
-
-                                    break;
-                                }
-
-                                default: {
-                                    int columnSizeBinaryPower = columnSizes.getQuick(columnIndex);
-                                    columnPageLength = colNRows << columnSizeBinaryPower;
-                                    if (colFirstRow > 0) {
-                                        long columnPageBegin = colFirstRow << columnSizeBinaryPower;
-                                        columnPageAddress += columnPageBegin;
-                                        columnPageLength -= columnPageBegin;
-                                    }
-                                }
-                            }
-
-                            columnFrameAddresses.setQuick(columnIndex, columnPageAddress);
-                            columnFrameLengths.setQuick(columnIndex, columnPageLength);
-
-                            if (timestampColumnIndex == columnIndex) {
-                                firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
-                                lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress + columnPageLength - Long.BYTES);
-                            }
-                        } else {
-                            columnFrameAddresses.setQuick(columnIndex, -1);
-                            columnFrameLengths.setQuick(columnIndex, 0);
-                        }
+                        long columnTop = reader.getColumnTop(columnBase, columnIndex);
                         columnTops.setQuick(columnIndex, columnTop);
+                        if (columnTop > 0) {
+                            checkNFrameRowsForColumnTops = true;
+                        }
                     }
-
-                    nFrameRows -= nFirstFrameRow;
-                    nFirstFrameRow = 0;
-                    return frame;
                 }
-                nFirstFrameRow = 0;
+                nFrameRows = nPartitionRows - frameFirstRow;
+                if (nFrameRows > maxRowsPerFrame) {
+                    nFrameRows = maxRowsPerFrame;
+                }
+
+                if (checkNFrameRowsForColumnTops) {
+                    checkNFrameRowsForColumnTops = false;
+                    long frameLastRow = frameFirstRow + nFrameRows - 1;
+                    for (int i = 0; i < columnCount; i++) {
+                        long columnTop = columnTops.getQuick(i);
+                        if (columnTop > frameFirstRow) {
+                            checkNFrameRowsForColumnTops = true;
+                            if (columnTop <= frameLastRow) {
+                                nFrameRows = columnTop - frameFirstRow;
+                                frameLastRow = frameFirstRow + nFrameRows - 1;
+                            }
+                        }
+                    }
+                }
+
+                for (int i = 0; i < columnCount; i++) {
+                    int columnIndex = columnIndexes.get(i);
+                    final long columnTop = columnTops.getQuick(columnIndex);
+                    final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex));
+
+                    if (columnTop <= frameFirstRow && col.getPageCount() > 0) {
+                        assert col.getPageCount() == 1;
+                        final long colFrameFirstRow = frameFirstRow - columnTop;
+                        final long colFrameLastRow = colFrameFirstRow + nFrameRows;
+                        final long colMaxRow = nPartitionRows - columnTop;
+
+                        long columnPageAddress = col.getPageAddress(0);
+                        long columnPageLength;
+
+                        int columnType = reader.getMetadata().getColumnType(columnIndex);
+                        switch (columnType) {
+                            case ColumnType.STRING: {
+                                final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
+                                columnPageLength = calculateStringPagePosition(col, strLenCol, colFrameLastRow, colMaxRow);
+
+                                if (colFrameFirstRow > 0) {
+                                    long columnPageBegin = calculateStringPagePosition(col, strLenCol, colFrameFirstRow, colMaxRow);
+                                    columnPageAddress += columnPageBegin;
+                                    columnPageLength -= columnPageBegin;
+                                }
+
+                                break;
+                            }
+
+                            case ColumnType.BINARY: {
+                                final ReadOnlyColumn binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
+                                columnPageLength = calculateBinaryPagePosition(col, binLenCol, colFrameLastRow, colMaxRow);
+
+                                if (colFrameFirstRow > 0) {
+                                    long columnPageBegin = calculateBinaryPagePosition(col, binLenCol, colFrameFirstRow, colMaxRow);
+                                    columnPageAddress += columnPageBegin;
+                                    columnPageLength -= columnPageBegin;
+                                }
+
+                                break;
+                            }
+
+                            default: {
+                                int columnSizeBinaryPower = columnSizes.getQuick(columnIndex);
+                                columnPageLength = colFrameLastRow << columnSizeBinaryPower;
+                                if (colFrameFirstRow > 0) {
+                                    long columnPageBegin = colFrameFirstRow << columnSizeBinaryPower;
+                                    columnPageAddress += columnPageBegin;
+                                    columnPageLength -= columnPageBegin;
+                                }
+                            }
+                        }
+
+                        columnFrameAddresses.setQuick(columnIndex, columnPageAddress);
+                        columnFrameLengths.setQuick(columnIndex, columnPageLength);
+
+                        if (timestampColumnIndex == columnIndex) {
+                            firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
+                            lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress + columnPageLength - Long.BYTES);
+                        }
+                    } else {
+                        columnFrameAddresses.setQuick(columnIndex, 0);
+                        columnFrameLengths.setQuick(columnIndex, 0);
+                    }
+                }
+
+                frameFirstRow += nFrameRows;
+                assert frameFirstRow <= nPartitionRows;
+                if (frameFirstRow == nPartitionRows) {
+                    moveToNextPartition = true;
+                    frameFirstRow = 0;
+                } else {
+                    moveToNextPartition = false;
+                }
+                return frame;
             }
             return null;
         }
@@ -266,6 +311,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         @Override
         public void toTop() {
             partitionIndex = -1;
+            moveToNextPartition = true;
             partitionCount = reader.getPartitionCount();
             firstTimestamp = Long.MIN_VALUE;
             lastTimestamp = 0;
@@ -285,7 +331,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
             @Override
             public long getPageValueCount(int columnIndex) {
-                return nFrameRows - columnTops.getQuick(columnIndex);
+                return nFrameRows;
             }
 
             @Override
