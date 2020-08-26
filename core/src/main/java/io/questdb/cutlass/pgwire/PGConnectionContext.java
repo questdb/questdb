@@ -144,45 +144,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
 
-
-//    private void addDefaultProbes() {
-//        probes.add(getTypeAdapter(ColumnType.CHAR));
-//        probes.add(getTypeAdapter(ColumnType.SHORT));
-//        probes.add(getTypeAdapter(ColumnType.INT));
-//        probes.add(getTypeAdapter(ColumnType.FLOAT));
-//        probes.add(getTypeAdapter(ColumnType.LONG));
-//        probes.add(getTypeAdapter(ColumnType.DOUBLE));
-//        probes.add(getTypeAdapter(ColumnType.BOOLEAN));
-//        probes.add(getTypeAdapter(ColumnType.TIMESTAMP));
-//        probes.add(getTypeAdapter(ColumnType.DATE));
-//        probes.add(getTypeAdapter(ColumnType.STRING));
-//    }
-//
-//    public TypeAdapter getTypeAdapter(int columnType) {
-//        switch (columnType) {
-//            case ColumnType.BYTE:
-//                return ByteAdapter.INSTANCE;
-//            case ColumnType.SHORT:
-//                return ShortAdapter.INSTANCE;
-//            case ColumnType.CHAR:
-//                return CharAdapter.INSTANCE;
-//            case ColumnType.INT:
-//                return IntAdapter.INSTANCE;
-//            case ColumnType.LONG:
-//                return LongAdapter.INSTANCE;
-//            case ColumnType.BOOLEAN:
-//                return BooleanAdapter.INSTANCE;
-//            case ColumnType.FLOAT:
-//                return FloatAdapter.INSTANCE;
-//            case ColumnType.DOUBLE:
-//                return DoubleAdapter.INSTANCE;
-//            case ColumnType.DATE:
-//                return DateAdapter.INSTANCE;
-//            default:
-//                throw CairoException.instance(0).put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
-//        }
-//    }
-
     public PGConnectionContext(
             CairoEngine engine,
             PGWireConfiguration configuration,
