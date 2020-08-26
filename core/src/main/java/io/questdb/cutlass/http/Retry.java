@@ -24,15 +24,21 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.pool.ex.RetryFailedOperationException;
+
 public interface Retry {
     /**
      * Run a retry
-     * @return false if not successful or true if successful
      */
-    boolean tryRerun(HttpRequestProcessorSelector selector);
+    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
 
     /**
      * Gets retry run attributes
      */
     RetryAttemptAttributes getAttemptDetails();
+
+    /**
+     * Notify client that re-run failed
+     */
+    void fail(HttpRequestProcessorSelector selector, RetryFailedOperationException e);
 }

@@ -187,6 +187,16 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             public double getExponentialWaitMultiplier() {
                 return 2.0;
             }
+
+            @Override
+            public int getInitialWaitQueueSize() {
+                return 64;
+            }
+
+            @Override
+            public int getMaxProcessingQueueSize() {
+                return 4096;
+            }
         };
     }
 

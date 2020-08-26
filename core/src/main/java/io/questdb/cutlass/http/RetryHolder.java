@@ -24,15 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import org.jetbrains.annotations.NotNull;
-
-public class RetryHolder implements Comparable<RetryHolder> {
+class RetryHolder {
     public Retry retry;
-
-    @Override
-    public int compareTo(@NotNull RetryHolder o) {
-        RetryAttemptAttributes a1 = retry.getAttemptDetails();
-        RetryAttemptAttributes a2 = o.retry.getAttemptDetails();
-        return a1.nextRunTimestamp > a2.nextRunTimestamp ? 1 : (a1.nextRunTimestamp < a2.nextRunTimestamp ? -1 : 0);
-    }
 }

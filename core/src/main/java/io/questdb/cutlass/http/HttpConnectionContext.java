@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.pool.ex.RetryFailedOperationException;
 import io.questdb.cairo.pool.ex.RetryOperationException;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.griffin.HttpSqlExecutionInterruptor;
@@ -197,7 +198,16 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             processor.onRequestComplete(this);
         } catch (RetryOperationException e) {
             pendingRetry = true;
+            scheduleRetry(processor, rescheduleContext);
+        }
+    }
+
+    public void scheduleRetry(HttpRequestProcessor processor, RescheduleContext rescheduleContext) {
+        try {
+            pendingRetry = true;
             rescheduleContext.reschedule(this);
+        } catch (RetryFailedOperationException e) {
+            fail(e, processor);
         }
     }
 
@@ -406,7 +416,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                 }
             } catch (RetryOperationException e) {
                 pendingRetry = true;
-                rescheduleContext.reschedule(this);
+                scheduleRetry(processor, rescheduleContext);
             } catch (PeerDisconnectedException e) {
                 dispatcher.disconnect(this);
             } catch (ServerDisconnectException e) {
@@ -469,16 +479,14 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return execInterruptor;
     }
 
-    public boolean tryRerun(HttpRequestProcessorSelector selector) {
+    public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         if (pendingRetry) {
             pendingRetry = false;
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
             try {
+                processor.onRequestRetry(this);
                 if (multipartParserState.multipartRetry) {
-                    processor.onRequestRetry(this);
                     continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retryRescheduleContext);
-                } else {
-                    processor.onRequestRetry(this);
                 }
             } catch (RetryOperationException e2) {
                 pendingRetry = true;
@@ -498,5 +506,26 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     @Override
     public RetryAttemptAttributes getAttemptDetails() {
         return retryAttemptAttributes;
+    }
+
+    @Override
+    public void fail(HttpRequestProcessorSelector selector, RetryFailedOperationException e) {
+        pendingRetry = false;
+        HttpRequestProcessor processor = getHttpRequestProcessor(selector);
+        fail(e, processor);
+    }
+
+    private void fail(RetryFailedOperationException e, HttpRequestProcessor processor) {
+        pendingRetry = false;
+        try {
+            processor.failRequest(this, e);
+        } catch (PeerDisconnectedException peerDisconnectedException) {
+            dispatcher.disconnect(this);
+        } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
+            dispatcher.registerChannel(this, IOOperation.WRITE);
+        } catch (ServerDisconnectException serverDisconnectException) {
+            LOG.info().$("kicked out [fd=").$(fd).$(']').$();
+            dispatcher.disconnect(this);
+        }
     }
 }

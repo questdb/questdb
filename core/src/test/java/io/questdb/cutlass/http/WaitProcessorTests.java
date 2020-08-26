@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.pool.ex.RetryFailedOperationException;
 import io.questdb.std.time.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -80,7 +81,7 @@ public class WaitProcessorTests {
                         private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
 
                         @Override
-                        public boolean tryRerun(HttpRequestProcessorSelector selector) {
+                        public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
                             jobAttempts[index]++;
                             return false;
                         }
@@ -88,6 +89,11 @@ public class WaitProcessorTests {
                         @Override
                         public RetryAttemptAttributes getAttemptDetails() {
                             return attemptAttributes;
+                        }
+
+                        @Override
+                        public void fail(HttpRequestProcessorSelector selector, RetryFailedOperationException e) {
+                            throw new UnsupportedOperationException();
                         }
                     });
         }
@@ -114,7 +120,7 @@ public class WaitProcessorTests {
             private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
 
             @Override
-            public boolean tryRerun(HttpRequestProcessorSelector selector) {
+            public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
                 job1Attempts++;
                 return false;
             }
@@ -122,6 +128,11 @@ public class WaitProcessorTests {
             @Override
             public RetryAttemptAttributes getAttemptDetails() {
                 return attemptAttributes;
+            }
+
+            @Override
+            public void fail(HttpRequestProcessorSelector selector, RetryFailedOperationException e) {
+                throw new UnsupportedOperationException();
             }
         };
     }
@@ -142,6 +153,16 @@ public class WaitProcessorTests {
             @Override
             public double getExponentialWaitMultiplier() {
                 return 2.0;
+            }
+
+            @Override
+            public int getInitialWaitQueueSize() {
+                return 64;
+            }
+
+            @Override
+            public int getMaxProcessingQueueSize() {
+                return 4096;
             }
         });
     }

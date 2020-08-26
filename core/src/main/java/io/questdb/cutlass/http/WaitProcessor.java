@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.pool.ex.EntryUnavailableException;
+import io.questdb.cairo.pool.ex.RetryFailedOperationException;
 import io.questdb.mp.*;
 import io.questdb.std.time.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
@@ -34,14 +34,13 @@ import java.util.concurrent.locks.LockSupport;
 
 public class WaitProcessor extends  SynchronizedJob implements RescheduleContext {
 
-    private static final int retryQueueLength = 4096;
-    private final RingQueue<RetryHolder> inQueue = new RingQueue<>(RetryHolder::new, retryQueueLength);
-    private final Sequence inPubSequence = new MPSequence(retryQueueLength);
-    private final Sequence inSubSequence = new SCSequence();
-    private final PriorityQueue<RetryHolder> nextRerun = new PriorityQueue<>(64);
-    private final RingQueue<RetryHolder> outQueue = new RingQueue<>(RetryHolder::new, retryQueueLength);
-    private final Sequence outPubSequence = new SPSequence(retryQueueLength);
-    private final Sequence outSubSequence = new MCSequence(retryQueueLength);
+    private final RingQueue<RetryHolder> inQueue;
+    private final Sequence inPubSequence;
+    private final Sequence inSubSequence;
+    private final PriorityQueue<Retry> nextRerun;
+    private final RingQueue<RetryHolder> outQueue;
+    private final Sequence outPubSequence;
+    private final Sequence outSubSequence;
     private final MillisecondClock clock;
     private final long maxWaitCapMs;
     private final double exponentialWaitMultiplier;
@@ -50,6 +49,15 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
         this.clock = configuration.getClock();
         this.maxWaitCapMs = configuration.getMaxWaitCapMs();
         this.exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();
+        nextRerun = new PriorityQueue<>(configuration.getInitialWaitQueueSize(), WaitProcessor::compareRetiesInQueue);
+
+        int retryQueueLength = configuration.getMaxProcessingQueueSize();
+        inQueue = new RingQueue<>(RetryHolder::new, retryQueueLength);
+        inPubSequence = new MPSequence(retryQueueLength);
+        inSubSequence = new SCSequence();
+        outQueue = new RingQueue<>(RetryHolder::new, retryQueueLength);
+        outPubSequence = new SPSequence(retryQueueLength);
+        outSubSequence = new MCSequence(retryQueueLength);
 
         inPubSequence.then(inSubSequence).then(inPubSequence);
         outPubSequence.then(outSubSequence).then(outPubSequence);
@@ -82,11 +90,12 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
             // -1 = queue is empty. It means there are already too many retries waiting
             // Send error to client.
             if (cursor < 0) {
-                throw EntryUnavailableException.INSTANCE;
+                throw RetryFailedOperationException.INSTANCE;
             }
 
             try {
-                inQueue.get(cursor).retry = retry;;
+                RetryHolder retryHolder = inQueue.get(cursor);
+                retryHolder.retry = retry;
                 return;
             } finally {
                 inPubSequence.done(cursor);
@@ -99,12 +108,15 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
         boolean useful = false;
 
         while (true) {
-            RetryHolder retryHolder = getNextRerun();
-            if (retryHolder != null) {
+            Retry retry = getNextRerun();
+            if (retry != null) {
                 useful = true;
-                if (!retryHolder.retry.tryRerun(selector)) {
-                    // Need more attempts
-                    reschedule(retryHolder.retry, retryHolder.retry.getAttemptDetails().attempt + 1, retryHolder.retry.getAttemptDetails().waitStartTimestamp);
+                if (!retry.tryRerun(selector, this)) {
+                    try {
+                        reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
+                    } catch (RetryFailedOperationException e) {
+                        retry.fail(selector, e);
+                    }
                 }
             } else {
                 return useful;
@@ -112,7 +124,7 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
         }
     }
 
-    private @Nullable RetryHolder getNextRerun() {
+    private @Nullable Retry getNextRerun() {
         long cursor = outSubSequence.next();
         // -2 = there was a contest for queue index and this thread has lost
         if (cursor < 0) {
@@ -120,7 +132,10 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
         }
 
         try {
-            return outQueue.get(cursor);
+            RetryHolder retryHolder = outQueue.get(cursor);
+            Retry r = retryHolder.retry;
+            retryHolder.retry = null;
+            return r;
         } finally {
             outSubSequence.done(cursor);
         }
@@ -141,16 +156,17 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
                 return any;
             }
 
-            RetryHolder toRun;
+            Retry retry;
             try {
-                toRun = inQueue.get(cursor);
+                RetryHolder toRun = inQueue.get(cursor);
+                retry = toRun.retry;
+                toRun.retry = null;
             } finally {
                 inSubSequence.done(cursor);
             }
+            retry.getAttemptDetails().nextRunTimestamp = calculateNextTimestamp(retry.getAttemptDetails());
 
-            toRun.retry.getAttemptDetails().nextRunTimestamp = calculateNextTimestamp(toRun.retry.getAttemptDetails());
-
-            nextRerun.add(toRun);
+            nextRerun.add(retry);
             any = true;
         }
     }
@@ -170,10 +186,12 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
         boolean useful = false;
         final long now = clock.getTicks();
         while (nextRerun.size() > 0) {
-            RetryHolder next = nextRerun.peek();
-            if (next.retry.getAttemptDetails().nextRunTimestamp <= now) {
+            Retry next = nextRerun.peek();
+            if (next.getAttemptDetails().nextRunTimestamp <= now) {
                 useful = true;
-                if (!sendToOutQueue(nextRerun.poll())) {
+                Retry retry = nextRerun.poll();
+                if (!sendToOutQueue(retry)) {
+                    nextRerun.add(retry);
                     return true;
                 }
             }
@@ -185,7 +203,7 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
         return useful;
     }
 
-    private boolean sendToOutQueue(RetryHolder retryHolder) {
+    private boolean sendToOutQueue(Retry retry) {
         while (true) {
             long cursor = outPubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
@@ -201,11 +219,18 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
 
             try {
                 RetryHolder retryHolderOut = outQueue.get(cursor);
-                retryHolderOut.retry = retryHolder.retry;
+                retryHolderOut.retry = retry;
                 return true;
             } finally {
                 outPubSequence.done(cursor);
             }
         }
+    }
+
+    private static int compareRetiesInQueue(Retry r1, Retry r2) {
+        // r1, r2 are always not null, null retries are not queued
+        RetryAttemptAttributes a1 = r1.getAttemptDetails();
+        RetryAttemptAttributes a2 = r2.getAttemptDetails();
+        return a1.nextRunTimestamp > a2.nextRunTimestamp ? 1 : (a1.nextRunTimestamp < a2.nextRunTimestamp ? -1 : 0);
     }
 }

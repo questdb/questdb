@@ -87,6 +87,8 @@ import java.util.Properties;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
+    private static final int DEFAULT_RERUN_QUEUE_SIZE = 4096;
+    private int rerunProcessingQueueSize = DEFAULT_RERUN_QUEUE_SIZE;
     private final String RequestHeaders = "Host: localhost:9000\r\n" +
             "Connection: keep-alive\r\n" +
             "Accept: */*\r\n" +
@@ -4626,6 +4628,32 @@ public class IODispatcherTest {
     }
 
     @Test
+    @Ignore
+    public void testImportWaitsWhenWriterLockedLoop() throws Exception {
+        for (int i = 0; i < 100; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportWaitsWhenWriterLocked();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
+    @Ignore
+    public void testImportProcessedWhenClientDisconnectedLoop() throws Exception {
+        for (int i = 0; i < 100; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportProcessedWhenClientDisconnected();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
     public void testInsertWaitsWhenWriterLocked() throws Exception {
         final int parallelCount = 2;
         testJsonQuery0(parallelCount, engine -> {
@@ -4705,6 +4733,97 @@ public class IODispatcherTest {
             );
         }, false);
     }
+
+    @Test
+    public void testInsertWaitsExceedsRerunProcessingQueueSize() throws Exception {
+        try {
+            rerunProcessingQueueSize = 1;
+            final int parallelCount = 4;
+            testJsonQuery0(parallelCount, engine -> {
+                // create table
+                sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                RequestHeaders,
+                        ResponseHeaders +
+                                "0c\r\n" +
+                                "{\"ddl\":\"OK\"}\r\n" +
+                                "00\r\n" +
+                                "\r\n",
+                        1,
+                        0,
+                        true,
+                        false
+                );
+
+                TableWriter writer = lockWriter(engine, "balances_x");
+
+                final int insertCount = rerunProcessingQueueSize * 10;
+                CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                AtomicInteger fails = new AtomicInteger();
+                for (int i = 0; i < parallelCount; i++) {
+                    new Thread(() -> {
+                        try {
+                            for (int r = 0; r < insertCount; r++) {
+                                // insert one record
+                                try {
+                                    sendAndReceive(
+                                            NetworkFacadeImpl.INSTANCE,
+                                            "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                                    RequestHeaders,
+                                            ResponseHeaders +
+                                                    "0c\r\n" +
+                                                    "{\"ddl\":\"OK\"}\r\n" +
+                                                    "00\r\n" +
+                                                    "\r\n",
+                                            1,
+                                            0,
+                                            false,
+                                            true
+                                    );
+                                } catch (AssertionError ase) {
+                                    fails.incrementAndGet();
+                                }
+                                catch (Exception e) {
+                                    LOG.error().$("Failed execute insert http request. Server error ").$(e);
+                                }
+                            }
+                        } finally {
+                            countDownLatch.countDown();
+                        }
+                    }).start();
+                }
+
+                boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
+                Assert.assertFalse(finished);
+
+                writer.close();
+                if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
+                    Assert.fail("Wait to process retries exceeded timeout");
+                }
+                // Assert.assertTrue("Some insertion must fail because of retry queue overflow", fails.get() > 0);
+
+                // check if we have parallelCount x insertCount  records
+                sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
+                                RequestHeaders,
+                        ResponseHeaders +
+                                "71\r\n" +
+                                "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount - fails.get()) + "]],\"count\":1}\r\n" +
+                                "00\r\n" +
+                                "\r\n",
+                        1,
+                        0,
+                        false,
+                        false
+                );
+            }, false);
+        } finally {
+            rerunProcessingQueueSize = DEFAULT_RERUN_QUEUE_SIZE;
+        }
+    }
+
 
     // TODO: investigate failure
     @Test
@@ -4861,19 +4980,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
-    public void testImportWaitsWhenWriterLockedLoop() throws Exception {
-        for (int i = 0; i < 100; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
-            testImportWaitsWhenWriterLocked();
-            temp.delete();
-            temp.create();
-        }
-    }
-
-    @Test
     public void testImportWaitsWhenWriterLocked() throws Exception {
         final int parallelCount = 2;
         testImport(2, (engine) -> {
@@ -4948,19 +5054,6 @@ public class IODispatcherTest {
             );
 
         });
-    }
-
-    @Test
-    @Ignore
-    public void testImportProcessedWhenClientDisconnectedLoop() throws Exception {
-        for (int i = 0; i < 100; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
-            testImportProcessedWhenClientDisconnected();
-            temp.delete();
-            temp.create();
-        }
     }
 
     @Test
@@ -5243,6 +5336,16 @@ public class IODispatcherTest {
                     @Override
                     public double getExponentialWaitMultiplier() {
                         return 2.0;
+                    }
+
+                    @Override
+                    public int getInitialWaitQueueSize() {
+                        return rerunProcessingQueueSize;
+                    }
+
+                    @Override
+                    public int getMaxProcessingQueueSize() {
+                        return rerunProcessingQueueSize;
                     }
                 };
             }

@@ -229,6 +229,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgDaemonPool;
     private long maxRerunWaitCapMs;
     private double rerunExponentialWaitMultiplier;
+    private int rerunInitialWaitQueueSize;
+    private int rerunMaxProcessingQueueSize;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
@@ -319,6 +321,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.maxRerunWaitCapMs = getLong(properties,"http.busy.retry.maximum.wait.before.retry", 1000);
             this.rerunExponentialWaitMultiplier = getDouble(properties, "http.busy.retry.exponential.wait.multipier", 2.0);
+            this.rerunInitialWaitQueueSize = getIntSize(properties, "http.busy.retry.initialWaitQueueSize", 64);
+            this.rerunMaxProcessingQueueSize = getIntSize(properties, "http.busy.retry.maxProcessingQueueSize", 4096);
         }
         this.pgEnabled = getBoolean(properties, "pg.enabled", true);
         if (pgEnabled) {
@@ -1499,6 +1503,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getExponentialWaitMultiplier() {
             return rerunExponentialWaitMultiplier;
+        }
+
+        @Override
+        public int getInitialWaitQueueSize() {
+            return rerunInitialWaitQueueSize;
+        }
+
+        @Override
+        public int getMaxProcessingQueueSize() {
+            return rerunMaxProcessingQueueSize;
         }
     }
 

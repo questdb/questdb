@@ -30,4 +30,6 @@ public interface WaitProcessorConfiguration {
     MillisecondClock getClock();
     long getMaxWaitCapMs();
     double getExponentialWaitMultiplier();
+    int getInitialWaitQueueSize();
+    int getMaxProcessingQueueSize();
 }

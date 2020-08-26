@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.pool.ex.RetryFailedOperationException;
+
 @FunctionalInterface
 public interface RescheduleContext {
-    void reschedule(Retry retry);
+    void reschedule(Retry retry) throws RetryFailedOperationException;
 }
