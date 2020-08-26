@@ -540,12 +540,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putLenEx(a);
     }
 
-    private void appendCharColumn(Record record, int columnIndex) {
-        final long a = responseAsciiSink.skip();
-        responseAsciiSink.put(record.getChar(columnIndex));
-        responseAsciiSink.putLenEx(a);
-    }
-
     private void appendDateColumn(Record record, int columnIndex) {
         final long longValue = record.getDate(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
@@ -705,6 +699,10 @@ public class PGConnectionContext implements IOContext, Mutable {
             //infer type if needed
             if (inferTypes) {
                 int pgType = inferParameterType(lo, valueLen);
+                if (pgType == -1) {
+                    LOG.error().$("invalid parameter type for parameter #[").$(j).$(']').$();
+                    throw BadProtocolException.INSTANCE;
+                }
                 setupBindVariable(bindVariableSetters, j, pgType);
             }
             // apply parameter format
@@ -1096,7 +1094,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         columnAppenders.extendAndSet(ColumnType.DATE, this::appendDateColumn);
         columnAppenders.extendAndSet(ColumnType.BOOLEAN, this::appendBooleanColumn);
         columnAppenders.extendAndSet(ColumnType.BYTE, this::appendByteColumn);
-        columnAppenders.extendAndSet(ColumnType.CHAR, this::appendCharColumn);
         columnAppenders.extendAndSet(ColumnType.BINARY, this::appendBinColumn);
     }
 

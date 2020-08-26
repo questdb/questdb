@@ -2201,6 +2201,32 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInferringBadParamenterWithoutExplicitParameterTypeHex2() throws Exception {
+        String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+                "<520000000800000003\n" +
+                ">70000000076f6800\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">50000000300073656c65637420782c202024312c2024322066726f6d206c6f6e675f73657175656e63652832293b000000\n" +
+                ">4200000021000000010000000200000001000000000a353030303030303030300000\n" +
+                "<!!";
+
+        assertHexScript(NetworkFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                new DefaultPGWireConfiguration() {
+                    @Override
+                    public String getDefaultPassword() {
+                        return "oh";
+                    }
+
+                    @Override
+                    public String getDefaultUsername() {
+                        return "xyz";
+                    }
+                });
+    }
+
+    @Test
     public void testHappyPathForIntParameterWithoutExplicitParameterTypeHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
