@@ -351,7 +351,7 @@ public class TableBackupTest {
                 mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[5] Could not rename "));
+                Assert.assertTrue(ex.getMessage().startsWith("[5] could not rename "));
             }
 
             mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);

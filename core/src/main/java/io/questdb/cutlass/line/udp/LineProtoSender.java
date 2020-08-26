@@ -123,7 +123,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     @Override
     public void close() {
         if (nf.close(fd) != 0) {
-            LOG.error().$("failed to close UDP socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            LOG.error().$("could not close UDP socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
         }
         nf.freeSockAddr(sockaddr);
         Unsafe.free(bufA, capacity);

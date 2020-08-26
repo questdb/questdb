@@ -117,7 +117,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 }
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' cannot be altered: [0]: table busy");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' could not be altered: [0]: table busy");
             }
             allHaltLatch.await(2, TimeUnit.SECONDS);
         });
