@@ -115,6 +115,26 @@ public class DropTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropWithDotFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("create table 'x.csv' (a int)", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
+
+            try {
+                compiler.compile("drop table x.csv", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token");
+            }
+
+            cc = compiler.compile("drop table 'x.csv'", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
+
+        });
+    }
+
+    @Test
     public void testDropUtf8Quoted() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CompiledQuery cc = compiler.compile("create table 'научный руководитель'(a int)", sqlExecutionContext);

@@ -1416,18 +1416,16 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok;
         expectKeyword(lexer, "table");
-
         final int tableNamePosition = lexer.getPosition();
 
-        tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-
-        tableExistsOrFail(tableNamePosition, tok, executionContext);
-
-        CharSequence tableName = GenericLexer.immutableOf(tok);
+        CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+        }
+        tableExistsOrFail(tableNamePosition, tableName, executionContext);
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
-
         return compiledQuery.ofDrop();
     }
 
