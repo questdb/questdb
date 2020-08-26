@@ -282,6 +282,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
+    public void failRequest(HttpConnectionContext context, CairoException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        sendError(transientContext, e.getFlyweightMessage(), Chars.equalsNc("json", transientContext.getRequestHeader().getUrlParam("fmt")));
+        throw ServerDisconnectException.INSTANCE;
+    }
+
+    @Override
     public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         final CharSequence contentDisposition = partHeader.getContentDispositionName();
         LOG.debug().$("part begin [name=").$(contentDisposition).$(']').$();

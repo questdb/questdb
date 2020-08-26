@@ -4654,6 +4654,32 @@ public class IODispatcherTest {
     }
 
     @Test
+    @Ignore
+    public void testInsertWaitsExceedsRerunProcessingQueueSizeLoop() throws Exception {
+        for (int i = 0; i < 100; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testInsertWaitsExceedsRerunProcessingQueueSize();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
+    @Ignore
+    public void testImportRerunsExceedsRerunProcessingQueueSizeLoop() throws Exception {
+        for (int i = 0; i < 100; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportRerunsExceedsRerunProcessingQueueSize();
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
     public void testInsertWaitsWhenWriterLocked() throws Exception {
         final int parallelCount = 2;
         testJsonQuery0(parallelCount, engine -> {
@@ -4783,8 +4809,7 @@ public class IODispatcherTest {
                                     );
                                 } catch (AssertionError ase) {
                                     fails.incrementAndGet();
-                                }
-                                catch (Exception e) {
+                                } catch (Exception e) {
                                     LOG.error().$("Failed execute insert http request. Server error ").$(e);
                                 }
                             }
@@ -4801,7 +4826,6 @@ public class IODispatcherTest {
                 if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
                     Assert.fail("Wait to process retries exceeded timeout");
                 }
-                // Assert.assertTrue("Some insertion must fail because of retry queue overflow", fails.get() > 0);
 
                 // check if we have parallelCount x insertCount  records
                 sendAndReceive(
@@ -4823,7 +4847,6 @@ public class IODispatcherTest {
             rerunProcessingQueueSize = DEFAULT_RERUN_QUEUE_SIZE;
         }
     }
-
 
     // TODO: investigate failure
     @Test
@@ -5138,6 +5161,89 @@ public class IODispatcherTest {
             }
 
         });
+    }
+
+    @Test
+    public void testImportRerunsExceedsRerunProcessingQueueSize() throws Exception {
+        try {
+            rerunProcessingQueueSize = 1;
+            final int parallelCount = 4;
+            testImport(2, (engine) -> {
+                // create table and do 1 import
+                sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        ValidImportRequest,
+                        ValidImportResponse,
+                        1,
+                        0,
+                        false,
+                        false
+                );
+
+                TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
+                final int validRequestRecordCount = 24;
+                final int insertCount = 4;
+                AtomicInteger failedImports = new AtomicInteger();
+                CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                for (int i = 0; i < parallelCount; i++) {
+                    int finalI = i;
+                    new Thread(() -> {
+                        try {
+                            for (int r = 0; r < insertCount; r++) {
+                                // insert one record
+                                try {
+                                    sendAndReceive(
+                                            NetworkFacadeImpl.INSTANCE,
+                                            ValidImportRequest,
+                                            ValidImportResponse,
+                                            1,
+                                            0,
+                                            false,
+                                            false
+                                    );
+                                } catch (AssertionError e) {
+                                    failedImports.incrementAndGet();
+                                } catch (Exception e) {
+                                    LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                }
+                            }
+                        } finally {
+                            countDownLatch.countDown();
+                        }
+                        LOG.info().$("Stopped thread ").$(finalI).$();
+                    }).start();
+                }
+
+                boolean finished = countDownLatch.await(100, TimeUnit.MILLISECONDS);
+                Assert.assertFalse(finished);
+
+                writer.close();
+
+                if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
+                    Assert.fail("Imports did not finish within reasonable time");
+                }
+
+                // check if we have parallelCount x insertCount  records
+                LOG.info().$("Requesting row count").$();
+                sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
+                                RequestHeaders,
+                        ResponseHeaders +
+                                "84\r\n" +
+                                "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                                "00\r\n" +
+                                "\r\n",
+                        1,
+                        0,
+                        false,
+                        false
+                );
+
+            });
+        } finally {
+            rerunProcessingQueueSize = DEFAULT_RERUN_QUEUE_SIZE;
+        }
     }
 
     @NotNull
