@@ -49,10 +49,10 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public TableReplicationRecordCursor getPageFrameCursor(SqlExecutionContext executionContext) {
-        return cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), maxRowsPerFrame, columnIndexes, columnSizes);
+        return cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), maxRowsPerFrame, -1, columnIndexes, columnSizes);
     }
 
-    public TableReplicationRecordCursor getPageFrameCursorFrom(SqlExecutionContext executionContext, long nFirstRow) {
+    public TableReplicationRecordCursor getPageFrameCursorFrom(SqlExecutionContext executionContext, int timestampColumnIndex, long nFirstRow) {
         TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);
         int partitionIndex = 0;
         int partitionCount = reader.getPartitionCount();
@@ -64,11 +64,12 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             partitionIndex++;
             nFirstRow -= partitionRowCount;
         }
-        return cursor.of(reader, maxRowsPerFrame, columnIndexes, columnSizes, partitionIndex, nFirstRow);
+        return cursor.of(reader, maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes, partitionIndex, nFirstRow);
     }
 
-    public TableReplicationRecordCursor getPageFrameCursor(int partitionIndex, long partitionRowCount) {
-        return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName), maxRowsPerFrame, columnIndexes, columnSizes, partitionIndex, partitionRowCount);
+    public TableReplicationRecordCursor getPageFrameCursor(int timestampColumnIndex, int partitionIndex, long partitionRowCount) {
+        return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName), maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes, partitionIndex,
+                partitionRowCount);
     }
 
     @Override
@@ -129,21 +130,23 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             return reader.getSymbolMapReader(columnIndexes.getQuick(i));
         }
 
-        private TableReplicationRecordCursor of(TableReader reader, long maxRowsPerFrame, IntList columnIndexes, IntList columnSizes, int partitionIndex, long partitionRowCount) {
-            of(reader, maxRowsPerFrame, columnIndexes, columnSizes);
+        private TableReplicationRecordCursor of(
+                TableReader reader, long maxRowsPerFrame, int timestampColumnIndex, IntList columnIndexes, IntList columnSizes, int partitionIndex, long partitionRowCount
+        ) {
+            of(reader, maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes);
             this.partitionIndex = partitionIndex - 1;
             frameFirstRow = partitionRowCount;
 
             return this;
         }
 
-        public TableReplicationRecordCursor of(TableReader reader, long maxRowsPerFrame, IntList columnIndexes, IntList columnSizes) {
+        public TableReplicationRecordCursor of(TableReader reader, long maxRowsPerFrame, int timestampColumnIndex, IntList columnIndexes, IntList columnSizes) {
             this.reader = reader;
             this.maxRowsPerFrame = maxRowsPerFrame;
             this.columnIndexes = columnIndexes;
             this.columnSizes = columnSizes;
             columnCount = columnIndexes.size();
-            timestampColumnIndex = reader.getMetadata().getTimestampIndex();
+            this.timestampColumnIndex = timestampColumnIndex;
             columnFrameAddresses.ensureCapacity(columnCount);
             columnFrameLengths.ensureCapacity(columnCount);
             columnTops.ensureCapacity(columnCount);

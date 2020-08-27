@@ -93,7 +93,7 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     static final long META_COLUMN_DATA_SIZE = 16;
     static final long META_COLUMN_DATA_RESERVED = 3;
