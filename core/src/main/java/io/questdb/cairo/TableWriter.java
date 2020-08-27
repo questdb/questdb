@@ -188,6 +188,7 @@ public class TableWriter implements Closeable {
     private boolean performRecovery;
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
+    private final TableBlockWriter blockWriter;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -228,6 +229,7 @@ public class TableWriter implements Closeable {
         this.other = new Path().of(root).concat(name);
         this.name = Chars.toString(name);
         this.rootLen = path.length();
+        this.blockWriter = new TableBlockWriter(configuration);
         try {
             if (lock) {
                 lock();
@@ -561,6 +563,7 @@ public class TableWriter implements Closeable {
 
     @Override
     public void close() {
+        blockWriter.clear();
         if (isOpen() && lifecycleManager.close()) {
             doClose(true);
         }
@@ -1627,6 +1630,7 @@ public class TableWriter implements Closeable {
                 freeTempMem();
                 LOG.info().$("closed '").utf8(name).$('\'').$();
             }
+            blockWriter.close();
         }
     }
 
@@ -2880,6 +2884,11 @@ public class TableWriter implements Closeable {
         }
 
         TableWriter.this.commit();
+    }
+
+    public TableBlockWriter getBlockWriter() {
+        blockWriter.open(this);
+        return blockWriter;
     }
 
     @FunctionalInterface

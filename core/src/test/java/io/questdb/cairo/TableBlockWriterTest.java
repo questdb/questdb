@@ -662,10 +662,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         LOG.info().$("Replicating table from row ").$(nFirstRow).$();
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
-                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);
-                TableBlockWriter blockWriter = new TableBlockWriter(configuration)) {
+                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);) {
 
-            blockWriter.of(writer);
+            TableBlockWriter blockWriter = writer.getBlockWriter();
 
             final int columnCount = writer.getMetadata().getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {

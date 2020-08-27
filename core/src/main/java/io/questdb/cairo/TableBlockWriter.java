@@ -27,7 +27,7 @@ public class TableBlockWriter implements Closeable {
     private long partitionLo;
     private long partitionHi;
 
-    public TableBlockWriter(CairoConfiguration configuration) {
+    TableBlockWriter(CairoConfiguration configuration) {
         root = configuration.getRoot();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
@@ -83,7 +83,7 @@ public class TableBlockWriter implements Closeable {
         }
     }
 
-    public void of(TableWriter writer) {
+    void open(TableWriter writer) {
         clear();
         this.writer = writer;
         metadata = writer.getMetadata();
@@ -97,9 +97,8 @@ public class TableBlockWriter implements Closeable {
         }
     }
 
-    public void clear() {
+    void clear() {
         if (null != writer) {
-            writer.close();
             metadata = null;
             writer = null;
         }
