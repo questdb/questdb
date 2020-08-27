@@ -47,8 +47,9 @@ public class ExtendableOnePageMemory extends OnePageMemory {
 
     @Override
     public void grow(long newSize) {
-        assert newSize >= grownLength;
-        grownLength = newSize;
+        if (newSize > grownLength) {
+            grownLength = newSize;
+        }
         final long fileSize = ff.length(fd);
         newSize = Math.max(newSize, fileSize);
         if (newSize <= size) {
@@ -69,6 +70,12 @@ public class ExtendableOnePageMemory extends OnePageMemory {
         }
         size = newSize;
         absolutePointer = page + offset;
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        grownLength = 0;
     }
 
     public long getGrownLength() {
