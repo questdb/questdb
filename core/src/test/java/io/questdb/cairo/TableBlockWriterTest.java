@@ -4,7 +4,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import io.questdb.cairo.TableReplicationRecordCursorFactory.TableReplicationRecordCursor;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RecordCursor;
@@ -684,7 +683,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
             int nFrames = 0;
             int timestampColumnIndex = reader.getMetadata().getTimestampIndex();
-            TableReplicationRecordCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, timestampColumnIndex, nFirstRow);
+            TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, timestampColumnIndex, nFirstRow);
             PageFrame frame;
             LongList columnTops = new LongList(columnCount);
             while ((frame = cursor.next()) != null) {
