@@ -45,7 +45,7 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
     private final long tableVersion;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    private TableReaderPageFrameCursor pageFrameCursor = null;
+    private TableReplicationRecordCursor pageFrameCursor = null;
     private final boolean framingSupported;
 
     public TableReaderRecordCursorFactory(
@@ -84,16 +84,16 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
         return true;
     }
 
+    // TODO: Replication, implement this correctly
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
         if (pageFrameCursor != null) {
-            return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
-        } else if (framingSupported) {
-            // TODO: Replication, implement this correctly
-            return new TableReplicationRecordCursor().of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), Long.MAX_VALUE, -1,
+            return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), Long.MAX_VALUE, -1,
                     columnIndexes, columnSizes);
-            // pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes);
-            // return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
+        } else if (framingSupported) {
+            pageFrameCursor = new TableReplicationRecordCursor();
+            return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), Long.MAX_VALUE, -1,
+                    columnIndexes, columnSizes);
         } else {
             return null;
         }

@@ -1619,6 +1619,7 @@ public class TableWriter implements Closeable {
         try {
             freeTxMem();
         } finally {
+            blockWriter.close();
             Misc.free(metaMem);
             Misc.free(txPendingPartitionSizes);
             Misc.free(ddlMem);
@@ -1630,7 +1631,6 @@ public class TableWriter implements Closeable {
                 freeTempMem();
                 LOG.info().$("closed '").utf8(name).$('\'').$();
             }
-            blockWriter.close();
         }
     }
 
