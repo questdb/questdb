@@ -237,15 +237,12 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
-        if (offset + len * 2 + Integer.BYTES <= size) {
-            if (len == TableUtils.NULL_LEN) {
-                return null;
-            }
-
-            if (len == 0) {
-                return "";
-            }
+        if (len > -1 && offset + len * Character.BYTES + Integer.BYTES <= size) {
             return view.of(offset + VirtualMemory.STRING_LENGTH_BYTES, len);
+        }
+
+        if (len == TableUtils.NULL_LEN) {
+            return null;
         }
         throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(']');
     }
