@@ -281,15 +281,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                 return binLenCol.getLong(binLenOffset);
             }
 
-            long columnPageLength;
-            long lastBinLenOffset = (row - 1) << 3;
-            long lastBinOffset = binLenCol.getLong(lastBinLenOffset);
-            long lastBinLen = col.getBinLen(lastBinOffset);
-            if (lastBinLen == TableUtils.NULL_LEN) {
-                lastBinLen = 0;
-            }
-            columnPageLength = lastBinOffset + Long.BYTES + lastBinLen;
-            return columnPageLength;
+            return col.getGrownLength();
         }
 
         private long calculateStringPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn strLenCol, long row, long maxRows) {
@@ -300,15 +292,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                 return strLenCol.getLong(strLenOffset);
             }
 
-            long columnPageLength;
-            long lastStrLenOffset = (row - 1) << 3;
-            long lastStrOffset = strLenCol.getLong(lastStrLenOffset);
-            int lastStrLen = col.getStrLen(lastStrOffset);
-            if (lastStrLen == TableUtils.NULL_LEN) {
-                lastStrLen = 0;
-            }
-            columnPageLength = lastStrOffset + VirtualMemory.STRING_LENGTH_BYTES + lastStrLen * 2;
-            return columnPageLength;
+            return col.getGrownLength();
         }
 
         @Override

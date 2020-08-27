@@ -73,12 +73,13 @@ public class ExtendableOnePageMemory extends OnePageMemory {
     }
 
     @Override
+    public long getGrownLength() {
+        return grownLength;
+    }
+
+    @Override
     public void close() {
         super.close();
         grownLength = 0;
-    }
-
-    public long getGrownLength() {
-        return grownLength;
     }
 }

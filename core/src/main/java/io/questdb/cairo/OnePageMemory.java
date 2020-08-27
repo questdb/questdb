@@ -204,6 +204,11 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     }
 
     @Override
+    public long getGrownLength() {
+        return size;
+    }
+
+    @Override
     public boolean isDeleted() {
         return !ff.exists(fd);
     }
