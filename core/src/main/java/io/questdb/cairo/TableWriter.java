@@ -2566,12 +2566,9 @@ public class TableWriter implements Closeable {
                                             break;
                                     }
                                 }
-
-
                             } finally {
                                 Unsafe.free(ss, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
                             }
-
 
                             LOG.info()
                                     .$("merged data2 + ooo2 [dataFrom=").$(mergeDataLo)
