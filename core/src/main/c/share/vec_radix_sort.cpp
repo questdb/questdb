@@ -306,7 +306,6 @@ void k_way_merge_long_index(
         tree[i / 2] = tree[winner];
     }
 
-
     // take the first winner
     auto winner_index = tree[1].index_index;
     index_entry_t *winner = indexes + winner_index - entries_count;
@@ -316,14 +315,24 @@ void k_way_merge_long_index(
         sentinels_left--;
     }
 
+
     // full run
     while (sentinels_left > 0) {
+
+//        printf("sentinels = %d\n", sentinels_left);
+
         // back fill the winning index
         if (PREDICT_TRUE(++winner->pos < winner->size)) {
             tree[winner_index].value = winner->index[winner->pos].ts;
         } else {
             tree[winner_index].value = L_MAX;
             sentinels_left--;
+        }
+
+//        printf("sentinels2 = %d\n", sentinels_left);
+
+        if (sentinels_left == 0) {
+            break;
         }
 
         _mm_prefetch(tree, _MM_HINT_NTA);
@@ -340,6 +349,7 @@ void k_way_merge_long_index(
         winner_index = tree[1].index_index;
         winner = indexes + winner_index - entries_count;
         _mm_prefetch(winner, _MM_HINT_NTA);
+//        printf("would write: %lu\n", merged_index_pos++);
         dest[merged_index_pos++] = winner->index[winner->pos];
     }
 }
@@ -388,6 +398,7 @@ Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pInde
         }
     }
 
+//    printf("merged size = %lu, size=%d, count=%d\n", merged_index_size, size, count);
     auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
     k_way_merge_long_index(entries, size, size - count, merged_index);
     return reinterpret_cast<jlong>(merged_index);
