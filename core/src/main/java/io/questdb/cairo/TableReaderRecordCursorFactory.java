@@ -24,13 +24,19 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import io.questdb.cairo.TableReplicationRecordCursorFactory.TableReplicationRecordCursor;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory {
     private final TableReaderSelectedColumnRecordCursor cursor;
@@ -83,8 +89,11 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
         } else if (framingSupported) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes);
-            return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
+            // TODO: Replication, implement this correctly
+            return new TableReplicationRecordCursor().of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), Long.MAX_VALUE, -1,
+                    columnIndexes, columnSizes);
+            // pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes);
+            // return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName));
         } else {
             return null;
         }
