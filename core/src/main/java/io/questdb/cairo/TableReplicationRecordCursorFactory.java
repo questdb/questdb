@@ -125,8 +125,8 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return reader.getSymbolMapReader(columnIndex);
+        public SymbolTable getSymbolTable(int i) {
+            return reader.getSymbolMapReader(columnIndexes.getQuick(i));
         }
 
         private TableReplicationRecordCursor of(TableReader reader, long maxRowsPerFrame, IntList columnIndexes, IntList columnSizes, int partitionIndex, long partitionRowCount) {
@@ -165,7 +165,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                     for (int i = 0; i < columnCount; i++) {
                         int columnIndex = columnIndexes.get(i);
                         long columnTop = reader.getColumnTop(columnBase, columnIndex);
-                        columnTops.setQuick(columnIndex, columnTop);
+                        columnTops.setQuick(i, columnTop);
                         if (columnTop > 0) {
                             checkNFrameRowsForColumnTops = true;
                         }
@@ -193,7 +193,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
 
                 for (int i = 0; i < columnCount; i++) {
                     int columnIndex = columnIndexes.get(i);
-                    final long columnTop = columnTops.getQuick(columnIndex);
+                    final long columnTop = columnTops.getQuick(i);
                     final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex));
 
                     if (columnTop <= frameFirstRow && col.getPageCount() > 0) {
@@ -244,16 +244,16 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
                             }
                         }
 
-                        columnFrameAddresses.setQuick(columnIndex, columnPageAddress);
-                        columnFrameLengths.setQuick(columnIndex, columnPageLength);
+                        columnFrameAddresses.setQuick(i, columnPageAddress);
+                        columnFrameLengths.setQuick(i, columnPageLength);
 
                         if (timestampColumnIndex == columnIndex) {
                             firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
                             lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress + columnPageLength - Long.BYTES);
                         }
                     } else {
-                        columnFrameAddresses.setQuick(columnIndex, 0);
-                        columnFrameLengths.setQuick(columnIndex, 0);
+                        columnFrameAddresses.setQuick(i, 0);
+                        columnFrameLengths.setQuick(i, 0);
                     }
                 }
 
@@ -325,12 +325,12 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         public class ReplicationPageFrame implements PageFrame {
 
             @Override
-            public long getPageAddress(int columnIndex) {
-                return columnFrameAddresses.getQuick(columnIndex);
+            public long getPageAddress(int i) {
+                return columnFrameAddresses.getQuick(i);
             }
 
             @Override
-            public long getPageValueCount(int columnIndex) {
+            public long getPageValueCount(int i) {
                 return nFrameRows;
             }
 
@@ -349,13 +349,13 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
             }
 
             @Override
-            public long getPageLength(int columnIndex) {
-                return columnFrameLengths.getQuick(columnIndex);
+            public long getPageLength(int i) {
+                return columnFrameLengths.getQuick(i);
             }
 
             @Override
-            public long getColumnTop(int columnIndex) {
-                return columnTops.getQuick(columnIndex);
+            public long getColumnTop(int i) {
+                return columnTops.getQuick(i);
             }
         }
     }
