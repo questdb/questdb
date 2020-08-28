@@ -29,7 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
-import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
@@ -4492,7 +4492,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-        final GroupByNotKeyedJob job = new GroupByNotKeyedJob(engine.getMessageBus());
+        final GroupByJob job = new GroupByJob(engine.getMessageBus());
         new Thread(() -> {
             while (running.get()) {
                 job.run(0);
