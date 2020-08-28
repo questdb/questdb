@@ -30,11 +30,11 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.VectorAggregateTask;
 
-public class GroupByNotKeyedJob implements Job {
+public class GroupByJob implements Job {
     private final RingQueue<VectorAggregateTask> queue;
     private final Sequence subSeq;
 
-    public GroupByNotKeyedJob(MessageBus messageBus) {
+    public GroupByJob(MessageBus messageBus) {
         this.queue = messageBus.getVectorAggregateQueue();
         this.subSeq = messageBus.getVectorAggregateSubSequence();
     }
