@@ -368,7 +368,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         return this;
     }
 
-    @SuppressWarnings("unused")
     public void setBooleanBindVariable(int index, long address, int valueLen) throws SqlException {
         if (valueLen != 4 && valueLen != 5) {
             throw SqlException.$(0, "bad value for BOOLEAN parameter [index=").put(index).put(", valueLen=").put(valueLen).put(']');
@@ -458,7 +457,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    @SuppressWarnings("unused")
     public void setNoopBindVariable(int index, long address, int valueLen) {
     }
 
@@ -1198,7 +1196,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             @Transient AssociativeCache<Object> factoryCache,
             @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
             @Transient ObjList<BindVariableSetter> bindVariableSetters
-    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws BadProtocolException, SqlException {
         // 'Parse'
         // this appears to be the execution side - we must at least return 'RowDescription'
         // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
@@ -1566,12 +1564,11 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
             responseAsciiSink.putLen(addr);
             transientCopyBuffer = Unsafe.malloc(1024 * 1024);
-            send();
         } else {
             prepareError(SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist"));
             prepareReadyForQuery(responseAsciiSink);
-            send();
         }
+        send();
     }
 
     private void prepareRowDescription() {

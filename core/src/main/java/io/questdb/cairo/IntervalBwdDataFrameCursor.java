@@ -96,6 +96,8 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                     dataFrame.rowLo = lo;
                     dataFrame.rowHi = hi;
 
+                    sizeSoFar += hi - lo;
+
                     // we do have whole partition of fragment?
                     if (lo == 0) {
                         // whole partition, will need to skip to next one
@@ -118,11 +120,6 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
             }
         }
         return null;
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     @Override

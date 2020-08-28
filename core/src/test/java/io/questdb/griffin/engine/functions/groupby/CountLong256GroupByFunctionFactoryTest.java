@@ -54,6 +54,8 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "select a, count(s) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_long256(16) s,  timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
+                true,
+                true,
                 true
         );
     }
@@ -66,7 +68,9 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "select count(s) from x",
                 "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -87,6 +91,8 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "select ts, count(s) from x sample by 1s fill(linear)",
                 "create table x as (select * from (select rnd_long256(10) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
+                true,
+                true,
                 true
         );
     }

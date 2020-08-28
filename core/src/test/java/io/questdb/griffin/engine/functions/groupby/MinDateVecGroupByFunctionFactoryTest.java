@@ -48,7 +48,9 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "alter table tab add column b date",
                 "avg\n" +
                         "5261.376146789\n",
-                false
+                false,
+                true,
+                true
         );
 
         assertQuery(
@@ -57,7 +59,9 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select round(avg(f),6) avg, min(b) min from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -72,7 +76,9 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "insert into tab select 99999999999999999L from long_sequence(1)",
                 "min\n" +
                         "3170843-11-07T09:46:39.999Z\n",
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -84,7 +90,9 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select min(f) from tab",
                 "create table tab as (select cast(rnd_long(-55, 9009, 2) as date) f from long_sequence(131))",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 }

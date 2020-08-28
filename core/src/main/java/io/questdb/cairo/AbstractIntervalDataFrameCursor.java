@@ -31,6 +31,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.Transient;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
+    static final int SCAN_UP = -1;
+    static final int SCAN_DOWN = 1;
     protected final LongList intervals;
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final int timestampIndex;
@@ -43,18 +45,63 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     // than one searches to be performed we can use this variable to avoid
     // searching partition from top every time
     protected long partitionLimit;
+    protected long sizeSoFar = 0;
+    protected long size = -1;
     private int initialIntervalsLo;
     private int initialIntervalsHi;
     private int initialPartitionLo;
     private int initialPartitionHi;
 
-    static final int SCAN_UP = -1;
-    static final int SCAN_DOWN = 1;
-
     public AbstractIntervalDataFrameCursor(@Transient LongList intervals, int timestampIndex) {
         assert timestampIndex > -1;
         this.intervals = new LongList(intervals);
         this.timestampIndex = timestampIndex;
+    }
+
+    @Override
+    public void close() {
+        if (reader != null) {
+            reader.close();
+            reader = null;
+        }
+    }
+
+    @Override
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
+    }
+
+    @Override
+    public void toTop() {
+        intervalsLo = initialIntervalsLo;
+        intervalsHi = initialIntervalsHi;
+        partitionLo = initialPartitionLo;
+        partitionHi = initialPartitionHi;
+        sizeSoFar = 0;
+    }
+
+    @Override
+    public TableReader getTableReader() {
+        return reader;
+    }
+
+    @Override
+    public boolean reload() {
+        if (reader != null && reader.reload()) {
+            calculateRanges();
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public long size() {
+        return size > -1 ? size : computeSize();
+    }
+
+    public void of(TableReader reader) {
+        this.reader = reader;
+        calculateRanges();
     }
 
     protected static long search(ReadOnlyColumn column, long value, long low, long high, int increment) {
@@ -78,47 +125,8 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return -(low + 1);
     }
 
-    @Override
-    public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
-    }
-
-    @Override
-    public StaticSymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
-    }
-
-    @Override
-    public TableReader getTableReader() {
-        return reader;
-    }
-
-    @Override
-    public boolean reload() {
-        if (reader != null && reader.reload()) {
-            calculateRanges();
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public void toTop() {
-        intervalsLo = initialIntervalsLo;
-        intervalsHi = initialIntervalsHi;
-        partitionLo = initialPartitionLo;
-        partitionHi = initialPartitionHi;
-    }
-
-    public void of(TableReader reader) {
-        this.reader = reader;
-        calculateRanges();
-    }
-
     private void calculateRanges() {
+        size = -1;
         if (intervals.size() > 0) {
             if (reader.getPartitionedBy() == PartitionBy.NONE) {
                 initialIntervalsLo = 0;
@@ -133,6 +141,90 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
             }
             toTop();
         }
+    }
+
+    private long computeSize() {
+        int intervalsLo = this.intervalsLo;
+        int intervalsHi = this.intervalsHi;
+        int partitionLo = this.partitionLo;
+        int partitionHi = this.partitionHi;
+        long partitionLimit = this.partitionLimit;
+        long size = this.sizeSoFar;
+
+        while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
+            // We don't need to worry about column tops and null column because we
+            // are working with timestamp. Timestamp column cannot be added to existing table.
+            long rowCount = reader.openPartition(partitionLo);
+            if (rowCount > 0) {
+
+                final ReadOnlyColumn column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final long intervalLo = intervals.getQuick(intervalsLo * 2);
+                final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
+
+
+                final long partitionTimestampLo = column.getLong(0);
+                // interval is wholly above partition, skip interval
+                if (partitionTimestampLo > intervalHi) {
+                    intervalsLo++;
+                    continue;
+                }
+
+                final long partitionTimestampHi = column.getLong((rowCount - 1) * 8);
+                // interval is wholly below partition, skip partition
+                if (partitionTimestampHi < intervalLo) {
+                    partitionLimit = 0;
+                    partitionLo++;
+                    continue;
+                }
+
+                // calculate intersection
+
+                long lo;
+                if (partitionTimestampLo == intervalLo) {
+                    lo = 0;
+                } else {
+                    lo = search(column, intervalLo, partitionLimit, rowCount, AbstractIntervalDataFrameCursor.SCAN_UP);
+                    if (lo < 0) {
+                        lo = -lo - 1;
+                    }
+                }
+
+                long hi = search(column, intervalHi, lo, rowCount, AbstractIntervalDataFrameCursor.SCAN_DOWN);
+
+                if (hi < 0) {
+                    hi = -hi - 1;
+                } else {
+                    // We have direct hit. Interval is inclusive of edges and we have to
+                    // bump to high bound because it is non-inclusive
+                    hi++;
+                }
+
+                if (lo < hi) {
+
+                    size += (hi - lo);
+
+                    // we do have whole partition of fragment?
+                    if (hi == rowCount) {
+                        // whole partition, will need to skip to next one
+                        partitionLimit = 0;
+                        partitionLo++;
+                    } else {
+                        // only fragment, need to skip to next interval
+                        partitionLimit = hi;
+                        intervalsLo++;
+                    }
+                    continue;
+                }
+                // interval yielded empty data frame
+                partitionLimit = hi;
+                intervalsLo++;
+            } else {
+                // partition was empty, just skip to next
+                partitionLo++;
+            }
+        }
+
+        return this.size = size;
     }
 
     private void cullIntervals() {
