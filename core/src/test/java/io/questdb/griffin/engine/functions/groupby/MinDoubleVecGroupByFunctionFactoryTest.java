@@ -38,6 +38,34 @@ public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
     }
 
     @Test
+    public void testAddColumn() throws Exception {
+        assertQuery(
+                "avg\n" +
+                        "0.511848387\n",
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_double(2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b double",
+                "avg\n" +
+                        "0.511848387\n",
+                false,
+                true,
+                true
+        );
+
+        assertQuery(
+                "avg\tmin\n" +
+                        "0.504722\t0.0032519916115479885\n",
+                "select round(avg(f),6) avg, min(b) min from tab",
+                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery(
                 "min\n" +
@@ -48,7 +76,9 @@ public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "insert into tab select 22.009 from long_sequence(1)",
                 "min\n" +
                         "22.009\n",
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -60,31 +90,9 @@ public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "select min(f) from tab",
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,
-                false
-        );
-    }
-
-    @Test
-    public void testAddColumn() throws Exception {
-        assertQuery(
-                "avg\n" +
-                        "0.511848387\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b double",
-                "avg\n" +
-                        "0.511848387\n",
-                false
-        );
-
-        assertQuery(
-                "avg\tmin\n" +
-                        "0.504722\t0.0032519916115479885\n",
-                "select round(avg(f),6) avg, min(b) min from tab",
-                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
-                null,
-                false
+                false,
+                true,
+                true
         );
     }
 }

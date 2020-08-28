@@ -285,6 +285,9 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "VTJW\t-2.2037\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t-4.1995\t1970-01-04T06:00:00.000000Z\n" +
                         "RXGZ\t-1.3064\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 }

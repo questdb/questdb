@@ -40,6 +40,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('d', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -52,6 +53,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "365\n",
                 "select datediff('d', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -64,6 +66,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('d', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -96,6 +99,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('h', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -108,6 +112,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "8760\n",
                 "select datediff('h', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -120,6 +125,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('h', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -152,6 +158,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('m', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -164,6 +171,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "525600\n",
                 "select datediff('m', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -176,6 +184,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('m', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -208,6 +217,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('M', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -220,6 +230,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "12\n",
                 "select datediff('M', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -232,6 +243,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('M', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -264,6 +276,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('s', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -276,6 +289,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "31536000\n",
                 "select datediff('s', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -288,6 +302,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('s', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -325,6 +340,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('w', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -337,6 +353,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "52\n",
                 "select datediff('w', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -349,6 +366,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('w', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -381,6 +399,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('y', to_timestamp(concat('202',x),'yyyy'), cast(NaN as long)) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -393,6 +412,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "1\n",
                 "select datediff('y', to_timestamp(concat('202',x),'yyyy'), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }
@@ -405,6 +425,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                         "NaN\n",
                 "select datediff('y', cast(NaN as long), to_timestamp(concat('202', x+1),'yyyy')) from long_sequence(2);",
                 null,
+                true,
                 true
         );
     }

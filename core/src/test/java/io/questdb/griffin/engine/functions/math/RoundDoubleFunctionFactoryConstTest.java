@@ -37,6 +37,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "NaN\n",
                 "select round(14.7778, -18) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -48,28 +49,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "NaN\n",
                 "select round(14.7778, 17) from long_sequence(1)",
                 null,
-                true
-        );
-    }
-
-    @Test
-    public void testOKNegScale() throws SqlException {
-        assertQuery(
-                "round\n" +
-                        "0.0\n",
-                "select round(14.7778, -13) from long_sequence(1)",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testOKPosScale() throws SqlException {
-        assertQuery(
-                "round\n" +
-                        "14.7778\n",
-                "select round(14.7778, 11) from long_sequence(1)",
-                null,
+                true,
                 true
         );
     }
@@ -81,6 +61,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "-0.0\n",
                 "select round(-14.778, -5) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -92,6 +73,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "-100.0\n",
                 "select round(-104.9, -1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -103,6 +85,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "-110.0\n",
                 "select round(-106.1, -1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -114,6 +97,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "100.0\n",
                 "select round(104.90, -1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -125,6 +109,31 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "110.0\n",
                 "select round(106.1, -1) from long_sequence(1)",
                 null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOKNegScale() throws SqlException {
+        assertQuery(
+                "round\n" +
+                        "0.0\n",
+                "select round(14.7778, -13) from long_sequence(1)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOKPosScale() throws SqlException {
+        assertQuery(
+                "round\n" +
+                        "14.7778\n",
+                "select round(14.7778, 11) from long_sequence(1)",
+                null,
+                true,
                 true
         );
     }
@@ -136,6 +145,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "-14.777999999999999\n",
                 "select round(-14.778, 7) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -147,6 +157,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "-100.5\n",
                 "select round(-100.54, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -158,6 +169,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "-100.60000000000001\n",
                 "select round(-100.56, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -169,6 +181,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "100.4\n",
                 "select round(100.44, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -180,6 +193,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
                         "100.5\n",
                 "select round(100.45, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }

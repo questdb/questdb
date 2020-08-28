@@ -45,21 +45,6 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
     }
 
     @Test
-    public void testBadSyntax() throws Exception {
-        assertFailure("alter table x alter column z", 28, "'add index' or 'cache' or 'nocache' expected");
-    }
-
-    @Test
-    public void testAlterFlagInNonSymbolColumn() throws Exception {
-        assertFailure("alter table x alter column b cache", 29, "Invalid column type - Column should be of type symbol");
-    }
-
-    @Test
-    public void testWhenCacheOrNocacheAreNotInAlterStatement() throws Exception {
-        assertFailure("alter table x alter column z ca", 29, "'cache' or 'nocache' expected");
-    }
-
-    @Test
     public void testAlterExpectColumnKeyword() throws Exception {
         assertFailure("alter table x alter", 19, "'column' expected");
     }
@@ -70,8 +55,8 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
     }
 
     @Test
-    public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x alter column y cache", 29, "Invalid column: y");
+    public void testAlterFlagInNonSymbolColumn() throws Exception {
+        assertFailure("alter table x alter column b cache", 29, "Invalid column type - Column should be of type symbol");
     }
 
     @Test
@@ -116,14 +101,14 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
         final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(sink, 1);
 
-        assertMemoryLeak(this::createX);
-
-        assertQuery(expectedOrderedWhenCached,
-                "select sym from x order by sym",
-                "x",
-                null);
-
         assertMemoryLeak(() -> {
+
+            assertMemoryLeak(this::createX);
+
+            assertQueryPlain(expectedOrderedWhenCached,
+                    "select sym from x order by sym"
+            );
+
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 //check cursor before altering symbol column
                 sink.clear();
@@ -148,10 +133,9 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
             }
         });
 
-        assertQuery(expectedUnordered,
-                "select sym from x order by 1 asc",
-                "x",
-                null);
+        assertQueryPlain(expectedUnordered,
+                "select sym from x order by 1 asc"
+        );
     }
 
     @Test
@@ -171,7 +155,6 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
             executeInsert("insert into x values (9, 'GBP')\"");
         });
 
-
         String expectUnordered = "sym\n" +
                 "GBP\n" +
                 "GBP\n" +
@@ -182,10 +165,6 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 "GBP\n" +
                 "CHF\n" +
                 "GBP\n";
-        assertQuery(expectUnordered,
-                "select sym from x order by sym",
-                "x",
-                null);
 
         String expected = "sym\n" +
                 "GBP\n" +
@@ -199,6 +178,11 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 "GBP\n";
 
         assertMemoryLeak(() -> {
+
+            assertQueryPlain(expectUnordered,
+                    "select sym from x order by sym"
+            );
+
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 //check cursor before altering symbol column
                 sink.clear();
@@ -234,10 +218,25 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
                 "GBP\n" +
                 "JPY\n" +
                 "USD\n";
-        assertQuery(expectedOrdered,
-                "select sym from x order by 1 asc",
-                "x",
-                null);
+
+        assertQueryPlain(expectedOrdered,
+                "select sym from x order by 1 asc"
+        );
+    }
+
+    @Test
+    public void testBadSyntax() throws Exception {
+        assertFailure("alter table x alter column z", 28, "'add index' or 'cache' or 'nocache' expected");
+    }
+
+    @Test
+    public void testInvalidColumn() throws Exception {
+        assertFailure("alter table x alter column y cache", 29, "Invalid column: y");
+    }
+
+    @Test
+    public void testWhenCacheOrNocacheAreNotInAlterStatement() throws Exception {
+        assertFailure("alter table x alter column z ca", 29, "'cache' or 'nocache' expected");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
@@ -289,16 +288,16 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
         }
 
         @Override
-        public void printHeader(RecordMetadata metadata) {
-            sink.put(metadata.getColumnName(columnIndex));
-            sink.put('\n');
-        }
-
-        @Override
         public void print(Record r, RecordMetadata m) {
             printColumn(r, m, columnIndex);
             sink.put("\n");
             sink.flush();
+        }
+
+        @Override
+        public void printHeader(RecordMetadata metadata) {
+            sink.put(metadata.getColumnName(columnIndex));
+            sink.put('\n');
         }
 
     }

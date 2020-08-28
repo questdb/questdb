@@ -126,7 +126,9 @@ public class JoinTest extends AbstractGriffinTest {
                 "select * from orders asof join quotes on(sym)",
                 null,
                 "timestamp",
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -266,7 +268,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from " +
@@ -337,7 +339,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tABC\tABC\t16.378\t0.775\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
                             "20\t\t\t4.773\t0.624\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
 
         }));
     }
@@ -382,7 +387,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from (" +
@@ -430,7 +435,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
                             "20\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -498,7 +506,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from " +
@@ -569,7 +577,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tgoogl\t34.25\t0.26\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
                             "20\tgoogl\t2.6750000000000003\t0.26\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:58:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -640,7 +651,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from " +
@@ -708,7 +719,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tmsft\t4.727\t0.148\t2018-01-01T03:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
                             "20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -794,7 +808,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
         });
     }
 
@@ -880,7 +894,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
         });
     }
 
@@ -966,7 +980,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
         });
     }
 
@@ -1052,7 +1066,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
         });
     }
 
@@ -1130,7 +1144,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from (" +
@@ -1178,7 +1192,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tmsft\t66.98\t2018-01-01T03:48:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
                             "20\tgoogl\t26.369\t2018-01-01T04:00:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -1243,7 +1260,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from " +
@@ -1311,7 +1328,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tmsft\t4.727\t0.912\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
                             "20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -1355,7 +1375,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from (" +
@@ -1403,7 +1423,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tmsft\t66.98\t2018-01-01T03:48:00.000000Z\t55\tmsft\t0.051000000000000004\t2018-01-01T01:50:00.000000Z\n" +
                             "20\tgoogl\t26.369\t2018-01-01T04:00:00.000000Z\t60\tgoogl\t0.6900000000000001\t2018-01-01T02:00:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -1471,7 +1494,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from " +
@@ -1542,7 +1565,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tABC\tABC\t16.378\t0.775\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
                             "20\t\t\t4.773\t0.624\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -1609,7 +1635,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile(
                     "insert into x select * from " +
@@ -1678,7 +1704,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tABC\tABC\t85.427\t0.359\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
                             "20\tABC\tABC\t54.586\t0.359\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:24:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -1722,7 +1751,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, "timestamp");
+            assertQueryAndCache(expected, query, "timestamp", true);
 
             compiler.compile("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
             compiler.compile("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
@@ -1749,7 +1778,10 @@ public class JoinTest extends AbstractGriffinTest {
                             "19\tmsft\tmsft\t66.98\t0.051000000000000004\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
                             "20\tgoogl\tgoogl\t26.369\t0.6900000000000001\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
                     query,
-                    "timestamp");
+                    "timestamp",
+                    false,
+                    true
+            );
         });
     }
 
@@ -1812,7 +1844,81 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x cross join y", null);
+            assertQuery(expected, "select * from x cross join y", null, false, true);
+        });
+    }
+
+    @Test
+    public void testCrossJoinNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tn\tkk1\ta1\tb1\n" +
+                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1196016669\tfalse\n" +
+                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t183633043\ttrue\n" +
+                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-101516094\tfalse\n" +
+                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t1196016669\tfalse\n" +
+                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t183633043\ttrue\n" +
+                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\n";
+            compiler.compile(
+                    "create table x as (select" +
+                            " cast(x as int) kk, " +
+                            " rnd_int() a," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) i," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(2)) timestamp(k)",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "create table y as (select" +
+                            " cast((x-1)/4 + 1 as int) kk," +
+                            " rnd_int() a," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) i," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(0, 1000000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n" +
+                            " from long_sequence(3))",
+                    sqlExecutionContext
+            );
+
+            // filter is applied to final join result
+            assertQuery(expected, "select x.kk, x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.i, x.j, x.l, x.m, x.n, y.kk, y.a, y.b from x cross join y", null, false, true);
+        });
+    }
+
+    @Test
+    public void testCrossTripleOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            final CompiledQuery cq = compiler.compile("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c", sqlExecutionContext);
+            final RecordCursorFactory factory = cq.getRecordCursorFactory();
+            try {
+                Assert.assertNotNull(factory);
+                sink.clear();
+                printer.printHeader(factory.getMetadata());
+                TestUtils.assertEquals("x\tx1\tx2\n", sink);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(Long.MAX_VALUE, cursor.size());
+                }
+            } finally {
+                Misc.free(factory);
+            }
         });
     }
 
@@ -1870,81 +1976,7 @@ public class JoinTest extends AbstractGriffinTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x cross join y", "k");
-        });
-    }
-
-    @Test
-    public void testCrossTripleOverflow() throws Exception {
-        assertMemoryLeak(() -> {
-            final CompiledQuery cq = compiler.compile("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c", sqlExecutionContext);
-            final RecordCursorFactory factory = cq.getRecordCursorFactory();
-            try {
-                Assert.assertNotNull(factory);
-                sink.clear();
-                printer.printHeader(factory.getMetadata());
-                TestUtils.assertEquals("x\tx1\tx2\n", sink);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(Long.MAX_VALUE, cursor.size());
-                }
-            } finally {
-                Misc.free(factory);
-            }
-        });
-    }
-
-    @Test
-    public void testCrossJoinNoTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tn\tkk1\ta1\tb1\n" +
-                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1196016669\tfalse\n" +
-                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t183633043\ttrue\n" +
-                    "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-101516094\tfalse\n" +
-                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t1196016669\tfalse\n" +
-                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t183633043\ttrue\n" +
-                    "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\n";
-            compiler.compile(
-                    "create table x as (select" +
-                            " cast(x as int) kk, " +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n" +
-                            " from long_sequence(2)) timestamp(k)",
-                    sqlExecutionContext
-            );
-
-            compiler.compile(
-                    "create table y as (select" +
-                            " cast((x-1)/4 + 1 as int) kk," +
-                            " rnd_int() a," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) i," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(0, 1000000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n" +
-                            " from long_sequence(3))",
-                    sqlExecutionContext
-            );
-
-            // filter is applied to final join result
-            assertQuery(expected, "select x.kk, x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.i, x.j, x.l, x.m, x.n, y.kk, y.a, y.b from x cross join y", null);
+            assertQuery(expected, "select * from x cross join y", "k", false, true);
         });
     }
 
@@ -1956,7 +1988,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
 
             // master records should be filtered out because slave records missing
-            assertQuery(expected, "select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10", null);
+            assertQuery(expected, "select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10", null, false, true);
         });
     }
 
@@ -2221,7 +2253,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20", null);
+            assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20", null, false);
 
             compiler.compile("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
             compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)", sqlExecutionContext);
@@ -2406,7 +2438,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))", sqlExecutionContext);
             compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
 
-            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null);
+            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null, false);
 
             compiler.compile("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)", sqlExecutionContext);
             compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
@@ -2520,7 +2552,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null);
+            assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, false);
 
             compiler.compile("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
             compiler.compile("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
@@ -2564,7 +2596,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))", sqlExecutionContext);
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300", null);
+            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300", null, false);
 
             compiler.compile("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)", sqlExecutionContext);
             compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)", sqlExecutionContext);
@@ -2667,7 +2699,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, null);
+            assertQueryAndCache(expected, query, null, false);
         }));
     }
 
@@ -2865,7 +2897,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, "select x.c, x.a, b from x outer join y on y.m = x.c", null);
+            assertQueryAndCache(expected, "select x.c, x.a, b from x outer join y on y.m = x.c", null, false);
 
             compiler.compile("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)", sqlExecutionContext);
             compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
@@ -2913,7 +2945,7 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))", sqlExecutionContext);
 
             // master records should be filtered out because slave records missing
-            assertQueryAndCache(expected, query, "ts");
+            assertQueryAndCache(expected, query, "ts", false);
 
             compiler.compile("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)", sqlExecutionContext);
             compiler.compile("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)", sqlExecutionContext);
@@ -3106,7 +3138,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, null);
+            assertQueryAndCache(expected, query, null, false);
 
             compiler.compile(
                     "insert into x select * from " +
@@ -3351,7 +3383,7 @@ public class JoinTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            assertQueryAndCache(expected, query, null);
+            assertQueryAndCache(expected, query, null, false);
 
             compiler.compile(
                     "insert into x select * from " +

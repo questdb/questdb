@@ -38,6 +38,34 @@ public class MaxLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddColumn() throws Exception {
+        assertQuery(
+                "avg\n" +
+                        "5261.376146789\n",
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b long",
+                "avg\n" +
+                        "5261.376146789\n",
+                false,
+                true,
+                true
+        );
+
+        assertQuery(
+                "avg\tmax\n" +
+                        "2633.684612\t88964\n",
+                "select round(avg(f),6) avg, max(b) max from tab",
+                "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery(
                 "max\n" +
@@ -48,7 +76,9 @@ public class MaxLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "insert into tab select 99999999999995L from long_sequence(1)",
                 "max\n" +
                         "99999999999995\n",
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -60,31 +90,9 @@ public class MaxLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select max(f) from tab",
                 "create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))",
                 null,
-                false
-        );
-    }
-
-    @Test
-    public void testAddColumn() throws Exception {
-        assertQuery(
-                "avg\n" +
-                        "5261.376146789\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b long",
-                "avg\n" +
-                        "5261.376146789\n",
-                false
-        );
-
-        assertQuery(
-                "avg\tmax\n" +
-                        "2633.684612\t88964\n",
-                "select round(avg(f),6) avg, max(b) max from tab",
-                "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
-                null,
-                false
+                false,
+                true,
+                true
         );
     }
 }

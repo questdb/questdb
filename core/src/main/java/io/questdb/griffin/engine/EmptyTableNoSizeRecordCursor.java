@@ -22,22 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine;
 
-import org.junit.Test;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.VirtualRecordNoRowid;
+import io.questdb.std.ObjList;
 
-public class QuoteIdentifierTest extends AbstractGriffinTest {
+final public class EmptyTableNoSizeRecordCursor implements NoRandomAccessRecordCursor {
+    public static final EmptyTableNoSizeRecordCursor INSTANCE = new EmptyTableNoSizeRecordCursor();
 
-    @Test
-    public void testCreteTableWithQuotedNameAndColumns() throws Exception {
-        assertQuery(
-                "id\tname\n",
-                "quoted_table",
-                "create table \"quoted_table\"(\"id\" long,\"name\" string)",
-                null,
-                true,
-                true,
-                true
-        );
+    private final Record record = new VirtualRecordNoRowid(new ObjList<>());
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return false;
+    }
+
+    @Override
+    public void toTop() {
+    }
+
+    @Override
+    public long size() {
+        return -1;
     }
 }

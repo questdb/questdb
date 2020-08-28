@@ -38,95 +38,97 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInt() throws Exception {
+    public void testBooleanToStrOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "-920\t315515118\t1548800833\t-727724771\t315515118\n" +
-                        "701\t-948263339\t1326447242\t592859671\t592859671\n" +
-                        "706\t-847531048\t-1191262516\t-2041844972\tNaN\n" +
-                        "-714\t-1575378703\t806715481\t1545253512\t350\n" +
-                        "116\t1573662097\t-409854405\t339631474\tNaN\n" +
-                        "67\t1904508147\t-1532328444\t-1458132197\tNaN\n" +
-                        "207\t-1849627000\t-1432278050\t426455968\tNaN\n" +
-                        "-55\t-1792928964\t-1844391305\t-1520872171\tNaN\n" +
-                        "-104\t-1153445279\t1404198\t-1715058769\tNaN\n" +
-                        "-127\t1631244228\t-1975183723\t-1252906348\tNaN\n" +
-                        "790\t-761275053\t-2119387831\t-212807500\tNaN\n" +
-                        "881\t1110979454\t1253890363\t-113506296\tNaN\n" +
-                        "-535\t-938514914\t-547127752\t-1271909747\tNaN\n" +
-                        "-973\t-342047842\t-2132716300\t2006313928\tNaN\n" +
-                        "-463\t-27395319\t264240638\t2085282008\tNaN\n" +
-                        "-667\t2137969456\t1890602616\t-1272693194\tNaN\n" +
-                        "578\t1036510002\t-2002373666\t44173540\tNaN\n" +
-                        "940\t410717394\t-2144581835\t1978144263\tNaN\n" +
-                        "-54\t-1162267908\t2031014705\t-530317703\tNaN\n" +
-                        "-393\t-296610933\t936627841\t326010667\tNaN\n",
+                        "false\tWCPS\tYRXPE\tRXG\tRXG\n" +
+                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tYQEHBH\n" +
+                        "false\tLPD\tSBEOUOJS\tUED\tUED\n" +
+                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
+                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
+                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
+                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tSMSSUQ\n" +
+                        "false\tTKVV\tOJIPHZ\tIHVL\tIHVL\n" +
+                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
+                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
+                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
+                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
+                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
+                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
+                        "false\tUKL\tXSLUQD\tPHNIMYF\tPHNIMYF\n" +
+                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
+                        "false\tTNLE\tUHH\tGGLN\tGGLN\n" +
+                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tZSLQVFGPP\n" +
+                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
+                        "false\tFNWG\tDGGI\tDVRVNGS\tDVRVNGS\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
                         "    c,\n" +
                         "    case x\n" +
-                        "        when -920 then a\n" +
-                        "        when 701 then c\n" +
-                        "        when -714 then 350\n" +
+                        "        when true then 'HELLO'\n" +
+                        "        else c\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
+                        "select rnd_boolean() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                false,
                 true
         );
     }
 
     @Test
-    public void testCastValueToLong256() throws Exception {
+    public void testBooleanToStrOrElseReversed() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "-920\t315515118\t7746536061816329025\t0x965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad159f9b2131d49fcd1d\t0x12ce60ee\n" +
-                        "671\t1868723706\t-1675638984090602536\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\t\n" +
-                        "481\t1545253512\t-6943924477733600060\t0x6e60a01a5b3ea0db4b0f595f143e5d722f1a8266e7921e3b716de3d25dcc2d91\t\n" +
-                        "147\t-1532328444\t8336855953317473051\t0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\t\n" +
-                        "-55\t-1792928964\t4086802474270249591\t0x9840ad8800156d26c718ab5cbb3fd261c1bf6c24be53876861b1a0b0a5595515\t\n" +
-                        "-769\t-1125169127\t2811900023577169860\t0x6adc00ebd29fdd5373dee145497c54365b9832d4b5522a9474ce62a98a451695\t\n" +
-                        "-831\t-212807500\t3958193676455060057\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\t\n" +
-                        "-914\t-547127752\t-4442449726822927731\t0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\t\n" +
-                        "-463\t-27395319\t5476540218465058302\t0x83b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d6afe61bd7c4ae0d8\t\n" +
-                        "-194\t68265578\t8325936937764905778\t0x9290f9bc187b0cd2bacd57f41b59057caa237cfb02a208e494cfe42988a633de\t\n" +
-                        "-835\t1978144263\t6820495939660535106\t0x655f87a3a21d575f610f69efe063fe79336dc434790ed3312bbfcf66bab932fc\t\n" +
-                        "-933\t936627841\t5334238747895433003\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\t\n" +
-                        "416\t-419093579\t-5228148654835984711\t0x5277ee62a5a6e9fb9ff97d73fc0c62d069440048957ae05360802a2ca499f211\t\n" +
-                        "380\t161592763\t-7316123607359392486\t0x9660300cea7db540954a62eca44acb2d71660a9b0890a2f06a0accd425e948d4\t\n" +
-                        "-574\t-235358133\t-4692986177227268943\t0xd4e0ddcd6eb2cff1c736a8b67656c4f159d574d2ff5fb1e3687a84abb7bfac3e\t\n" +
-                        "-722\t-443320374\t8831607763082315932\t0xa5f80be4b45bf437492990e1a29afcac07efe23cedb3250630d46a3a4749c41d\t\n" +
-                        "-128\t-1386539059\t-4608960730952244094\t0x37b4f6e41fbfd55f587274e3ab1ebd4d6cecb916a1ad092b997918f622d62989\t\n" +
-                        "-842\t1234796102\t-3214230645884399728\t0x87c4f865faa4218e8fd993f0e9bcda593c5d8a6969daa0b37d4f1da8fd48b2c3\t\n" +
-                        "-123\t-998315423\t8155981915549526575\t0x84646fead466b67f39d5534da00d272c772c8b7f9505620ebbdfe8ff0cd60c64\t\n" +
-                        "535\t-882371473\t-8425379692364264520\t0x14e2b6a0cb7dddc7781a7e89ba21f328a4099f7e23f05cae7ebaf6ca993f8fc9\t\n",
+                        "false\tWCPS\tYRXPE\tRXG\tRXG\n" +
+                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tYQEHBH\n" +
+                        "false\tLPD\tSBEOUOJS\tUED\tUED\n" +
+                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
+                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
+                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
+                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tSMSSUQ\n" +
+                        "false\tTKVV\tOJIPHZ\tIHVL\tIHVL\n" +
+                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
+                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
+                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
+                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
+                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
+                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
+                        "false\tUKL\tXSLUQD\tPHNIMYF\tPHNIMYF\n" +
+                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
+                        "false\tTNLE\tUHH\tGGLN\tGGLN\n" +
+                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tZSLQVFGPP\n" +
+                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
+                        "false\tFNWG\tDGGI\tDVRVNGS\tDVRVNGS\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
                         "    c,\n" +
                         "    case x\n" +
-                        "        when -920 then a\n" +
-                        "        when 701 then c\n" +
-                        "        when -714 then 350\n" +
+                        "        when false then c\n" +
+                        "        else 'HELLO'\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_long() b," +
-                        " rnd_long256() c" +
+                        "select rnd_boolean() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                false,
                 true
         );
     }
@@ -235,29 +237,175 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLong() throws Exception {
+    public void testBooleanToStrOrMoreBranches() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "-920\t4729996258992366\t1548800833\t-727724771\t4729996258992366\n" +
-                        "701\t8920866532787660373\t1326447242\t592859671\t592859671\n" +
-                        "706\t-1675638984090602536\t-1191262516\t-2041844972\tNaN\n" +
-                        "-714\t-7489826605295361807\t806715481\t1545253512\t350\n" +
-                        "116\t8173439391403617681\t-409854405\t339631474\tNaN\n" +
-                        "67\t-8968886490993754893\t-1532328444\t-1458132197\tNaN\n" +
-                        "207\t-8284534269888369016\t-1432278050\t426455968\tNaN\n" +
-                        "-55\t5539350449504785212\t-1844391305\t-1520872171\tNaN\n" +
-                        "-104\t-4100339045953973663\t1404198\t-1715058769\tNaN\n" +
-                        "-127\t2811900023577169860\t-1975183723\t-1252906348\tNaN\n" +
-                        "790\t7700030475747712339\t-2119387831\t-212807500\tNaN\n" +
-                        "881\t9194293009132827518\t1253890363\t-113506296\tNaN\n" +
-                        "-535\t7199909180655756830\t-547127752\t-1271909747\tNaN\n" +
-                        "-973\t6404066507400987550\t-2132716300\t2006313928\tNaN\n" +
-                        "-463\t8573481508564499209\t264240638\t2085282008\tNaN\n" +
-                        "-667\t-8480005421611953360\t1890602616\t-1272693194\tNaN\n" +
-                        "578\t8325936937764905778\t-2002373666\t44173540\tNaN\n" +
-                        "940\t-7885528361265853230\t-2144581835\t1978144263\tNaN\n" +
-                        "-54\t3152466304308949756\t2031014705\t-530317703\tNaN\n" +
-                        "-393\t6179044593759294347\t936627841\t326010667\tNaN\n",
+                        "false\tWCPS\tYRXPE\tRXG\tRXG\n" +
+                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tYQEHBH\n" +
+                        "false\tLPD\tSBEOUOJS\tUED\tUED\n" +
+                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
+                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
+                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
+                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tSMSSUQ\n" +
+                        "false\tTKVV\tOJIPHZ\tIHVL\tIHVL\n" +
+                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
+                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
+                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
+                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
+                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
+                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
+                        "false\tUKL\tXSLUQD\tPHNIMYF\tPHNIMYF\n" +
+                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
+                        "false\tTNLE\tUHH\tGGLN\tGGLN\n" +
+                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tZSLQVFGPP\n" +
+                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
+                        "false\tFNWG\tDGGI\tDVRVNGS\tDVRVNGS\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when true then 'HELLO'\n" +
+                        "        when false then c\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_boolean() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToStrOrMoreBranchesReversed() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "false\tWCPS\tYRXPE\tRXG\tRXG\n" +
+                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tYQEHBH\n" +
+                        "false\tLPD\tSBEOUOJS\tUED\tUED\n" +
+                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
+                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
+                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
+                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tSMSSUQ\n" +
+                        "false\tTKVV\tOJIPHZ\tIHVL\tIHVL\n" +
+                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
+                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
+                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
+                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
+                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
+                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
+                        "false\tUKL\tXSLUQD\tPHNIMYF\tPHNIMYF\n" +
+                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
+                        "false\tTNLE\tUHH\tGGLN\tGGLN\n" +
+                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tZSLQVFGPP\n" +
+                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
+                        "false\tFNWG\tDGGI\tDVRVNGS\tDVRVNGS\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when false then c\n" +
+                        "        when true then 'HELLO'\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_boolean() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testByteOrElse() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "76\tT\tJ\tW\tJ\n" +
+                        "79\tP\tS\tW\tS\n" +
+                        "90\tY\tR\tX\tY\n" +
+                        "74\tE\tH\tN\tH\n" +
+                        "32\tX\tG\tZ\tG\n" +
+                        "77\tX\tU\tX\tU\n" +
+                        "101\tB\tB\tT\tB\n" +
+                        "89\tP\tG\tW\tG\n" +
+                        "112\tF\tY\tU\tY\n" +
+                        "117\tE\tY\tY\tY\n" +
+                        "86\tE\tH\tB\tH\n" +
+                        "65\tF\tO\tW\tO\n" +
+                        "73\tP\tD\tX\tD\n" +
+                        "119\tS\tB\tE\tB\n" +
+                        "57\tU\tO\tJ\tJ\n" +
+                        "103\tH\tR\tU\tR\n" +
+                        "58\tD\tR\tQ\tR\n" +
+                        "20\tU\tL\tO\tL\n" +
+                        "54\tJ\tG\tE\tG\n" +
+                        "31\tJ\tR\tS\tZ\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when cast(90 as byte) then a\n" +
+                        "        when cast(57 as byte) then c\n" +
+                        "        when cast(31 as byte) then 'Z'\n" +
+                        "        else b\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_byte() x," +
+                        " rnd_char() a," +
+                        " rnd_char() b," +
+                        " rnd_char() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCastValueToLong256() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "-920\t315515118\t7746536061816329025\t0x965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad159f9b2131d49fcd1d\t0x12ce60ee\n" +
+                        "671\t1868723706\t-1675638984090602536\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\t\n" +
+                        "481\t1545253512\t-6943924477733600060\t0x6e60a01a5b3ea0db4b0f595f143e5d722f1a8266e7921e3b716de3d25dcc2d91\t\n" +
+                        "147\t-1532328444\t8336855953317473051\t0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\t\n" +
+                        "-55\t-1792928964\t4086802474270249591\t0x9840ad8800156d26c718ab5cbb3fd261c1bf6c24be53876861b1a0b0a5595515\t\n" +
+                        "-769\t-1125169127\t2811900023577169860\t0x6adc00ebd29fdd5373dee145497c54365b9832d4b5522a9474ce62a98a451695\t\n" +
+                        "-831\t-212807500\t3958193676455060057\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\t\n" +
+                        "-914\t-547127752\t-4442449726822927731\t0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\t\n" +
+                        "-463\t-27395319\t5476540218465058302\t0x83b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d6afe61bd7c4ae0d8\t\n" +
+                        "-194\t68265578\t8325936937764905778\t0x9290f9bc187b0cd2bacd57f41b59057caa237cfb02a208e494cfe42988a633de\t\n" +
+                        "-835\t1978144263\t6820495939660535106\t0x655f87a3a21d575f610f69efe063fe79336dc434790ed3312bbfcf66bab932fc\t\n" +
+                        "-933\t936627841\t5334238747895433003\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\t\n" +
+                        "416\t-419093579\t-5228148654835984711\t0x5277ee62a5a6e9fb9ff97d73fc0c62d069440048957ae05360802a2ca499f211\t\n" +
+                        "380\t161592763\t-7316123607359392486\t0x9660300cea7db540954a62eca44acb2d71660a9b0890a2f06a0accd425e948d4\t\n" +
+                        "-574\t-235358133\t-4692986177227268943\t0xd4e0ddcd6eb2cff1c736a8b67656c4f159d574d2ff5fb1e3687a84abb7bfac3e\t\n" +
+                        "-722\t-443320374\t8831607763082315932\t0xa5f80be4b45bf437492990e1a29afcac07efe23cedb3250630d46a3a4749c41d\t\n" +
+                        "-128\t-1386539059\t-4608960730952244094\t0x37b4f6e41fbfd55f587274e3ab1ebd4d6cecb916a1ad092b997918f622d62989\t\n" +
+                        "-842\t1234796102\t-3214230645884399728\t0x87c4f865faa4218e8fd993f0e9bcda593c5d8a6969daa0b37d4f1da8fd48b2c3\t\n" +
+                        "-123\t-998315423\t8155981915549526575\t0x84646fead466b67f39d5534da00d272c772c8b7f9505620ebbdfe8ff0cd60c64\t\n" +
+                        "535\t-882371473\t-8425379692364264520\t0x14e2b6a0cb7dddc7781a7e89ba21f328a4099f7e23f05cae7ebaf6ca993f8fc9\t\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
@@ -271,12 +419,163 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         "from tanc",
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
-                        " rnd_long() a," +
+                        " rnd_int() a," +
+                        " rnd_long() b," +
+                        " rnd_long256() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCharOrElse() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "V\tT\tJ\tW\tJ\n" +
+                        "C\tP\tS\tW\tS\n" +
+                        "H\tY\tR\tX\tR\n" +
+                        "P\tE\tH\tN\tH\n" +
+                        "R\tX\tG\tZ\tG\n" +
+                        "S\tX\tU\tX\tU\n" +
+                        "I\tB\tB\tT\tB\n" +
+                        "G\tP\tG\tW\tG\n" +
+                        "F\tF\tY\tU\tY\n" +
+                        "D\tE\tY\tY\tY\n" +
+                        "Q\tE\tH\tB\tH\n" +
+                        "H\tF\tO\tW\tO\n" +
+                        "L\tP\tD\tX\tP\n" +
+                        "Y\tS\tB\tE\tB\n" +
+                        "O\tU\tO\tJ\tJ\n" +
+                        "S\tH\tR\tU\tR\n" +
+                        "E\tD\tR\tQ\tR\n" +
+                        "Q\tU\tL\tO\tL\n" +
+                        "F\tJ\tG\tE\tG\n" +
+                        "T\tJ\tR\tS\tZ\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when 'L' then a\n" +
+                        "        when 'O' then c\n" +
+                        "        when 'T' then 'Z'\n" +
+                        "        else b\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_char() x," +
+                        " rnd_char() a," +
+                        " rnd_char() b," +
+                        " rnd_char() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDateOrElse() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "1970-01-01T02:07:23.856Z\tT\tJ\tW\tJ\n" +
+                        "1970-01-01T00:43:07.029Z\tP\tS\tW\tZ\n" +
+                        "1970-01-01T00:14:24.006Z\tY\tR\tX\tR\n" +
+                        "1970-01-01T00:32:57.934Z\tE\tH\tN\tH\n" +
+                        "1970-01-01T01:00:00.060Z\tX\tG\tZ\tG\n" +
+                        "1970-01-01T01:52:00.859Z\tX\tU\tX\tU\n" +
+                        "1970-01-01T02:37:52.057Z\tB\tB\tT\tB\n" +
+                        "1970-01-01T02:03:42.727Z\tP\tG\tW\tG\n" +
+                        "1970-01-01T02:45:57.016Z\tF\tY\tU\tY\n" +
+                        "1970-01-01T02:30:11.353Z\tE\tY\tY\tY\n" +
+                        "1970-01-01T00:55:56.086Z\tE\tH\tB\tE\n" +
+                        "1970-01-01T01:24:20.057Z\tF\tO\tW\tO\n" +
+                        "1970-01-01T01:04:57.951Z\tP\tD\tX\tD\n" +
+                        "1970-01-01T01:38:37.157Z\tS\tB\tE\tB\n" +
+                        "1970-01-01T02:37:52.839Z\tU\tO\tJ\tO\n" +
+                        "1970-01-01T00:38:26.717Z\tH\tR\tU\tR\n" +
+                        "1970-01-01T00:48:12.010Z\tD\tR\tQ\tQ\n" +
+                        "1970-01-01T01:53:35.364Z\tU\tL\tO\tL\n" +
+                        "1970-01-01T00:08:55.106Z\tJ\tG\tE\tG\n" +
+                        "1970-01-01T02:04:44.767Z\tJ\tR\tS\tR\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when cast('1970-01-01T00:55:56.086Z' as date) then a\n" +
+                        "        when cast('1970-01-01T00:48:12.010Z' as date) then c\n" +
+                        "        when cast('1970-01-01T00:43:07.029Z' as date) then 'Z'\n" +
+                        "        else b\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_date() x," +
+                        " rnd_char() a," +
+                        " rnd_char() b," +
+                        " rnd_char() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInt() throws Exception {
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
+                        "-920\t315515118\t1548800833\t-727724771\t315515118\n" +
+                        "701\t-948263339\t1326447242\t592859671\t592859671\n" +
+                        "706\t-847531048\t-1191262516\t-2041844972\tNaN\n" +
+                        "-714\t-1575378703\t806715481\t1545253512\t350\n" +
+                        "116\t1573662097\t-409854405\t339631474\tNaN\n" +
+                        "67\t1904508147\t-1532328444\t-1458132197\tNaN\n" +
+                        "207\t-1849627000\t-1432278050\t426455968\tNaN\n" +
+                        "-55\t-1792928964\t-1844391305\t-1520872171\tNaN\n" +
+                        "-104\t-1153445279\t1404198\t-1715058769\tNaN\n" +
+                        "-127\t1631244228\t-1975183723\t-1252906348\tNaN\n" +
+                        "790\t-761275053\t-2119387831\t-212807500\tNaN\n" +
+                        "881\t1110979454\t1253890363\t-113506296\tNaN\n" +
+                        "-535\t-938514914\t-547127752\t-1271909747\tNaN\n" +
+                        "-973\t-342047842\t-2132716300\t2006313928\tNaN\n" +
+                        "-463\t-27395319\t264240638\t2085282008\tNaN\n" +
+                        "-667\t2137969456\t1890602616\t-1272693194\tNaN\n" +
+                        "578\t1036510002\t-2002373666\t44173540\tNaN\n" +
+                        "940\t410717394\t-2144581835\t1978144263\tNaN\n" +
+                        "-54\t-1162267908\t2031014705\t-530317703\tNaN\n" +
+                        "-393\t-296610933\t936627841\t326010667\tNaN\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when -920 then a\n" +
+                        "        when 701 then c\n" +
+                        "        when -714 then 350\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
                 true
         );
     }
@@ -325,6 +624,8 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
                 true
         );
     }
@@ -452,294 +753,57 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
                 true
         );
     }
 
     @Test
-    public void testCharOrElse() throws Exception {
+    public void testLong() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "V\tT\tJ\tW\tJ\n" +
-                        "C\tP\tS\tW\tS\n" +
-                        "H\tY\tR\tX\tR\n" +
-                        "P\tE\tH\tN\tH\n" +
-                        "R\tX\tG\tZ\tG\n" +
-                        "S\tX\tU\tX\tU\n" +
-                        "I\tB\tB\tT\tB\n" +
-                        "G\tP\tG\tW\tG\n" +
-                        "F\tF\tY\tU\tY\n" +
-                        "D\tE\tY\tY\tY\n" +
-                        "Q\tE\tH\tB\tH\n" +
-                        "H\tF\tO\tW\tO\n" +
-                        "L\tP\tD\tX\tP\n" +
-                        "Y\tS\tB\tE\tB\n" +
-                        "O\tU\tO\tJ\tJ\n" +
-                        "S\tH\tR\tU\tR\n" +
-                        "E\tD\tR\tQ\tR\n" +
-                        "Q\tU\tL\tO\tL\n" +
-                        "F\tJ\tG\tE\tG\n" +
-                        "T\tJ\tR\tS\tZ\n",
+                        "-920\t4729996258992366\t1548800833\t-727724771\t4729996258992366\n" +
+                        "701\t8920866532787660373\t1326447242\t592859671\t592859671\n" +
+                        "706\t-1675638984090602536\t-1191262516\t-2041844972\tNaN\n" +
+                        "-714\t-7489826605295361807\t806715481\t1545253512\t350\n" +
+                        "116\t8173439391403617681\t-409854405\t339631474\tNaN\n" +
+                        "67\t-8968886490993754893\t-1532328444\t-1458132197\tNaN\n" +
+                        "207\t-8284534269888369016\t-1432278050\t426455968\tNaN\n" +
+                        "-55\t5539350449504785212\t-1844391305\t-1520872171\tNaN\n" +
+                        "-104\t-4100339045953973663\t1404198\t-1715058769\tNaN\n" +
+                        "-127\t2811900023577169860\t-1975183723\t-1252906348\tNaN\n" +
+                        "790\t7700030475747712339\t-2119387831\t-212807500\tNaN\n" +
+                        "881\t9194293009132827518\t1253890363\t-113506296\tNaN\n" +
+                        "-535\t7199909180655756830\t-547127752\t-1271909747\tNaN\n" +
+                        "-973\t6404066507400987550\t-2132716300\t2006313928\tNaN\n" +
+                        "-463\t8573481508564499209\t264240638\t2085282008\tNaN\n" +
+                        "-667\t-8480005421611953360\t1890602616\t-1272693194\tNaN\n" +
+                        "578\t8325936937764905778\t-2002373666\t44173540\tNaN\n" +
+                        "940\t-7885528361265853230\t-2144581835\t1978144263\tNaN\n" +
+                        "-54\t3152466304308949756\t2031014705\t-530317703\tNaN\n" +
+                        "-393\t6179044593759294347\t936627841\t326010667\tNaN\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
                         "    c,\n" +
                         "    case x\n" +
-                        "        when 'L' then a\n" +
-                        "        when 'O' then c\n" +
-                        "        when 'T' then 'Z'\n" +
-                        "        else b\n" +
+                        "        when -920 then a\n" +
+                        "        when 701 then c\n" +
+                        "        when -714 then 350\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select rnd_char() x," +
-                        " rnd_char() a," +
-                        " rnd_char() b," +
-                        " rnd_char() c" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_long() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true
-        );
-    }
-
-    @Test
-    public void testDateOrElse() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\tk\n" +
-                        "1970-01-01T02:07:23.856Z\tT\tJ\tW\tJ\n" +
-                        "1970-01-01T00:43:07.029Z\tP\tS\tW\tZ\n" +
-                        "1970-01-01T00:14:24.006Z\tY\tR\tX\tR\n" +
-                        "1970-01-01T00:32:57.934Z\tE\tH\tN\tH\n" +
-                        "1970-01-01T01:00:00.060Z\tX\tG\tZ\tG\n" +
-                        "1970-01-01T01:52:00.859Z\tX\tU\tX\tU\n" +
-                        "1970-01-01T02:37:52.057Z\tB\tB\tT\tB\n" +
-                        "1970-01-01T02:03:42.727Z\tP\tG\tW\tG\n" +
-                        "1970-01-01T02:45:57.016Z\tF\tY\tU\tY\n" +
-                        "1970-01-01T02:30:11.353Z\tE\tY\tY\tY\n" +
-                        "1970-01-01T00:55:56.086Z\tE\tH\tB\tE\n" +
-                        "1970-01-01T01:24:20.057Z\tF\tO\tW\tO\n" +
-                        "1970-01-01T01:04:57.951Z\tP\tD\tX\tD\n" +
-                        "1970-01-01T01:38:37.157Z\tS\tB\tE\tB\n" +
-                        "1970-01-01T02:37:52.839Z\tU\tO\tJ\tO\n" +
-                        "1970-01-01T00:38:26.717Z\tH\tR\tU\tR\n" +
-                        "1970-01-01T00:48:12.010Z\tD\tR\tQ\tQ\n" +
-                        "1970-01-01T01:53:35.364Z\tU\tL\tO\tL\n" +
-                        "1970-01-01T00:08:55.106Z\tJ\tG\tE\tG\n" +
-                        "1970-01-01T02:04:44.767Z\tJ\tR\tS\tR\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when cast('1970-01-01T00:55:56.086Z' as date) then a\n" +
-                        "        when cast('1970-01-01T00:48:12.010Z' as date) then c\n" +
-                        "        when cast('1970-01-01T00:43:07.029Z' as date) then 'Z'\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_date() x," +
-                        " rnd_char() a," +
-                        " rnd_char() b," +
-                        " rnd_char() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testTimestampOrElse() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\tk\n" +
-                        "1970-01-01T00:00:00.000000Z\tV\tT\tJ\tT\n" +
-                        "1970-01-01T00:00:00.100000Z\tW\tC\tP\tC\n" +
-                        "1970-01-01T00:00:00.200000Z\tS\tW\tH\tW\n" +
-                        "1970-01-01T00:00:00.300000Z\tY\tR\tX\tR\n" +
-                        "1970-01-01T00:00:00.400000Z\tP\tE\tH\tE\n" +
-                        "1970-01-01T00:00:00.500000Z\tN\tR\tX\tN\n" +
-                        "1970-01-01T00:00:00.600000Z\tG\tZ\tS\tZ\n" +
-                        "1970-01-01T00:00:00.700000Z\tX\tU\tX\tU\n" +
-                        "1970-01-01T00:00:00.800000Z\tI\tB\tB\tB\n" +
-                        "1970-01-01T00:00:00.900000Z\tT\tG\tP\tG\n" +
-                        "1970-01-01T00:00:01.000000Z\tG\tW\tF\tW\n" +
-                        "1970-01-01T00:00:01.100000Z\tF\tY\tU\tY\n" +
-                        "1970-01-01T00:00:01.200000Z\tD\tE\tY\tE\n" +
-                        "1970-01-01T00:00:01.300000Z\tY\tQ\tE\tQ\n" +
-                        "1970-01-01T00:00:01.400000Z\tH\tB\tH\tB\n" +
-                        "1970-01-01T00:00:01.500000Z\tF\tO\tW\tO\n" +
-                        "1970-01-01T00:00:01.600000Z\tL\tP\tD\tP\n" +
-                        "1970-01-01T00:00:01.700000Z\tX\tY\tS\tY\n" +
-                        "1970-01-01T00:00:01.800000Z\tB\tE\tO\tE\n" +
-                        "1970-01-01T00:00:01.900000Z\tU\tO\tJ\tZ\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when cast('1970-01-01T00:00:00.500Z' as date) then a\n" +
-                        "        when cast('1970-01-01T00:48:12.010Z' as date) then c\n" +
-                        "        when cast('1970-01-01T00:00:01.900Z' as date) then 'Z'\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select timestamp_sequence(0, 100000L) x," +
-                        " rnd_char() a," +
-                        " rnd_char() b," +
-                        " rnd_char() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testByteOrElse() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\tk\n" +
-                        "76\tT\tJ\tW\tJ\n" +
-                        "79\tP\tS\tW\tS\n" +
-                        "90\tY\tR\tX\tY\n" +
-                        "74\tE\tH\tN\tH\n" +
-                        "32\tX\tG\tZ\tG\n" +
-                        "77\tX\tU\tX\tU\n" +
-                        "101\tB\tB\tT\tB\n" +
-                        "89\tP\tG\tW\tG\n" +
-                        "112\tF\tY\tU\tY\n" +
-                        "117\tE\tY\tY\tY\n" +
-                        "86\tE\tH\tB\tH\n" +
-                        "65\tF\tO\tW\tO\n" +
-                        "73\tP\tD\tX\tD\n" +
-                        "119\tS\tB\tE\tB\n" +
-                        "57\tU\tO\tJ\tJ\n" +
-                        "103\tH\tR\tU\tR\n" +
-                        "58\tD\tR\tQ\tR\n" +
-                        "20\tU\tL\tO\tL\n" +
-                        "54\tJ\tG\tE\tG\n" +
-                        "31\tJ\tR\tS\tZ\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when cast(90 as byte) then a\n" +
-                        "        when cast(57 as byte) then c\n" +
-                        "        when cast(31 as byte) then 'Z'\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_byte() x," +
-                        " rnd_char() a," +
-                        " rnd_char() b," +
-                        " rnd_char() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testSymbolOrElse() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\tk\n" +
-                        "a1\tT\tJ\tW\tZ\n" +
-                        "b2\tP\tS\tW\tP\n" +
-                        "b2\tY\tR\tX\tY\n" +
-                        "\tE\tH\tN\tH\n" +
-                        "b2\tX\tG\tZ\tX\n" +
-                        "c3\tX\tU\tX\tU\n" +
-                        "c3\tB\tB\tT\tB\n" +
-                        "a1\tP\tG\tW\tZ\n" +
-                        "\tF\tY\tU\tY\n" +
-                        "c3\tE\tY\tY\tY\n" +
-                        "a1\tE\tH\tB\tZ\n" +
-                        "b2\tF\tO\tW\tF\n" +
-                        "a1\tP\tD\tX\tZ\n" +
-                        "d4\tS\tB\tE\tE\n" +
-                        "d4\tU\tO\tJ\tJ\n" +
-                        "c3\tH\tR\tU\tR\n" +
-                        "d4\tD\tR\tQ\tQ\n" +
-                        "a1\tU\tL\tO\tZ\n" +
-                        "\tJ\tG\tE\tG\n" +
-                        "d4\tJ\tR\tS\tS\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when 'b2' then a\n" +
-                        "        when 'd4' then c\n" +
-                        "        when 'a1' then 'Z'\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_symbol('a1', 'b2', 'c3', 'd4', null) x," +
-                        " rnd_char() a," +
-                        " rnd_char() b," +
-                        " rnd_char() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testSymbolAndNullOrElse() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\tk\n" +
-                        "a1\tT\tJ\tW\tJ\n" +
-                        "b2\tP\tS\tW\tP\n" +
-                        "b2\tY\tR\tX\tY\n" +
-                        "\tE\tH\tN\tZ\n" +
-                        "b2\tX\tG\tZ\tX\n" +
-                        "c3\tX\tU\tX\tU\n" +
-                        "c3\tB\tB\tT\tB\n" +
-                        "a1\tP\tG\tW\tG\n" +
-                        "\tF\tY\tU\tZ\n" +
-                        "c3\tE\tY\tY\tY\n" +
-                        "a1\tE\tH\tB\tH\n" +
-                        "b2\tF\tO\tW\tF\n" +
-                        "a1\tP\tD\tX\tD\n" +
-                        "d4\tS\tB\tE\tE\n" +
-                        "d4\tU\tO\tJ\tJ\n" +
-                        "c3\tH\tR\tU\tR\n" +
-                        "d4\tD\tR\tQ\tQ\n" +
-                        "a1\tU\tL\tO\tL\n" +
-                        "\tJ\tG\tE\tZ\n" +
-                        "d4\tJ\tR\tS\tS\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when 'b2' then a\n" +
-                        "        when 'd4' then c\n" +
-                        "        when null then 'Z'\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_symbol('a1', 'b2', 'c3', 'd4', null) x," +
-                        " rnd_char() a," +
-                        " rnd_char() b," +
-                        " rnd_char() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
+                true,
+                true,
                 true
         );
     }
@@ -788,6 +852,79 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLong256OrElse() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when cast('0x00' as long256) then a\n" +
+                        "        when cast('0x00' as long256) then c\n" +
+                        "        when cast('0x00' as long256) then 350\n" +
+                        "        else b\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_long256() x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                45,
+                "type LONG256 is not supported in 'switch' type of 'case' statement"
+        );
+    }
+
+    @Test
+    public void testShort() throws Exception {
+        assertQuery(
+                "a\tk\n" +
+                        "-27056\t0\n" +
+                        "-13027\t0\n" +
+                        "-1398\t0\n" +
+                        "-19496\t0\n" +
+                        "-4914\t0\n" +
+                        "-19832\t0\n" +
+                        "7739\t7739\n" +
+                        "31987\t0\n" +
+                        "-1593\t0\n" +
+                        "13216\t0\n" +
+                        "-11657\t0\n" +
+                        "-11679\t0\n" +
+                        "18457\t0\n" +
+                        "10900\t21558\n" +
+                        "-19127\t0\n" +
+                        "13182\t0\n" +
+                        "27809\t0\n" +
+                        "12941\t0\n" +
+                        "21748\t0\n" +
+                        "-1271\t0\n",
+                "select \n" +
+                        "    a,\n" +
+                        "    case a\n" +
+                        "        when cast(7739 as short) then a\n" +
+                        "        when cast(10900 as short) then b\n" +
+                        "    end k \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select " +
+                        " rnd_short() a," +
+                        " rnd_short() b," +
+                        " rnd_short() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
                 true
         );
     }
@@ -836,80 +973,8 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
-                true
-        );
-    }
-
-    @Test
-    public void testLong256OrElse() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when cast('0x00' as long256) then a\n" +
-                        "        when cast('0x00' as long256) then c\n" +
-                        "        when cast('0x00' as long256) then 350\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_long256() x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                45,
-                "type LONG256 is not supported in 'switch' type of 'case' statement"
-        );
-    }
-
-    @Test
-    public void testStrOrElse() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\tk\n" +
-                        "JWCPSWHYR\t-2041844972\t-1436881714\t-1575378703\t-1436881714\n" +
-                        "RXG\t339631474\t1530831067\t1904508147\t1530831067\n" +
-                        "IBBTGPGW\t-1101822104\t-1153445279\t1404198\t-1153445279\n" +
-                        "EYYQEHBHFO\t-113506296\t-422941535\t-938514914\t-422941535\n" +
-                        "YSBEOU\t264240638\t2085282008\t-483853667\t264240638\n" +
-                        "UED\t-2002373666\t44173540\t458818940\t44173540\n" +
-                        "OFJGET\t-296610933\t936627841\t326010667\t936627841\n" +
-                        "RYRFBV\t-1787109293\t-66297136\t-1515787781\t-66297136\n" +
-                        "OZZVDZ\t-235358133\t-1299391311\t-1212175298\t-1299391311\n" +
-                        "CXZO\t1196016669\t-307026682\t-1566901076\t-1566901076\n" +
-                        "KGH\t-1582495445\t-1424048819\t532665695\t-1424048819\n" +
-                        "OTSEDYYCT\t-1794809330\t-1609750740\t-731466113\t350\n" +
-                        "XWCK\t-880943673\t-2075675260\t1254404167\t-2075675260\n" +
-                        "DSWUGSHOL\t1864113037\t-1966408995\t183633043\t-1966408995\n" +
-                        "BZX\t2124174232\t-2043803188\t544695670\t-2043803188\n" +
-                        "JSMSSU\t-2111250190\t462277692\t614536941\t462277692\n" +
-                        "KVVSJOJ\t1238491107\t-1056463214\t-636975106\t-1056463214\n" +
-                        "PIH\t1362833895\t576104460\t-805434743\t576104460\n" +
-                        "LJU\t454820511\t-246923735\t-514934130\t-246923735\n" +
-                        "MLLEO\t387510473\t1431425139\t-948252781\t1431425139\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when 'YSBEOU' then a\n" +
-                        "        when 'CXZO' then c\n" +
-                        "        when 'OTSEDYYCT' then 350\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_str() x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
+                true,
+                true,
                 true
         );
     }
@@ -959,56 +1024,8 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false
-        );
-    }
-
-    @Test
-    public void testStrToStrOrElse() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\tk\n" +
-                        "JWCPSWHYR\tEHNRX\tSXUXI\tTGPGW\tSXUXI\n" +
-                        "YUDEYYQEHB\tOWLPDXYSB\tUOJSHRUEDR\tULOFJGE\tUOJSHRUEDR\n" +
-                        "RSZSRYRF\tTMHGOOZZVD\tMYICCXZO\tCWEKG\tMYICCXZO\n" +
-                        "UVSDOTSE\tYCTGQO\tXWCK\tSUWDSWU\tXWCK\n" +
-                        "HOLNV\tQBZXIOVIK\tMSSUQSR\tKVVSJOJ\tMSSUQSR\n" +
-                        "HZEPIHVLT\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tGLHMLLEOYP\n" +
-                        "MBEZGHW\tKFL\tJOXPKR\tIHYH\tJOXPKR\n" +
-                        "QMYS\tPGLUOHN\tZSQLDGLOG\tOUSZMZV\tZSQLDGLOG\n" +
-                        "BNDCQCEHNO\tELLKK\tWNWIFFLR\tOMNXKUIZUL\tWNWIFFLR\n" +
-                        "YVFZF\tZLUOG\tFVWSWSR\tONFCLTJCKF\tFVWSWSR\n" +
-                        "NTO\tXUKLG\tSLUQDY\tHNIMYFF\tXUKLG\n" +
-                        "NPH\tPBNH\tWWC\tGTNLEGPUHH\tWWC\n" +
-                        "GGLN\tZLCBDMIG\tVKHTLQ\tLQVF\tVKHTLQ\n" +
-                        "PRGSXBHYS\tYMIZJS\tNPIWZNFK\tVMCGFN\tVMCGFN\n" +
-                        "RMDGGIJ\tVRVNG\tEQODRZEI\tOQKYH\tEQODRZEI\n" +
-                        "UWQOEE\tEBQQEMXDK\tJCTIZK\tLUHZQSN\tJCTIZK\n" +
-                        "MKJSMKIX\tVTUPDHH\tIWHPZRHH\tZJYYFLSVI\tIWHPZRHH\n" +
-                        "WWLEVM\tCJBEV\tHLIHYBT\tNCLNXFS\tHLIHYBT\n" +
-                        "PNXH\tTZODWKOCPF\tPVKNC\tLNLRH\tPVKNC\n" +
-                        "XYPO\tDBZWNI\tEHR\tPBMB\tWORKS!\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when 'NTO' then a\n" +
-                        "        when 'PRGSXBHYS' then c\n" +
-                        "        when 'XYPO' then 'WORKS!'\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_str() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                false
+                false,
+                true
         );
     }
 
@@ -1039,49 +1056,52 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBooleanToStrOrElse() throws Exception {
+    public void testStrOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "false\tWCPS\tYRXPE\tRXG\tRXG\n" +
-                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tYQEHBH\n" +
-                        "false\tLPD\tSBEOUOJS\tUED\tUED\n" +
-                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
-                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
-                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
-                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tSMSSUQ\n" +
-                        "false\tTKVV\tOJIPHZ\tIHVL\tIHVL\n" +
-                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
-                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
-                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
-                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
-                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
-                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
-                        "false\tUKL\tXSLUQD\tPHNIMYF\tPHNIMYF\n" +
-                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
-                        "false\tTNLE\tUHH\tGGLN\tGGLN\n" +
-                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tZSLQVFGPP\n" +
-                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
-                        "false\tFNWG\tDGGI\tDVRVNGS\tDVRVNGS\n",
+                        "JWCPSWHYR\t-2041844972\t-1436881714\t-1575378703\t-1436881714\n" +
+                        "RXG\t339631474\t1530831067\t1904508147\t1530831067\n" +
+                        "IBBTGPGW\t-1101822104\t-1153445279\t1404198\t-1153445279\n" +
+                        "EYYQEHBHFO\t-113506296\t-422941535\t-938514914\t-422941535\n" +
+                        "YSBEOU\t264240638\t2085282008\t-483853667\t264240638\n" +
+                        "UED\t-2002373666\t44173540\t458818940\t44173540\n" +
+                        "OFJGET\t-296610933\t936627841\t326010667\t936627841\n" +
+                        "RYRFBV\t-1787109293\t-66297136\t-1515787781\t-66297136\n" +
+                        "OZZVDZ\t-235358133\t-1299391311\t-1212175298\t-1299391311\n" +
+                        "CXZO\t1196016669\t-307026682\t-1566901076\t-1566901076\n" +
+                        "KGH\t-1582495445\t-1424048819\t532665695\t-1424048819\n" +
+                        "OTSEDYYCT\t-1794809330\t-1609750740\t-731466113\t350\n" +
+                        "XWCK\t-880943673\t-2075675260\t1254404167\t-2075675260\n" +
+                        "DSWUGSHOL\t1864113037\t-1966408995\t183633043\t-1966408995\n" +
+                        "BZX\t2124174232\t-2043803188\t544695670\t-2043803188\n" +
+                        "JSMSSU\t-2111250190\t462277692\t614536941\t462277692\n" +
+                        "KVVSJOJ\t1238491107\t-1056463214\t-636975106\t-1056463214\n" +
+                        "PIH\t1362833895\t576104460\t-805434743\t576104460\n" +
+                        "LJU\t454820511\t-246923735\t-514934130\t-246923735\n" +
+                        "MLLEO\t387510473\t1431425139\t-948252781\t1431425139\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
                         "    c,\n" +
                         "    case x\n" +
-                        "        when true then 'HELLO'\n" +
-                        "        else c\n" +
+                        "        when 'YSBEOU' then a\n" +
+                        "        when 'CXZO' then c\n" +
+                        "        when 'OTSEDYYCT' then 350\n" +
+                        "        else b\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select rnd_boolean() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
+                        "select rnd_str() x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
                 true,
-                false
+                true,
+                true
         );
     }
 
@@ -1184,41 +1204,43 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBooleanToStrOrMoreBranches() throws Exception {
+    public void testStrToStrOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "false\tWCPS\tYRXPE\tRXG\tRXG\n" +
-                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tYQEHBH\n" +
-                        "false\tLPD\tSBEOUOJS\tUED\tUED\n" +
-                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
-                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
-                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
-                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tSMSSUQ\n" +
-                        "false\tTKVV\tOJIPHZ\tIHVL\tIHVL\n" +
-                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
-                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
-                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
-                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
-                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
-                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
-                        "false\tUKL\tXSLUQD\tPHNIMYF\tPHNIMYF\n" +
-                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
-                        "false\tTNLE\tUHH\tGGLN\tGGLN\n" +
-                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tZSLQVFGPP\n" +
-                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
-                        "false\tFNWG\tDGGI\tDVRVNGS\tDVRVNGS\n",
+                        "JWCPSWHYR\tEHNRX\tSXUXI\tTGPGW\tSXUXI\n" +
+                        "YUDEYYQEHB\tOWLPDXYSB\tUOJSHRUEDR\tULOFJGE\tUOJSHRUEDR\n" +
+                        "RSZSRYRF\tTMHGOOZZVD\tMYICCXZO\tCWEKG\tMYICCXZO\n" +
+                        "UVSDOTSE\tYCTGQO\tXWCK\tSUWDSWU\tXWCK\n" +
+                        "HOLNV\tQBZXIOVIK\tMSSUQSR\tKVVSJOJ\tMSSUQSR\n" +
+                        "HZEPIHVLT\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tGLHMLLEOYP\n" +
+                        "MBEZGHW\tKFL\tJOXPKR\tIHYH\tJOXPKR\n" +
+                        "QMYS\tPGLUOHN\tZSQLDGLOG\tOUSZMZV\tZSQLDGLOG\n" +
+                        "BNDCQCEHNO\tELLKK\tWNWIFFLR\tOMNXKUIZUL\tWNWIFFLR\n" +
+                        "YVFZF\tZLUOG\tFVWSWSR\tONFCLTJCKF\tFVWSWSR\n" +
+                        "NTO\tXUKLG\tSLUQDY\tHNIMYFF\tXUKLG\n" +
+                        "NPH\tPBNH\tWWC\tGTNLEGPUHH\tWWC\n" +
+                        "GGLN\tZLCBDMIG\tVKHTLQ\tLQVF\tVKHTLQ\n" +
+                        "PRGSXBHYS\tYMIZJS\tNPIWZNFK\tVMCGFN\tVMCGFN\n" +
+                        "RMDGGIJ\tVRVNG\tEQODRZEI\tOQKYH\tEQODRZEI\n" +
+                        "UWQOEE\tEBQQEMXDK\tJCTIZK\tLUHZQSN\tJCTIZK\n" +
+                        "MKJSMKIX\tVTUPDHH\tIWHPZRHH\tZJYYFLSVI\tIWHPZRHH\n" +
+                        "WWLEVM\tCJBEV\tHLIHYBT\tNCLNXFS\tHLIHYBT\n" +
+                        "PNXH\tTZODWKOCPF\tPVKNC\tLNLRH\tPVKNC\n" +
+                        "XYPO\tDBZWNI\tEHR\tPBMB\tWORKS!\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
                         "    c,\n" +
                         "    case x\n" +
-                        "        when true then 'HELLO'\n" +
-                        "        when false then c\n" +
+                        "        when 'NTO' then a\n" +
+                        "        when 'PRGSXBHYS' then c\n" +
+                        "        when 'XYPO' then 'WORKS!'\n" +
+                        "        else b\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select rnd_boolean() x," +
+                        "select rnd_str() x," +
                         " rnd_str() a," +
                         " rnd_str() b," +
                         " rnd_str() c" +
@@ -1226,143 +1248,157 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         ")",
                 null,
                 true,
-                false
+                false,
+                true
         );
     }
 
     @Test
-    public void testBooleanToStrOrMoreBranchesReversed() throws Exception {
+    public void testSymbolAndNullOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "false\tWCPS\tYRXPE\tRXG\tRXG\n" +
-                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tYQEHBH\n" +
-                        "false\tLPD\tSBEOUOJS\tUED\tUED\n" +
-                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
-                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
-                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
-                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tSMSSUQ\n" +
-                        "false\tTKVV\tOJIPHZ\tIHVL\tIHVL\n" +
-                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
-                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
-                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
-                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
-                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
-                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
-                        "false\tUKL\tXSLUQD\tPHNIMYF\tPHNIMYF\n" +
-                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
-                        "false\tTNLE\tUHH\tGGLN\tGGLN\n" +
-                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tZSLQVFGPP\n" +
-                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
-                        "false\tFNWG\tDGGI\tDVRVNGS\tDVRVNGS\n",
+                        "a1\tT\tJ\tW\tJ\n" +
+                        "b2\tP\tS\tW\tP\n" +
+                        "b2\tY\tR\tX\tY\n" +
+                        "\tE\tH\tN\tZ\n" +
+                        "b2\tX\tG\tZ\tX\n" +
+                        "c3\tX\tU\tX\tU\n" +
+                        "c3\tB\tB\tT\tB\n" +
+                        "a1\tP\tG\tW\tG\n" +
+                        "\tF\tY\tU\tZ\n" +
+                        "c3\tE\tY\tY\tY\n" +
+                        "a1\tE\tH\tB\tH\n" +
+                        "b2\tF\tO\tW\tF\n" +
+                        "a1\tP\tD\tX\tD\n" +
+                        "d4\tS\tB\tE\tE\n" +
+                        "d4\tU\tO\tJ\tJ\n" +
+                        "c3\tH\tR\tU\tR\n" +
+                        "d4\tD\tR\tQ\tQ\n" +
+                        "a1\tU\tL\tO\tL\n" +
+                        "\tJ\tG\tE\tZ\n" +
+                        "d4\tJ\tR\tS\tS\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
                         "    c,\n" +
                         "    case x\n" +
-                        "        when false then c\n" +
-                        "        when true then 'HELLO'\n" +
+                        "        when 'b2' then a\n" +
+                        "        when 'd4' then c\n" +
+                        "        when null then 'Z'\n" +
+                        "        else b\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select rnd_boolean() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
+                        "select rnd_symbol('a1', 'b2', 'c3', 'd4', null) x," +
+                        " rnd_char() a," +
+                        " rnd_char() b," +
+                        " rnd_char() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
                 true,
-                false
+                true,
+                true
         );
     }
 
     @Test
-    public void testBooleanToStrOrElseReversed() throws Exception {
+    public void testSymbolOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
-                        "false\tWCPS\tYRXPE\tRXG\tRXG\n" +
-                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tYQEHBH\n" +
-                        "false\tLPD\tSBEOUOJS\tUED\tUED\n" +
-                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
-                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
-                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
-                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tSMSSUQ\n" +
-                        "false\tTKVV\tOJIPHZ\tIHVL\tIHVL\n" +
-                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
-                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
-                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
-                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
-                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
-                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
-                        "false\tUKL\tXSLUQD\tPHNIMYF\tPHNIMYF\n" +
-                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
-                        "false\tTNLE\tUHH\tGGLN\tGGLN\n" +
-                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tZSLQVFGPP\n" +
-                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
-                        "false\tFNWG\tDGGI\tDVRVNGS\tDVRVNGS\n",
+                        "a1\tT\tJ\tW\tZ\n" +
+                        "b2\tP\tS\tW\tP\n" +
+                        "b2\tY\tR\tX\tY\n" +
+                        "\tE\tH\tN\tH\n" +
+                        "b2\tX\tG\tZ\tX\n" +
+                        "c3\tX\tU\tX\tU\n" +
+                        "c3\tB\tB\tT\tB\n" +
+                        "a1\tP\tG\tW\tZ\n" +
+                        "\tF\tY\tU\tY\n" +
+                        "c3\tE\tY\tY\tY\n" +
+                        "a1\tE\tH\tB\tZ\n" +
+                        "b2\tF\tO\tW\tF\n" +
+                        "a1\tP\tD\tX\tZ\n" +
+                        "d4\tS\tB\tE\tE\n" +
+                        "d4\tU\tO\tJ\tJ\n" +
+                        "c3\tH\tR\tU\tR\n" +
+                        "d4\tD\tR\tQ\tQ\n" +
+                        "a1\tU\tL\tO\tZ\n" +
+                        "\tJ\tG\tE\tG\n" +
+                        "d4\tJ\tR\tS\tS\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
                         "    c,\n" +
                         "    case x\n" +
-                        "        when false then c\n" +
-                        "        else 'HELLO'\n" +
+                        "        when 'b2' then a\n" +
+                        "        when 'd4' then c\n" +
+                        "        when 'a1' then 'Z'\n" +
+                        "        else b\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select rnd_boolean() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
+                        "select rnd_symbol('a1', 'b2', 'c3', 'd4', null) x," +
+                        " rnd_char() a," +
+                        " rnd_char() b," +
+                        " rnd_char() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
                 true,
-                false
+                true,
+                true
         );
     }
 
     @Test
-    public void testShort() throws Exception {
+    public void testTimestampOrElse() throws Exception {
         assertQuery(
-                "a\tk\n" +
-                        "-27056\t0\n" +
-                        "-13027\t0\n" +
-                        "-1398\t0\n" +
-                        "-19496\t0\n" +
-                        "-4914\t0\n" +
-                        "-19832\t0\n" +
-                        "7739\t7739\n" +
-                        "31987\t0\n" +
-                        "-1593\t0\n" +
-                        "13216\t0\n" +
-                        "-11657\t0\n" +
-                        "-11679\t0\n" +
-                        "18457\t0\n" +
-                        "10900\t21558\n" +
-                        "-19127\t0\n" +
-                        "13182\t0\n" +
-                        "27809\t0\n" +
-                        "12941\t0\n" +
-                        "21748\t0\n" +
-                        "-1271\t0\n",
+                "x\ta\tb\tc\tk\n" +
+                        "1970-01-01T00:00:00.000000Z\tV\tT\tJ\tT\n" +
+                        "1970-01-01T00:00:00.100000Z\tW\tC\tP\tC\n" +
+                        "1970-01-01T00:00:00.200000Z\tS\tW\tH\tW\n" +
+                        "1970-01-01T00:00:00.300000Z\tY\tR\tX\tR\n" +
+                        "1970-01-01T00:00:00.400000Z\tP\tE\tH\tE\n" +
+                        "1970-01-01T00:00:00.500000Z\tN\tR\tX\tN\n" +
+                        "1970-01-01T00:00:00.600000Z\tG\tZ\tS\tZ\n" +
+                        "1970-01-01T00:00:00.700000Z\tX\tU\tX\tU\n" +
+                        "1970-01-01T00:00:00.800000Z\tI\tB\tB\tB\n" +
+                        "1970-01-01T00:00:00.900000Z\tT\tG\tP\tG\n" +
+                        "1970-01-01T00:00:01.000000Z\tG\tW\tF\tW\n" +
+                        "1970-01-01T00:00:01.100000Z\tF\tY\tU\tY\n" +
+                        "1970-01-01T00:00:01.200000Z\tD\tE\tY\tE\n" +
+                        "1970-01-01T00:00:01.300000Z\tY\tQ\tE\tQ\n" +
+                        "1970-01-01T00:00:01.400000Z\tH\tB\tH\tB\n" +
+                        "1970-01-01T00:00:01.500000Z\tF\tO\tW\tO\n" +
+                        "1970-01-01T00:00:01.600000Z\tL\tP\tD\tP\n" +
+                        "1970-01-01T00:00:01.700000Z\tX\tY\tS\tY\n" +
+                        "1970-01-01T00:00:01.800000Z\tB\tE\tO\tE\n" +
+                        "1970-01-01T00:00:01.900000Z\tU\tO\tJ\tZ\n",
                 "select \n" +
+                        "    x,\n" +
                         "    a,\n" +
-                        "    case a\n" +
-                        "        when cast(7739 as short) then a\n" +
-                        "        when cast(10900 as short) then b\n" +
-                        "    end k \n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when cast('1970-01-01T00:00:00.500Z' as date) then a\n" +
+                        "        when cast('1970-01-01T00:48:12.010Z' as date) then c\n" +
+                        "        when cast('1970-01-01T00:00:01.900Z' as date) then 'Z'\n" +
+                        "        else b\n" +
+                        "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select " +
-                        " rnd_short() a," +
-                        " rnd_short() b," +
-                        " rnd_short() c" +
+                        "select timestamp_sequence(0, 100000L) x," +
+                        " rnd_char() a," +
+                        " rnd_char() b," +
+                        " rnd_char() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
                 true
         );
     }

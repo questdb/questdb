@@ -131,7 +131,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -161,7 +161,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, true);
             }
         });
     }
@@ -198,7 +198,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -222,7 +222,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y union all z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, false);
             }
         });
     }
@@ -257,7 +257,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -272,7 +272,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, false);
             }
         });
     }
@@ -413,7 +413,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -468,7 +468,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union y union z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, false);
             }
         });
     }
@@ -572,7 +572,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -629,7 +629,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, false);
             }
         });
     }

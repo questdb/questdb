@@ -48,11 +48,6 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddBadSyntax() throws Exception {
-        assertFailure("alter table x add column abc int k", 33, "',' expected");
-    }
-
-    @Test
     public void testAddBadColumnNameBackSlash() throws Exception {
         assertFailure("alter table x add column \\", 25, "new column name contains invalid characters");
     }
@@ -65,6 +60,11 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     @Test
     public void testAddBadColumnNameFwdSlash() throws Exception {
         assertFailure("alter table x add column /", 25, "new column name contains invalid characters");
+    }
+
+    @Test
+    public void testAddBadSyntax() throws Exception {
+        assertFailure("alter table x add column abc int k", 33, "',' expected");
     }
 
     @Test
@@ -120,7 +120,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int", sqlExecutionContext).getType());
 
-                    assertQuery(
+                    assertQueryPlain(
                             "c\tmycol\n" +
                                     "XYZ\tNaN\n" +
                                     "ABC\tNaN\n" +
@@ -132,9 +132,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                                     "ABC\tNaN\n" +
                                     "\tNaN\n" +
                                     "XYZ\tNaN\n",
-                            "select c, mycol from x",
-                            null,
-                            true
+                            "select c, mycol from x"
                     );
                 }
         );
@@ -428,8 +426,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     createX();
 
                     Assert.assertEquals(ALTER, compiler.compile("alter table x add column mycol int, second symbol", sqlExecutionContext).getType());
-
-                    assertQuery(
+                    assertQueryPlain(
                             "c\tmycol\tsecond\n" +
                                     "XYZ\tNaN\t\n" +
                                     "ABC\tNaN\t\n" +
@@ -441,9 +438,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                                     "ABC\tNaN\t\n" +
                                     "\tNaN\t\n" +
                                     "XYZ\tNaN\t\n",
-                            "select c, mycol, second from x",
-                            null,
-                            true
+                            "select c, mycol, second from x"
                     );
                 }
         );

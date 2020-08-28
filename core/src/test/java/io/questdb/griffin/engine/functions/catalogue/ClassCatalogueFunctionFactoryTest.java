@@ -174,7 +174,8 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 false,
                 sqlExecutionContext,
-                false
+                false,
+                true
         );
     }
 
@@ -205,7 +206,8 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 true,
                 sqlExecutionContext,
-                false
+                false,
+                true
         );
     }
 }

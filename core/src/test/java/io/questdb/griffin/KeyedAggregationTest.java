@@ -39,20 +39,6 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntSymbolResolution() throws Exception {
-        assertQuery(
-                "s2\tsum\n" +
-                        "\t104119.880948161\n" +
-                        "a1\t103804.62242300605\n" +
-                        "a2\t104433.68659571148\n" +
-                        "a3\t104341.28852517322\n",
-                "select s2, sum(val) from tab order by s2",
-                "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_symbol('a1','a2','a3', null) s2, rnd_double(2) val from long_sequence(1000000))",
-                null, true
-        );
-    }
-
-    @Test
     public void testHourDouble() throws Exception {
         assertQuery(
                 "hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
@@ -61,33 +47,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t11641.765471468498\t11641.76547146845\t11641.765471468458\t1.8566421983501336E-5\t0.9999768905891359\t0.500376750256533\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z\n",
                 "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val), max(ts), min(ts) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double(2) val from long_sequence(100000))",
-                null, true
-        );
-    }
-
-    @Test
-    public void testHourLong() throws Exception {
-        assertQuery(
-                "hour\tcount\tsum\tmin\tmax\tavg\n" +
-                        "0\t36000\t13265789485\t-988\t889951\t443212.3712872941\n" +
-                        "1\t36000\t13359838134\t-997\t889948\t444350.36699261627\n" +
-                        "2\t28000\t10444993989\t-992\t889982\t445586.53594129946\n",
-                "select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1",
-                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
-                null, true
-        );
-    }
-
-    @Test
-    public void testHourPossibleBugfix() throws Exception {
-        assertQuery(
-                "hour\tsum\tksum\tnsum\tmin\tmax\tavg\n" +
-                        "0\t13265789485\t1.3265789485E10\t1.3265789485E10\t-988\t889951\t443212.3712872941\n" +
-                        "1\t13359838134\t1.3359838134E10\t1.3359838134E10\t-997\t889948\t444350.36699261627\n" +
-                        "2\t10444993989\t1.0444993989E10\t1.0444993989E10\t-992\t889982\t445586.53594129946\n",
-                "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val) from tab order by 1",
-                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
-                null, true
+                null, true, true, true
         );
     }
 
@@ -100,20 +60,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t28000\n",
                 "select hour(ts), count() from tab where val < 0.5",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(100000))",
-                null, true
-        );
-    }
-
-    @Test
-    public void testHourLongMissingFunctions() throws Exception {
-        assertQuery(
-                "hour\tksum\tnsum\n" +
-                        "0\t1.3265789485E10\t1.3265789485E10\n" +
-                        "1\t1.3359838134E10\t1.3359838134E10\n" +
-                        "2\t1.0444993989E10\t1.0444993989E10\n",
-                "select hour(ts), ksum(val), nsum(val) from tab order by 1",
-                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
-                null, true
+                null, true, true, true
         );
     }
 
@@ -126,7 +73,60 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t28000\t10420189893\t-914\t889980\t444528.3858623779\n",
                 "select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_int(-998, 889991, 2) val from long_sequence(100000))",
-                null, true
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testHourLong() throws Exception {
+        assertQuery(
+                "hour\tcount\tsum\tmin\tmax\tavg\n" +
+                        "0\t36000\t13265789485\t-988\t889951\t443212.3712872941\n" +
+                        "1\t36000\t13359838134\t-997\t889948\t444350.36699261627\n" +
+                        "2\t28000\t10444993989\t-992\t889982\t445586.53594129946\n",
+                "select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testHourLongMissingFunctions() throws Exception {
+        assertQuery(
+                "hour\tksum\tnsum\n" +
+                        "0\t1.3265789485E10\t1.3265789485E10\n" +
+                        "1\t1.3359838134E10\t1.3359838134E10\n" +
+                        "2\t1.0444993989E10\t1.0444993989E10\n",
+                "select hour(ts), ksum(val), nsum(val) from tab order by 1",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testHourPossibleBugfix() throws Exception {
+        assertQuery(
+                "hour\tsum\tksum\tnsum\tmin\tmax\tavg\n" +
+                        "0\t13265789485\t1.3265789485E10\t1.3265789485E10\t-988\t889951\t443212.3712872941\n" +
+                        "1\t13359838134\t1.3359838134E10\t1.3359838134E10\t-997\t889948\t444350.36699261627\n" +
+                        "2\t10444993989\t1.0444993989E10\t1.0444993989E10\t-992\t889982\t445586.53594129946\n",
+                "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val) from tab order by 1",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testIntSymbolResolution() throws Exception {
+        assertQuery(
+                "s2\tsum\n" +
+                        "\t104119.880948161\n" +
+                        "a1\t103804.62242300605\n" +
+                        "a2\t104433.68659571148\n" +
+                        "a3\t104341.28852517322\n",
+                "select s2, sum(val) from tab order by s2",
+                "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_symbol('a1','a2','a3', null) s2, rnd_double(2) val from long_sequence(1000000))",
+                null, true, true, true
         );
     }
 
