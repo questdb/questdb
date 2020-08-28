@@ -205,7 +205,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                         Assert.fail();
                     } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "cursor failed"));
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "cursor could not consistently read index header"));
                     }
                 }
             }
@@ -216,8 +216,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorBadSequence() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             setupIndexHeader();
-            assertBackwardReaderConstructorFail("failed to read index header");
-            assertForwardReaderConstructorFail("failed to read index header");
+            assertBackwardReaderConstructorFail("could not consistently");
+            assertForwardReaderConstructorFail("could not consistently");
         });
     }
 
@@ -326,7 +326,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 try {
                     reader.getCursor(true, 10, 0, Long.MAX_VALUE);
                 } catch (CairoException e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "failed to consistently"));
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
                 // make sure index fails until sequence is not up to date
@@ -334,7 +334,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 try {
                     reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                 } catch (CairoException e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "failed to consistently"));
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
                 mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -401,7 +401,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                         Assert.fail();
                     } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "cursor failed"));
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "cursor could not consistently read index header"));
                     }
                 }
             }
@@ -494,7 +494,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     reader.getCursor(true, 10, 0, Long.MAX_VALUE);
                     Assert.fail();
                 } catch (CairoException e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "failed to consistently"));
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
                 // make sure index fails until sequence is not up to date
@@ -503,7 +503,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                     Assert.fail();
                 } catch (CairoException e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "failed to consistently"));
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
                 mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);

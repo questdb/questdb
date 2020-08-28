@@ -38,40 +38,6 @@ import org.junit.Test;
 
 public class SqlParserTest extends AbstractGriffinTest {
 
-    private static void assertSyntaxError(
-            SqlCompiler compiler,
-            String query,
-            int position,
-            String contains,
-            TableModel... tableModels
-    ) throws Exception {
-        try {
-            assertMemoryLeak(() -> {
-                try {
-                    for (int i = 0, n = tableModels.length; i < n; i++) {
-                        CairoTestUtils.create(tableModels[i]);
-                    }
-                    compiler.compile(query, sqlExecutionContext);
-                    Assert.fail("Exception expected");
-                } catch (SqlException e) {
-                    Assert.assertEquals(position, e.getPosition());
-                    TestUtils.assertContains(e.getMessage(), contains);
-                }
-            });
-        } finally {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                tableModel.close();
-            }
-        }
-    }
-
-    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
-        assertSyntaxError(compiler, query, position, contains, tableModels);
-    }
-
     @Test
     public void testAliasWithSpace() throws Exception {
         assertQuery("select-choose x from (select [x] from x 'b a' where x > 1)",
@@ -105,58 +71,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (select [a, b, c] from xyz)",
                 "select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz",
                 modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .col("x", ColumnType.INT)
-                        .col("y", ColumnType.INT)
-                        .col("z", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testSelectNoFromUnion() throws SqlException {
-        assertQuery(
-                "select-group-by a, sum(b) sum from ((select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual 333 333, 1 1 from (long_sequence(1))) x)",
-                "select a, sum(b) from (select 1 a, 1 b union all select 333, 1) x"
-        );
-    }
-
-    @Test
-    public void testQueryExceptQuery() throws SqlException {
-        assertQuery(
-                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) except select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
-                "select * from x except select* from y",
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .col("x", ColumnType.INT)
-                        .col("y", ColumnType.INT)
-                        .col("z", ColumnType.INT),
-                modelOf("y")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .col("x", ColumnType.INT)
-                        .col("y", ColumnType.INT)
-                        .col("z", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testQueryIntersectQuery() throws SqlException {
-        assertQuery(
-                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) intersect select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
-                "select * from x intersect select* from y",
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .col("x", ColumnType.INT)
-                        .col("y", ColumnType.INT)
-                        .col("z", ColumnType.INT),
-                modelOf("y")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("c", ColumnType.INT)
@@ -206,6 +120,37 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("customers").col("customerId", ColumnType.SYMBOL),
                 modelOf("employees").col("employeeId", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.SYMBOL));
+    }
+
+    @Test
+    public void testAsOfJoinOuterWhereClause() throws Exception {
+        assertQuery(
+                "select-choose trade_time, quote_time, trade_price, trade_size, quote_price, quote_size from ((select-choose [trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size] trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size from (select [ts, price, size, sym] from trade asof join select [ts, price, size, sym] from book on book.sym = trade.sym post-join-where book.price != NaN)) _xQdbA1)",
+                "select * from \n" +
+                        "(\n" +
+                        "select \n" +
+                        "trade.ts as trade_time,\n" +
+                        "book.ts as quote_time,\n" +
+                        "trade.price as trade_price,\n" +
+                        "trade.size as trade_size,\n" +
+                        "book.price as quote_price,\n" +
+                        "book.size as quote_size\n" +
+                        "from\n" +
+                        "trade asof join book\n" +
+                        "where trade.sym = book.sym\n" +
+                        ")\n" +
+                        "where quote_price != NaN;",
+                modelOf("trade")
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+                        .col("size", ColumnType.LONG),
+                modelOf("book")
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("price", ColumnType.DOUBLE)
+                        .col("size", ColumnType.LONG)
+        );
     }
 
     @Test
@@ -285,37 +230,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsOfJoinOuterWhereClause() throws Exception {
-        assertQuery(
-                "select-choose trade_time, quote_time, trade_price, trade_size, quote_price, quote_size from ((select-choose [trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size] trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size from (select [ts, price, size, sym] from trade asof join select [ts, price, size, sym] from book on book.sym = trade.sym post-join-where book.price != NaN)) _xQdbA1)",
-                "select * from \n" +
-                        "(\n" +
-                        "select \n" +
-                        "trade.ts as trade_time,\n" +
-                        "book.ts as quote_time,\n" +
-                        "trade.price as trade_price,\n" +
-                        "trade.size as trade_size,\n" +
-                        "book.price as quote_price,\n" +
-                        "book.size as quote_size\n" +
-                        "from\n" +
-                        "trade asof join book\n" +
-                        "where trade.sym = book.sym\n" +
-                        ")\n" +
-                        "where quote_price != NaN;",
-                modelOf("trade")
-                        .col("ts", ColumnType.TIMESTAMP)
-                        .col("sym", ColumnType.SYMBOL)
-                        .col("price", ColumnType.DOUBLE)
-                        .col("size", ColumnType.LONG),
-                modelOf("book")
-                        .col("ts", ColumnType.TIMESTAMP)
-                        .col("sym", ColumnType.SYMBOL)
-                        .col("price", ColumnType.DOUBLE)
-                        .col("size", ColumnType.LONG)
-        );
-    }
-
-    @Test
     public void testBlockCommentNested() throws Exception {
         assertQuery("select-choose x, a from ((select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a')",
                 "(x where a > 1) /* comment /* ok */  whatever */'b a' where x > 1",
@@ -341,22 +255,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "    else 'table'\n" +
                         "    end kind from tab limit 10\n",
                 modelOf("tab").col("a", ColumnType.CHAR).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testSelectOrderByWhereOnCount() throws SqlException {
-        assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab) order by a) _xQdbA1 where c > 0)",
-                "(select a, count() c from tab order by 1) where c > 0",
-                modelOf("tab").col("a", ColumnType.SYMBOL)
-        );
-    }
-
-    @Test
-    public void testSelectWhereOnCount() throws SqlException {
-        assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab)) _xQdbA1 where c > 0)",
-                "(select a, count() c from tab) where c > 0",
-                modelOf("tab").col("a", ColumnType.SYMBOL)
         );
     }
 
@@ -1745,6 +1643,19 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testEmptyWhere() throws Exception {
+        assertFailure(
+                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where",
+                "create table tab (\n" +
+                        "    tag string,\n" +
+                        "    seq long\n" +
+                        ")  partition by NONE",
+                71,
+                "empty where clause"
+        );
+    }
+
+    @Test
     public void testEqualsConstantTransitivityLhs() throws Exception {
         assertQuery(
                 "select-choose c.customerId customerId, o.customerId customerId1 from (select [customerId] from customers c outer join (select [customerId] from orders o where customerId = 100) o on o.customerId = c.customerId where 100 = customerId)",
@@ -1818,6 +1729,108 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFailureForOrderByOnAliasedColumnNotOnSelect() throws Exception {
+        assertFailure(
+                "select y from tab order by tab.x",
+                "create table tab (\n" +
+                        "    x double,\n" +
+                        "    y int\n" +
+                        ")  partition by NONE",
+                27,
+                "Invalid column: tab.x"
+        );
+    }
+
+    @Test
+    public void testFailureForOrderByOnNonSelectedColumn() throws Exception {
+        assertFailure(
+                "select 2*y+x from tab order by x",
+                "create table tab (\n" +
+                        "    x double,\n" +
+                        "    y int\n" +
+                        ")  partition by NONE",
+                31,
+                "Invalid column: x"
+        );
+    }
+
+    @Test
+    public void testFailureForOrderByOnSelectedColumnThatHasNoAlias() throws Exception {
+        assertFailure(
+                "select 2*y+x, 3/x from tab order by x",
+                "create table tab (\n" +
+                        "    x double,\n" +
+                        "    y int\n" +
+                        ")  partition by NONE",
+                36,
+                "Invalid column: x"
+        );
+    }
+
+    @Test
+    public void testFailureOfOrderByOnMultipleColumnsWhenColumnIsMissing() throws Exception {
+        assertFailure(
+                "select y z  from tab order by z desc, x",
+                "create table tab (\n" +
+                        "    x double,\n" +
+                        "    y int\n" +
+                        ")  partition by NONE",
+                38, "Invalid column: x");
+    }
+
+    @Test
+    public void testFailureOrderByGroupByColPrefixed() throws Exception {
+        assertFailure(
+                "select a, sum(b) b from tab order by tab.b, a",
+                "create table tab (\n" +
+                        "    a int,\n" +
+                        "    b int\n" +
+                        ")  partition by NONE",
+                37,
+                "Invalid column: tab.b"
+        );
+    }
+
+    @Test
+    public void testFailureOrderByGroupByColPrefixed2() throws Exception {
+        assertFailure(
+                "select a, sum(b) b from tab order by a, tab.b",
+                "create table tab (\n" +
+                        "    a int,\n" +
+                        "    b int\n" +
+                        ")  partition by NONE",
+                40,
+                "Invalid column: tab.b"
+        );
+    }
+
+    @Test
+    public void testFailureOrderByGroupByColPrefixed3() throws Exception {
+        assertFailure(
+                "select a, sum(b) b from tab order by tab.a, tab.b",
+                "create table tab (\n" +
+                        "    a int,\n" +
+                        "    b int\n" +
+                        ")  partition by NONE",
+                44,
+                "Invalid column: tab.b"
+        );
+    }
+
+    @Test
+    public void testFailureOrderByOnOuterResultWhenOrderByColumnIsNotSelected() throws Exception {
+        assertFailure(
+                "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
+                "create table tab (\n" +
+                        "    x double,\n" +
+                        "    y int\n" +
+                        ")  partition by NONE",
+                59,
+                "Invalid column: tab.y"
+        );
+    }
+
+    @Test
     public void testFilter2() throws Exception {
         assertQuery("select-virtual customerId + 1 column, name, count from ((select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X'))) _xQdbA1)",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
@@ -1844,6 +1857,24 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 and count > 1 order by c.customerId",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testFilterPostJoin() throws SqlException {
+        assertQuery(
+                "select-choose a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag post-join-where b.seq < a.seq)",
+                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
+                modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testFilterPostJoinSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose tag, hi, lo from ((select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag post-join-where a.seq > b.seq + 1)) _xQdbA1)",
+                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where hi > lo + 1",
+                modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
         );
     }
 
@@ -2700,6 +2731,40 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinTimestampPropagation() throws SqlException {
+        assertQuery(
+                "select-choose ts_stop, id, ts_start, id1 from ((select-choose [a.created ts_stop, a.id id, b.created ts_start, b.id id1] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [created, id] from (select-choose [created, id] id, created, event, timestamp from ((select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) _xQdbA7) timestamp (created)) a lt join select [created, id] from (select-choose [created, id] id, created, event, timestamp from ((select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) _xQdbA4) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000)) _xQdbA1)",
+                "with \n" +
+                        "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
+                        "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
+                        "\n" +
+                        "(select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
+                modelOf("telemetry_users")
+                        .col("id", ColumnType.LONG256)
+                        .col("created", ColumnType.TIMESTAMP)
+                        .col("event", ColumnType.SHORT)
+                        .timestamp()
+        );
+    }
+
+    @Test
+    public void testJoinTimestampPropagationWhenTimestampNotSelected() throws SqlException {
+        assertQuery(
+                "select-distinct id from (select-choose [id] id from ((select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [id, created] from (select-choose [id] id, created, event, timestamp from ((select-choose [id, created] id, created, event, timestamp from (select [id, created, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) _xQdbA7) timestamp (created)) a lt join select [id, created] from (select-choose [id] id, created, event, timestamp from ((select-choose [id, created] id, created, event, timestamp from (select [id, created, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) _xQdbA4) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000)) _xQdbA1))",
+                "with \n" +
+                        "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
+                        "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
+                        "\n" +
+                        "select distinct id from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
+                modelOf("telemetry_users")
+                        .col("id", ColumnType.LONG256)
+                        .col("created", ColumnType.TIMESTAMP)
+                        .col("event", ColumnType.SHORT)
+                        .timestamp()
+        );
+    }
+
+    @Test
     public void testJoinTriangle() throws Exception {
         assertQuery(
                 "select-choose o.a a, o.b b, o.c c, c.c c1, c.d d, c.e e, d.b b1, d.d d1, d.quantity quantity from (select [a, b, c] from orders o join select [c, d, e] from customers c on c.c = o.c join select [b, d, quantity] from orderDetails d on d.d = c.d and d.b = o.b)",
@@ -3017,6 +3082,55 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNoopGroupBy() throws SqlException {
+        assertQuery(
+                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts) where sym in ('AA','BB'))",
+                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by sym",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testNoopGroupByAfterFrom() throws Exception {
+        assertQuery(
+                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts))",
+                "select sym, avg(bid) avgBid from x group by sym",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testNoopGroupByFailureWhenMissingColumn() throws Exception {
+        assertFailure(
+                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by ",
+                "create table x (\n" +
+                        "    sym symbol,\n" +
+                        "    bid int,\n" +
+                        "    ask int\n" +
+                        ")  partition by NONE",
+                71,
+                "literal expected"
+        );
+    }
+
+    @Test
+    public void testNotMoveWhereIntoDistinct() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-distinct [a] a from (select-choose [a] a from (select [a] from tab)) where a = 10) _xQdbA1)",
+                "(select distinct a from tab) where a = 10",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testOneAnalyticColumn() throws Exception {
         assertQuery(
                 "select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c] from xyz)",
@@ -3204,15 +3318,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByGroupByColWithAliasDifferentToColumnName() throws SqlException {
-        assertQuery(
-                "select-group-by a, max(b) x from (select [a, b] from tab) order by x",
-                "select a, max(b) x from tab order by x",
-                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
     public void testOrderByGroupByCol2() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (select [a, b] from tab) order by a",
@@ -3231,41 +3336,11 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFailureOrderByGroupByColPrefixed() throws Exception {
-        assertFailure(
-                "select a, sum(b) b from tab order by tab.b, a",
-                "create table tab (\n" +
-                        "    a int,\n" +
-                        "    b int\n" +
-                        ")  partition by NONE",
-                37,
-                "Invalid column: tab.b"
-        );
-    }
-
-    @Test
-    public void testFailureOrderByGroupByColPrefixed2() throws Exception {
-        assertFailure(
-                "select a, sum(b) b from tab order by a, tab.b",
-                "create table tab (\n" +
-                        "    a int,\n" +
-                        "    b int\n" +
-                        ")  partition by NONE",
-                40,
-                "Invalid column: tab.b"
-        );
-    }
-
-    @Test
-    public void testFailureOrderByGroupByColPrefixed3() throws Exception {
-        assertFailure(
-                "select a, sum(b) b from tab order by tab.a, tab.b",
-                "create table tab (\n" +
-                        "    a int,\n" +
-                        "    b int\n" +
-                        ")  partition by NONE",
-                44,
-                "Invalid column: tab.b"
+    public void testOrderByGroupByColWithAliasDifferentToColumnName() throws SqlException {
+        assertQuery(
+                "select-group-by a, max(b) x from (select [a, b] from tab) order by x",
+                "select a, max(b) x from tab order by x",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
     }
 
@@ -3275,19 +3350,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select-virtual to_date(timestamp) t from (select [timestamp] from blocks.csv) order by t",
                 "select to_date(timestamp) t from 'blocks.csv' order by t",
                 modelOf("blocks.csv").col("timestamp", ColumnType.TIMESTAMP)
-        );
-    }
-
-    @Test
-    public void testFailureForOrderByOnAliasedColumnNotOnSelect() throws Exception {
-        assertFailure(
-                "select y from tab order by tab.x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                27,
-                "Invalid column: tab.x"
         );
     }
 
@@ -3326,15 +3388,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
                         .col("s", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testNotMoveWhereIntoDistinct() throws SqlException {
-        assertQuery(
-                "select-choose a from ((select-distinct [a] a from (select-choose [a] a from (select [a] from tab)) where a = 10) _xQdbA1)",
-                "(select distinct a from tab) where a = 10",
-                modelOf("tab").col("a", ColumnType.INT)
         );
     }
 
@@ -3399,17 +3452,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFailureOfOrderByOnMultipleColumnsWhenColumnIsMissing() throws Exception {
-        assertFailure(
-                "select y z  from tab order by z desc, x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                38, "Invalid column: x");
-    }
-
-    @Test
     public void testOrderByOnNonSelectedColumn() throws Exception {
         assertFailure(
                 "select y from tab order by x",
@@ -3418,32 +3460,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "    y int\n" +
                         ")  partition by NONE",
                 27, "Invalid column: x");
-    }
-
-    @Test
-    public void testFailureForOrderByOnNonSelectedColumn() throws Exception {
-        assertFailure(
-                "select 2*y+x from tab order by x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                31,
-                "Invalid column: x"
-        );
-    }
-
-    @Test
-    public void testFailureForOrderByOnSelectedColumnThatHasNoAlias() throws Exception {
-        assertFailure(
-                "select 2*y+x, 3/x from tab order by x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                36,
-                "Invalid column: x"
-        );
     }
 
     @Test
@@ -3465,19 +3481,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("tab")
                         .col("x", ColumnType.DOUBLE)
                         .col("y", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testFailureOrderByOnOuterResultWhenOrderByColumnIsNotSelected() throws Exception {
-        assertFailure(
-                "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                59,
-                "Invalid column: tab.y"
         );
     }
 
@@ -3654,22 +3657,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectNoWhere() throws SqlException {
-        assertQuery(
-                "select-virtual rnd_int(1,2,0) rnd_int from (long_sequence(1))",
-                "select rnd_int(1, 2, 0)"
-        );
-    }
-
-    @Test
-    public void testSelectAliasNoWhere() throws SqlException {
-        assertQuery(
-                "select-virtual rnd_int(1,2,0) a from (long_sequence(1))",
-                "select rnd_int(1, 2, 0) a"
-        );
-    }
-
-    @Test
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
                 "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid))) order by Schema, Name",
@@ -3694,6 +3681,50 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "  AND n.nspname !~ '^pg_toast'\n" +
                         "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
                         "ORDER BY 1, 2"
+        );
+    }
+
+    @Test
+    public void testQueryExceptQuery() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) except select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select * from x except select* from y",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("y")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testQueryIntersectQuery() throws SqlException {
+        assertQuery(
+                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) intersect select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select * from x intersect select* from y",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("y")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
         );
     }
 
@@ -3968,6 +3999,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectAliasNoWhere() throws SqlException {
+        assertQuery(
+                "select-virtual rnd_int(1,2,0) a from (long_sequence(1))",
+                "select rnd_int(1, 2, 0) a"
+        );
+    }
+
+    @Test
     public void testSelectAnalyticOperator() throws Exception {
         assertSyntaxError(
                 "select sum(x), 2*x over() from tab",
@@ -4213,8 +4252,32 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectNoFromUnion() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(b) sum from ((select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual 333 333, 1 1 from (long_sequence(1))) x)",
+                "select a, sum(b) from (select 1 a, 1 b union all select 333, 1) x"
+        );
+    }
+
+    @Test
+    public void testSelectNoWhere() throws SqlException {
+        assertQuery(
+                "select-virtual rnd_int(1,2,0) rnd_int from (long_sequence(1))",
+                "select rnd_int(1, 2, 0)"
+        );
+    }
+
+    @Test
     public void testSelectOnItsOwn() throws Exception {
         assertSyntaxError("select ", 7, "column expected");
+    }
+
+    @Test
+    public void testSelectOrderByWhereOnCount() throws SqlException {
+        assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab) order by a) _xQdbA1 where c > 0)",
+                "(select a, count() c from tab order by 1) where c > 0",
+                modelOf("tab").col("a", ColumnType.SYMBOL)
+        );
     }
 
     @Test
@@ -4254,6 +4317,14 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("d", ColumnType.INT)
                         .col("tip_amount", ColumnType.DOUBLE)
                         .col("e", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWhereOnCount() throws SqlException {
+        assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab)) _xQdbA1 where c > 0)",
+                "(select a, count() c from tab) where c > 0",
+                modelOf("tab").col("a", ColumnType.SYMBOL)
         );
     }
 
@@ -4948,6 +5019,19 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWhereClauseWithInStatement() throws SqlException {
+        assertQuery(
+                "select-choose sym, bid, ask, ts from (select [sym, bid, ask, ts] from x timestamp (ts) where sym in ('AA','BB')) order by ts desc",
+                "select * from x where sym in ('AA', 'BB' ) order by ts desc",
+                modelOf("x")
+                        .col("sym", ColumnType.SYMBOL)
+                        .col("bid", ColumnType.INT)
+                        .col("ask", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWhereNotSelectedColumn() throws Exception {
         assertQuery(
                 "select-choose c.customerId customerId, c.weight weight, o.customerId customerId1, o.x x from (select [customerId, weight] from customers c outer join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10)) o on o.customerId = c.customerId where weight = 100)",
@@ -4969,6 +5053,17 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "duplicate name",
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithRecursive() throws SqlException {
+        assertQuery(
+                "select-choose a from ((select-choose [a] a from ((select-choose [a] a from (select [a] from tab)) x)) y)",
+                "with x as (select * from tab)," +
+                        " y as (select * from x)" +
+                        " select * from y",
+                modelOf("tab").col("a", ColumnType.INT)
         );
     }
 
@@ -4995,17 +5090,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWithRecursive() throws SqlException {
-        assertQuery(
-                "select-choose a from ((select-choose [a] a from ((select-choose [a] a from (select [a] from tab)) x)) y)",
-                "with x as (select * from tab)," +
-                        " y as (select * from x)" +
-                        " select * from y",
-                modelOf("tab").col("a", ColumnType.INT)
-        );
-    }
-
-    @Test
     public void testWithSubquery() throws SqlException {
         assertQuery(
                 "select-choose 1 from ((select-virtual [1 1] 1 1 from ((select-choose a from (select [a] from tab)) x cross join (select-choose a from ((select-choose [a] a from (select [a] from tab)) x)) y)) _xQdbA1)",
@@ -5013,6 +5097,19 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " y as (select * from x)" +
                         " select * from (select 1 from x cross join y)",
                 modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithSyntaxError() throws Exception {
+        assertSyntaxError(
+                "with x as (" +
+                        " select ,a from tab" +
+                        ") x",
+                19,
+                "missing expression",
+                modelOf("tab").col("a", ColumnType.INT)
+
         );
     }
 
@@ -5059,101 +5156,38 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
-    @Test
-    public void testWithSyntaxError() throws Exception {
-        assertSyntaxError(
-                "with x as (" +
-                        " select ,a from tab" +
-                        ") x",
-                19,
-                "missing expression",
-                modelOf("tab").col("a", ColumnType.INT)
-
-        );
+    private static void assertSyntaxError(
+            SqlCompiler compiler,
+            String query,
+            int position,
+            String contains,
+            TableModel... tableModels
+    ) throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                try {
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        CairoTestUtils.create(tableModels[i]);
+                    }
+                    compiler.compile(query, sqlExecutionContext);
+                    Assert.fail("Exception expected");
+                } catch (SqlException e) {
+                    Assert.assertEquals(position, e.getPosition());
+                    TestUtils.assertContains(e.getMessage(), contains);
+                }
+            });
+        } finally {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
+            }
+        }
     }
 
-    @Test
-    public void testWhereClauseWithInStatement() throws SqlException {
-        assertQuery(
-                "select-choose sym, bid, ask, ts from (select [sym, bid, ask, ts] from x timestamp (ts) where sym in ('AA','BB')) order by ts desc",
-                "select * from x where sym in ('AA', 'BB' ) order by ts desc",
-                modelOf("x")
-                        .col("sym", ColumnType.SYMBOL)
-                        .col("bid", ColumnType.INT)
-                        .col("ask", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testFilterPostJoin() throws SqlException {
-        assertQuery(
-                "select-choose a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag post-join-where b.seq < a.seq)",
-                "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
-                modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
-        );
-    }
-
-    @Test
-    public void testFilterPostJoinSubQuery() throws SqlException {
-        assertQuery(
-                "select-choose tag, hi, lo from ((select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag post-join-where a.seq > b.seq + 1)) _xQdbA1)",
-                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where hi > lo + 1",
-                modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
-        );
-    }
-
-    @Test
-    public void testEmptyWhere() throws Exception {
-        assertFailure(
-                "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where",
-                "create table tab (\n" +
-                        "    tag string,\n" +
-                        "    seq long\n" +
-                        ")  partition by NONE",
-                71,
-                "empty where clause"
-        );
-    }
-
-    @Test
-    public void testNoopGroupByAfterFrom() throws Exception {
-        assertQuery(
-                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts))",
-                "select sym, avg(bid) avgBid from x group by sym",
-                modelOf("x")
-                        .col("sym", ColumnType.SYMBOL)
-                        .col("bid", ColumnType.INT)
-                        .col("ask", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testNoopGroupBy() throws SqlException {
-        assertQuery(
-                "select-group-by sym, avg(bid) avgBid from (select [sym, bid] from x timestamp (ts) where sym in ('AA','BB'))",
-                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by sym",
-                modelOf("x")
-                        .col("sym", ColumnType.SYMBOL)
-                        .col("bid", ColumnType.INT)
-                        .col("ask", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testNoopGroupByFailureWhenMissingColumn() throws Exception {
-        assertFailure(
-                "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by ",
-                "create table x (\n" +
-                        "    sym symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")  partition by NONE",
-                71,
-                "literal expected"
-        );
+    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
+        assertSyntaxError(compiler, query, position, contains, tableModels);
     }
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {

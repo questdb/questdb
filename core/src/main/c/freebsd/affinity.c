@@ -37,10 +37,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
     cpuset_t set;
     CPU_ZERO(&set);
     CPU_SET(cpu, &set);
-    int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpuset_t), &set);
-    if (rc != 0) {
-     fprintf(stderr, "Failed to set affinity to cpu %d, got errno %d: %s", cpu, errno, strerror(errno));
-    }
-    return rc;
+    return pthread_setaffinity_np(pthread_self(), sizeof(cpuset_t), &set);;
 }
 

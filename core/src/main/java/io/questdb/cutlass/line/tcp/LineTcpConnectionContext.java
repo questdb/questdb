@@ -105,7 +105,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     if (event.isComplete()) {
                         complete = true;
                     } else {
-                        LOG.error().$('[').$(fd).$("] failed to parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
+                        LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
                                 .$(byteCharSequence.of(recvBufLineStart, recvBufLineNext - 1)).$();
                     }
                     recvBufLineStart = recvBufLineNext;
@@ -143,7 +143,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             dispatcher.registerChannel(this, IOOperation.READ);
             return false;
         } catch (RuntimeException ex) {
-            LOG.error().$('[').$(fd).$("] Failed to process line data").$(ex).$();
+            LOG.error().$('[').$(fd).$("] could not process line data").$(ex).$();
             dispatcher.disconnect(this);
             return false;
         }
