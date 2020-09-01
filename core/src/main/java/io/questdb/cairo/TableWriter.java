@@ -263,37 +263,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
-        if (ff.exists(name)) {
-            if (ff.remove(name)) {
-                LOG.info().$("removed: ").$(name).$();
-            } else {
-                LOG.error().$("cannot remove: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
-            }
-        }
-    }
-
-    private static void renameFileOrLog(FilesFacade ff, LPSZ name, LPSZ to) {
-        if (ff.exists(name)) {
-            if (ff.rename(name, to)) {
-                LOG.info().$("renamed: ").$(name).$();
-            } else {
-                LOG.error().$("cannot rename: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
-            }
-        }
-    }
-
-    static void indexAndCountDown(ColumnIndexer indexer, long lo, long hi, SOCountDownLatch latch) {
-        try {
-            indexer.refreshSourceAndIndex(lo, hi);
-        } catch (CairoException e) {
-            indexer.distress();
-            LOG.error().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
-        } finally {
-            latch.countDown();
-        }
-    }
-
     public void addColumn(CharSequence name, int type) {
         addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
     }
@@ -1014,6 +983,37 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
+        if (ff.exists(name)) {
+            if (ff.remove(name)) {
+                LOG.info().$("removed: ").$(name).$();
+            } else {
+                LOG.error().$("cannot remove: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
+            }
+        }
+    }
+
+    private static void renameFileOrLog(FilesFacade ff, LPSZ name, LPSZ to) {
+        if (ff.exists(name)) {
+            if (ff.rename(name, to)) {
+                LOG.info().$("renamed: ").$(name).$();
+            } else {
+                LOG.error().$("cannot rename: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
+            }
+        }
+    }
+
+    static void indexAndCountDown(ColumnIndexer indexer, long lo, long hi, SOCountDownLatch latch) {
+        try {
+            indexer.refreshSourceAndIndex(lo, hi);
+        } catch (CairoException e) {
+            indexer.distress();
+            LOG.error().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
+        } finally {
+            latch.countDown();
+        }
+    }
+
     private static void removeOrException(FilesFacade ff, LPSZ path) {
         if (ff.exists(path) && !ff.remove(path)) {
             throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
@@ -1113,6 +1113,61 @@ public class TableWriter implements Closeable {
             }
         }
         return low;
+    }
+
+    private static int msGetOffsetDataFd(int columnIndex) {
+        return columnIndex * 16;
+    }
+
+    private static int msGetOffsetDataPtr(int columnIndex) {
+        return columnIndex * 16 + 1;
+    }
+
+    private static int msGetOffsetTargetFd(int columnIndex) {
+        return columnIndex * 16 + 8;
+    }
+
+    private static int msGetOffsetTargetPtr(int columnIndex) {
+        return columnIndex * 16 + 4;
+    }
+
+    private static int msGetOffsetDestOffet(int columnIndex) {
+        return columnIndex * 16 + 6;
+    }
+
+    private static long mapReadOnlyOrFail(FilesFacade ff, Path path, long fd, long size) {
+        long dataAddr = ff.mmap(fd, size + Integer.BYTES, 0, Files.MAP_RO);
+        if (dataAddr == -1) {
+            throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(size + Integer.BYTES);
+        }
+        return dataAddr;
+    }
+
+    private static long mapReadWriteOrFail(FilesFacade ff, Path path, long fd, long size) {
+        long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
+        if (addr != -1) {
+            return addr;
+        }
+        throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
+    }
+
+    private static void truncateToSizeOrFail(FilesFacade ff, Path path, long mergeFd, long mergeSize) {
+        if (!ff.truncate(mergeFd, mergeSize)) {
+            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(mergeSize).put(']');
+        }
+    }
+
+    private static long openReadWriteOrFail(FilesFacade ff, Path path) {
+        final long fd = ff.openRW(path);
+        if (fd != -1) {
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
+    }
+
+    private static void copyColumnData(long src, long[] mergeStruct, int columnDataOffset, long lo, long len) {
+        Unsafe.getUnsafe().copyMemory(src + lo, mergeStruct[columnDataOffset + 4] + mergeStruct[columnDataOffset + 6], len);
+        mergeStruct[columnDataOffset + 6] += len;
     }
 
     private int addColumnToMeta(
@@ -1450,6 +1505,20 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void copyFixedSizeColumnData(
+            long src,
+            long[] mergeStruct,
+            int columnIndex,
+            long srcLo,
+            long srcHi,
+            int columnType
+    ) {
+        final int shl = ColumnType.pow2SizeOf(columnType);
+        final long lo = srcLo << shl;
+        final long hi = (srcHi + 1) << shl;
+        copyColumnData(src, mergeStruct, columnIndex, lo, hi - lo);
+    }
+
     private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -1513,6 +1582,86 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
+        for (int i = 0; i < columnCount; i++) {
+            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem2;
+            final int columnType = metadata.getColumnType(i);
+
+            long lo;
+            long hi;
+            switch (columnType) {
+                // todo: review removing case statement
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    // we can find out the edge of string column in one of two ways
+                    // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
+                    // 2  if there are more items behind indexHi we can get offset of indexHi+1
+                    mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                    lo = mem2.getLong(indexLo * Long.BYTES);
+                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
+                        hi = mem.getAppendOffset();
+                    } else {
+                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
+                    }
+                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
+                    copyFixedSizeColumnData(mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
+                    break;
+                default:
+                    copyFixedSizeColumnData(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, columnType);
+                    break;
+            }
+        }
+    }
+
+    private void copyPartitionData(long indexLo, long indexHi, long[] mergeStruct) {
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            long lo;
+            long hi;
+            switch (columnType) {
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    lo = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + indexLo * Long.BYTES);
+                    if (indexHi + 1 == mergeStruct[i * 16 + 2] / Long.BYTES) {
+                        hi = mergeStruct[i * 16 + 8 + 2];
+                    } else {
+                        hi = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + (indexHi + 1) * Long.BYTES);
+                    }
+                    copyColumnData(mergeStruct[i * 16 + 8 + 1], mergeStruct, i * 16 + 8, lo, hi - lo);
+                    copyFixedSizeColumnData(mergeStruct[i * 16 + 1], mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
+                    break;
+                default:
+                    copyFixedSizeColumnData(mergeStruct[i * 16 + 1], mergeStruct, i * 16, indexLo, indexHi, columnType);
+                    break;
+            }
+        }
+    }
+
+    private void copyTempPartitionBack(long[] mergeStruct) {
+        for (int i = 0; i < columnCount; i++) {
+            copyTempPartitionColumnBack(mergeStruct, msGetOffsetDataFd(i));
+            copyTempPartitionColumnBack(mergeStruct, msGetOffsetTargetFd(i));
+        }
+    }
+
+    private void copyTempPartitionColumnBack(long[] mergeStruct, int offset) {
+        long dstFd = mergeStruct[offset];
+        if (dstFd != 0) {
+            long dstMem = mergeStruct[offset + 1];
+            long dstLen = mergeStruct[offset + 2];
+
+            long srcMem = mergeStruct[offset + 4];
+            long srcLen = mergeStruct[offset + 5];
+
+            ff.munmap(dstMem, dstLen);
+            dstMem = mapReadWriteOrFail(ff, null, Math.abs(dstFd), srcLen);
+            mergeStruct[offset + 1] = dstMem;
+            mergeStruct[offset + 2] = srcLen;
+            Unsafe.getUnsafe().copyMemory(srcMem, dstMem, srcLen);
+        }
+    }
+
     /**
      * Creates bitmap index files for a column. This method uses primary column instance as temporary tool to
      * append index data. Therefore it must be called before primary column is initialized.
@@ -1560,6 +1709,173 @@ public class TableWriter implements Closeable {
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
+    private long[] createTempPartition(Path path, long indexLo, long indexHi, long dataIndexMax, int destIndex, boolean reuseFds) {
+        final int PAD = 16;
+        long[] mergeStruct = new long[columnCount * PAD];
+
+        int plen = path.length();
+        for (int i = 0; i < columnCount; i++) {
+            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem2;
+            final int columnType = metadata.getColumnType(i);
+
+            long lo;
+            long hi;
+            try {
+                switch (columnType) {
+                    case ColumnType.STRING:
+                        int shl = ColumnType.pow2SizeOf(ColumnType.LONG);
+
+                        long dataSize;
+                        if (dataIndexMax > 0) {
+                            // index files are opened as normal
+                            iFile(path, metadata.getColumnName(i));
+
+                            long indexFd = reuseFds ? -columns.getQuick(getSecondaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
+                            mergeStruct[i * PAD] = indexFd;
+
+                            long indexSize = dataIndexMax << shl;
+                            long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
+
+                            mergeStruct[i * PAD + 1] = indexAddr;
+                            mergeStruct[i * PAD + 2] = indexSize;
+
+                            // open data file now
+
+                            path.trimTo(plen);
+                            dFile(path, metadata.getColumnName(i));
+                            long dataFd = reuseFds ? -columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
+                            mergeStruct[i * PAD + 8] = dataFd;
+                            dataSize = Unsafe.getUnsafe().getLong(indexAddr + indexSize - Long.BYTES);
+                            long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
+
+                            int len = Unsafe.getUnsafe().getInt(dataAddr + dataSize) * Character.BYTES;
+                            ff.munmap(dataAddr, dataSize + Integer.BYTES);
+                            dataSize += len;
+                            dataAddr = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
+                            mergeStruct[i * PAD + 8 + 1] = dataAddr;
+                            mergeStruct[i * PAD + 8 + 2] = dataSize;
+                        } else {
+                            dataSize = 0;
+                        }
+
+                        path.trimTo(plen);
+                        if (destIndex > 0) {
+                            path.put('.').put(destIndex);
+                        }
+                        iFile(path, metadata.getColumnName(i));
+
+                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+                        }
+
+                        final long indexMergeFd = openReadWriteOrFail(ff, path);
+
+                        mergeStruct[i * PAD + 3] = indexMergeFd;
+
+                        long indexMergeSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
+
+                        truncateToSizeOrFail(ff, path, indexMergeFd, indexMergeSize);
+                        long indexMergeAddr = mapReadWriteOrFail(ff, path, indexMergeFd, indexMergeSize);
+
+                        mergeStruct[i * PAD + 4] = indexMergeAddr;
+                        mergeStruct[i * PAD + 5] = indexMergeSize;
+                        mergeStruct[i * PAD + 6] = 0L; // offset of what's been written so far
+
+
+                        path.trimTo(plen);
+                        if (destIndex > 0) {
+                            path.put('.').put(destIndex);
+                        }
+                        dFile(path, metadata.getColumnName(i));
+
+                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+                        }
+
+                        final long dataMergeFd = openReadWriteOrFail(ff, path);
+
+                        mergeStruct[i * PAD + 8 + 3] = indexMergeFd;
+
+                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        lo = mem2.getLong(indexLo * Long.BYTES);
+                        hi = mem2.getLong(indexHi * Long.BYTES);
+                        hi += mem.getInt(hi) * Character.BYTES + Integer.BYTES;
+
+                        dataSize += (hi - lo);
+
+                        truncateToSizeOrFail(ff, path, dataMergeFd, dataSize);
+                        long dataMergeAddr = mapReadWriteOrFail(ff, path, dataMergeFd, dataSize);
+
+                        mergeStruct[i * PAD + 8 + 4] = dataMergeAddr;
+                        mergeStruct[i * PAD + 8 + 5] = dataSize;
+                        mergeStruct[i * PAD + 8 + 6] = 0L; // offset of what's been written so far
+
+                        break;
+                    case ColumnType.BINARY:
+                        // todo: do the same for binary as we have for STRING
+                        //     we may need to refactor a little bit to avoid extreme duplication
+/*
+                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        lo = mem2.getLong(indexLo * Long.BYTES);
+                        hi = mem2.getLong(indexHi * Long.BYTES);
+                        hi += mem.getLong(hi) + Long.BYTES;
+
+                        dFile(path, metadata.getColumnName(i));
+                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
+
+                        path.trimTo(plen);
+                        iFile(path, metadata.getColumnName(i));
+                        copyOOO(mem2, indexLo, indexHi, path, ColumnType.LONG);
+*/
+                        break;
+
+                    default:
+
+                        shl = ColumnType.pow2SizeOf(columnType);
+
+                        if (dataIndexMax > 0) {
+                            dFile(path, metadata.getColumnName(i));
+                            dataSize = dataIndexMax << shl;
+                            long dataFd = reuseFds ? columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
+                            mergeStruct[i * PAD] = dataFd;
+                            mergeStruct[i * PAD + 1] = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
+                            mergeStruct[i * PAD + 2] = dataSize;
+                        }
+
+                        path.trimTo(plen);
+                        if (destIndex > 0) {
+                            path.put('.').put(destIndex);
+                        }
+                        dFile(path, metadata.getColumnName(i));
+
+                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+                        }
+
+                        final long mergeFd = openReadWriteOrFail(ff, path);
+
+                        mergeStruct[i * PAD + 3] = mergeFd;
+
+                        long mergeSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
+
+                        truncateToSizeOrFail(ff, path, mergeFd, mergeSize);
+
+                        long addr = mapReadWriteOrFail(ff, path, mergeFd, mergeSize);
+
+                        mergeStruct[i * PAD + 4] = addr;
+                        mergeStruct[i * PAD + 5] = mergeSize;
+                        mergeStruct[i * PAD + 6] = 0L; // offset of what's been written so far
+
+                        break;
+                }
+            } finally {
+                path.trimTo(plen);
+            }
+        }
+        return mergeStruct;
+    }
+
     private void doClose(boolean truncate) {
         boolean tx = inTransaction();
         freeColumns(truncate);
@@ -1602,6 +1918,29 @@ public class TableWriter implements Closeable {
             }
             indexers.clear();
             denseIndexers.clear();
+        }
+    }
+
+    private void freeMergeStruct(long[] mergeStruct) {
+        for (int i = 0; i < columnCount; i++) {
+            freeMergeStructArtefact(mergeStruct, i * 16);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 3);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 8);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 8 + 3);
+        }
+    }
+
+    private void freeMergeStructArtefact(long[] mergeStruct, int offset) {
+        long fd = mergeStruct[offset];
+        long mem = mergeStruct[offset + 1];
+        long memSize = mergeStruct[offset + 2];
+
+        if (mem != 0 && memSize != 0) {
+            ff.munmap(mem, memSize);
+        }
+
+        if (fd > 0) {
+            ff.close(fd);
         }
     }
 
@@ -1790,173 +2129,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private long[] createTempPartition(Path path, long indexLo, long indexHi, long dataIndexMax, int destIndex, boolean reuseFds) {
-        final int PAD = 16;
-        long[] mergeStruct = new long[columnCount * PAD];
-
-        int plen = path.length();
-        for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
-            ContiguousVirtualMemory mem2;
-            final int columnType = metadata.getColumnType(i);
-
-            long lo;
-            long hi;
-            try {
-                switch (columnType) {
-                    case ColumnType.STRING:
-                        int shl = ColumnType.pow2SizeOf(ColumnType.LONG);
-
-                        long dataSize;
-                        if (dataIndexMax > 0) {
-                            // index files are opened as normal
-                            iFile(path, metadata.getColumnName(i));
-
-                            long indexFd = reuseFds ? -columns.getQuick(getSecondaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
-                            mergeStruct[i * PAD] = indexFd;
-
-                            long indexSize = dataIndexMax << shl;
-                            long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
-
-                            mergeStruct[i * PAD + 1] = indexAddr;
-                            mergeStruct[i * PAD + 2] = indexSize;
-
-                            // open data file now
-
-                            path.trimTo(plen);
-                            dFile(path, metadata.getColumnName(i));
-                            long dataFd = reuseFds ? -columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
-                            mergeStruct[i * PAD + 8] = dataFd;
-                            dataSize = Unsafe.getUnsafe().getLong(indexAddr + indexSize - Long.BYTES);
-                            long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
-
-                            int len = Unsafe.getUnsafe().getInt(dataAddr + dataSize) * Character.BYTES;
-                            ff.munmap(dataAddr, dataSize + Integer.BYTES);
-                            dataSize += len;
-                            dataAddr = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
-                            mergeStruct[i * PAD + 8 + 1] = dataAddr;
-                            mergeStruct[i * PAD + 8 + 2] = dataSize;
-                        } else {
-                            dataSize = 0;
-                        }
-
-                        path.trimTo(plen);
-                        if (destIndex > 0) {
-                            path.put('.').put(destIndex);
-                        }
-                        iFile(path, metadata.getColumnName(i));
-
-                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-                        }
-
-                        final long indexMergeFd = openReadWriteOrFail(ff, path);
-
-                        mergeStruct[i * PAD + 3] = indexMergeFd;
-
-                        long indexMergeSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
-
-                        truncateToSizeOrFail(ff, path, indexMergeFd, indexMergeSize);
-                        long indexMergeAddr = mapReadWriteOrFail(ff, path, indexMergeFd, indexMergeSize);
-
-                        mergeStruct[i * PAD + 4] = indexMergeAddr;
-                        mergeStruct[i * PAD + 5] = indexMergeSize;
-                        mergeStruct[i * PAD + 6] = 0L; // offset of what's been written so far
-
-
-                        path.trimTo(plen);
-                        if (destIndex > 0) {
-                            path.put('.').put(destIndex);
-                        }
-                        dFile(path, metadata.getColumnName(i));
-
-                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-                        }
-
-                        final long dataMergeFd = openReadWriteOrFail(ff, path);
-
-                        mergeStruct[i * PAD + 8 + 3] = indexMergeFd;
-
-                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                        lo = mem2.getLong(indexLo * Long.BYTES);
-                        hi = mem2.getLong(indexHi * Long.BYTES);
-                        hi += mem.getInt(hi) * Character.BYTES + Integer.BYTES;
-
-                        dataSize += (hi - lo);
-
-                        truncateToSizeOrFail(ff, path, dataMergeFd, dataSize);
-                        long dataMergeAddr = mapReadWriteOrFail(ff, path, dataMergeFd, dataSize);
-
-                        mergeStruct[i * PAD + 8 + 4] = dataMergeAddr;
-                        mergeStruct[i * PAD + 8 + 5] = dataSize;
-                        mergeStruct[i * PAD + 8 + 6] = 0L; // offset of what's been written so far
-
-                        break;
-                    case ColumnType.BINARY:
-                        // todo: do the same for binary as we have for STRING
-                        //     we may need to refactor a little bit to avoid extreme duplication
-/*
-                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                        lo = mem2.getLong(indexLo * Long.BYTES);
-                        hi = mem2.getLong(indexHi * Long.BYTES);
-                        hi += mem.getLong(hi) + Long.BYTES;
-
-                        dFile(path, metadata.getColumnName(i));
-                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
-
-                        path.trimTo(plen);
-                        iFile(path, metadata.getColumnName(i));
-                        copyOOO(mem2, indexLo, indexHi, path, ColumnType.LONG);
-*/
-                        break;
-
-                    default:
-
-                        shl = ColumnType.pow2SizeOf(columnType);
-
-                        if (dataIndexMax > 0) {
-                            dFile(path, metadata.getColumnName(i));
-                            dataSize = dataIndexMax << shl;
-                            long dataFd = reuseFds ? columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
-                            mergeStruct[i * PAD] = dataFd;
-                            mergeStruct[i * PAD + 1] = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
-                            mergeStruct[i * PAD + 2] = dataSize;
-                        }
-
-                        path.trimTo(plen);
-                        if (destIndex > 0) {
-                            path.put('.').put(destIndex);
-                        }
-                        dFile(path, metadata.getColumnName(i));
-
-                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-                        }
-
-                        final long mergeFd = openReadWriteOrFail(ff, path);
-
-                        mergeStruct[i * PAD + 3] = mergeFd;
-
-                        long mergeSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
-
-                        truncateToSizeOrFail(ff, path, mergeFd, mergeSize);
-
-                        long addr = mapReadWriteOrFail(ff, path, mergeFd, mergeSize);
-
-                        mergeStruct[i * PAD + 4] = addr;
-                        mergeStruct[i * PAD + 5] = mergeSize;
-                        mergeStruct[i * PAD + 6] = 0L; // offset of what's been written so far
-
-                        break;
-                }
-            } finally {
-                path.trimTo(plen);
-            }
-        }
-        return mergeStruct;
-    }
-
     private void mergeCopyInt(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
         long dst = mergeStruct[msGetOffsetTargetPtr(i)] + mergeStruct[i * 16 + 6];
         long src1 = mergeStruct[msGetOffsetDataPtr(i)];
@@ -1989,67 +2161,38 @@ public class TableWriter implements Closeable {
         mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Long.BYTES;
     }
 
-    private static int msGetOffsetDataFd(int columnIndex) {
-        return columnIndex * 16;
-    }
+    private void mergeCopyVarLen(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
+        // destination of variable length data
+        long dstVarOffset = mergeStruct[i * 16 + 8 + 6];
+        long dstVar = mergeStruct[i * 16 + 8 + 4];
+        long dstFix = mergeStruct[i * 16 + 4] + mergeStruct[i * 16 + 6];
 
-    private static int msGetOffsetDataPtr(int columnIndex) {
-        return columnIndex * 16 + 1;
-    }
+        // fixed length column
+        long srcFix1 = mergeStruct[i * 16 + 1];
+        long srcFix2 = mergeColumns.getQuick(getSecondaryColumnIndex(i)).addressOf(0);
 
-    private static int msGetOffsetTargetFd(int columnIndex) {
-        return columnIndex * 16 + 8;
-    }
+        long srcVar1 = mergeStruct[i * 16 + 8 + 1];
+        long srcVar2 = mergeColumns.getQuick(getPrimaryColumnIndex(i)).addressOf(0);
 
-    private static int msGetOffsetTargetPtr(int columnIndex) {
-        return columnIndex * 16 + 4;
-    }
+        // reverse order
+        // todo: cache?
+        long[] srcFix = new long[]{srcFix2, srcFix1};
+        long[] srcVar = new long[]{srcVar2, srcVar1};
 
-    private void copyTempPartitionBack(long[] mergeStruct) {
-        for (int i = 0; i < columnCount; i++) {
-            copyTempPartitionColumnBack(mergeStruct, msGetOffsetDataFd(i));
-            copyTempPartitionColumnBack(mergeStruct, msGetOffsetTargetFd(i));
+        for (long l = 0; l < dataOOMergeIndexLen; l++) {
+            final long row = Unsafe.getUnsafe().getLong(dataOOMergeIndex + (l * 16) + Long.BYTES);
+            final int bit = (int) (row >>> 63);
+            final long rr = row & ~(1L << 63);
+
+            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
+            long addr = srcVar[bit] + offset;
+            int len = Unsafe.getUnsafe().getInt(addr) * Character.BYTES + Integer.BYTES;
+            Unsafe.getUnsafe().copyMemory(addr, dstVar, len);
+            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, dstVarOffset);
+            dstVarOffset += len;
         }
-    }
-
-    private void copyTempPartitionColumnBack(long[] mergeStruct, int offset) {
-        long dstFd = mergeStruct[offset];
-        if (dstFd != 0) {
-            long dstMem = mergeStruct[offset + 1];
-            long dstLen = mergeStruct[offset + 2];
-
-            long srcMem = mergeStruct[offset + 4];
-            long srcLen = mergeStruct[offset + 5];
-
-            ff.munmap(dstMem, dstLen);
-            dstMem = mapReadWriteOrFail(ff, null, Math.abs(dstFd), srcLen);
-            mergeStruct[offset + 1] = dstMem;
-            mergeStruct[offset + 2] = srcLen;
-            Unsafe.getUnsafe().copyMemory(srcMem, dstMem, srcLen);
-        }
-    }
-
-    private void freeMergeStruct(long[] mergeStruct) {
-        for (int i = 0; i < columnCount; i++) {
-            freeMergeStructArtefact(mergeStruct, i * 16);
-            freeMergeStructArtefact(mergeStruct, i * 16 + 3);
-            freeMergeStructArtefact(mergeStruct, i * 16 + 8);
-            freeMergeStructArtefact(mergeStruct, i * 16 + 8 + 3);
-        }
-    }
-
-    private void freeMergeStructArtefact(long[] mergeStruct, int offset) {
-        long fd = mergeStruct[offset];
-        long mem = mergeStruct[offset + 1];
-        long memSize = mergeStruct[offset + 2];
-
-        if (mem != 0 && memSize != 0) {
-            ff.munmap(mem, memSize);
-        }
-
-        if (fd > 0) {
-            ff.close(fd);
-        }
+        mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Integer.BYTES;
+        mergeStruct[i * 16 + 8 + 6] = dstVarOffset;
     }
 
     private void mergeOutOfOrderRecords() {
@@ -2391,6 +2534,7 @@ public class TableWriter implements Closeable {
                                     switch (metadata.getColumnType(i)) {
                                         case ColumnType.STRING:
                                         case ColumnType.BINARY:
+                                            mergeCopyVarLen(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
                                             break;
                                         case ColumnType.INT:
                                         case ColumnType.FLOAT:
@@ -2446,112 +2590,6 @@ public class TableWriter implements Closeable {
             path.trimTo(rootLen);
             this.mergeRowCount = 0;
         }
-    }
-
-    private static long mapReadOnlyOrFail(FilesFacade ff, Path path, long fd, long size) {
-        long dataAddr = ff.mmap(fd, size + Integer.BYTES, 0, Files.MAP_RO);
-        if (dataAddr == -1) {
-            throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(size + Integer.BYTES);
-        }
-        return dataAddr;
-    }
-
-    private static long mapReadWriteOrFail(FilesFacade ff, Path path, long fd, long size) {
-        long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
-        if (addr != -1) {
-            return addr;
-        }
-        throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
-    }
-
-    private static void truncateToSizeOrFail(FilesFacade ff, Path path, long mergeFd, long mergeSize) {
-        if (!ff.truncate(mergeFd, mergeSize)) {
-            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(mergeSize).put(']');
-        }
-    }
-
-    private static long openReadWriteOrFail(FilesFacade ff, Path path) {
-        final long fd = ff.openRW(path);
-        if (fd != -1) {
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
-    }
-
-    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
-        for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
-            ContiguousVirtualMemory mem2;
-            final int columnType = metadata.getColumnType(i);
-
-            long lo;
-            long hi;
-            switch (columnType) {
-                // todo: review removing case statement
-                case ColumnType.STRING:
-                case ColumnType.BINARY:
-                    // we can find out the edge of string column in one of two ways
-                    // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
-                    // 2  if there are more items behind indexHi we can get offset of indexHi+1
-                    mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                    lo = mem2.getLong(indexLo * Long.BYTES);
-                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
-                        hi = mem.getAppendOffset();
-                    } else {
-                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
-                    }
-                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
-                    copyFixedSizeColumnData(mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
-                    break;
-                default:
-                    copyFixedSizeColumnData(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, columnType);
-                    break;
-            }
-        }
-    }
-
-    private void copyPartitionData(long indexLo, long indexHi, long[] mergeStruct) {
-        for (int i = 0; i < columnCount; i++) {
-            final int columnType = metadata.getColumnType(i);
-            long lo;
-            long hi;
-            switch (columnType) {
-                case ColumnType.STRING:
-                case ColumnType.BINARY:
-                    lo = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + indexLo * Long.BYTES);
-                    if (indexHi + 1 == mergeStruct[i * 16 + 2] / Long.BYTES) {
-                        hi = mergeStruct[i * 16 + 8 + 2];
-                    } else {
-                        hi = Unsafe.getUnsafe().getLong(mergeStruct[i * 16 + 1] + (indexHi + 1) * Long.BYTES);
-                    }
-                    copyColumnData(mergeStruct[i * 16 + 8 + 1], mergeStruct, i * 16 + 8, lo, hi - lo);
-                    copyFixedSizeColumnData(mergeStruct[i * 16 + 1], mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
-                    break;
-                default:
-                    copyFixedSizeColumnData(mergeStruct[i * 16 + 1], mergeStruct, i * 16, indexLo, indexHi, columnType);
-                    break;
-            }
-        }
-    }
-
-
-    private void copyFixedSizeColumnData(
-            long src,
-            long[] mergeStruct,
-            int columnIndex,
-            long srcLo,
-            long srcHi,
-            int columnType
-    ) {
-        final int shl = ColumnType.pow2SizeOf(columnType);
-        final long lo = srcLo << shl;
-        final long hi = (srcHi + 1) << shl;
-        copyColumnData(src, mergeStruct, columnIndex, lo, hi - lo);
-    }
-
-    private static void copyColumnData(long src, long[] mergeStruct, int columnIndex, long lo, long len) {
-        Unsafe.getUnsafe().copyMemory(src + lo, mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6], len);
-        mergeStruct[columnIndex + 6] += len;
     }
 
     private void mergeTimestampSetter(long timestamp) {
@@ -2865,37 +2903,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int renameColumnFromMeta(int index, CharSequence newName) {
-        try {
-            int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, fileOperationRetryCount);
-            int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(partitionBy);
-            ddlMem.putInt(timestampIndex);
-            ddlMem.putInt(ColumnType.VERSION);
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
-                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
-
-                if (i == index) {
-                    columnName = newName;
-                }
-                ddlMem.putStr(columnName);
-            }
-
-            return metaSwapIndex;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
     private void removeIndexFiles(CharSequence columnName) {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
@@ -3073,6 +3080,37 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);
+        }
+    }
+
+    private int renameColumnFromMeta(int index, CharSequence newName) {
+        try {
+            int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, fileOperationRetryCount);
+            int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+            ddlMem.putInt(columnCount);
+            ddlMem.putInt(partitionBy);
+            ddlMem.putInt(timestampIndex);
+            ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+
+            for (int i = 0; i < columnCount; i++) {
+                writeColumnEntry(i);
+            }
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
+
+                if (i == index) {
+                    columnName = newName;
+                }
+                ddlMem.putStr(columnName);
+            }
+
+            return metaSwapIndex;
+        } finally {
+            ddlMem.close();
         }
     }
 
