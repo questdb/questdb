@@ -124,7 +124,7 @@ public class CairoLineProtoParserSupport {
         try {
             row.putTimestamp(index, Numbers.parseLong(value, 0, value.length() - 1));
         } catch (NumericException e) {
-            LOG.error().$("not an INT: ").$(value).$();
+            LOG.error().$("not a LONG: ").$(value).$();
             throw BadCastException.INSTANCE;
         }
     }

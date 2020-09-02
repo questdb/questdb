@@ -2417,6 +2417,38 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertTimestampAsStr() throws Exception {
+        final String expected = "ts\n" +
+                "2020-01-10T15:00:01.000143Z\n" +
+                "2020-01-10T18:00:01.800000Z\n";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xy (ts timestamp)", sqlExecutionContext);
+            // execute insert with micros
+            executeInsert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
+
+            // execute insert with millis
+            executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
+
+            // test bad format
+            try {
+                executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not convert to timestamp");
+            }
+
+            try (RecordCursorFactory factory = compiler.compile("xy", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertAsSelectColumnList() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +

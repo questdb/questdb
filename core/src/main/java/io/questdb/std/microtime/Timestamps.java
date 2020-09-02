@@ -605,7 +605,7 @@ final public class Timestamps {
                         state = STATE_END;
                         break OUT;
                     default:
-                        throw new IllegalStateException("Unexpected state");
+                        throw NumericException.INSTANCE;
                 }
             }
         } catch (NumericException e) {

@@ -45,7 +45,6 @@ import io.questdb.std.time.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -578,6 +577,71 @@ public class IODispatcherTest {
 
     @Test
     public void testImportBadJson() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "1e\r\n" +
+                        "{\"status\":\"Unexpected symbol\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"timestamp,\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "timestamp,bid\r\n" +
+                        "27/05/2018 00:00:01,100\r\n" +
+                        "27/05/2018 00:00:02,101\r\n" +
+                        "27/05/2018 00:00:03,102\r\n" +
+                        "27/05/2018 00:00:04,103\r\n" +
+                        "27/05/2018 00:00:05,104\r\n" +
+                        "27/05/2018 00:00:06,105\r\n" +
+                        "27/05/2018 00:00:07,106\r\n" +
+                        "27/05/2018 00:00:08,107\r\n" +
+                        "27/05/2018 00:00:09,108\r\n" +
+                        "27/05/2018 00:00:10,109\r\n" +
+                        "27/05/2018 00:00:11,110\r\n" +
+                        "27/05/2018 00:00:12,111\r\n" +
+                        "27/05/2018 00:00:13,112\r\n" +
+                        "27/05/2018 00:00:14,113\r\n" +
+                        "27/05/2018 00:00:15,114\r\n" +
+                        "27/05/2018 00:00:16,115\r\n" +
+                        "27/05/2018 00:00:17,116\r\n" +
+                        "27/05/2018 00:00:18,117\r\n" +
+                        "27/05/2018 00:00:19,118\r\n" +
+                        "27/05/2018 00:00:20,119\r\n" +
+                        "27/05/2018 00:00:21,120\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
+    @Test
+    public void testImportGetRequest() throws Exception {
         testImport(
                 "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
@@ -4931,83 +4995,6 @@ public class IODispatcherTest {
                 serverHaltLatch.await();
             }
             Assert.assertEquals(N * senderCount, requestsReceived.get());
-        });
-    }
-
-    @Test
-    @Ignore
-    public void testUpload() throws Exception {
-        assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
-//            final String baseDir = "/home/vlad/dev/123";
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
-            ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(engine);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
-
-
-                workerPool.start(LOG);
-
-                Thread.sleep(2000000);
-            }
         });
     }
 
