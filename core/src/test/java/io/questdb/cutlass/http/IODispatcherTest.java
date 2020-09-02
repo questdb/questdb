@@ -45,7 +45,6 @@ import io.questdb.std.time.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -4931,83 +4930,6 @@ public class IODispatcherTest {
                 serverHaltLatch.await();
             }
             Assert.assertEquals(N * senderCount, requestsReceived.get());
-        });
-    }
-
-    @Test
-    @Ignore
-    public void testUpload() throws Exception {
-        assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
-//            final String baseDir = "/home/vlad/dev/123";
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
-            ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(engine);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
-
-
-                workerPool.start(LOG);
-
-                Thread.sleep(2000000);
-            }
         });
     }
 

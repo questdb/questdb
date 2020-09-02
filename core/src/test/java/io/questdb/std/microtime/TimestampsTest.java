@@ -312,6 +312,16 @@ public class TimestampsTest {
         TestUtils.assertEquals(date, sink);
     }
 
+    @Test
+    public void testParseTimestampNotNullLocale() {
+        try {
+            // we deliberately mangle timezone so that function begins to rely on locale to resole text
+            TimestampFormatUtils.parseTimestamp("2020-01-10T15:00:01.000143Zz");
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
+    }
+
     @Test(expected = NumericException.class)
     public void testParseWrongDay() throws Exception {
         TimestampFormatUtils.parseDateTime("2013-09-31T00:00:00.000Z");
