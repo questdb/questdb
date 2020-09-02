@@ -23,7 +23,7 @@ RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -Dprofile.install-lo
 ## unpack the runtime
 
 WORKDIR c:/questdb/core/target
-RUN tar xvfz questdb-5.0.2-rt-windows-amd64.tar.gz
+RUN tar xvfz questdb-5.0.3-rt-windows-amd64.tar.gz
 #RUN dir questdb-*-rt-windows-amd64.tar.gz
 
 FROM mcr.microsoft.com/windows/nanoserver:1903
