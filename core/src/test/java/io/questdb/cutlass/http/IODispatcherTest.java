@@ -641,6 +641,41 @@ public class IODispatcherTest {
         );
     }
 
+
+    @Test
+    public void testImportBadRequestGet() throws Exception {
+        testImport(
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "27\r\n" +
+                        "Bad request. Multipart POST expected.\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "GET /upload?blah HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "DNT: 1\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: none\r\n" +
+                        "Sec-Fetch-Mode: navigate\r\n" +
+                        "Sec-Fetch-User: ?1\r\n" +
+                        "Sec-Fetch-Dest: document\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en;q=0.9,es-AR;q=0.8,es;q=0.7\r\n" +
+                        "\r\n",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
+    }
+
     @Test
     public void testImportColumnMismatch() throws Exception {
         testImport(

@@ -355,9 +355,14 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     // bad request - multipart request for processor that doesn't expect multipart
                     headerParser.clear();
                     LOG.error().$("bad request [multipart/non-multipart]").$();
+                    simpleResponse().sendStatus(400, "Bad request. non-multipart POST expected.");
+                    keepGoing = false;
                 } else if (!multipartRequest && multipartProcessor) {
                     // bad request - regular request for processor that expects multipart
                     LOG.error().$("bad request [non-multipart/multipart]").$();
+                    simpleResponse().sendStatus(400, "Bad request. Multipart POST expected.");
+                    keepGoing = false;
+                    clear();
                 } else if (multipartProcessor) {
                     keepGoing = consumeMultipart(fd, processor, headerEnd, read, newRequest);
                 } else {
