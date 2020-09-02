@@ -30,7 +30,7 @@ FROM mcr.microsoft.com/windows/nanoserver:1903
 
 WORKDIR /app
 
-COPY --from=0 c:/questdb/core/target/questdb-5.0.2-rt-windows-amd64/ .
+COPY --from=0 c:/questdb/core/target/questdb-5.0.3-rt-windows-amd64/ .
 
 # Make working folder the quest db folder
 WORKDIR /app/bin
