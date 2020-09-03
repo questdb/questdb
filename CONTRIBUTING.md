@@ -43,7 +43,7 @@ git to make build of development process Java-centric and simplified.
 
 ## Setup Java and JAVA_HOME
 
-JAVA_HOME is require by Maven. It is possible to have multiple version of Java on the same platform. Please
+JAVA_HOME is required by Maven. It is possible to have multiple version of Java on the same platform. Please
 set up JAVA_HOME to point to Java 11. Java versions above or below may not work. If you are new to Java please
 check JAVA_HOME is pointing to the root of Java directory. For example, I installed Java here `C:\Users\Vlad\dev\jdk-11.0.8`.
 JAVA_HOME needs to be `C:\Users\Vlad\dev\jdk-11.0.8` and *not* `C:\Users\Vlad\dev\jdk-11.0.8\bin\java` however tempting this is.
