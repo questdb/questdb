@@ -132,6 +132,22 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- remove web console package on "clean" -->
+            <plugin>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.1.0</version>
+                <configuration>
+                    <filesets>
+                        <fileset>
+                            <directory>src/main/resources/io/questdb/site/</directory>
+                            <includes>
+                                <include>public.zip</include>
+                            </includes>
+                            <followSymlinks>false</followSymlinks>
+                        </fileset>
+                    </filesets>
+                </configuration>
+            </plugin>
             <!-- disable stock deploy plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -218,7 +234,7 @@
             </build>
         </profile>
         <profile>
-            <id>install-local-nodejs</id>
+            <id>use-built-in-nodejs</id>
             <properties>
                 <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>

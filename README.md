@@ -51,7 +51,7 @@ milliseconds.
 
 ## Web Console
 
-Interactive console to import data (drag and drop) and start querying right
+The interactive console to import data (drag and drop) and start querying right
 away. Check our Web Console guide to get started:
 
 <div align="center">
@@ -148,13 +148,31 @@ git clone git@github.com:questdb/questdb.git
 
 #### (c) Build the Code
 
+Commands below will create JAR without assembling executable binaries nor building web console.
+
 ```script
 cd questdb
 mvn clean package -DskipTests
 ```
 
-The build should take around 2 minutes. You can remove `-DskipTests` to run the
-3000+ unit tests. The tests take 3-5 minutes to run.
+To package web console with the jar use the following command:
+
+```script
+mvn clean package -DskipTests -P build-web-console
+```
+
+To build executable binaries use the following command:
+
+```script
+mvn clean package -DskipTests -P build-web-console,build-binaries
+```
+
+To run tests it is not required to have binaries built nor web console. There are over 4000 tests that should complete
+without 2-6 minutes depending on the system.
+
+```script
+mvn clean test
+```
 
 #### (d) Run QuestDB
 
