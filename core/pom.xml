@@ -25,8 +25,8 @@
 <project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <name>QuestDB Core</name>
-    <description>QuestDB is High Performance Time Series Database</description>
+    <name>QuestDB core</name>
+    <description>QuestDB is high performance time series SQL database</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -42,8 +42,7 @@
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
 
-
-    <url>https://www.questdb.io/</url>
+    <url>https://questdb.io/</url>
     <licenses>
         <license>
             <name>Apache 2.0</name>
@@ -63,6 +62,17 @@
         <url>scm:git:https://github.com/questdb/questdb.git</url>
     </scm>
 
+    <distributionManagement>
+        <snapshotRepository>
+            <id>central</id>
+            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+        </snapshotRepository>
+        <repository>
+            <id>central</id>
+            <url>https://oss.sonatype.org/service/local/staging/deploy/maven2</url>
+        </repository>
+    </distributionManagement>
+
     <build>
         <plugins>
             <plugin>
@@ -78,70 +88,6 @@
                     <source>${javac.target}</source>
                     <target>${javac.target}</target>
                 </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>1.6.0</version>
-                <configuration>
-                    <longModulepath>false</longModulepath>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>npm-install</id>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <phase>generate-sources</phase>
-                        <configuration>
-                            <executable>${nodejs.npm.cmd}</executable>
-                            <arguments>
-                                <argument>install</argument>
-                                <argument>--no-fund</argument>
-                                <argument>--scripts-prepend-node-path=auto</argument>
-                            </arguments>
-                            <workingDirectory>../ui</workingDirectory>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>npm-run-build</id>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <phase>generate-sources</phase>
-                        <configuration>
-                            <executable>${nodejs.npm.cmd}</executable>
-                            <arguments>
-                                <argument>run</argument>
-                                <argument>build</argument>
-                                <argument>--scripts-prepend-node-path=auto</argument>
-                            </arguments>
-                            <workingDirectory>../ui</workingDirectory>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>jlink</id>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <phase>package</phase>
-                        <configuration>
-                            <executable>${java.home}/bin/jlink</executable>
-                            <arguments>
-                                <argument>--module-path</argument>
-                                <argument>${build.outputDirectory}</argument>
-                                <argument>--add-modules</argument>
-                                <argument>io.questdb</argument>
-                                <argument>--output</argument>
-                                <argument>${build.directory}/runtime</argument>
-                                <argument>--no-header-files</argument>
-                                <argument>--no-man-pages</argument>
-                                <argument>--compress=2</argument>
-                            </arguments>
-                            <workingDirectory>../core</workingDirectory>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -162,42 +108,6 @@
                         </manifest>
                     </archive>
                 </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <version>3.0.0</version>
-                <configuration>
-                    <tarLongFileMode>posix</tarLongFileMode>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>create-binary</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptors>
-                                <descriptor>src/main/assembly/binaries.xml</descriptor>
-                            </descriptors>
-                            <finalName>questdb</finalName>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>create-runtime</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <descriptors>
-                                <descriptor>${runtime.assembly}</descriptor>
-                            </descriptors>
-                            <finalName>questdb</finalName>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -222,18 +132,20 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- disable stock deploy plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
     <profiles>
         <profile>
-            <id>release-sign-artifacts</id>
-            <activation>
-                <property>
-                    <name>release</name>
-                    <value>true</value>
-                </property>
-            </activation>
+            <id>maven-central-release</id>
             <build>
                 <plugins>
                     <plugin>
@@ -262,8 +174,6 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <arg>--add-exports</arg>
-                            <arg>java.base/jdk.internal.math=io.questdb</arg>
                             <additionalJOptions>
                                 <additionalJOption>--add-exports</additionalJOption>
                                 <additionalJOption>java.base/jdk.internal.math=io.questdb</additionalJOption>
@@ -288,15 +198,20 @@
                         </configuration>
                     </plugin>
                     <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>cobertura-maven-plugin</artifactId>
-                        <version>2.7</version>
+                        <groupId>org.sonatype.plugins</groupId>
+                        <artifactId>nexus-staging-maven-plugin</artifactId>
+                        <version>1.5.1</version>
+                        <executions>
+                            <execution>
+                                <id>default-deploy</id>
+                                <phase>deploy</phase>
+                                <goals>
+                                    <goal>deploy</goal>
+                                </goals>
+                            </execution>
+                        </executions>
                         <configuration>
-                            <formats>
-                                <format>html</format>
-                                <format>xml</format>
-                            </formats>
-                            <check/>
+                            <serverId>central</serverId>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -307,11 +222,6 @@
             <properties>
                 <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
-            <activation>
-                <property>
-                    <name>profile.install-local-nodejs</name>
-                </property>
-            </activation>
             <build>
                 <plugins>
                     <plugin>
@@ -335,18 +245,129 @@
             </build>
         </profile>
         <profile>
-            <id>platform-windows-amd64-node</id>
-            <activation>
-                <os>
-                    <family>windows</family>
-                </os>
-                <property>
-                    <name>profile.install-local-nodejs</name>
-                </property>
-            </activation>
-            <properties>
-                <nodejs.npm.cmd>${project.basedir}/node/npm.cmd</nodejs.npm.cmd>
-            </properties>
+            <id>build-web-console</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>1.6.0</version>
+                        <configuration>
+                            <longModulepath>false</longModulepath>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>npm-install</id>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <phase>generate-sources</phase>
+                                <configuration>
+                                    <executable>${nodejs.npm.cmd}</executable>
+                                    <arguments>
+                                        <argument>install</argument>
+                                        <argument>--no-fund</argument>
+                                        <argument>--scripts-prepend-node-path=auto</argument>
+                                    </arguments>
+                                    <workingDirectory>../ui</workingDirectory>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>npm-run-build</id>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <phase>generate-sources</phase>
+                                <configuration>
+                                    <executable>${nodejs.npm.cmd}</executable>
+                                    <arguments>
+                                        <argument>run</argument>
+                                        <argument>build</argument>
+                                        <argument>--scripts-prepend-node-path=auto</argument>
+                                    </arguments>
+                                    <workingDirectory>../ui</workingDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>build-binaries</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>1.6.0</version>
+                        <configuration>
+                            <longModulepath>false</longModulepath>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>jlink</id>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <phase>package</phase>
+                                <configuration>
+                                    <executable>${java.home}/bin/jlink</executable>
+                                    <arguments>
+                                        <argument>--module-path</argument>
+                                        <argument>${project.build.outputDirectory}</argument>
+                                        <argument>--add-modules</argument>
+                                        <argument>io.questdb</argument>
+                                        <argument>--output</argument>
+                                        <argument>${project.build.directory}/runtime</argument>
+                                        <argument>--no-header-files</argument>
+                                        <argument>--no-man-pages</argument>
+                                        <argument>--compress=2</argument>
+                                    </arguments>
+                                    <workingDirectory>../core</workingDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-assembly-plugin</artifactId>
+                        <version>3.0.0</version>
+                        <configuration>
+                            <tarLongFileMode>posix</tarLongFileMode>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>create-binary</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>single</goal>
+                                </goals>
+                                <configuration>
+                                    <descriptors>
+                                        <descriptor>src/main/assembly/binaries.xml</descriptor>
+                                    </descriptors>
+                                    <finalName>questdb</finalName>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>create-runtime</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>single</goal>
+                                </goals>
+                                <configuration>
+                                    <descriptors>
+                                        <descriptor>${runtime.assembly}</descriptor>
+                                    </descriptors>
+                                    <finalName>questdb</finalName>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
         <profile>
             <id>platform-windows-amd64</id>
@@ -359,6 +380,7 @@
                 <archive.name>${project.version}-rt-windows-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-windows-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm.cmd</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -372,6 +394,20 @@
             <properties>
                 <archive.name>${project.version}-rt-linux-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
+                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-freebsd-amd64</id>
+            <activation>
+                <os>
+                    <family>FreeBSD</family>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
             </properties>
         </profile>

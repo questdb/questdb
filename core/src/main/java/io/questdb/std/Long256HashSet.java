@@ -57,7 +57,7 @@ public class Long256HashSet implements Mutable {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
-        this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : initialCapacity;
+        this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
         int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
         this.loadFactor = loadFactor;
         this.keys = alloc(len);
@@ -66,9 +66,12 @@ public class Long256HashSet implements Mutable {
     }
 
     /**
-     * Adds key to hash set preserving key uniqueness.
+     * Adds key to hash set preserving key uniqueness. 256 bit long encoded in 4 64-bit values
      *
-     * @param k0,k1,k2,k3 - 256 bit long
+     * @param k0 0-63 bit
+     * @param k1 64-127 bit
+     * @param k2 128-191 bit
+     * @param k3 192-256 bit
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(long k0, long k1, long k2, long k3) {

@@ -30,8 +30,7 @@
     <artifactId>benchmarks</artifactId>
     <version>1.0</version>
     <packaging>jar</packaging>
-
-    <name>JMH benchmark sample: Java</name>
+    <name>JMH benchmarks for QuestDB</name>
 
     <!--
        This is the demo/sample template build script for building Java benchmarks with JMH.
