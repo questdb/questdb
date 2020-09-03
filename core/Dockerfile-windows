@@ -18,7 +18,7 @@ WORKDIR c:/questdb
 
 ## build from source
 
-RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -Dprofile.install-local-nodejs
+RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
 
 ## unpack the runtime
 
