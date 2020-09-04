@@ -105,6 +105,16 @@
         "blog",
         "example"
       ]
+    },
+    {
+      "login": "alexprut",
+      "name": "Alex Prut",
+      "avatar_url": "https://avatars2.githubusercontent.com/u/1648497?v=4",
+      "profile": "http://alexprut.com",
+      "contributions": [
+        "code",
+        "maintenance"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
