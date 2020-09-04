@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
@@ -55,16 +54,6 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return rec.getShort(this.valueIndex);
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.SHORT);
@@ -72,6 +61,21 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putShort(this.valueIndex, Numbers.SHORT_NaN);
+        setShort(mapValue, (short) 0);
+    }
+
+    @Override
+    public void setShort(MapValue mapValue, short value) {
+        mapValue.putShort(this.valueIndex, value);
+    }
+
+    @Override
+    public Function getArg() {
+        return this.arg;
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        return rec.getShort(this.valueIndex);
     }
 }

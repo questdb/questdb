@@ -32,8 +32,6 @@ import java.util.Arrays;
 public final class Numbers {
 
     public static final int INT_NaN = Integer.MIN_VALUE;
-    public static final short SHORT_NaN = Short.MIN_VALUE;
-    public static final byte BYTE_Nan = Byte.MIN_VALUE;
     public static final long LONG_NaN = Long.MIN_VALUE;
     public static final double TOLERANCE = 1E-15d;
     public static final int SIZE_1MB = 1024 * 1024;

@@ -72,6 +72,11 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putByte(this.valueIndex, Numbers.BYTE_Nan);
+        setByte(mapValue, (byte) 0);
+    }
+
+    @Override
+    public void setByte(MapValue mapValue, byte value) {
+        mapValue.putByte(this.valueIndex, value);
     }
 }

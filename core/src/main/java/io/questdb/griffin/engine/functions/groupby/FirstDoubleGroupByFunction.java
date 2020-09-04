@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -55,6 +54,22 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     }
 
     @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public void setDouble(MapValue mapValue, double value) {
+        mapValue.putDouble(this.valueIndex, value);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        setDouble(mapValue, Double.NaN);
+    }
+
+    @Override
     public Function getArg() {
         return this.arg;
     }
@@ -62,16 +77,5 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     @Override
     public double getDouble(Record rec) {
         return rec.getDouble(this.valueIndex);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putDouble(this.valueIndex, Numbers.INT_NaN);
     }
 }

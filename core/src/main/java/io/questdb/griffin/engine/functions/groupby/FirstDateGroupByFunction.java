@@ -29,28 +29,30 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
+public class FirstDateGroupByFunction extends DateFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public FirstIntGroupByFunction(int position, @NotNull Function arg) {
+    public FirstDateGroupByFunction(int position, @NotNull Function arg) {
         super(position);
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, arg.getInt(record));
+        mapValue.putLong(this.valueIndex, this.arg.getDate(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
+        // empty
     }
 
     @Override
@@ -59,28 +61,18 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public int getInt(Record rec) {
-        return rec.getInt(valueIndex);
+    public long getDate(Record rec) {
+        return rec.getDate(this.valueIndex);
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.DATE);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        setInt(mapValue, Numbers.INT_NaN);
-    }
-
-    @Override
-    public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(valueIndex, value);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
+        mapValue.putTimestamp(this.valueIndex, Numbers.LONG_NaN);
     }
 }

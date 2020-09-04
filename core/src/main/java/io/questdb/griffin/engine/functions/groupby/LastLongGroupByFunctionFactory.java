@@ -24,28 +24,25 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Rnd;
-import org.junit.Before;
-import org.junit.Test;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.ObjList;
 
-public class LastSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
-    @Before
-    public void setUp3() {
-        SharedRandom.RANDOM.set(new Rnd());
+public class LastLongGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "last(L)";
     }
 
-    @Test
-    public void testLastSymbolNoNulls() throws Exception {
-        //TODO non functional test here, just an example
-        assertQuery(
-                "x\n" +
-                        "DEF\n",
-                "select last(sym) sym from tab",
-                "create table tab as (select rnd_symbol(10, 4, 4, 0) sym from long_sequence(10))\n",
-                null,
-                false
-        );
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        return new LastLongGroupByFunction(position, args.getQuick(0));
     }
 }
