@@ -285,6 +285,9 @@ public class FirstDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-3.7763943098045716\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t-2.362042754952945\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t5.177485979761071\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 }

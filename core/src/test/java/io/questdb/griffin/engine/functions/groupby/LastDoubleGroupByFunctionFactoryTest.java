@@ -51,7 +51,9 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select last(x) x from tab",
                 "create table tab as (select cast(x as double) x from long_sequence(10))",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -63,7 +65,9 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select last(y) y from tab",
                 "create table tab as (select cast(x as double) x, cast(null as double) y from long_sequence(100))",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -282,6 +286,9 @@ public class LastDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-1.9805699408189095\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t1.7017646298154117\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t0.8636461872776237\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 }

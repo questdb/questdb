@@ -285,6 +285,8 @@ public class LastIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CPSW\t-1258204039\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t2147483647\t1970-01-04T06:00:00.000000Z\n" +
                         "ZMZV\tNaN\t1970-01-04T06:00:00.000000Z\n",
+                true,
+                true,
                 true
         );
     }

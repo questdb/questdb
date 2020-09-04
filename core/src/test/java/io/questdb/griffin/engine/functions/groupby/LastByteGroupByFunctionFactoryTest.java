@@ -258,6 +258,9 @@ public class LastByteGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "CPSW\t54\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t124\t1970-01-04T06:00:00.000000Z\n" +
                         "ZMZV\t0\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 }

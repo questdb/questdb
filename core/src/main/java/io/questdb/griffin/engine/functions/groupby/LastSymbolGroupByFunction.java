@@ -24,80 +24,18 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class LastSymbolGroupByFunction extends SymbolFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
-    private SymbolTable symbolTable;
-
-    public LastSymbolGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
-        this.arg = arg;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        this.symbolTable = symbolTableSource.getSymbolTable(this.valueIndex);
-        assert this.symbolTable != this;
-        assert this.symbolTable != null;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(this.valueIndex, this.arg.getInt(record));
+public class LastSymbolGroupByFunction extends FirstSymbolGroupByFunction {
+    public LastSymbolGroupByFunction(int position, @NotNull SymbolFunction arg) {
+        super(position, arg);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         computeFirst(mapValue, record);
-    }
-
-    @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return rec.getInt(this.valueIndex);
-    }
-
-    @Override
-    public CharSequence getSymbol(Record rec) {
-        return symbolTable.valueOf(getInt(rec));
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SYMBOL);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(this.valueIndex, Numbers.INT_NaN);
-    }
-
-    @Override
-    public boolean isSymbolTableStatic() {
-        return true;
-    }
-
-    @Override
-    public CharSequence valueOf(int key) {
-        return "";
     }
 }
