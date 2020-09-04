@@ -25,18 +25,17 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class LastIntGroupByFunction extends FirstIntGroupByFunction {
-
-    public LastIntGroupByFunction(int position, @NotNull Function arg) {
+public class LastSymbolGroupByFunction extends FirstSymbolGroupByFunction {
+    public LastSymbolGroupByFunction(int position, @NotNull SymbolFunction arg) {
         super(position, arg);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
+        computeFirst(mapValue, record);
     }
 }

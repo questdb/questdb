@@ -24,19 +24,54 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class LastIntGroupByFunction extends FirstIntGroupByFunction {
+public class FirstTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
+    private int valueIndex;
 
-    public LastIntGroupByFunction(int position, @NotNull Function arg) {
-        super(position, arg);
+    public FirstTimestampGroupByFunction(int position, @NotNull Function arg) {
+        super(position);
+        this.arg = arg;
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        mapValue.putLong(this.valueIndex, this.arg.getTimestamp(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        super.computeFirst(mapValue, record);
+        // empty
+    }
+
+    @Override
+    public Function getArg() {
+        return this.arg;
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return rec.getTimestamp(this.valueIndex);
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.TIMESTAMP);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putTimestamp(this.valueIndex, Numbers.LONG_NaN);
     }
 }

@@ -29,9 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import org.jetbrains.annotations.NotNull;
 
-public class LastIntGroupByFunction extends FirstIntGroupByFunction {
+public class LastDateGroupByFunction extends FirstDateGroupByFunction {
 
-    public LastIntGroupByFunction(int position, @NotNull Function arg) {
+    public LastDateGroupByFunction(int position, @NotNull Function arg) {
         super(position, arg);
     }
 

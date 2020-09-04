@@ -27,11 +27,12 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+
 import org.jetbrains.annotations.NotNull;
 
-public class LastIntGroupByFunction extends FirstIntGroupByFunction {
+public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
 
-    public LastIntGroupByFunction(int position, @NotNull Function arg) {
+    public LastDoubleGroupByFunction(int position, @NotNull Function arg) {
         super(position, arg);
     }
 
