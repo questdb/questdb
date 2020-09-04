@@ -2161,7 +2161,7 @@ public class TableWriter implements Closeable {
         mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Long.BYTES;
     }
 
-    private void mergeCopyVarLen(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
+    private void mergeCopyStr(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
         // destination of variable length data
         long dstVarOffset = mergeStruct[i * 16 + 8 + 6];
         long dstVar = mergeStruct[i * 16 + 8 + 4];
@@ -2181,13 +2181,16 @@ public class TableWriter implements Closeable {
 
         for (long l = 0; l < dataOOMergeIndexLen; l++) {
             final long row = Unsafe.getUnsafe().getLong(dataOOMergeIndex + (l * 16) + Long.BYTES);
+            // high bit in the index in the source array [0,1]
             final int bit = (int) (row >>> 63);
+
+            // row number is "row" with high bit removed
             final long rr = row & ~(1L << 63);
 
             long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
             long addr = srcVar[bit] + offset;
             int len = Unsafe.getUnsafe().getInt(addr) * Character.BYTES + Integer.BYTES;
-            Unsafe.getUnsafe().copyMemory(addr, dstVar, len);
+            Unsafe.getUnsafe().copyMemory(addr, dstVar+dstVarOffset, len);
             Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, dstVarOffset);
             dstVarOffset += len;
         }
@@ -2534,7 +2537,7 @@ public class TableWriter implements Closeable {
                                     switch (metadata.getColumnType(i)) {
                                         case ColumnType.STRING:
                                         case ColumnType.BINARY:
-                                            mergeCopyVarLen(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                                            mergeCopyStr(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
                                             break;
                                         case ColumnType.INT:
                                         case ColumnType.FLOAT:
