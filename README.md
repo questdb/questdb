@@ -148,7 +148,8 @@ git clone git@github.com:questdb/questdb.git
 
 #### (c) Build the Code
 
-Commands below will create JAR without assembling executable binaries nor building web console.
+Commands below will create JAR without assembling executable binaries nor
+building web console.
 
 ```script
 cd questdb
@@ -167,8 +168,9 @@ To build executable binaries use the following command:
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
-To run tests it is not required to have binaries built nor web console. There are over 4000 tests that should complete
-without 2-6 minutes depending on the system.
+To run tests it is not required to have binaries built nor web console. There
+are over 4000 tests that should complete without 2-6 minutes depending on the
+system.
 
 ```script
 mvn clean test
@@ -245,6 +247,7 @@ Thanks to these wonderful people
     <td align="center"><a href="http://solanav.github.io"><img src="https://avatars1.githubusercontent.com/u/32469597?v=4" width="100px;" alt=""/><br /><sub><b>solanav</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=solanav" title="Code">💻</a> <a href="https://github.com/questdb/questdb/commits?author=solanav" title="Documentation">📖</a></td>
     <td align="center"><a href="https://shantanoo-desai.github.io"><img src="https://avatars1.githubusercontent.com/u/12070966?v=4" width="100px;" alt=""/><br /><sub><b>shantanoo-desai</b></sub></a><br /><a href="#blog-shantanoo-desai" title="Blogposts">📝</a> <a href="#example-shantanoo-desai" title="Examples">💡</a></td>
     <td align="center"><a href="http://alexprut.com"><img src="https://avatars2.githubusercontent.com/u/1648497?v=4" width="100px;" alt=""/><br /><sub><b>alexprut</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=alexprut" title="Code">💻</a> <a href="#maintenance-alexprut" title="Maintenance">🚧</a></td>
+    <td align="center"><a href="https://github.com/lbowman"><img src="https://avatars1.githubusercontent.com/u/1477427?v=4" width="100px;" alt=""/><br /><sub><b>lbowman</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=lbowman" title="Code">💻</a> <a href="https://github.com/questdb/questdb/commits?author=lbowman" title="Tests">⚠️</a></td>
   </tr>
 </table>
 
