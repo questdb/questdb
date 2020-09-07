@@ -1519,6 +1519,38 @@ public class TableWriter implements Closeable {
         copyColumnData(src, mergeStruct, columnIndex, lo, hi - lo);
     }
 
+    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
+        for (int i = 0; i < columnCount; i++) {
+            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem2;
+            final int columnType = metadata.getColumnType(i);
+
+            long lo;
+            long hi;
+            switch (columnType) {
+                // todo: review removing case statement
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    // we can find out the edge of string column in one of two ways
+                    // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
+                    // 2  if there are more items behind indexHi we can get offset of indexHi+1
+                    mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                    lo = mem2.getLong(indexLo * Long.BYTES);
+                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
+                        hi = mem.getAppendOffset();
+                    } else {
+                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
+                    }
+                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
+                    shiftCopyFixedSizeColumnData(lo, mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
+                    break;
+                default:
+                    copyFixedSizeColumnData(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, columnType);
+                    break;
+            }
+        }
+    }
+
     private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -1582,36 +1614,41 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
-        for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
-            ContiguousVirtualMemory mem2;
-            final int columnType = metadata.getColumnType(i);
+    private void mergeCopyStr(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
+        // destination of variable length data
+        long dstVarOffset = mergeStruct[i * 16 + 8 + 6];
+        long dstVar = mergeStruct[i * 16 + 8 + 4];
+        long dstFix = mergeStruct[i * 16 + 4] + mergeStruct[i * 16 + 6];
 
-            long lo;
-            long hi;
-            switch (columnType) {
-                // todo: review removing case statement
-                case ColumnType.STRING:
-                case ColumnType.BINARY:
-                    // we can find out the edge of string column in one of two ways
-                    // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
-                    // 2  if there are more items behind indexHi we can get offset of indexHi+1
-                    mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                    lo = mem2.getLong(indexLo * Long.BYTES);
-                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
-                        hi = mem.getAppendOffset();
-                    } else {
-                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
-                    }
-                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
-                    copyFixedSizeColumnData(mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
-                    break;
-                default:
-                    copyFixedSizeColumnData(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, columnType);
-                    break;
-            }
+        // fixed length column
+        long srcFix1 = mergeStruct[i * 16 + 1];
+        long srcFix2 = mergeColumns.getQuick(getSecondaryColumnIndex(i)).addressOf(0);
+
+        long srcVar1 = mergeStruct[i * 16 + 8 + 1];
+        long srcVar2 = mergeColumns.getQuick(getPrimaryColumnIndex(i)).addressOf(0);
+
+        // reverse order
+        // todo: cache?
+        long[] srcFix = new long[]{srcFix2, srcFix1};
+        long[] srcVar = new long[]{srcVar2, srcVar1};
+
+        for (long l = 0; l < dataOOMergeIndexLen; l++) {
+            final long row = Unsafe.getUnsafe().getLong(dataOOMergeIndex + (l * 16) + Long.BYTES);
+            // high bit in the index in the source array [0,1]
+            final int bit = (int) (row >>> 63);
+
+            // row number is "row" with high bit removed
+            final long rr = row & ~(1L << 63);
+
+            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
+            long addr = srcVar[bit] + offset;
+            int len = Unsafe.getUnsafe().getInt(addr) * Character.BYTES + Integer.BYTES;
+            Unsafe.getUnsafe().copyMemory(addr, dstVar + dstVarOffset, len);
+            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, dstVarOffset);
+            dstVarOffset += len;
         }
+        mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Integer.BYTES;
+        mergeStruct[i * 16 + 8 + 6] = dstVarOffset;
     }
 
     private void copyPartitionData(long indexLo, long indexHi, long[] mergeStruct) {
@@ -2161,43 +2198,6 @@ public class TableWriter implements Closeable {
         mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Long.BYTES;
     }
 
-    private void mergeCopyStr(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
-        // destination of variable length data
-        long dstVarOffset = mergeStruct[i * 16 + 8 + 6];
-        long dstVar = mergeStruct[i * 16 + 8 + 4];
-        long dstFix = mergeStruct[i * 16 + 4] + mergeStruct[i * 16 + 6];
-
-        // fixed length column
-        long srcFix1 = mergeStruct[i * 16 + 1];
-        long srcFix2 = mergeColumns.getQuick(getSecondaryColumnIndex(i)).addressOf(0);
-
-        long srcVar1 = mergeStruct[i * 16 + 8 + 1];
-        long srcVar2 = mergeColumns.getQuick(getPrimaryColumnIndex(i)).addressOf(0);
-
-        // reverse order
-        // todo: cache?
-        long[] srcFix = new long[]{srcFix2, srcFix1};
-        long[] srcVar = new long[]{srcVar2, srcVar1};
-
-        for (long l = 0; l < dataOOMergeIndexLen; l++) {
-            final long row = Unsafe.getUnsafe().getLong(dataOOMergeIndex + (l * 16) + Long.BYTES);
-            // high bit in the index in the source array [0,1]
-            final int bit = (int) (row >>> 63);
-
-            // row number is "row" with high bit removed
-            final long rr = row & ~(1L << 63);
-
-            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
-            long addr = srcVar[bit] + offset;
-            int len = Unsafe.getUnsafe().getInt(addr) * Character.BYTES + Integer.BYTES;
-            Unsafe.getUnsafe().copyMemory(addr, dstVar+dstVarOffset, len);
-            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, dstVarOffset);
-            dstVarOffset += len;
-        }
-        mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Integer.BYTES;
-        mergeStruct[i * 16 + 8 + 6] = dstVarOffset;
-    }
-
     private void mergeOutOfOrderRecords() {
         final int timestampIndex = metadata.getTimestampIndex();
         try {
@@ -2238,14 +2238,14 @@ public class TableWriter implements Closeable {
             long indexMax = mergeRowCount;
             long ooTimestampHi = Unsafe.getUnsafe().getLong(mergedTimestamps + (indexMax - 1) * 16);
 
-            while (indexLo < indexMax) {
+            while (true) {
                 long ooTimestampLo = Unsafe.getUnsafe().getLong(mergedTimestamps + indexLo * 16);
 
                 path.trimTo(rootLen);
                 setStateForTimestamp(path, ooTimestampLo, true);
                 int plen = path.length();
 
-                long partitionTimestampHi = this.partitionHi;
+                final long partitionTimestampHi = this.partitionHi;
 
                 // find "current" partition boundary in the out of order data
                 // once we know the boundary we can move on to calculating another one
@@ -2257,11 +2257,13 @@ public class TableWriter implements Closeable {
 
                 long fd = 0;
                 long dataTimestampLo;
-                long dataTimestampHi;
+                long dataTimestampHi = Long.MIN_VALUE;
                 long dataIndexMax;
 
                 // is out of order data hitting the last partition?
                 // if so we do not need to re-open files and and write to existing file descriptors
+
+                long partitionSize;
 
                 if (partitionTimestampHi > maxTruncated) {
 
@@ -2274,325 +2276,369 @@ public class TableWriter implements Closeable {
                     } finally {
                         freeMergeStruct(mergeStruct);
                     }
-                    indexLo = indexHi + 1;
-                    continue;
-                }
 
-                try {
-                    dFile(path, metadata.getColumnName(timestampIndex));
-                    if (partitionTimestampHi == maxTruncated) {
-                        dataTimestampHi = this.maxTimestamp;
-                        dataIndexMax = transientRowCountBeforeOutOfOrder;
-                        fd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-                    } else {
+                    partitionSize = indexHi - indexLo + 1;
+                } else {
+
+                    // out of order is hitting existing partition
+
+                    try {
+                        dFile(path, metadata.getColumnName(timestampIndex));
+                        if (partitionTimestampHi == maxTruncated) {
+                            dataTimestampHi = this.maxTimestamp;
+                            dataIndexMax = transientRowCountBeforeOutOfOrder;
+                            fd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
+                        } else {
+
+                            // out of order data is going into archive partition
+                            // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
+                            // and "high" being newest
 
 
-                        // out of order data is going into archive partition
-                        // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
-                        // and "high" being newest
-
-
-                        // also track the fd that we need to eventually close
-                        fd = ff.openRW(path);
-                        if (fd == -1) {
-                            throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
-                        }
-
-                        // todo: read the archive
-                        dataIndexMax = ff.length(fd) / Long.BYTES;
-
-                        // read bottom of file
-                        // todo: check that offset is non-negative
-                        if (ff.read(fd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
-                            throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
-                        }
-                        dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
-                    }
-
-                    // read the top value
-                    // todo: check that file size is > 8 bytes
-                    if (ff.read(Math.abs(fd), tempMem8b, Long.BYTES, 0) != Long.BYTES) {
-                        throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
-                    }
-
-                    dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
-                    // this is an overloaded function, page size is derived from the file size
-                    timestampSearchColumn.of(ff, path, 0, dataIndexMax * Long.BYTES);
-
-                    // create copy jobs
-                    // we will have maximum of 3 stages:
-                    // - prefix data
-                    // - merge job
-                    // - suffix data
-                    //
-                    // prefix and suffix can be sourced either from OO fully or from Data (written to disk) fully
-                    // so for prefix and suffix we will need a flag indicating source of the data
-                    // as well as range of rows in that source
-
-                    int prefixType = -1;
-                    long prefixLo = -1;
-                    long prefixHi = -1;
-                    long mergeDataLo = -1;
-                    long mergeDataHi = -1;
-                    long mergeOOOLo = -1;
-                    long mergeOOOHi = -1;
-                    int suffixType = -1;
-                    long suffixLo = -1;
-                    long suffixHi = -1;
-
-                    if (ooTimestampLo < dataTimestampLo) {
-
-                        //            +-----+
-                        //            | OOO |
-                        //
-                        //  +------+
-                        //  | data |
-
-                        prefixType = 1;
-                        prefixLo = indexLo;
-                        mergeDataLo = 0;
-                        prefixHi = searchIndex(mergedTimestamps, dataTimestampLo, indexLo, indexHi);
-                        mergeOOOLo = prefixHi + 1;
-
-                        if (ooTimestampHi >= dataTimestampLo) {
-
-                            //
-                            //  +------+  | OOO |
-                            //  | data |  +-----+
-                            //  |      |
-
-                            if (ooTimestampHi < dataTimestampHi) {
-
-                                // |      | |     |
-                                // |      | | OOO |
-                                // | data | +-----+
-                                // |      |
-                                // +------+
-
-                                mergeOOOHi = indexHi;
-                                mergeDataHi = BinarySearch.find(timestampSearchColumn, ooTimestampHi, 0, dataIndexMax - 1);
-                            } else if (ooTimestampHi > dataTimestampHi) {
-
-                                // |      | |     |
-                                // |      | | OOO |
-                                // | data | |     |
-                                // +------+ |     |
-                                //          +-----+
-
-                                mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, mergeOOOLo, indexHi);
-                                mergeDataHi = dataIndexMax - 1;
-                            } else {
-
-                                // |      | |     |
-                                // |      | | OOO |
-                                // | data | |     |
-                                // +------+ +-----+
-
-                                mergeOOOHi = indexHi;
-                                mergeDataHi = dataIndexMax - 1;
+                            // also track the fd that we need to eventually close
+                            fd = ff.openRW(path);
+                            if (fd == -1) {
+                                throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
                             }
 
-                        } else {
+                            // todo: read the archive
+                            dataIndexMax = ff.length(fd) / Long.BYTES;
+
+                            // read bottom of file
+                            // todo: check that offset is non-negative
+                            if (ff.read(fd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
+                                throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
+                            }
+                            dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
+                        }
+
+                        // read the top value
+                        if (ff.read(Math.abs(fd), tempMem8b, Long.BYTES, 0) != Long.BYTES) {
+                            throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
+                        }
+
+                        dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
+                        // this is an overloaded function, page size is derived from the file size
+                        timestampSearchColumn.of(ff, path, 0, dataIndexMax * Long.BYTES);
+
+                        // create copy jobs
+                        // we will have maximum of 3 stages:
+                        // - prefix data
+                        // - merge job
+                        // - suffix data
+                        //
+                        // prefix and suffix can be sourced either from OO fully or from Data (written to disk) fully
+                        // so for prefix and suffix we will need a flag indicating source of the data
+                        // as well as range of rows in that source
+
+                        int prefixType = -1;
+                        long prefixLo = -1;
+                        long prefixHi = -1;
+                        long mergeDataLo = -1;
+                        long mergeDataHi = -1;
+                        long mergeOOOLo = -1;
+                        long mergeOOOHi = -1;
+                        int suffixType = -1;
+                        long suffixLo = -1;
+                        long suffixHi = -1;
+
+                        if (ooTimestampLo < dataTimestampLo) {
 
                             //            +-----+
                             //            | OOO |
-                            //            +-----+
                             //
                             //  +------+
                             //  | data |
 
-                            suffixType = 2;
-                            suffixLo = 0;
-                            suffixHi = dataIndexMax - 1;
+                            prefixType = 1;
+                            prefixLo = indexLo;
+                            mergeDataLo = 0;
+                            prefixHi = searchIndex(mergedTimestamps, dataTimestampLo, indexLo, indexHi);
+                            mergeOOOLo = prefixHi + 1;
 
-                        }
-                    } else {
-
-                        //   +------+                +------+  +-----+
-                        //   | data |  +-----+       | data |  |     |
-                        //   |      |  | OOO |  OR   |      |  | OOO |
-                        //   |      |  |     |       |      |  |     |
-
-                        if (ooTimestampLo <= dataTimestampHi) {
-
-                            //
-                            // |      |
-                            // |      | +-----+
-                            // | data | | OOO |
-                            // +------+
-
-                            prefixType = 2;
-                            prefixLo = 0;
-                            prefixHi = BinarySearch.find(timestampSearchColumn, ooTimestampLo, 0, dataIndexMax - 1);
-                            mergeDataLo = prefixHi + 1;
-                            mergeOOOLo = indexLo;
-
-                            if (ooTimestampHi < dataTimestampHi) {
+                            if (ooTimestampHi >= dataTimestampLo) {
 
                                 //
-                                // |      | +-----+
-                                // | data | | OOO |
-                                // |      | +-----+
-                                // +------+
+                                //  +------+  | OOO |
+                                //  | data |  +-----+
+                                //  |      |
 
-                                mergeOOOHi = indexHi;
-                                mergeDataHi = BinarySearch.find(timestampSearchColumn, ooTimestampHi, mergeDataLo, dataIndexMax - 1);
+                                if (ooTimestampHi < dataTimestampHi) {
 
-                                suffixType = 2;
-                                suffixLo = mergeDataHi + 1;
-                                suffixHi = dataIndexMax - 1;
-                            } else if (ooTimestampHi > dataTimestampHi) {
+                                    // |      | |     |
+                                    // |      | | OOO |
+                                    // | data | +-----+
+                                    // |      |
+                                    // +------+
 
-                                //
-                                // |      | +-----+
-                                // | data | | OOO |
-                                // |      | |     |
-                                // +------+ |     |
-                                //          |     |
-                                //          +-----+
+                                    mergeOOOHi = indexHi;
+                                    mergeDataHi = BinarySearch.find(timestampSearchColumn, ooTimestampHi, 0, dataIndexMax - 1);
+                                } else if (ooTimestampHi > dataTimestampHi) {
 
-                                mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, indexLo, indexHi);
-                                mergeDataHi = dataIndexMax - 1;
+                                    // |      | |     |
+                                    // |      | | OOO |
+                                    // | data | |     |
+                                    // +------+ |     |
+                                    //          +-----+
 
-                                suffixType = 1;
-                                suffixLo = mergeOOOHi + 1;
-                                suffixHi = indexHi;
+                                    mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, mergeOOOLo, indexHi);
+                                    mergeDataHi = dataIndexMax - 1;
+                                } else {
+
+                                    // |      | |     |
+                                    // |      | | OOO |
+                                    // | data | |     |
+                                    // +------+ +-----+
+
+                                    mergeOOOHi = indexHi;
+                                    mergeDataHi = dataIndexMax - 1;
+                                }
+
                             } else {
 
+                                //            +-----+
+                                //            | OOO |
+                                //            +-----+
                                 //
-                                // |      | +-----+
-                                // | data | | OOO |
-                                // |      | |     |
-                                // +------+ +-----+
-                                //
+                                //  +------+
+                                //  | data |
 
-                                mergeOOOHi = indexHi;
-                                mergeDataHi = dataIndexMax - 1;
+                                suffixType = 2;
+                                suffixLo = 0;
+                                suffixHi = dataIndexMax - 1;
+
                             }
                         } else {
 
-                            // +------+
-                            // | data |
-                            // |      |
-                            // +------+
-                            //
-                            //           +-----+
-                            //           | OOO |
-                            //           |     |
-                            //
-                            suffixType = 1;
-                            suffixLo = indexLo;
-                            suffixHi = indexHi;
+                            //   +------+                +------+  +-----+
+                            //   | data |  +-----+       | data |  |     |
+                            //   |      |  | OOO |  OR   |      |  | OOO |
+                            //   |      |  |     |       |      |  |     |
 
-                            // todo: this is the only case when we do not need to create new set of files
+                            if (ooTimestampLo <= dataTimestampHi) {
+
+                                //
+                                // |      |
+                                // |      | +-----+
+                                // | data | | OOO |
+                                // +------+
+
+                                prefixType = 2;
+                                prefixLo = 0;
+                                prefixHi = BinarySearch.find(timestampSearchColumn, ooTimestampLo, 0, dataIndexMax - 1);
+                                mergeDataLo = prefixHi + 1;
+                                mergeOOOLo = indexLo;
+
+                                if (ooTimestampHi < dataTimestampHi) {
+
+                                    //
+                                    // |      | +-----+
+                                    // | data | | OOO |
+                                    // |      | +-----+
+                                    // +------+
+
+                                    mergeOOOHi = indexHi;
+                                    mergeDataHi = BinarySearch.find(timestampSearchColumn, ooTimestampHi, mergeDataLo, dataIndexMax - 1);
+
+                                    suffixType = 2;
+                                    suffixLo = mergeDataHi + 1;
+                                    suffixHi = dataIndexMax - 1;
+                                } else if (ooTimestampHi > dataTimestampHi) {
+
+                                    //
+                                    // |      | +-----+
+                                    // | data | | OOO |
+                                    // |      | |     |
+                                    // +------+ |     |
+                                    //          |     |
+                                    //          +-----+
+
+                                    mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, indexLo, indexHi);
+                                    mergeDataHi = dataIndexMax - 1;
+
+                                    suffixType = 1;
+                                    suffixLo = mergeOOOHi + 1;
+                                    suffixHi = indexHi;
+                                } else {
+
+                                    //
+                                    // |      | +-----+
+                                    // | data | | OOO |
+                                    // |      | |     |
+                                    // +------+ +-----+
+                                    //
+
+                                    mergeOOOHi = indexHi;
+                                    mergeDataHi = dataIndexMax - 1;
+                                }
+                            } else {
+
+                                // +------+
+                                // | data |
+                                // |      |
+                                // +------+
+                                //
+                                //           +-----+
+                                //           | OOO |
+                                //           |     |
+                                //
+                                suffixType = 1;
+                                suffixLo = indexLo;
+                                suffixHi = indexHi;
+
+                                // todo: this is the only case when we do not need to create new set of files
+                            }
                         }
-                    }
 
-                    path.trimTo(plen);
-                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, dataIndexMax, 1, fd < 0);
-                    try {
-
-                        switch (prefixType) {
-                            case 1:
-                                LOG.info().$("copy ooo prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
-                                copyOutOfOrderData(prefixLo, prefixHi, mergeStruct);
-                                break;
-                            case 2:
-                                LOG.info().$("copy data prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
-                                copyPartitionData(prefixLo, prefixHi, mergeStruct);
-                                break;
-                            default:
-                                break;
-                        }
-
+                        // calculate partition size to maintain consistency
+                        partitionSize = prefixHi - prefixLo + 1 + suffixHi - suffixLo + 1;
                         if (mergeDataLo != -1) {
-                            long dataOOMergeIndex;
-                            long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
-                            // copy timestamp column of the partition into a "index" memory
+                            partitionSize += mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
+                        }
 
-                            long ss = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
-                            try {
-                                final long src = mergeStruct[timestampIndex * 16 + 1];
-                                // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
-                                // have to go back and find data rows we need to move accordingly
-                                long index = Unsafe.malloc((mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
-                                try {
-                                    for (long l = mergeDataLo; l <= mergeDataHi; l++) {
-                                        Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES, Unsafe.getUnsafe().getLong(src + l * Long.BYTES));
-                                        Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES, l | (1L << 63));
-                                    }
+                        // we also need to calculate max timestamp
 
-                                    Unsafe.getUnsafe().putLong(ss, index);
-                                    Unsafe.getUnsafe().putLong(ss + Long.BYTES, mergeDataHi - mergeDataLo + 1);
-                                    Unsafe.getUnsafe().putLong(ss + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
-                                    Unsafe.getUnsafe().putLong(ss + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
-//
-                                    dataOOMergeIndex = Vect.mergeLongIndexesAsc(ss, 2);
-                                } finally {
-                                    Unsafe.free(index, (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
-                                }
+                        path.trimTo(plen);
+                        long[] mergeStruct = createTempPartition(path, indexLo, indexHi, dataIndexMax, 1, fd < 0);
+                        try {
 
-                                for (int i = 0; i < columnCount; i++) {
-
-                                    switch (metadata.getColumnType(i)) {
-                                        case ColumnType.STRING:
-                                        case ColumnType.BINARY:
-                                            mergeCopyStr(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
-                                            break;
-                                        case ColumnType.INT:
-                                        case ColumnType.FLOAT:
-                                        case ColumnType.SYMBOL:
-                                            mergeCopyInt(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
-                                            break;
-                                        case ColumnType.LONG:
-                                        case ColumnType.DATE:
-                                        case ColumnType.TIMESTAMP:
-                                        case ColumnType.DOUBLE:
-                                            mergeCopyLong(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
-                                            break;
-                                    }
-                                }
-                            } finally {
-                                Unsafe.free(ss, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+                            switch (prefixType) {
+                                case 1:
+                                    LOG.info().$("copy ooo prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
+                                    copyOutOfOrderData(prefixLo, prefixHi, mergeStruct);
+                                    break;
+                                case 2:
+                                    LOG.info().$("copy data prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
+                                    copyPartitionData(prefixLo, prefixHi, mergeStruct);
+                                    break;
+                                default:
+                                    break;
                             }
 
-                            LOG.info()
-                                    .$("merged data2 + ooo2 [dataFrom=").$(mergeDataLo)
-                                    .$(", dataTo=").$(mergeDataHi)
-                                    .$(", oooFrom=").$(mergeOOOLo)
-                                    .$(", oooTo=").$(mergeOOOHi)
-                                    .$(']').$();
-                        }
+                            if (mergeDataLo != -1) {
+                                long dataOOMergeIndex;
+                                long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
+                                // copy timestamp column of the partition into a "index" memory
 
-                        switch (suffixType) {
-                            case 1:
-                                LOG.info().$("copy ooo suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
-                                copyOutOfOrderData(suffixLo, suffixHi, mergeStruct);
-                                break;
-                            case 2:
-                                LOG.info().$("copy data suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
-                                copyPartitionData(suffixLo, suffixHi, mergeStruct);
-                                break;
-                            default:
-                                break;
-                        }
+                                long ss = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+                                try {
+                                    final long src = mergeStruct[timestampIndex * 16 + 1];
+                                    // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
+                                    // have to go back and find data rows we need to move accordingly
+                                    long index = Unsafe.malloc((mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
+                                    try {
+                                        for (long l = mergeDataLo; l <= mergeDataHi; l++) {
+                                            Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES, Unsafe.getUnsafe().getLong(src + l * Long.BYTES));
+                                            Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES, l | (1L << 63));
+                                        }
 
-                        // todo: this should be conditional to what data we just updated
-                        copyTempPartitionBack(mergeStruct);
+                                        Unsafe.getUnsafe().putLong(ss, index);
+                                        Unsafe.getUnsafe().putLong(ss + Long.BYTES, mergeDataHi - mergeDataLo + 1);
+                                        Unsafe.getUnsafe().putLong(ss + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
+                                        Unsafe.getUnsafe().putLong(ss + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
+//
+                                        dataOOMergeIndex = Vect.mergeLongIndexesAsc(ss, 2);
+                                    } finally {
+                                        Unsafe.free(index, (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
+                                    }
+
+                                    for (int i = 0; i < columnCount; i++) {
+
+                                        switch (metadata.getColumnType(i)) {
+                                            case ColumnType.STRING:
+                                            case ColumnType.BINARY:
+                                                mergeCopyStr(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                                                break;
+                                            case ColumnType.INT:
+                                            case ColumnType.FLOAT:
+                                            case ColumnType.SYMBOL:
+                                                mergeCopyInt(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                                                break;
+                                            case ColumnType.LONG:
+                                            case ColumnType.DATE:
+                                            case ColumnType.TIMESTAMP:
+                                            case ColumnType.DOUBLE:
+                                                mergeCopyLong(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                                                break;
+                                        }
+                                    }
+                                } finally {
+                                    Unsafe.free(ss, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+                                }
+
+                                LOG.info()
+                                        .$("merged data2 + ooo2 [dataFrom=").$(mergeDataLo)
+                                        .$(", dataTo=").$(mergeDataHi)
+                                        .$(", oooFrom=").$(mergeOOOLo)
+                                        .$(", oooTo=").$(mergeOOOHi)
+                                        .$(']').$();
+                            }
+
+                            switch (suffixType) {
+                                case 1:
+                                    LOG.info().$("copy ooo suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
+                                    copyOutOfOrderData(suffixLo, suffixHi, mergeStruct);
+                                    break;
+                                case 2:
+                                    LOG.info().$("copy data suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
+                                    copyPartitionData(suffixLo, suffixHi, mergeStruct);
+                                    break;
+                                default:
+                                    break;
+                            }
+
+                            // todo: this should be conditional to what data we just updated
+                            copyTempPartitionBack(mergeStruct);
+                        } finally {
+                            freeMergeStruct(mergeStruct);
+                        }
                     } finally {
-                        freeMergeStruct(mergeStruct);
+                        if (fd > 0) {
+                            ff.close(fd);
+                        }
                     }
-                } finally {
+                }
+
+                if (indexHi + 1 < indexMax) {
+                    // we are exiting current partition
+                    txPartitionCount++;
+                    txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
+                    fixedRowCount += partitionSize;
+//                    txPrevTransientRowCount = transientRowCount;
+//                    transientRowCount = 0;
+//                    openPartition(timestamp);
+//                    setAppendPosition(0);
+//
+
                     indexLo = indexHi + 1;
-                    if (fd > 0) {
-                        ff.close(fd);
-                    }
+                } else {
+                    transientRowCount = partitionSize;
+                    // Compute max timestamp as maximum of out of order data and
+                    // data in existing partition.
+                    // When partition is new, the data timestamp is MIN_LONG
+                    maxTimestamp = Math.max(Unsafe.getUnsafe().getLong(mergedTimestamps + indexHi * 16), dataTimestampHi);
+                    break;
                 }
             }
         } finally {
             path.trimTo(rootLen);
             this.mergeRowCount = 0;
         }
+    }
+
+    private void shiftCopyFixedSizeColumnData(
+            long shift,
+            long src,
+            long[] mergeStruct,
+            int columnIndex,
+            long srcLo,
+            long srcHi,
+            int columnType
+    ) {
+        final int shl = ColumnType.pow2SizeOf(columnType);
+        final long lo = srcLo << shl;
+        final long hi = (srcHi + 1) << shl;
+        copyColumnData(src, mergeStruct, columnIndex, lo, hi - lo);
     }
 
     private void mergeTimestampSetter(long timestamp) {
@@ -3824,18 +3870,6 @@ public class TableWriter implements Closeable {
             putLong(index, value);
         }
 
-        private BigMem getPrimaryColumn(int columnIndex) {
-            return rowColumns.getQuick(getPrimaryColumnIndex(columnIndex));
-        }
-
-        private BigMem getSecondaryColumn(int columnIndex) {
-            return rowColumns.getQuick(getSecondaryColumnIndex(columnIndex));
-        }
-
-        private void notNull(int index) {
-            refs.setQuick(index, masterRef);
-        }
-
         public void putTimestamp(int index, CharSequence value) {
             // try UTC timestamp first (micro)
             long l;
@@ -3849,6 +3883,18 @@ public class TableWriter implements Closeable {
                 }
             }
             putTimestamp(index, l);
+        }
+
+        private BigMem getPrimaryColumn(int columnIndex) {
+            return rowColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        }
+
+        private BigMem getSecondaryColumn(int columnIndex) {
+            return rowColumns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+
+        private void notNull(int index) {
+            refs.setQuick(index, masterRef);
         }
     }
 
