@@ -1625,7 +1625,9 @@ public class TableWriter implements Closeable {
         try {
             freeTxMem();
         } finally {
-            blockWriter.close();
+            if (null != blockWriter) {
+                blockWriter.close();
+            }
             Misc.free(metaMem);
             Misc.free(txPendingPartitionSizes);
             Misc.free(ddlMem);
