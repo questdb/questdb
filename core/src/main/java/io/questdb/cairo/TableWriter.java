@@ -567,7 +567,9 @@ public class TableWriter implements Closeable {
 
     @Override
     public void close() {
-        blockWriter.clear();
+        if (null != blockWriter) {
+            blockWriter.clear();
+        }
         if (isOpen() && lifecycleManager.close()) {
             doClose(true);
         }
