@@ -97,6 +97,7 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                     dataFrame.partitionIndex = partitionLo;
                     dataFrame.rowLo = lo;
                     dataFrame.rowHi = hi;
+                    sizeSoFar += (hi - lo);
 
                     // we do have whole partition of fragment?
                     if (hi == rowCount) {
@@ -120,11 +121,6 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
             }
         }
         return null;
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     @Override

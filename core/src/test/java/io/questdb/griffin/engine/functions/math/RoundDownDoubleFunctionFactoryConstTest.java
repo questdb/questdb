@@ -39,6 +39,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
                         "NaN\n",
                 "select round_down(14.7778, -18) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -50,28 +51,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
                         "NaN\n",
                 "select round_down(14.7778, 18) from long_sequence(1)",
                 null,
-                true
-        );
-    }
-
-    @Test
-    public void testOKNegScale() throws SqlException {
-        assertQuery(
-                "round_down\n" +
-                        "0.0\n",
-                "select round_down(14.7778, -13) from long_sequence(1)",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testOKPosScale() throws SqlException {
-        assertQuery(
-                "round_down\n" +
-                        "14.777800000000001\n",
-                "select round_down(14.7778, 13) from long_sequence(1)",
-                null,
+                true,
                 true
         );
     }
@@ -83,6 +63,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
                         "-0.0\n",
                 "select round_down(-14.778, -5) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -94,6 +75,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
                         "-10.0\n",
                 "select round_down(-14.778, -1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -105,6 +87,31 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
                         "10.0\n",
                 "select round_down(14.778, -1) from long_sequence(1)",
                 null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOKNegScale() throws SqlException {
+        assertQuery(
+                "round_down\n" +
+                        "0.0\n",
+                "select round_down(14.7778, -13) from long_sequence(1)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOKPosScale() throws SqlException {
+        assertQuery(
+                "round_down\n" +
+                        "14.777800000000001\n",
+                "select round_down(14.7778, 13) from long_sequence(1)",
+                null,
+                true,
                 true
         );
     }
@@ -116,6 +123,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
                         "-14.777999999999999\n",
                 "select round_down(-14.778, 7) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -127,6 +135,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
                         "-100.9\n",
                 "select round_down(-100.9999, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -138,6 +147,7 @@ public class RoundDownDoubleFunctionFactoryConstTest extends AbstractGriffinTest
                         "100.0\n",
                 "select round_down(100.01, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }

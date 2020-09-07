@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.std.*;
@@ -164,7 +164,7 @@ public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory 
             // empty map? this means that base cursor was empty
             if (map.size() == 0) {
                 baseCursor.close();
-                return EmptyTableRecordCursor.INSTANCE;
+                return EmptyTableNoSizeRecordCursor.INSTANCE;
             }
 
             // because we pass base cursor twice we have to go back to top

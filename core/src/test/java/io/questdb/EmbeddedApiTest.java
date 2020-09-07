@@ -33,7 +33,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Rule;
 import org.junit.Test;
@@ -42,6 +48,71 @@ import org.junit.rules.TemporaryFolder;
 public class EmbeddedApiTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
+
+    @Test
+    public void testConcurrentSQLExec() throws Exception {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        final Log log = LogFactory.getLog("testConcurrentSQLExec");
+
+        TestUtils.assertMemoryLeak(() -> {
+            WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{
+                            -1, -1
+                    };
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+
+
+            Rnd rnd = new Rnd();
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final MessageBusImpl messageBus = new MessageBusImpl(configuration);
+                workerPool.assign(new GroupByJob(messageBus));
+                workerPool.start(log);
+                try {
+                    // number of cores is current thread + workers in the pool
+                    final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 2, messageBus);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+
+                        compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
+
+                        long timestamp = 0;
+                        try (TableWriter writer = engine.getWriter(ctx.getCairoSecurityContext(), "abc")) {
+                            for (int i = 0; i < 10_000_000; i++) {
+                                TableWriter.Row row = writer.newRow(timestamp);
+                                row.putDouble(0, rnd.nextDouble());
+                                row.append();
+                                timestamp += 1_000_000;
+                            }
+                            writer.commit();
+                        }
+
+                        try (RecordCursorFactory factory = compiler.compile("select sum(g) from abc", ctx).getRecordCursorFactory()) {
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                final Record record = cursor.getRecord();
+                                while (cursor.hasNext()) {
+                                    // access 'record' instance for field values
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
 
     @Test
     public void testReadWrite() throws Exception {

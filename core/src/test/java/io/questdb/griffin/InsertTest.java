@@ -284,6 +284,8 @@ public class InsertTest extends AbstractGriffinTest {
                         "        timestamp_sequence(172800000000, 360000000) ts \n" +
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
+                true,
+                true,
                 true
         );
     }
@@ -470,6 +472,8 @@ public class InsertTest extends AbstractGriffinTest {
                 "ts",
                 "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)",
                 expected,
+                true,
+                true,
                 true
         );
     }

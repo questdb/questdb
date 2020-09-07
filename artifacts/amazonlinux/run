@@ -1,0 +1,5 @@
+#!/bin/sh
+
+docker build .
+id=$(docker images --format='{{.ID}}' | head -1)
+docker cp $(docker create "$id"):/app/core/target/questdb-5.0.3-rt-linux-amd64.tar.gz .

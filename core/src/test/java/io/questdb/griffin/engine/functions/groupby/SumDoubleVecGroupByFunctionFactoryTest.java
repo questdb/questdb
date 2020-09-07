@@ -38,6 +38,34 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
     }
 
     @Test
+    public void testAddColumn() throws Exception {
+        assertQuery(
+                "avg\n" +
+                        "0.511848387\n",
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_double(2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b double",
+                "avg\n" +
+                        "0.511848387\n",
+                false,
+                true,
+                true
+        );
+
+        assertQuery(
+                "avg\tsum\n" +
+                        "0.504722\t188.82913096423943\n",
+                "select round(avg(f),6) avg, sum(b) sum from tab",
+                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery(
                 "sum\n" +
@@ -48,7 +76,9 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "insert into tab select 0.9822 from long_sequence(1)",
                 "sum\n" +
                         "0.9822000000000001\n",
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -60,31 +90,9 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "select round(sum(f), 12) sum from tab",
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,
-                false
-        );
-    }
-
-    @Test
-    public void testAddColumn() throws Exception {
-        assertQuery(
-                "avg\n" +
-                        "0.511848387\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_double(2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b double",
-                "avg\n" +
-                        "0.511848387\n",
-                false
-        );
-
-        assertQuery(
-                "avg\tsum\n" +
-                        "0.504722\t188.82913096423943\n",
-                "select round(avg(f),6) avg, sum(b) sum from tab",
-                "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
-                null,
-                false
+                false,
+                true,
+                true
         );
     }
 }

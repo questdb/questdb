@@ -400,8 +400,23 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunctionFactory,
 //                  'last' group by function
+            io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastShortGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastSymbolGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.LastLongGroupByFunctionFactory,
+
+//                  'first' group by function
+            io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstTimestampGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.FirstDateGroupByFunctionFactory,
 //                  'max' group
             io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.MaxIntGroupByFunctionFactory,

@@ -170,7 +170,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         size = limit;
                         base.toTop();
                     } else {
-                        limit = hi - lo;
+                        limit = Math.max(0, hi - lo);
                         size = limit;
                     }
 

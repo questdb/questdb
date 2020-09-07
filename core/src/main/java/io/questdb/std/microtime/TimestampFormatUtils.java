@@ -144,7 +144,7 @@ public class TimestampFormatUtils {
 
     // YYYY-MM-DDThh:mm:ss.mmmnnn
     public static long parseTimestamp(CharSequence seq) throws NumericException {
-        return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), null);
+        return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
     }
 
     public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {

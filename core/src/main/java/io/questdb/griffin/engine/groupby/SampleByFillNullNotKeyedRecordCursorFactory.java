@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -85,7 +85,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
             return initFunctionsAndCursor(executionContext, baseCursor);
         }
         Misc.free(baseCursor);
-        return EmptyTableRecordCursor.INSTANCE;
+        return EmptyTableNoSizeRecordCursor.INSTANCE;
     }
 
     @Override

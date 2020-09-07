@@ -72,7 +72,10 @@ public class CountTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 "cnt\n" +
                         "25\n",
-                false);
+                false,
+                true,
+                true
+        );
     }
 
     @Test
@@ -110,7 +113,10 @@ public class CountTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 "count\n" +
                         "25\n",
-                false);
+                false,
+                true,
+                true
+        );
     }
 
     @Test
@@ -148,6 +154,9 @@ public class CountTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 "count\n" +
                         "5319\n",
-                false);
+                false,
+                true,
+                true
+        );
     }
 }

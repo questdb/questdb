@@ -29,7 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
-import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
@@ -58,7 +58,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("column\n" +
                         "234990000000000\n",
                 "select 23499000000000*10 from long_sequence(1)",
-                null, null);
+                null, null, true, true, true
+        );
     }
 
     @Test
@@ -76,7 +77,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -99,32 +102,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k)",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
             Assert.assertEquals(50.03730496259993, r.avgDouble(0), 0.00001);
         }
-    }
-
-    @Test
-    public void testFilterConstantTrue() throws Exception {
-        final String expected = "sum\n" +
-                "551.3822454600645\n";
-
-        assertQuery(expected,
-                "(select sum(a) from x) where 1=1",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " timestamp_sequence(0, 10000) k" +
-                        " from" +
-                        " long_sequence(12)" +
-                        ") timestamp(k)",
-                null,
-                false
-        );
     }
 
     @Test
@@ -142,7 +127,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -165,7 +152,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(0)" +
                         ") timestamp(k)",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -189,6 +178,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2\t10\n",
                             factory,
                             true,
+                            true,
                             true
                     );
                 }
@@ -211,6 +201,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "1\t10\n" +
                                     "2\t10\n",
                             factory,
+                            true,
                             true,
                             true
                     );
@@ -236,6 +227,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2\t10\n",
                             factory,
                             true,
+                            true,
                             true
                     );
                 }
@@ -259,12 +251,43 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "10\n",
                             factory,
                             true,
-                            true
+                            true,
+                            false
 
                     );
                 }
             }
         });
+    }
+
+    @Test
+    public void testBug484() throws Exception {
+        TestMatchFunctionFactory.clear();
+
+        assertQuery("sym\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n" +
+                        "cc\n",
+                "select * from x2 where sym in (select distinct sym from x2 where sym  in (select distinct sym from x2 where sym = 'cc')) and test_match()",
+                "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
+                null
+        );
+
+        // also good numbers, extra top calls are due to symbol column API check
+        // tables without symbol columns will skip this check
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
     }
 
     @Test
@@ -374,8 +397,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "tst",
                 "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000000l) t from long_sequence(100)) timestamp(t)) partition by DAY",
                 "t",
+                true,
+                true,
                 true
-
         );
     }
 
@@ -438,30 +462,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDistinctSymbolColumn() throws Exception {
-        final String expected = "pair\n" +
-                "A\n" +
-                "B\n" +
-                "C\n";
-
-        assertQuery(expected,
-                "select distinct pair from prices",
-                "create table prices as " +
-                        "(" +
-                        " SELECT \n" +
-                        " x ID, --increasing integer\n" +
-                        " rnd_symbol('A', 'B', 'C') pair, \n" +
-                        " rnd_double(0) length,\n" +
-                        " rnd_double(0) height" +
-                        " from" +
-                        " long_sequence(1200000)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
     public void testDistinctFunctionColumn() throws Exception {
         final String expected = "v\n" +
                 "8.0\n" +
@@ -520,6 +520,32 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDistinctSymbolColumn() throws Exception {
+        final String expected = "pair\n" +
+                "A\n" +
+                "B\n" +
+                "C\n";
+
+        assertQuery(expected,
+                "select distinct pair from prices",
+                "create table prices as " +
+                        "(" +
+                        " SELECT \n" +
+                        " x ID, --increasing integer\n" +
+                        " rnd_symbol('A', 'B', 'C') pair, \n" +
+                        " rnd_double(0) length,\n" +
+                        " rnd_double(0) height" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDistinctSymbolColumnWithFilter() throws Exception {
         final String expected = "pair\n" +
                 "A\n" +
@@ -560,7 +586,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ")",
-                "k");
+                "k",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -604,6 +634,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // these values are assured to be correct for the scenario
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
+    public void testFilterConstantTrue() throws Exception {
+        final String expected = "sum\n" +
+                "551.3822454600645\n";
+
+        assertQuery(expected,
+                "(select sum(a) from x) where 1=1",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(12)" +
+                        ") timestamp(k)",
+                null,
+                false,
+                true,
+                true
+        );
     }
 
     @Test
@@ -663,6 +715,53 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilterOnIndexAndExpression() throws Exception {
+
+        TestMatchFunctionFactory.clear();
+
+        assertQuery("contactId\n" +
+                        "KOJSOLDYRO\n" +
+                        "SKEDJ\n",
+                "SELECT\n" +
+                        "    DISTINCT E.contactId AS contactId\n" +
+                        "FROM\n" +
+                        "    contact_events E\n" +
+                        "WHERE\n" +
+                        "    E.groupId = 'ZIMN'\n" +
+                        "    AND E.eventId = 'IPHZ'\n" +
+                        "EXCEPT\n" +
+                        "SELECT\n" +
+                        "    DISTINCT E.contactId AS contactId\n" +
+                        "FROM\n" +
+                        "    contact_events  E\n" +
+                        "WHERE\n" +
+                        "    E.groupId = 'MLGL'\n" +
+                        "    AND E.site__clean = 'EPIH'",
+                "create table contact_events as (" +
+                        "select" +
+                        " rnd_str(5,10,0) id," +
+                        " rnd_str(5,10,0) contactId," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_source," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_medium," +
+                        " rnd_symbol(5,4,4,1) site__query__utm_campaign," +
+                        " rnd_symbol(5,4,4,1) site__query__campaignId," +
+                        " rnd_symbol(5,4,4,1) site__query__campaignGroupId," +
+                        " rnd_symbol(5,4,4,1) site__query__adsetId," +
+                        " rnd_symbol(5,4,4,1) site__query__adId," +
+                        " rnd_symbol(5,4,4,1) site__main," +
+                        " rnd_str(5,10,0) site__queryString," +
+                        " rnd_str(5,10,0) site__clean," +
+                        " rnd_symbol(5,4,4,1) site__hash," +
+                        " rnd_symbol(5,4,4,1) eventId," +
+                        " rnd_symbol(5,4,4,1) groupId" +
+                        " from long_sequence(100)" +
+                        ")," +
+                        " index(groupId)",
+                null
+        );
+    }
+
+    @Test
     public void testFilterOnInterval() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
@@ -700,36 +799,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         "), index(b) timestamp(k)",
                 "k");
-
-        // also good numbers, extra top calls are due to symbol column API check
-        // tables without symbol columns will skip this check
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
-    }
-
-    @Test
-    public void testBug484() throws Exception {
-        TestMatchFunctionFactory.clear();
-
-        assertQuery("sym\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n",
-                "select * from x2 where sym in (select distinct sym from x2 where sym  in (select distinct sym from x2 where sym = 'cc')) and test_match()",
-                "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
-                null
-        );
 
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
@@ -915,7 +984,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         "),index(b) timestamp(k) partition by DAY",
                 "k",
-                false);
+                false,
+                true,
+                true
+        );
 
         // these value are also ok because ddl2 is present, there is another round of check for that
         // this ensures that "init" on filter is invoked
@@ -1089,53 +1161,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "44.80468966861358\t\t\n");
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
-    }
-
-    @Test
-    public void testFilterOnIndexAndExpression() throws Exception {
-
-        TestMatchFunctionFactory.clear();
-
-        assertQuery("contactId\n" +
-                        "KOJSOLDYRO\n" +
-                        "SKEDJ\n",
-                "SELECT\n" +
-                        "    DISTINCT E.contactId AS contactId\n" +
-                        "FROM\n" +
-                        "    contact_events E\n" +
-                        "WHERE\n" +
-                        "    E.groupId = 'ZIMN'\n" +
-                        "    AND E.eventId = 'IPHZ'\n" +
-                        "EXCEPT\n" +
-                        "SELECT\n" +
-                        "    DISTINCT E.contactId AS contactId\n" +
-                        "FROM\n" +
-                        "    contact_events  E\n" +
-                        "WHERE\n" +
-                        "    E.groupId = 'MLGL'\n" +
-                        "    AND E.site__clean = 'EPIH'",
-                "create table contact_events as (" +
-                        "select" +
-                        " rnd_str(5,10,0) id," +
-                        " rnd_str(5,10,0) contactId," +
-                        " rnd_symbol(5,4,4,1) site__query__utm_source," +
-                        " rnd_symbol(5,4,4,1) site__query__utm_medium," +
-                        " rnd_symbol(5,4,4,1) site__query__utm_campaign," +
-                        " rnd_symbol(5,4,4,1) site__query__campaignId," +
-                        " rnd_symbol(5,4,4,1) site__query__campaignGroupId," +
-                        " rnd_symbol(5,4,4,1) site__query__adsetId," +
-                        " rnd_symbol(5,4,4,1) site__query__adId," +
-                        " rnd_symbol(5,4,4,1) site__main," +
-                        " rnd_str(5,10,0) site__queryString," +
-                        " rnd_str(5,10,0) site__clean," +
-                        " rnd_symbol(5,4,4,1) site__hash," +
-                        " rnd_symbol(5,4,4,1) eventId," +
-                        " rnd_symbol(5,4,4,1) groupId" +
-                        " from long_sequence(100)" +
-                        ")," +
-                        " index(groupId)",
-                null
-        );
     }
 
     @Test
@@ -1449,7 +1474,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1479,7 +1508,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp (t)",
                 "a\tb\tk\n" +
                         "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                        "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n");
+                        "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1514,7 +1547,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1547,7 +1584,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1582,7 +1623,116 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedConstantFilter() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
+        assertQuery(expected,
+                "select * from x latest by b where 5 > 2",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedFilter() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
+        assertQuery(expected,
+                "select * from x latest by b where a > 40",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedFilterBySymbol() throws Exception {
+        final String expected = "a\tb\tc\tk\n" +
+                "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
+        assertQuery(expected,
+                "select * from x latest by b where c = 'SXUX'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_symbol(5,4,4,1) c," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " 'SXUX'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tc\tk\n" +
+                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
+                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1617,100 +1767,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1970-01-11T10:00:00.000000Z\t12.026122412833129\n" +
                         "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
                         "1970-01-22T23:46:40.000000Z\t40.455469747939254\n" +
-                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n");
-    }
-
-    @Test
-    public void testLatestByAllIndexedConstantFilter() throws Exception {
-        final String expected = "a\tb\tk\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery(expected,
-                "select * from x latest by b where 5 > 2",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n");
-    }
-
-    @Test
-    public void testLatestByAllIndexedFilter() throws Exception {
-        final String expected = "a\tb\tk\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery(expected,
-                "select * from x latest by b where a > 40",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tk\n" +
-                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n");
-    }
-
-    @Test
-    public void testLatestByAllIndexedFilterBySymbol() throws Exception {
-        final String expected = "a\tb\tc\tk\n" +
-                "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
-        assertQuery(expected,
-                "select * from x latest by b where c = 'SXUX'",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_symbol(5,4,4,1) c," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " 'VTJW'," +
-                        " 'SXUX'," +
-                        " to_timestamp('2019', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tb\tc\tk\n" +
-                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
-                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n");
+                        "2019-01-01T00:00:00.000000Z\t56.594291398612405\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1740,7 +1801,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp (t)",
                 expected +
-                        "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tCCKS\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1783,7 +1848,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                             "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                                     factory,
                                     true,
-                                    true
+                                    true,
+                                    false
                             );
                             Assert.fail();
                         } catch (CairoException e) {
@@ -1870,7 +1936,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(200)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         // this is good
@@ -1973,7 +2041,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2005,7 +2077,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "12.105630273556178\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "12.105630273556178\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
     }
@@ -2035,7 +2111,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2064,7 +2144,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
 
         // this is good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
@@ -2202,7 +2286,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2230,7 +2318,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
@@ -2260,7 +2352,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2288,7 +2384,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
-                        "88.10000000000001\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "88.10000000000001\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
@@ -2327,7 +2427,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "2\tUSD\t0.7943185767500432\t1\t1970-01-01T00:00:00.000000Z\n" +
                         "2\tGBP\t0.4388864091771264\t1\t1970-01-01T00:00:00.000000Z\n" +
                         "0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z\n" +
-                        "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n");
+                        "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2375,7 +2479,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2407,7 +2515,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2441,7 +2553,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
 
         // good
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
@@ -2475,7 +2591,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tUCLA\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2508,7 +2628,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+                        "33.46\tUCLA\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
     }
@@ -2543,7 +2667,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
     }
@@ -2575,7 +2703,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2607,7 +2739,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "33.46\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
 
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
     }
@@ -2652,7 +2788,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+                        "56.594291398612405\tRXGZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2670,7 +2810,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "10\n",
                 "select * from long_sequence(10)",
                 null,
-                null);
+                null,
+                true,
+                true,
+                true
+        );
 
 
         // test another record count
@@ -2698,19 +2842,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "20\n",
                 "select * from long_sequence(20)",
                 null,
-                null);
+                null,
+                true,
+                true,
+                true
+        );
 
         // test 0 record count
 
         assertQuery("x\n",
                 "select * from long_sequence(0)",
                 null,
-                null);
+                null,
+                true,
+                true,
+                true
+        );
 
         assertQuery("x\n",
                 "select * from long_sequence(-2)",
                 null,
-                null);
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -2728,7 +2884,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -2751,7 +2909,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(120)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -2774,7 +2934,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -2797,7 +2959,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(120)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -2822,7 +2986,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "10\n",
                             factory,
                             true,
-                            true
+                            true,
+                            false
                     );
                 }
             }
@@ -2952,7 +3117,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1194691156\tfalse\tQ\tNaN\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
                         "1194691157\tfalse\tRXGZ\t88.69397617459538\tNaN\t0\t\t\tNaN\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
                         "1431425139\tfalse\t\t0.30716667810043663\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
-                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n");
+                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -3227,7 +3396,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
                         ") timestamp(t)",
-                expected2);
+                expected2,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -3296,7 +3469,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
                         "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
                         "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
-                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n");
+                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -3410,7 +3587,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
                         "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
                         "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
-                        "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n");
+                        "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -3479,7 +3660,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
                         "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
                         "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
-                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n");
+                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -3574,7 +3759,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "X\n" +
                         "Y\n" +
                         "Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -3641,7 +3829,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n"
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n",
+                true,
+                true,
+                true
+
         );
     }
 
@@ -3709,7 +3901,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
                         "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                         "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n"
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
+                true,
+                true,
+                true
+
         );
     }
 
@@ -3777,7 +3973,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n"
+                        "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n",
+                true,
+                true,
+                true
         );
     }
 
@@ -3845,7 +4044,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
                         "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                         "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
-                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n"
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
+                true,
+                true,
+                true
         );
     }
 
@@ -3899,7 +4101,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m" +
                         " from long_sequence(20)" +
                         ")  timestamp(k) partition by DAY",
-                "k");
+                "k",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -3946,7 +4152,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m" +
                         " from long_sequence(20)" +
                         ")  timestamp(k) partition by DAY",
-                null);
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -4054,7 +4264,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_symbol(10,3,5,0) a" +
                         " from long_sequence(1000000)" +
                         ") ",
-                expected2, true);
+                expected2,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -4082,7 +4296,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -4105,34 +4321,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k)",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
             Assert.assertEquals(6.004476595511992E7, r.sumDouble(0), 0.00001);
-        }
-    }
-
-    @Test
-    public void testSumDoubleColumnWithNaNs() throws Exception {
-        final String expected = "a\tk\n";
-
-        assertQuery(expected,
-                "x where 1 = 0",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(2)*100 a," +
-                        " timestamp_sequence(0, 10000) k" +
-                        " from" +
-                        " long_sequence(1200000)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                false
-        );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(5.001433965140632E7, r.sumDouble(0), 0.00001);
         }
     }
 
@@ -4197,6 +4392,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testSumDoubleColumnWithNaNs() throws Exception {
+        final String expected = "a\tk\n";
+
+        assertQuery(expected,
+                "x where 1 = 0",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(2)*100 a," +
+                        " timestamp_sequence(0, 10000) k" +
+                        " from" +
+                        " long_sequence(1200000)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                false,
+                true,
+                true
+        );
+
+        try (TableReader r = new TableReader(configuration, "x")) {
+            Assert.assertEquals(5.001433965140632E7, r.sumDouble(0), 0.00001);
+        }
+    }
+
     //NOTE Kahan should fail this  - Neumaier should pass
     //    @Test
 //    public void testSumDoubleColumnWithNeumaierMethodVectorised1() throws Exception {
@@ -4214,11 +4434,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 //        }
 //    }
 
-    private void executeInsertStatement(double d) throws SqlException {
-        String ddl = "insert into x (ds) values (" + d + ")";
-        executeInsert(ddl);
-    }
-
     @Test
     public void testVectorAggregateOnSparsePartitions() throws Exception {
         final String expected = "a\tk\n";
@@ -4234,7 +4449,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " long_sequence(120)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false
+                false,
+                true,
+                true
         );
 
         try (TableReader r = new TableReader(configuration, "x")) {
@@ -4252,7 +4469,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select avg(c),sum(c) from x",
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(42))",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -4273,7 +4492,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         final AtomicBoolean running = new AtomicBoolean(true);
         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-        final GroupByNotKeyedJob job = new GroupByNotKeyedJob(engine.getMessageBus());
+        final GroupByJob job = new GroupByJob(engine.getMessageBus());
         new Thread(() -> {
             while (running.get()) {
                 job.run(0);
@@ -4287,7 +4506,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "select round(avg(c), 9) avg, round(sum(c), 6) sum from x",
                     "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b, rnd_double(2) c, rnd_int() d from long_sequence(2000000))",
                     null,
-                    false
+                    false,
+                    true,
+                    true
             );
         } finally {
             running.set(false);
@@ -4302,7 +4523,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "select sum(a),round(sum(b),5) sum1 from x",
                 "create table x as (select rnd_int(0,100,2) a, rnd_double(2) b from long_sequence(1000035L))",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -4356,7 +4579,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m" +
                         " from long_sequence(20)" +
                         ")  timestamp(k) partition by DAY",
-                "k");
+                "k",
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -4403,6 +4630,15 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m" +
                         " from long_sequence(20)" +
                         ")  timestamp(k) partition by DAY",
-                null);
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    private void executeInsertStatement(double d) throws SqlException {
+        String ddl = "insert into x (ds) values (" + d + ")";
+        executeInsert(ddl);
     }
 }

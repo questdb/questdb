@@ -353,11 +353,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             try {
                 if (multipartRequest && !multipartProcessor) {
                     // bad request - multipart request for processor that doesn't expect multipart
-                    headerParser.clear();
-                    LOG.error().$("bad request [multipart/non-multipart]").$();
+                    keepGoing = rejectRequest("Bad request. non-multipart GET expected.");
                 } else if (!multipartRequest && multipartProcessor) {
                     // bad request - regular request for processor that expects multipart
-                    LOG.error().$("bad request [non-multipart/multipart]").$();
+                    keepGoing = rejectRequest("Bad request. Multipart POST expected.");
                 } else if (multipartProcessor) {
                     keepGoing = consumeMultipart(fd, processor, headerEnd, read, newRequest);
                 } else {
@@ -402,6 +401,14 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             keepGoing = false;
         }
         return keepGoing;
+    }
+
+    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        clear();
+        LOG.error().$(userMessage).$();
+        simpleResponse().sendStatus(400, userMessage);
+        dispatcher.registerChannel(this, IOOperation.READ);
+        return false;
     }
 
     private boolean handleClientSend() {

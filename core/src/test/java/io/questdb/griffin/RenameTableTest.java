@@ -72,6 +72,8 @@ public class RenameTableTest extends AbstractGriffinTest {
                             null,
 
                             "timestamp",
+                            true,
+                            true,
                             true
                     );
                 }

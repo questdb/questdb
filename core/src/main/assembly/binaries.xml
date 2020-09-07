@@ -31,12 +31,12 @@
     <files>
         <file>
             <source>../LICENSE.txt</source>
-            <outputDirectory>questdb-${artifact.version}</outputDirectory>
+            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
         </file>
     </files>
     <dependencySets>
         <dependencySet>
-            <outputDirectory>questdb-${artifact.version}</outputDirectory>
+            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
             <outputFileNameMapping>questdb.jar</outputFileNameMapping>
             <useProjectArtifact>true</useProjectArtifact>
             <scope>runtime</scope>
@@ -48,7 +48,7 @@
             <includes>
                 <include>*.sh</include>
             </includes>
-            <outputDirectory>questdb-${artifact.version}</outputDirectory>
+            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
             <fileMode>755</fileMode>
             <lineEnding>unix</lineEnding>
         </fileSet>
@@ -57,7 +57,7 @@
             <includes>
                 <include>*.exe</include>
             </includes>
-            <outputDirectory>questdb-${artifact.version}</outputDirectory>
+            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
         </fileSet>
     </fileSets>
 </assembly>

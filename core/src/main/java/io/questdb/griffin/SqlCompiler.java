@@ -214,7 +214,8 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
                 || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
-                || (from == ColumnType.CHAR && to == ColumnType.STRING);
+                || (from == ColumnType.CHAR && to == ColumnType.STRING)
+                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP);
     }
 
     // Creates data type converter.
@@ -256,6 +257,7 @@ public class SqlCompiler implements Closeable {
         int wPutSym = asm.poolMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
         int wPutSymChar = asm.poolMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutTimestampStr = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
         int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
@@ -608,10 +610,16 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    if (to.getColumnType(toColumnIndex) == ColumnType.SYMBOL) {
-                        asm.invokeVirtual(wPutSym);
-                    } else {
-                        asm.invokeVirtual(wPutStr);
+                    switch (to.getColumnType(toColumnIndex)) {
+                        case ColumnType.SYMBOL:
+                            asm.invokeVirtual(wPutSym);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeVirtual(wPutTimestampStr);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutStr);
+                            break;
                     }
                     break;
                 case ColumnType.BINARY:

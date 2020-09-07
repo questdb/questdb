@@ -66,6 +66,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('d', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -78,6 +79,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('d', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -90,6 +92,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('h', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -102,6 +105,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('h', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -114,6 +118,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('m', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -126,6 +131,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('m', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -138,6 +144,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('M', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -150,6 +157,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('M', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -162,6 +170,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('s', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -174,6 +183,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('s', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -186,6 +196,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('w', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -198,6 +209,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('w', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -210,6 +222,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('y', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -222,6 +235,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('y', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }

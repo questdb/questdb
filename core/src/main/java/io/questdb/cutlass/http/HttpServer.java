@@ -40,7 +40,7 @@ import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
@@ -267,8 +267,8 @@ public class HttpServer implements Closeable {
 
         // jobs that help parallel execution of queries
         workerPool.assign(new ColumnIndexerJob(messageBus));
-        workerPool.assign(new GroupByNotKeyedJob(messageBus));
-    }
+        workerPool.assign(new GroupByJob(messageBus));
+     }
 
     public void bind(HttpRequestProcessorFactory factory) {
         final String url = factory.getUrl();

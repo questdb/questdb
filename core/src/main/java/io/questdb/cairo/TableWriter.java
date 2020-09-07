@@ -3081,6 +3081,21 @@ public class TableWriter implements Closeable {
         private void notNull(int index) {
             refs.setQuick(index, masterRef);
         }
+
+        public void putTimestamp(int index, CharSequence value) {
+            // try UTC timestamp first (micro)
+            long l;
+            try {
+                l = TimestampFormatUtils.parseTimestamp(value);
+            } catch (NumericException e) {
+                try {
+                    l = TimestampFormatUtils.parseDateTime(value);
+                } catch (NumericException numericException) {
+                    throw CairoException.instance(0).put("could not convert to timestamp [value=").put(value).put(']');
+                }
+            }
+            putTimestamp(index, l);
+        }
     }
 
     static {

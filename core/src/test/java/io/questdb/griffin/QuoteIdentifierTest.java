@@ -35,6 +35,8 @@ public class QuoteIdentifierTest extends AbstractGriffinTest {
                 "quoted_table",
                 "create table \"quoted_table\"(\"id\" long,\"name\" string)",
                 null,
+                true,
+                true,
                 true
         );
     }

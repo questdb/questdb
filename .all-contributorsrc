@@ -105,6 +105,25 @@
         "blog",
         "example"
       ]
+    },
+    {
+      "login": "alexprut",
+      "name": "Alex Prut",
+      "avatar_url": "https://avatars2.githubusercontent.com/u/1648497?v=4",
+      "profile": "http://alexprut.com",
+      "contributions": [
+        "code",
+        "maintenance"
+      ]
+    },
+      "login": "lbowman",
+      "name": "Levi Bowman",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/1477427?v=4",
+      "profile": "https://github.com/lbowman",
+      "contributions": [
+        "code",
+        "test"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",

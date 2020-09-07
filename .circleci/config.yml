@@ -30,7 +30,7 @@ jobs:
           # fallback to using the latest cache if no exact match is found
           - v1-dependencies-
 
-      - run: mvn compile -DskipTests -Dprofile.install-local-nodejs
+      - run: mvn clean compile -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
 
       - save_cache:
           paths:
@@ -38,4 +38,4 @@ jobs:
           key: v1-dependencies-{{ checksum "pom.xml" }}
 
       # run tests!
-      - run: mvn integration-test -Dprofile.install-local-nodejs
+      - run: mvn test

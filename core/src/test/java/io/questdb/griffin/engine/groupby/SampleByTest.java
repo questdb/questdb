@@ -112,7 +112,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
                         "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
                         "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -283,7 +286,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "1970-01-04T07:00:00.000000Z\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
                         "1970-01-04T08:00:00.000000Z\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
                         "1970-01-04T09:00:00.000000Z\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -317,7 +323,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "UU\t4\n" +
                         "XY\t6\n" +
                         "ZP\t5\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -351,7 +360,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "\t1\n" +
                         "KK\t1\n" +
                         "PL\t1\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -379,7 +391,10 @@ public class SampleByTest extends AbstractGriffinTest {
                 "c\tsum_t\n" +
                         "PL\t1.088880189118224\n" +
                         "KK\t2.614956708935964\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -472,7 +487,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "ZP\t0.7836635625207334\n" +
                         "KK\t1.6435699091508287\n" +
                         "PL\t1.1627169669458202\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -490,6 +508,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
                 true
         );
     }
@@ -789,7 +809,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "PEHN\t10\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t-5\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t32\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -944,7 +967,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\tNaN\t1970-01-04T06:00:00.000000Z\n" +
                         "VTJW\tNaN\t1970-01-04T06:00:00.000000Z\n" +
                         "RXGZ\tNaN\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1124,7 +1150,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "ZGHW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "LOPJ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "VDKF\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1170,7 +1199,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T09:00:00.000000Z\n" +
                         "\t49.25778913497925\t94.75038154677522\t-330667436\t47\t-26781\t8219504976477969408\t1970-01-04T09:00:00.000000Z\n" +
                         "SXUX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1316,7 +1348,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "PEHN\t-163.67975914069712\t1970-01-04T09:00:00.000000Z\n" +
                         "HYRX\t-673.453149968598\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1381,7 +1416,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(10000)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -4113,9 +4151,9 @@ public class SampleByTest extends AbstractGriffinTest {
                         "RXGZ\t20.56\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                         "HYRX\t20.56\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n";
 
-                assertCursor(expected, factory, false, true);
+                assertCursor(expected, factory, false, true, false, false);
                 // make sure we get the same outcome when we get factory to create new cursor
-                assertCursor(expected, factory, false, true);
+                assertCursor(expected, factory, false, true, false, false);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
                 assertVariableColumns(factory, true);
 

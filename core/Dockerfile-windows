@@ -18,19 +18,19 @@ WORKDIR c:/questdb
 
 ## build from source
 
-RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -Dprofile.install-local-nodejs
+RUN c:\apache-maven-3.6.3\bin\mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
 
 ## unpack the runtime
 
 WORKDIR c:/questdb/core/target
-RUN tar xvfz questdb-5.0.2-rt-windows-amd64.tar.gz
+RUN tar xvfz questdb-5.0.3-rt-windows-amd64.tar.gz
 #RUN dir questdb-*-rt-windows-amd64.tar.gz
 
 FROM mcr.microsoft.com/windows/nanoserver:1903
 
 WORKDIR /app
 
-COPY --from=0 c:/questdb/core/target/questdb-5.0.2-rt-windows-amd64/ .
+COPY --from=0 c:/questdb/core/target/questdb-5.0.3-rt-windows-amd64/ .
 
 # Make working folder the quest db folder
 WORKDIR /app/bin

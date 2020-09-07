@@ -38,73 +38,40 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDoubleOrElse() throws Exception {
+    public void testBinary() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t0.8043224099968393\n" +
-                        "671\t0.8423410920883345\n" +
-                        "481\t0.3491070363730514\n" +
-                        "147\t0.5243722859289777\n" +
-                        "-55\t0.7261136209823622\n" +
-                        "-769\t0.3100545983862456\n" +
-                        "-831\t0.5249321062686694\n" +
-                        "-914\t0.6217326707853098\n" +
-                        "-463\t0.12503042190293423\n" +
-                        "-194\t0.6761934857077543\n" +
-                        "-835\t0.7883065830055033\n" +
-                        "-933\t0.5522494170511608\n" +
-                        "416\t0.4900510449885239\n" +
-                        "380\t0.38642336707855873\n" +
-                        "-574\t0.7997733229967019\n" +
-                        "-722\t0.40455469747939254\n" +
-                        "-128\t0.8828228366697741\n" +
-                        "-842\t0.9566236549439661\n" +
-                        "-123\t0.9269068519549879\n" +
-                        "535\t0.49428905119584543\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_double() a," +
-                        " rnd_double() b," +
-                        " rnd_double() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testDouble() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t0.8043224099968393\n" +
-                        "671\tNaN\n" +
-                        "481\tNaN\n" +
-                        "147\t0.5243722859289777\n" +
-                        "-55\t0.7261136209823622\n" +
-                        "-769\t0.3100545983862456\n" +
-                        "-831\t0.5249321062686694\n" +
-                        "-914\t0.6217326707853098\n" +
-                        "-463\t0.12503042190293423\n" +
-                        "-194\t0.6761934857077543\n" +
-                        "-835\t0.7883065830055033\n" +
-                        "-933\t0.5522494170511608\n" +
-                        "416\tNaN\n" +
-                        "380\tNaN\n" +
-                        "-574\t0.7997733229967019\n" +
-                        "-722\t0.40455469747939254\n" +
-                        "-128\t0.8828228366697741\n" +
-                        "-842\t0.9566236549439661\n" +
-                        "-123\t0.9269068519549879\n" +
-                        "535\tNaN\n",
+                        "-920\t00000000 ee 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4\n" +
+                        "00000010 91 3b 72 db f3 04 1b c7 88 de a0 79 3c 77 15 68\n" +
+                        "-352\t00000000 e2 4b b1 3e e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd\n" +
+                        "00000010 82 89 2b 4d 5f f6 46 90 c3 b3 59 8e e5 61 2f 64\n" +
+                        "-743\t00000000 14 58 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9\n" +
+                        "00000010 73 93 46 fe c2 d3 68 79 8b 43 1d 57 34 04 23 8d\n" +
+                        "-601\t00000000 ae 7c 9f 77 04 e9 0c ea 4e ea 8b f5 0f 2d b3 14\n" +
+                        "00000010 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65\n" +
+                        "-398\t00000000 f5 6e 8f 80 e3 54 b8 07 b1 32 57 ff 9a ef 88 cb\n" +
+                        "00000010 4b a1 cf cf 41 7d a6 d1 3e b4 48 d4 41 9d fb 49\n" +
+                        "437\t\n" +
+                        "-231\t00000000 19 ca f2 bf 84 5a 6f 38 35 15 29 83 1f c3 2f ed\n" +
+                        "00000010 b0 ba 08 e0 2c ee 41 de b6 81 df b7 6c 4b fb 2d\n" +
+                        "19\t\n" +
+                        "215\t\n" +
+                        "819\t\n" +
+                        "15\t\n" +
+                        "-307\t00000000 25 07 db 62 44 33 6e 00 8e 93 bd 27 42 f8 25 2a\n" +
+                        "00000010 42 71 a3 7a 58 e5 78 b8 1c d6 fc 7a ac 4c 11 9e\n" +
+                        "-272\t00000000 71 ea 20 7e 43 97 27 1f 5c d9 ee 04 5b 9c 17 f2\n" +
+                        "00000010 8c bf 95 30 57 1d 91 72 30 04 b7 02 cb 03 23 61\n" +
+                        "-559\t00000000 6c 3e 51 d7 eb b1 07 71 32 1f af 40 4e 8c 47 84\n" +
+                        "00000010 e9 c0 55 12 44 dc 4b c0 d9 1c 71 cf 5a 8f 21 06\n" +
+                        "560\t\n" +
+                        "687\t\n" +
+                        "629\t\n" +
+                        "-592\t00000000 7d f4 03 ed c9 2a 4e 91 c5 e4 39 b2 dd 0d a7 bb\n" +
+                        "00000010 d5 71 72 ba 9c ac 89 76 dd e7 1f eb 30 58 15 38\n" +
+                        "-228\t00000000 1c dd fc d2 8e 79 ec 02 b2 31 9c 69 be 74 9a ad\n" +
+                        "00000010 cc cf b8 e4 d1 7a 4f fb 16 fa 19 a2 df 43 81 a2\n" +
+                        "625\t\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -114,1060 +81,14 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         "from tanc",
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
-                        " rnd_double() a," +
-                        " rnd_double() b," +
-                        " rnd_double() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t0.8043\n" +
-                        "701\t0.0844\n" +
-                        "706\t0.1312\n" +
-                        "-714\t0.7906\n" +
-                        "116\t0.5094\n" +
-                        "67\t0.4622\n" +
-                        "207\t0.8072\n" +
-                        "-55\t0.7261\n" +
-                        "-104\t0.6694\n" +
-                        "-127\t0.8757\n" +
-                        "790\t0.5249\n" +
-                        "881\t0.0217\n" +
-                        "-535\t0.2158\n" +
-                        "-973\t0.8147\n" +
-                        "-463\t0.1250\n" +
-                        "-667\t0.9687\n" +
-                        "578\t0.4882\n" +
-                        "940\t0.7883\n" +
-                        "-54\t0.8102\n" +
-                        "-393\t0.3763\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_float() a," +
-                        " rnd_float() b," +
-                        " rnd_float() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testFloat() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t0.8043\n" +
-                        "701\tNaN\n" +
-                        "706\tNaN\n" +
-                        "-714\t0.7906\n" +
-                        "116\t0.5094\n" +
-                        "67\tNaN\n" +
-                        "207\tNaN\n" +
-                        "-55\t0.7261\n" +
-                        "-104\t0.6694\n" +
-                        "-127\t0.8757\n" +
-                        "790\tNaN\n" +
-                        "881\tNaN\n" +
-                        "-535\t0.2158\n" +
-                        "-973\t0.8147\n" +
-                        "-463\t0.1250\n" +
-                        "-667\t0.9687\n" +
-                        "578\tNaN\n" +
-                        "940\tNaN\n" +
-                        "-54\t0.8102\n" +
-                        "-393\t0.3763\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_float() a," +
-                        " rnd_float() b," +
-                        " rnd_float() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testIntOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t315515118\n" +
-                        "701\t592859671\n" +
-                        "706\t-2041844972\n" +
-                        "-714\t-1575378703\n" +
-                        "116\t339631474\n" +
-                        "67\t-1458132197\n" +
-                        "207\t426455968\n" +
-                        "-55\t-1792928964\n" +
-                        "-104\t-1153445279\n" +
-                        "-127\t1631244228\n" +
-                        "790\t-212807500\n" +
-                        "881\t-113506296\n" +
-                        "-535\t-938514914\n" +
-                        "-973\t-342047842\n" +
-                        "-463\t-27395319\n" +
-                        "-667\t2137969456\n" +
-                        "578\t44173540\n" +
-                        "940\t1978144263\n" +
-                        "-54\t-1162267908\n" +
-                        "-393\t-296610933\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then c\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testIntOrElseUnaryNeg() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t315515118\n" +
-                        "701\t-125\n" +
-                        "706\t-125\n" +
-                        "-714\t-1575378703\n" +
-                        "116\t339631474\n" +
-                        "67\t-125\n" +
-                        "207\t-125\n" +
-                        "-55\t-1792928964\n" +
-                        "-104\t-1153445279\n" +
-                        "-127\t1631244228\n" +
-                        "790\t-125\n" +
-                        "881\t-125\n" +
-                        "-535\t-938514914\n" +
-                        "-973\t-342047842\n" +
-                        "-463\t-27395319\n" +
-                        "-667\t2137969456\n" +
-                        "578\t-125\n" +
-                        "940\t-125\n" +
-                        "-54\t-1162267908\n" +
-                        "-393\t-296610933\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then c\n" +
-                        "        else -125\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testIntOrElseMalformedBinaryOperator() throws Exception {
-        assertFailure(
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then c\n" +
-                        "        else +125\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                103,
-                "too few arguments for '+' [found=1,expected=2]"
-        );
-    }
-
-    @Test
-    public void testInt() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t315515118\n" +
-                        "701\tNaN\n" +
-                        "706\tNaN\n" +
-                        "-714\t-1575378703\n" +
-                        "116\t339631474\n" +
-                        "67\tNaN\n" +
-                        "207\tNaN\n" +
-                        "-55\t-1792928964\n" +
-                        "-104\t-1153445279\n" +
-                        "-127\t1631244228\n" +
-                        "790\tNaN\n" +
-                        "881\tNaN\n" +
-                        "-535\t-938514914\n" +
-                        "-973\t-342047842\n" +
-                        "-463\t-27395319\n" +
-                        "-667\t2137969456\n" +
-                        "578\tNaN\n" +
-                        "940\tNaN\n" +
-                        "-54\t-1162267908\n" +
-                        "-393\t-296610933\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testShortOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t24814\n" +
-                        "701\t21015\n" +
-                        "706\t-5356\n" +
-                        "-714\t-24335\n" +
-                        "116\t7739\n" +
-                        "67\t-21733\n" +
-                        "207\t13216\n" +
-                        "-55\t4924\n" +
-                        "-104\t-11679\n" +
-                        "-127\t-12348\n" +
-                        "790\t-12108\n" +
-                        "881\t2056\n" +
-                        "-535\t26142\n" +
-                        "-973\t-15458\n" +
-                        "-463\t-1271\n" +
-                        "-667\t-11472\n" +
-                        "578\t2276\n" +
-                        "940\t5639\n" +
-                        "-54\t13052\n" +
-                        "-393\t5003\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_short() a," +
-                        " rnd_short() b," +
-                        " rnd_short() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testShort() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t24814\n" +
-                        "701\t0\n" +
-                        "706\t0\n" +
-                        "-714\t-24335\n" +
-                        "116\t7739\n" +
-                        "67\t0\n" +
-                        "207\t0\n" +
-                        "-55\t4924\n" +
-                        "-104\t-11679\n" +
-                        "-127\t-12348\n" +
-                        "790\t0\n" +
-                        "881\t0\n" +
-                        "-535\t26142\n" +
-                        "-973\t-15458\n" +
-                        "-463\t-1271\n" +
-                        "-667\t-11472\n" +
-                        "578\t0\n" +
-                        "940\t0\n" +
-                        "-54\t13052\n" +
-                        "-393\t5003\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_short() a," +
-                        " rnd_short() b," +
-                        " rnd_short() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testByteOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t102\n" +
-                        "701\t83\n" +
-                        "706\t84\n" +
-                        "-714\t55\n" +
-                        "116\t91\n" +
-                        "67\t45\n" +
-                        "207\t60\n" +
-                        "-55\t84\n" +
-                        "-104\t35\n" +
-                        "-127\t56\n" +
-                        "790\t32\n" +
-                        "881\t24\n" +
-                        "-535\t26\n" +
-                        "-973\t34\n" +
-                        "-463\t103\n" +
-                        "-667\t44\n" +
-                        "578\t28\n" +
-                        "940\t43\n" +
-                        "-54\t112\n" +
-                        "-393\t55\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_byte() a," +
-                        " rnd_byte() b," +
-                        " rnd_byte() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testByte() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t102\n" +
-                        "701\t0\n" +
-                        "706\t0\n" +
-                        "-714\t55\n" +
-                        "116\t91\n" +
-                        "67\t0\n" +
-                        "207\t0\n" +
-                        "-55\t84\n" +
-                        "-104\t35\n" +
-                        "-127\t56\n" +
-                        "790\t0\n" +
-                        "881\t0\n" +
-                        "-535\t26\n" +
-                        "-973\t34\n" +
-                        "-463\t103\n" +
-                        "-667\t44\n" +
-                        "578\t0\n" +
-                        "940\t0\n" +
-                        "-54\t112\n" +
-                        "-393\t55\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_byte() a," +
-                        " rnd_byte() b," +
-                        " rnd_byte() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testLongOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t4729996258992366\n" +
-                        "701\t-5354193255228091881\n" +
-                        "706\t3614738589890112276\n" +
-                        "-714\t-7489826605295361807\n" +
-                        "116\t3394168647660478011\n" +
-                        "67\t8336855953317473051\n" +
-                        "207\t-6856503215590263904\n" +
-                        "-55\t5539350449504785212\n" +
-                        "-104\t-4100339045953973663\n" +
-                        "-127\t2811900023577169860\n" +
-                        "790\t-8479285918156402508\n" +
-                        "881\t8942747579519338504\n" +
-                        "-535\t7199909180655756830\n" +
-                        "-973\t6404066507400987550\n" +
-                        "-463\t8573481508564499209\n" +
-                        "-667\t-8480005421611953360\n" +
-                        "578\t-6186964045554120476\n" +
-                        "940\t-6253307669002054137\n" +
-                        "-54\t3152466304308949756\n" +
-                        "-393\t6179044593759294347\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_long() a," +
-                        " rnd_long() b," +
-                        " rnd_long() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testLong() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t4729996258992366\n" +
-                        "701\tNaN\n" +
-                        "706\tNaN\n" +
-                        "-714\t-7489826605295361807\n" +
-                        "116\t3394168647660478011\n" +
-                        "67\tNaN\n" +
-                        "207\tNaN\n" +
-                        "-55\t5539350449504785212\n" +
-                        "-104\t-4100339045953973663\n" +
-                        "-127\t2811900023577169860\n" +
-                        "790\tNaN\n" +
-                        "881\tNaN\n" +
-                        "-535\t7199909180655756830\n" +
-                        "-973\t6404066507400987550\n" +
-                        "-463\t8573481508564499209\n" +
-                        "-667\t-8480005421611953360\n" +
-                        "578\tNaN\n" +
-                        "940\tNaN\n" +
-                        "-54\t3152466304308949756\n" +
-                        "-393\t6179044593759294347\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_long() a," +
-                        " rnd_long() b," +
-                        " rnd_long() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testCharOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tT\n" +
-                        "701\tW\n" +
-                        "706\tX\n" +
-                        "-714\tE\n" +
-                        "116\tG\n" +
-                        "67\tX\n" +
-                        "207\tT\n" +
-                        "-55\tP\n" +
-                        "-104\tF\n" +
-                        "-127\tE\n" +
-                        "790\tB\n" +
-                        "881\tW\n" +
-                        "-535\tP\n" +
-                        "-973\tS\n" +
-                        "-463\tU\n" +
-                        "-667\tH\n" +
-                        "578\tQ\n" +
-                        "940\tO\n" +
-                        "-54\tJ\n" +
-                        "-393\tJ\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_char() a," +
-                        " rnd_char() b," +
-                        " rnd_char() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testChar() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tT\n" +
-                        "701\t\n" +
-                        "706\t\n" +
-                        "-714\tE\n" +
-                        "116\tG\n" +
-                        "67\t\n" +
-                        "207\t\n" +
-                        "-55\tP\n" +
-                        "-104\tF\n" +
-                        "-127\tE\n" +
-                        "790\t\n" +
-                        "881\t\n" +
-                        "-535\tP\n" +
-                        "-973\tS\n" +
-                        "-463\tU\n" +
-                        "-667\tH\n" +
-                        "578\t\n" +
-                        "940\t\n" +
-                        "-54\tJ\n" +
-                        "-393\tJ\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_char() a," +
-                        " rnd_char() b," +
-                        " rnd_char() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testBooleanOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tfalse\n" +
-                        "701\ttrue\n" +
-                        "706\tfalse\n" +
-                        "-714\ttrue\n" +
-                        "116\tfalse\n" +
-                        "67\tfalse\n" +
-                        "207\ttrue\n" +
-                        "-55\tfalse\n" +
-                        "-104\ttrue\n" +
-                        "-127\tfalse\n" +
-                        "790\ttrue\n" +
-                        "881\tfalse\n" +
-                        "-535\tfalse\n" +
-                        "-973\tfalse\n" +
-                        "-463\tfalse\n" +
-                        "-667\ttrue\n" +
-                        "578\ttrue\n" +
-                        "940\ttrue\n" +
-                        "-54\tfalse\n" +
-                        "-393\tfalse\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_boolean() a," +
-                        " rnd_boolean() b," +
-                        " rnd_boolean() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testBoolean() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tfalse\n" +
-                        "701\tfalse\n" +
-                        "706\tfalse\n" +
-                        "-714\ttrue\n" +
-                        "116\tfalse\n" +
-                        "67\tfalse\n" +
-                        "207\tfalse\n" +
-                        "-55\tfalse\n" +
-                        "-104\ttrue\n" +
-                        "-127\tfalse\n" +
-                        "790\tfalse\n" +
-                        "881\tfalse\n" +
-                        "-535\tfalse\n" +
-                        "-973\tfalse\n" +
-                        "-463\tfalse\n" +
-                        "-667\ttrue\n" +
-                        "578\tfalse\n" +
-                        "940\tfalse\n" +
-                        "-54\tfalse\n" +
-                        "-393\tfalse\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_boolean() a," +
-                        " rnd_boolean() b," +
-                        " rnd_boolean() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testDateOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t1970-01-01T02:29:52.366Z\n" +
-                        "701\t1970-01-01T02:14:51.881Z\n" +
-                        "706\t1970-01-01T00:01:52.276Z\n" +
-                        "-714\t1970-01-01T01:29:21.807Z\n" +
-                        "116\t1970-01-01T00:07:58.011Z\n" +
-                        "67\t1970-01-01T02:04:33.051Z\n" +
-                        "207\t1970-01-01T00:04:23.904Z\n" +
-                        "-55\t1970-01-01T01:19:45.212Z\n" +
-                        "-104\t1970-01-01T01:06:13.663Z\n" +
-                        "-127\t1970-01-01T01:59:29.860Z\n" +
-                        "790\t1970-01-01T01:46:42.508Z\n" +
-                        "881\t1970-01-01T02:35:38.504Z\n" +
-                        "-535\t1970-01-01T01:35:56.830Z\n" +
-                        "-973\t1970-01-01T00:16:27.550Z\n" +
-                        "-463\t1970-01-01T01:14:59.209Z\n" +
-                        "-667\t1970-01-01T00:32:33.360Z\n" +
-                        "578\t1970-01-01T01:08:40.476Z\n" +
-                        "940\t1970-01-01T00:34:14.137Z\n" +
-                        "-54\t1970-01-01T02:29:09.756Z\n" +
-                        "-393\t1970-01-01T02:34:54.347Z\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_date() a," +
-                        " rnd_date() b," +
-                        " rnd_date() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testDate() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t1970-01-01T02:29:52.366Z\n" +
-                        "701\t\n" +
-                        "706\t\n" +
-                        "-714\t1970-01-01T01:29:21.807Z\n" +
-                        "116\t1970-01-01T00:07:58.011Z\n" +
-                        "67\t\n" +
-                        "207\t\n" +
-                        "-55\t1970-01-01T01:19:45.212Z\n" +
-                        "-104\t1970-01-01T01:06:13.663Z\n" +
-                        "-127\t1970-01-01T01:59:29.860Z\n" +
-                        "790\t\n" +
-                        "881\t\n" +
-                        "-535\t1970-01-01T01:35:56.830Z\n" +
-                        "-973\t1970-01-01T00:16:27.550Z\n" +
-                        "-463\t1970-01-01T01:14:59.209Z\n" +
-                        "-667\t1970-01-01T00:32:33.360Z\n" +
-                        "578\t\n" +
-                        "940\t\n" +
-                        "-54\t1970-01-01T02:29:09.756Z\n" +
-                        "-393\t1970-01-01T02:34:54.347Z\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_date() a," +
-                        " rnd_date() b," +
-                        " rnd_date() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testNonBooleanWhen() throws Exception {
-        assertFailure(
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_date() a," +
-                        " rnd_date() b," +
-                        " rnd_date() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                37,
-                "BOOLEAN expected, found INT"
-        );
-    }
-
-    @Test
-    public void testStrOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tWCPS\n" +
-                        "474\tYQEHBH\n" +
-                        "454\tUED\n" +
-                        "-666\tULOFJGE\n" +
-                        "-574\tYICCXZOUIC\n" +
-                        "-303\tYCTGQO\n" +
-                        "355\tSMSSUQ\n" +
-                        "692\tIHVL\n" +
-                        "-743\tLJU\n" +
-                        "36\tRGIIHYH\n" +
-                        "0\tIFOUSZM\n" +
-                        "799\tWNWIFFLR\n" +
-                        "650\tFKWZ\n" +
-                        "-760\tGXHFVWSWSR\n" +
-                        "-605\tUKL\n" +
-                        "-554\tNPH\n" +
-                        "-201\tTNLE\n" +
-                        "623\tZSLQVFGPP\n" +
-                        "-341\tXBHYSBQYMI\n" +
-                        "386\tDVRVNGS\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testStr() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tWCPS\n" +
-                        "474\t\n" +
-                        "454\t\n" +
-                        "-666\tULOFJGE\n" +
-                        "-574\tYICCXZOUIC\n" +
-                        "-303\tYCTGQO\n" +
-                        "355\t\n" +
-                        "692\t\n" +
-                        "-743\tLJU\n" +
-                        "36\t\n" +
-                        "0\t\n" +
-                        "799\t\n" +
-                        "650\t\n" +
-                        "-760\tGXHFVWSWSR\n" +
-                        "-605\tUKL\n" +
-                        "-554\tNPH\n" +
-                        "-201\tTNLE\n" +
-                        "623\t\n" +
-                        "-341\tXBHYSBQYMI\n" +
-                        "386\t\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testIntToStringCastOnBranch() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tWCPS\n" +
-                        "474\t10\n" +
-                        "454\t10\n" +
-                        "-666\tULOFJGE\n" +
-                        "-574\tYICCXZOUIC\n" +
-                        "-303\tYCTGQO\n" +
-                        "355\t10\n" +
-                        "692\t\n" +
-                        "-743\tLJU\n" +
-                        "36\t\n" +
-                        "0\t\n" +
-                        "799\t\n" +
-                        "650\t\n" +
-                        "-760\tGXHFVWSWSR\n" +
-                        "-605\tUKL\n" +
-                        "-554\tNPH\n" +
-                        "-201\tTNLE\n" +
-                        "623\t\n" +
-                        "-341\tXBHYSBQYMI\n" +
-                        "386\t10\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 500 then 10\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
+                        " rnd_bin() a," +
+                        " rnd_bin() b," +
+                        " rnd_bin() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
                 true,
-                false
-        );
-    }
-
-    @Test
-    public void testIntToStringCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tWCPS\n" +
-                        "474\t3.5\n" +
-                        "454\t3.5\n" +
-                        "-666\tULOFJGE\n" +
-                        "-574\tYICCXZOUIC\n" +
-                        "-303\tYCTGQO\n" +
-                        "355\t3.5\n" +
-                        "692\t3.5\n" +
-                        "-743\tLJU\n" +
-                        "36\t3.5\n" +
-                        "0\t3.5\n" +
-                        "799\t3.5\n" +
-                        "650\t3.5\n" +
-                        "-760\tGXHFVWSWSR\n" +
-                        "-605\tUKL\n" +
-                        "-554\tNPH\n" +
-                        "-201\tTNLE\n" +
-                        "623\t3.5\n" +
-                        "-341\tXBHYSBQYMI\n" +
-                        "386\t3.5\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else 3.5" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
                 true,
-                false
-        );
-    }
-
-    @Test
-    public void testTimestampOrElse() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t1970-01-01T00:00:00.000000Z\n" +
-                        "118\t1970-01-01T00:00:00.000103Z\n" +
-                        "833\t1970-01-01T00:00:00.000206Z\n" +
-                        "-771\t1970-01-01T00:00:00.000030Z\n" +
-                        "701\t1970-01-01T00:00:00.000406Z\n" +
-                        "-339\t1970-01-01T00:00:00.000050Z\n" +
-                        "242\t1970-01-01T00:00:00.000606Z\n" +
-                        "671\t1970-01-01T00:00:00.000706Z\n" +
-                        "706\t1970-01-01T00:00:00.000806Z\n" +
-                        "-48\t1970-01-01T00:00:00.000090Z\n" +
-                        "-516\t1970-01-01T00:00:00.000100Z\n" +
-                        "-972\t1970-01-01T00:00:00.000110Z\n" +
-                        "-714\t1970-01-01T00:00:00.000120Z\n" +
-                        "-703\t1970-01-01T00:00:00.000130Z\n" +
-                        "481\t1970-01-01T00:00:00.001406Z\n" +
-                        "512\t1970-01-01T00:00:00.001506Z\n" +
-                        "116\t1970-01-01T00:00:00.001603Z\n" +
-                        "97\t1970-01-01T00:00:00.001706Z\n" +
-                        "-405\t1970-01-01T00:00:00.000180Z\n" +
-                        "474\t1970-01-01T00:00:00.001906Z\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else c\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " timestamp_sequence(0, 10) a," +
-                        " timestamp_sequence(3, 100) b," +
-                        " timestamp_sequence(6, 100) c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testTimestamp() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t1970-01-01T00:00:00.000000Z\n" +
-                        "118\t1970-01-01T00:00:00.000103Z\n" +
-                        "833\t\n" +
-                        "-771\t1970-01-01T00:00:00.000030Z\n" +
-                        "701\t\n" +
-                        "-339\t1970-01-01T00:00:00.000050Z\n" +
-                        "242\t\n" +
-                        "671\t\n" +
-                        "706\t\n" +
-                        "-48\t1970-01-01T00:00:00.000090Z\n" +
-                        "-516\t1970-01-01T00:00:00.000100Z\n" +
-                        "-972\t1970-01-01T00:00:00.000110Z\n" +
-                        "-714\t1970-01-01T00:00:00.000120Z\n" +
-                        "-703\t1970-01-01T00:00:00.000130Z\n" +
-                        "481\t\n" +
-                        "512\t\n" +
-                        "116\t1970-01-01T00:00:00.001603Z\n" +
-                        "97\t\n" +
-                        "-405\t1970-01-01T00:00:00.000180Z\n" +
-                        "474\t\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " timestamp_sequence(0, 10) a," +
-                        " timestamp_sequence(3, 100) b," +
-                        " timestamp_sequence(6, 100) c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
                 true
         );
     }
@@ -1232,45 +153,36 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
                 true
         );
     }
 
     @Test
-    public void testBinary() throws Exception {
+    public void testBoolean() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t00000000 ee 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4\n" +
-                        "00000010 91 3b 72 db f3 04 1b c7 88 de a0 79 3c 77 15 68\n" +
-                        "-352\t00000000 e2 4b b1 3e e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd\n" +
-                        "00000010 82 89 2b 4d 5f f6 46 90 c3 b3 59 8e e5 61 2f 64\n" +
-                        "-743\t00000000 14 58 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9\n" +
-                        "00000010 73 93 46 fe c2 d3 68 79 8b 43 1d 57 34 04 23 8d\n" +
-                        "-601\t00000000 ae 7c 9f 77 04 e9 0c ea 4e ea 8b f5 0f 2d b3 14\n" +
-                        "00000010 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65\n" +
-                        "-398\t00000000 f5 6e 8f 80 e3 54 b8 07 b1 32 57 ff 9a ef 88 cb\n" +
-                        "00000010 4b a1 cf cf 41 7d a6 d1 3e b4 48 d4 41 9d fb 49\n" +
-                        "437\t\n" +
-                        "-231\t00000000 19 ca f2 bf 84 5a 6f 38 35 15 29 83 1f c3 2f ed\n" +
-                        "00000010 b0 ba 08 e0 2c ee 41 de b6 81 df b7 6c 4b fb 2d\n" +
-                        "19\t\n" +
-                        "215\t\n" +
-                        "819\t\n" +
-                        "15\t\n" +
-                        "-307\t00000000 25 07 db 62 44 33 6e 00 8e 93 bd 27 42 f8 25 2a\n" +
-                        "00000010 42 71 a3 7a 58 e5 78 b8 1c d6 fc 7a ac 4c 11 9e\n" +
-                        "-272\t00000000 71 ea 20 7e 43 97 27 1f 5c d9 ee 04 5b 9c 17 f2\n" +
-                        "00000010 8c bf 95 30 57 1d 91 72 30 04 b7 02 cb 03 23 61\n" +
-                        "-559\t00000000 6c 3e 51 d7 eb b1 07 71 32 1f af 40 4e 8c 47 84\n" +
-                        "00000010 e9 c0 55 12 44 dc 4b c0 d9 1c 71 cf 5a 8f 21 06\n" +
-                        "560\t\n" +
-                        "687\t\n" +
-                        "629\t\n" +
-                        "-592\t00000000 7d f4 03 ed c9 2a 4e 91 c5 e4 39 b2 dd 0d a7 bb\n" +
-                        "00000010 d5 71 72 ba 9c ac 89 76 dd e7 1f eb 30 58 15 38\n" +
-                        "-228\t00000000 1c dd fc d2 8e 79 ec 02 b2 31 9c 69 be 74 9a ad\n" +
-                        "00000010 cc cf b8 e4 d1 7a 4f fb 16 fa 19 a2 df 43 81 a2\n" +
-                        "625\t\n",
+                        "-920\tfalse\n" +
+                        "701\tfalse\n" +
+                        "706\tfalse\n" +
+                        "-714\ttrue\n" +
+                        "116\tfalse\n" +
+                        "67\tfalse\n" +
+                        "207\tfalse\n" +
+                        "-55\tfalse\n" +
+                        "-104\ttrue\n" +
+                        "-127\tfalse\n" +
+                        "790\tfalse\n" +
+                        "881\tfalse\n" +
+                        "-535\tfalse\n" +
+                        "-973\tfalse\n" +
+                        "-463\tfalse\n" +
+                        "-667\ttrue\n" +
+                        "578\tfalse\n" +
+                        "940\tfalse\n" +
+                        "-54\tfalse\n" +
+                        "-393\tfalse\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1280,12 +192,878 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         "from tanc",
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
-                        " rnd_bin() a," +
-                        " rnd_bin() b," +
-                        " rnd_bin() c" +
+                        " rnd_boolean() a," +
+                        " rnd_boolean() b," +
+                        " rnd_boolean() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tfalse\n" +
+                        "701\ttrue\n" +
+                        "706\tfalse\n" +
+                        "-714\ttrue\n" +
+                        "116\tfalse\n" +
+                        "67\tfalse\n" +
+                        "207\ttrue\n" +
+                        "-55\tfalse\n" +
+                        "-104\ttrue\n" +
+                        "-127\tfalse\n" +
+                        "790\ttrue\n" +
+                        "881\tfalse\n" +
+                        "-535\tfalse\n" +
+                        "-973\tfalse\n" +
+                        "-463\tfalse\n" +
+                        "-667\ttrue\n" +
+                        "578\ttrue\n" +
+                        "940\ttrue\n" +
+                        "-54\tfalse\n" +
+                        "-393\tfalse\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_boolean() a," +
+                        " rnd_boolean() b," +
+                        " rnd_boolean() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testByte() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t102\n" +
+                        "701\t0\n" +
+                        "706\t0\n" +
+                        "-714\t55\n" +
+                        "116\t91\n" +
+                        "67\t0\n" +
+                        "207\t0\n" +
+                        "-55\t84\n" +
+                        "-104\t35\n" +
+                        "-127\t56\n" +
+                        "790\t0\n" +
+                        "881\t0\n" +
+                        "-535\t26\n" +
+                        "-973\t34\n" +
+                        "-463\t103\n" +
+                        "-667\t44\n" +
+                        "578\t0\n" +
+                        "940\t0\n" +
+                        "-54\t112\n" +
+                        "-393\t55\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_byte() a," +
+                        " rnd_byte() b," +
+                        " rnd_byte() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testByteOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t102\n" +
+                        "701\t83\n" +
+                        "706\t84\n" +
+                        "-714\t55\n" +
+                        "116\t91\n" +
+                        "67\t45\n" +
+                        "207\t60\n" +
+                        "-55\t84\n" +
+                        "-104\t35\n" +
+                        "-127\t56\n" +
+                        "790\t32\n" +
+                        "881\t24\n" +
+                        "-535\t26\n" +
+                        "-973\t34\n" +
+                        "-463\t103\n" +
+                        "-667\t44\n" +
+                        "578\t28\n" +
+                        "940\t43\n" +
+                        "-54\t112\n" +
+                        "-393\t55\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_byte() a," +
+                        " rnd_byte() b," +
+                        " rnd_byte() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testIntOrElseMalformedBinaryOperator() throws Exception {
+        assertFailure(
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then c\n" +
+                        "        else +125\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                103,
+                "too few arguments for '+' [found=1,expected=2]"
+        );
+    }
+
+    @Test
+    public void testChar() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tT\n" +
+                        "701\t\n" +
+                        "706\t\n" +
+                        "-714\tE\n" +
+                        "116\tG\n" +
+                        "67\t\n" +
+                        "207\t\n" +
+                        "-55\tP\n" +
+                        "-104\tF\n" +
+                        "-127\tE\n" +
+                        "790\t\n" +
+                        "881\t\n" +
+                        "-535\tP\n" +
+                        "-973\tS\n" +
+                        "-463\tU\n" +
+                        "-667\tH\n" +
+                        "578\t\n" +
+                        "940\t\n" +
+                        "-54\tJ\n" +
+                        "-393\tJ\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_char() a," +
+                        " rnd_char() b," +
+                        " rnd_char() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCharOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tT\n" +
+                        "701\tW\n" +
+                        "706\tX\n" +
+                        "-714\tE\n" +
+                        "116\tG\n" +
+                        "67\tX\n" +
+                        "207\tT\n" +
+                        "-55\tP\n" +
+                        "-104\tF\n" +
+                        "-127\tE\n" +
+                        "790\tB\n" +
+                        "881\tW\n" +
+                        "-535\tP\n" +
+                        "-973\tS\n" +
+                        "-463\tU\n" +
+                        "-667\tH\n" +
+                        "578\tQ\n" +
+                        "940\tO\n" +
+                        "-54\tJ\n" +
+                        "-393\tJ\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_char() a," +
+                        " rnd_char() b," +
+                        " rnd_char() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDate() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t1970-01-01T02:29:52.366Z\n" +
+                        "701\t\n" +
+                        "706\t\n" +
+                        "-714\t1970-01-01T01:29:21.807Z\n" +
+                        "116\t1970-01-01T00:07:58.011Z\n" +
+                        "67\t\n" +
+                        "207\t\n" +
+                        "-55\t1970-01-01T01:19:45.212Z\n" +
+                        "-104\t1970-01-01T01:06:13.663Z\n" +
+                        "-127\t1970-01-01T01:59:29.860Z\n" +
+                        "790\t\n" +
+                        "881\t\n" +
+                        "-535\t1970-01-01T01:35:56.830Z\n" +
+                        "-973\t1970-01-01T00:16:27.550Z\n" +
+                        "-463\t1970-01-01T01:14:59.209Z\n" +
+                        "-667\t1970-01-01T00:32:33.360Z\n" +
+                        "578\t\n" +
+                        "940\t\n" +
+                        "-54\t1970-01-01T02:29:09.756Z\n" +
+                        "-393\t1970-01-01T02:34:54.347Z\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_date() a," +
+                        " rnd_date() b," +
+                        " rnd_date() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDateOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t1970-01-01T02:29:52.366Z\n" +
+                        "701\t1970-01-01T02:14:51.881Z\n" +
+                        "706\t1970-01-01T00:01:52.276Z\n" +
+                        "-714\t1970-01-01T01:29:21.807Z\n" +
+                        "116\t1970-01-01T00:07:58.011Z\n" +
+                        "67\t1970-01-01T02:04:33.051Z\n" +
+                        "207\t1970-01-01T00:04:23.904Z\n" +
+                        "-55\t1970-01-01T01:19:45.212Z\n" +
+                        "-104\t1970-01-01T01:06:13.663Z\n" +
+                        "-127\t1970-01-01T01:59:29.860Z\n" +
+                        "790\t1970-01-01T01:46:42.508Z\n" +
+                        "881\t1970-01-01T02:35:38.504Z\n" +
+                        "-535\t1970-01-01T01:35:56.830Z\n" +
+                        "-973\t1970-01-01T00:16:27.550Z\n" +
+                        "-463\t1970-01-01T01:14:59.209Z\n" +
+                        "-667\t1970-01-01T00:32:33.360Z\n" +
+                        "578\t1970-01-01T01:08:40.476Z\n" +
+                        "940\t1970-01-01T00:34:14.137Z\n" +
+                        "-54\t1970-01-01T02:29:09.756Z\n" +
+                        "-393\t1970-01-01T02:34:54.347Z\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_date() a," +
+                        " rnd_date() b," +
+                        " rnd_date() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDouble() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t0.8043224099968393\n" +
+                        "671\tNaN\n" +
+                        "481\tNaN\n" +
+                        "147\t0.5243722859289777\n" +
+                        "-55\t0.7261136209823622\n" +
+                        "-769\t0.3100545983862456\n" +
+                        "-831\t0.5249321062686694\n" +
+                        "-914\t0.6217326707853098\n" +
+                        "-463\t0.12503042190293423\n" +
+                        "-194\t0.6761934857077543\n" +
+                        "-835\t0.7883065830055033\n" +
+                        "-933\t0.5522494170511608\n" +
+                        "416\tNaN\n" +
+                        "380\tNaN\n" +
+                        "-574\t0.7997733229967019\n" +
+                        "-722\t0.40455469747939254\n" +
+                        "-128\t0.8828228366697741\n" +
+                        "-842\t0.9566236549439661\n" +
+                        "-123\t0.9269068519549879\n" +
+                        "535\tNaN\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_double() a," +
+                        " rnd_double() b," +
+                        " rnd_double() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDoubleOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t0.8043224099968393\n" +
+                        "671\t0.8423410920883345\n" +
+                        "481\t0.3491070363730514\n" +
+                        "147\t0.5243722859289777\n" +
+                        "-55\t0.7261136209823622\n" +
+                        "-769\t0.3100545983862456\n" +
+                        "-831\t0.5249321062686694\n" +
+                        "-914\t0.6217326707853098\n" +
+                        "-463\t0.12503042190293423\n" +
+                        "-194\t0.6761934857077543\n" +
+                        "-835\t0.7883065830055033\n" +
+                        "-933\t0.5522494170511608\n" +
+                        "416\t0.4900510449885239\n" +
+                        "380\t0.38642336707855873\n" +
+                        "-574\t0.7997733229967019\n" +
+                        "-722\t0.40455469747939254\n" +
+                        "-128\t0.8828228366697741\n" +
+                        "-842\t0.9566236549439661\n" +
+                        "-123\t0.9269068519549879\n" +
+                        "535\t0.49428905119584543\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_double() a," +
+                        " rnd_double() b," +
+                        " rnd_double() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloat() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t0.8043\n" +
+                        "701\tNaN\n" +
+                        "706\tNaN\n" +
+                        "-714\t0.7906\n" +
+                        "116\t0.5094\n" +
+                        "67\tNaN\n" +
+                        "207\tNaN\n" +
+                        "-55\t0.7261\n" +
+                        "-104\t0.6694\n" +
+                        "-127\t0.8757\n" +
+                        "790\tNaN\n" +
+                        "881\tNaN\n" +
+                        "-535\t0.2158\n" +
+                        "-973\t0.8147\n" +
+                        "-463\t0.1250\n" +
+                        "-667\t0.9687\n" +
+                        "578\tNaN\n" +
+                        "940\tNaN\n" +
+                        "-54\t0.8102\n" +
+                        "-393\t0.3763\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_float() a," +
+                        " rnd_float() b," +
+                        " rnd_float() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t0.8043\n" +
+                        "701\t0.0844\n" +
+                        "706\t0.1312\n" +
+                        "-714\t0.7906\n" +
+                        "116\t0.5094\n" +
+                        "67\t0.4622\n" +
+                        "207\t0.8072\n" +
+                        "-55\t0.7261\n" +
+                        "-104\t0.6694\n" +
+                        "-127\t0.8757\n" +
+                        "790\t0.5249\n" +
+                        "881\t0.0217\n" +
+                        "-535\t0.2158\n" +
+                        "-973\t0.8147\n" +
+                        "-463\t0.1250\n" +
+                        "-667\t0.9687\n" +
+                        "578\t0.4882\n" +
+                        "940\t0.7883\n" +
+                        "-54\t0.8102\n" +
+                        "-393\t0.3763\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_float() a," +
+                        " rnd_float() b," +
+                        " rnd_float() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInt() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t315515118\n" +
+                        "701\tNaN\n" +
+                        "706\tNaN\n" +
+                        "-714\t-1575378703\n" +
+                        "116\t339631474\n" +
+                        "67\tNaN\n" +
+                        "207\tNaN\n" +
+                        "-55\t-1792928964\n" +
+                        "-104\t-1153445279\n" +
+                        "-127\t1631244228\n" +
+                        "790\tNaN\n" +
+                        "881\tNaN\n" +
+                        "-535\t-938514914\n" +
+                        "-973\t-342047842\n" +
+                        "-463\t-27395319\n" +
+                        "-667\t2137969456\n" +
+                        "578\tNaN\n" +
+                        "940\tNaN\n" +
+                        "-54\t-1162267908\n" +
+                        "-393\t-296610933\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testIntOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t315515118\n" +
+                        "701\t592859671\n" +
+                        "706\t-2041844972\n" +
+                        "-714\t-1575378703\n" +
+                        "116\t339631474\n" +
+                        "67\t-1458132197\n" +
+                        "207\t426455968\n" +
+                        "-55\t-1792928964\n" +
+                        "-104\t-1153445279\n" +
+                        "-127\t1631244228\n" +
+                        "790\t-212807500\n" +
+                        "881\t-113506296\n" +
+                        "-535\t-938514914\n" +
+                        "-973\t-342047842\n" +
+                        "-463\t-27395319\n" +
+                        "-667\t2137969456\n" +
+                        "578\t44173540\n" +
+                        "940\t1978144263\n" +
+                        "-54\t-1162267908\n" +
+                        "-393\t-296610933\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then c\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testIntOrElseUnaryNeg() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t315515118\n" +
+                        "701\t-125\n" +
+                        "706\t-125\n" +
+                        "-714\t-1575378703\n" +
+                        "116\t339631474\n" +
+                        "67\t-125\n" +
+                        "207\t-125\n" +
+                        "-55\t-1792928964\n" +
+                        "-104\t-1153445279\n" +
+                        "-127\t1631244228\n" +
+                        "790\t-125\n" +
+                        "881\t-125\n" +
+                        "-535\t-938514914\n" +
+                        "-973\t-342047842\n" +
+                        "-463\t-27395319\n" +
+                        "-667\t2137969456\n" +
+                        "578\t-125\n" +
+                        "940\t-125\n" +
+                        "-54\t-1162267908\n" +
+                        "-393\t-296610933\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then c\n" +
+                        "        else -125\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testIntToStringCast() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tWCPS\n" +
+                        "474\t3.5\n" +
+                        "454\t3.5\n" +
+                        "-666\tULOFJGE\n" +
+                        "-574\tYICCXZOUIC\n" +
+                        "-303\tYCTGQO\n" +
+                        "355\t3.5\n" +
+                        "692\t3.5\n" +
+                        "-743\tLJU\n" +
+                        "36\t3.5\n" +
+                        "0\t3.5\n" +
+                        "799\t3.5\n" +
+                        "650\t3.5\n" +
+                        "-760\tGXHFVWSWSR\n" +
+                        "-605\tUKL\n" +
+                        "-554\tNPH\n" +
+                        "-201\tTNLE\n" +
+                        "623\t3.5\n" +
+                        "-341\tXBHYSBQYMI\n" +
+                        "386\t3.5\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else 3.5" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testIntToStringCastOnBranch() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tWCPS\n" +
+                        "474\t10\n" +
+                        "454\t10\n" +
+                        "-666\tULOFJGE\n" +
+                        "-574\tYICCXZOUIC\n" +
+                        "-303\tYCTGQO\n" +
+                        "355\t10\n" +
+                        "692\t\n" +
+                        "-743\tLJU\n" +
+                        "36\t\n" +
+                        "0\t\n" +
+                        "799\t\n" +
+                        "650\t\n" +
+                        "-760\tGXHFVWSWSR\n" +
+                        "-605\tUKL\n" +
+                        "-554\tNPH\n" +
+                        "-201\tTNLE\n" +
+                        "623\t\n" +
+                        "-341\tXBHYSBQYMI\n" +
+                        "386\t10\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 500 then 10\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testNonBooleanWhen() throws Exception {
+        assertFailure(
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_date() a," +
+                        " rnd_date() b," +
+                        " rnd_date() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                37,
+                "BOOLEAN expected, found INT"
+        );
+    }
+
+    @Test
+    public void testLong() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t4729996258992366\n" +
+                        "701\tNaN\n" +
+                        "706\tNaN\n" +
+                        "-714\t-7489826605295361807\n" +
+                        "116\t3394168647660478011\n" +
+                        "67\tNaN\n" +
+                        "207\tNaN\n" +
+                        "-55\t5539350449504785212\n" +
+                        "-104\t-4100339045953973663\n" +
+                        "-127\t2811900023577169860\n" +
+                        "790\tNaN\n" +
+                        "881\tNaN\n" +
+                        "-535\t7199909180655756830\n" +
+                        "-973\t6404066507400987550\n" +
+                        "-463\t8573481508564499209\n" +
+                        "-667\t-8480005421611953360\n" +
+                        "578\tNaN\n" +
+                        "940\tNaN\n" +
+                        "-54\t3152466304308949756\n" +
+                        "-393\t6179044593759294347\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_long() a," +
+                        " rnd_long() b," +
+                        " rnd_long() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLong256() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t0x72a215ba0462ad159f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee\n" +
+                        "-703\t0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\n" +
+                        "-50\t0x38b73d329210d2774cdfb9e29522133c87aa0968faec6879a0d8cea7196b33a0\n" +
+                        "-348\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\n" +
+                        "-973\t0xacea66fbe47c5e39bccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39e\n" +
+                        "2\t\n" +
+                        "841\t\n" +
+                        "380\t\n" +
+                        "401\t\n" +
+                        "-819\t0xd364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf637b4f6e41fbfd55f\n" +
+                        "-330\t0xaa7dc4eccb68146fb37f1ec82752c7d784646fead466b67f39d5534da00d272c\n" +
+                        "-446\t0xc6dfacdd3f3c52b88b4e4831499fc2a526567f4430b46b7f78c594c496995885\n" +
+                        "782\t\n" +
+                        "-67\t0x61a4be9e1b8dcc3c84572da78228e0f2af44c40a67ef5e1c5b3ef21223ee8849\n" +
+                        "613\t\n" +
+                        "988\t\n" +
+                        "-478\t0x7f24de22c77acf93e983e65f5551d0738678dc0e1718f0c950d5a76fa806bdc3\n" +
+                        "-499\t0x4fc01e2b9fd116236359c71782852d0489661af328d0e234d7eb56647bc4ff57\n" +
+                        "259\t\n" +
+                        "-532\t0x8d5c4bed8432de9862a2f11e8510a3e99cb8fc6467028eb0a07934b2a15de8e0\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_long256() a," +
+                        " rnd_long256() b," +
+                        " rnd_long256() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
                 true
         );
     }
@@ -1330,34 +1108,82 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
                 true
         );
     }
 
     @Test
-    public void testLong256() throws Exception {
+    public void testLongOrElse() throws Exception {
         assertQuery(
                 "x\tcase\n" +
-                        "-920\t0x72a215ba0462ad159f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee\n" +
-                        "-703\t0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\n" +
-                        "-50\t0x38b73d329210d2774cdfb9e29522133c87aa0968faec6879a0d8cea7196b33a0\n" +
-                        "-348\t0x8a538661f350d0b46f06560981acb5496adc00ebd29fdd5373dee145497c5436\n" +
-                        "-973\t0xacea66fbe47c5e39bccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39e\n" +
-                        "2\t\n" +
-                        "841\t\n" +
-                        "380\t\n" +
-                        "401\t\n" +
-                        "-819\t0xd364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf637b4f6e41fbfd55f\n" +
-                        "-330\t0xaa7dc4eccb68146fb37f1ec82752c7d784646fead466b67f39d5534da00d272c\n" +
-                        "-446\t0xc6dfacdd3f3c52b88b4e4831499fc2a526567f4430b46b7f78c594c496995885\n" +
-                        "782\t\n" +
-                        "-67\t0x61a4be9e1b8dcc3c84572da78228e0f2af44c40a67ef5e1c5b3ef21223ee8849\n" +
-                        "613\t\n" +
-                        "988\t\n" +
-                        "-478\t0x7f24de22c77acf93e983e65f5551d0738678dc0e1718f0c950d5a76fa806bdc3\n" +
-                        "-499\t0x4fc01e2b9fd116236359c71782852d0489661af328d0e234d7eb56647bc4ff57\n" +
-                        "259\t\n" +
-                        "-532\t0x8d5c4bed8432de9862a2f11e8510a3e99cb8fc6467028eb0a07934b2a15de8e0\n",
+                        "-920\t4729996258992366\n" +
+                        "701\t-5354193255228091881\n" +
+                        "706\t3614738589890112276\n" +
+                        "-714\t-7489826605295361807\n" +
+                        "116\t3394168647660478011\n" +
+                        "67\t8336855953317473051\n" +
+                        "207\t-6856503215590263904\n" +
+                        "-55\t5539350449504785212\n" +
+                        "-104\t-4100339045953973663\n" +
+                        "-127\t2811900023577169860\n" +
+                        "790\t-8479285918156402508\n" +
+                        "881\t8942747579519338504\n" +
+                        "-535\t7199909180655756830\n" +
+                        "-973\t6404066507400987550\n" +
+                        "-463\t8573481508564499209\n" +
+                        "-667\t-8480005421611953360\n" +
+                        "578\t-6186964045554120476\n" +
+                        "940\t-6253307669002054137\n" +
+                        "-54\t3152466304308949756\n" +
+                        "-393\t6179044593759294347\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_long() a," +
+                        " rnd_long() b," +
+                        " rnd_long() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testShort() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t24814\n" +
+                        "701\t0\n" +
+                        "706\t0\n" +
+                        "-714\t-24335\n" +
+                        "116\t7739\n" +
+                        "67\t0\n" +
+                        "207\t0\n" +
+                        "-55\t4924\n" +
+                        "-104\t-11679\n" +
+                        "-127\t-12348\n" +
+                        "790\t0\n" +
+                        "881\t0\n" +
+                        "-535\t26142\n" +
+                        "-973\t-15458\n" +
+                        "-463\t-1271\n" +
+                        "-667\t-11472\n" +
+                        "578\t0\n" +
+                        "940\t0\n" +
+                        "-54\t13052\n" +
+                        "-393\t5003\n",
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1367,12 +1193,242 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                         "from tanc",
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
-                        " rnd_long256() a," +
-                        " rnd_long256() b," +
-                        " rnd_long256() c" +
+                        " rnd_short() a," +
+                        " rnd_short() b," +
+                        " rnd_short() c" +
                         " from long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testShortOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t24814\n" +
+                        "701\t21015\n" +
+                        "706\t-5356\n" +
+                        "-714\t-24335\n" +
+                        "116\t7739\n" +
+                        "67\t-21733\n" +
+                        "207\t13216\n" +
+                        "-55\t4924\n" +
+                        "-104\t-11679\n" +
+                        "-127\t-12348\n" +
+                        "790\t-12108\n" +
+                        "881\t2056\n" +
+                        "-535\t26142\n" +
+                        "-973\t-15458\n" +
+                        "-463\t-1271\n" +
+                        "-667\t-11472\n" +
+                        "578\t2276\n" +
+                        "940\t5639\n" +
+                        "-54\t13052\n" +
+                        "-393\t5003\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_short() a," +
+                        " rnd_short() b," +
+                        " rnd_short() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testStr() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tWCPS\n" +
+                        "474\t\n" +
+                        "454\t\n" +
+                        "-666\tULOFJGE\n" +
+                        "-574\tYICCXZOUIC\n" +
+                        "-303\tYCTGQO\n" +
+                        "355\t\n" +
+                        "692\t\n" +
+                        "-743\tLJU\n" +
+                        "36\t\n" +
+                        "0\t\n" +
+                        "799\t\n" +
+                        "650\t\n" +
+                        "-760\tGXHFVWSWSR\n" +
+                        "-605\tUKL\n" +
+                        "-554\tNPH\n" +
+                        "-201\tTNLE\n" +
+                        "623\t\n" +
+                        "-341\tXBHYSBQYMI\n" +
+                        "386\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testStrOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\tWCPS\n" +
+                        "474\tYQEHBH\n" +
+                        "454\tUED\n" +
+                        "-666\tULOFJGE\n" +
+                        "-574\tYICCXZOUIC\n" +
+                        "-303\tYCTGQO\n" +
+                        "355\tSMSSUQ\n" +
+                        "692\tIHVL\n" +
+                        "-743\tLJU\n" +
+                        "36\tRGIIHYH\n" +
+                        "0\tIFOUSZM\n" +
+                        "799\tWNWIFFLR\n" +
+                        "650\tFKWZ\n" +
+                        "-760\tGXHFVWSWSR\n" +
+                        "-605\tUKL\n" +
+                        "-554\tNPH\n" +
+                        "-201\tTNLE\n" +
+                        "623\tZSLQVFGPP\n" +
+                        "-341\tXBHYSBQYMI\n" +
+                        "386\tDVRVNGS\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestamp() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t1970-01-01T00:00:00.000000Z\n" +
+                        "118\t1970-01-01T00:00:00.000103Z\n" +
+                        "833\t\n" +
+                        "-771\t1970-01-01T00:00:00.000030Z\n" +
+                        "701\t\n" +
+                        "-339\t1970-01-01T00:00:00.000050Z\n" +
+                        "242\t\n" +
+                        "671\t\n" +
+                        "706\t\n" +
+                        "-48\t1970-01-01T00:00:00.000090Z\n" +
+                        "-516\t1970-01-01T00:00:00.000100Z\n" +
+                        "-972\t1970-01-01T00:00:00.000110Z\n" +
+                        "-714\t1970-01-01T00:00:00.000120Z\n" +
+                        "-703\t1970-01-01T00:00:00.000130Z\n" +
+                        "481\t\n" +
+                        "512\t\n" +
+                        "116\t1970-01-01T00:00:00.001603Z\n" +
+                        "97\t\n" +
+                        "-405\t1970-01-01T00:00:00.000180Z\n" +
+                        "474\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " timestamp_sequence(0, 10) a," +
+                        " timestamp_sequence(3, 100) b," +
+                        " timestamp_sequence(6, 100) c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampOrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-920\t1970-01-01T00:00:00.000000Z\n" +
+                        "118\t1970-01-01T00:00:00.000103Z\n" +
+                        "833\t1970-01-01T00:00:00.000206Z\n" +
+                        "-771\t1970-01-01T00:00:00.000030Z\n" +
+                        "701\t1970-01-01T00:00:00.000406Z\n" +
+                        "-339\t1970-01-01T00:00:00.000050Z\n" +
+                        "242\t1970-01-01T00:00:00.000606Z\n" +
+                        "671\t1970-01-01T00:00:00.000706Z\n" +
+                        "706\t1970-01-01T00:00:00.000806Z\n" +
+                        "-48\t1970-01-01T00:00:00.000090Z\n" +
+                        "-516\t1970-01-01T00:00:00.000100Z\n" +
+                        "-972\t1970-01-01T00:00:00.000110Z\n" +
+                        "-714\t1970-01-01T00:00:00.000120Z\n" +
+                        "-703\t1970-01-01T00:00:00.000130Z\n" +
+                        "481\t1970-01-01T00:00:00.001406Z\n" +
+                        "512\t1970-01-01T00:00:00.001506Z\n" +
+                        "116\t1970-01-01T00:00:00.001603Z\n" +
+                        "97\t1970-01-01T00:00:00.001706Z\n" +
+                        "-405\t1970-01-01T00:00:00.000180Z\n" +
+                        "474\t1970-01-01T00:00:00.001906Z\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " timestamp_sequence(0, 10) a," +
+                        " timestamp_sequence(3, 100) b," +
+                        " timestamp_sequence(6, 100) c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
                 true
         );
     }

@@ -285,6 +285,8 @@ public class MinDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-3.7763943098045716\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t1.7017646298154117\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t-0.7913659771297854\t1970-01-04T06:00:00.000000Z\n",
+                true,
+                true,
                 true);
     }
 }

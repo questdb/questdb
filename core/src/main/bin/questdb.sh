@@ -175,7 +175,7 @@ function start {
     -XX:+AlwaysPreTouch
     -XX:+UseParallelOldGC
     --add-exports java.base/jdk.internal.math=io.questdb
-    -Xlog:gc*,gc+ref=debug,gc+heap=debug,gc+age=trace:file=$QDB_LOG/questdb-%p-%t.gc:tags,uptime,time,level"
+    "
 
     JAVA_MAIN="io.questdb/io.questdb.ServerMain"
     DATE=`date +%Y-%m-%dT%H-%M-%S`
