@@ -229,7 +229,11 @@ public class TableWriter implements Closeable {
         this.other = new Path().of(root).concat(name);
         this.name = Chars.toString(name);
         this.rootLen = path.length();
-        this.blockWriter = new TableBlockWriter(configuration, messageBus);
+        if (null == messageBus) {
+            this.blockWriter = null;
+        } else {
+            this.blockWriter = new TableBlockWriter(configuration, messageBus);
+        }
         try {
             if (lock) {
                 lock();
