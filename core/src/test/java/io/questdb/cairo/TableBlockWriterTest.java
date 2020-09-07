@@ -690,6 +690,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 long firstTimestamp = frame.getFirstTimestamp();
                 long lastTimestamp = frame.getLastTimestamp();
                 long pageRowCount = frame.getPageValueCount(0);
+                LOG.info().$("Replicating frame with ").$(pageRowCount).$(" rows,  from ").$ts(firstTimestamp).$(" to ").$ts(lastTimestamp).$();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long pageAddress = frame.getPageAddress(columnIndex);
                     long blockLength = frame.getPageLength(columnIndex);
