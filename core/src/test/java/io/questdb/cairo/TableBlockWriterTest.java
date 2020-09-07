@@ -1,9 +1,13 @@
 package io.questdb.cairo;
 
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
+
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RecordCursor;
@@ -13,15 +17,17 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LongList;
 import io.questdb.test.tools.TestUtils;
+import io.questdb.test.tools.TestUtils.LeakProneCode;
 
 public class TableBlockWriterTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(TableBlockWriterTest.class);
 
     @Test
     public void testSimple() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                     ") TIMESTAMP (ts);",
@@ -40,7 +46,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleResumeBlock() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             int nConsecutiveRows = 50;
             long tsStart = 0;
             long tsInc = 1000000000;
@@ -79,7 +85,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleResumeBlockWithRetry() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             int nConsecutiveRows = 10;
             long tsStart = 0;
             long tsInc = 1000000000;
@@ -122,7 +128,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitioned() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                     ") TIMESTAMP (ts) PARTITION BY DAY;",
@@ -141,7 +147,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testNoTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                     ");",
@@ -169,7 +175,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void testString(boolean endsWithNull) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(5,10,2) s FROM long_sequence(300)" +
                     ") TIMESTAMP (ts);",
@@ -208,7 +214,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void testBinary(boolean endsWithNull) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_bin(10, 20, 2) bin FROM long_sequence(500)" +
                     ") TIMESTAMP (ts);",
@@ -238,7 +244,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testSymbol() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_symbol(60,2,16,2) sym FROM long_sequence(500)" +
                     ") TIMESTAMP (ts);",
@@ -257,7 +263,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAllTypes() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(true, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT" +
                     " rnd_char() ch," +
@@ -297,7 +303,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAllTypesPartitioned() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(true, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT" +
                     " rnd_char() ch," +
@@ -346,7 +352,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     public void testAllTypesResumeBlock(long maxRowsPerFrame) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(true, () -> {
             int nConsecuriveRows = 50;
             long tsStart = 0;
             long tsInc = 1000000000;
@@ -425,7 +431,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void testAllTypesPartitionedResumeBlock(long maxRowsPerFrame) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(true, () -> {
             int nConsecuriveRows = 50;
             long tsStart = 0;
             long tsInc = 1000000000;
@@ -495,7 +501,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAllTypesResumeBlockWithRetry() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(true, () -> {
             int nConsecuriveRows = 50;
             long tsStart = 0;
             long tsInc = 1000000000;
@@ -572,7 +578,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumn1() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
                     ") TIMESTAMP (ts);",
@@ -593,7 +599,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumn2() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
                     ") TIMESTAMP (ts);",
@@ -622,7 +628,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumnPartitioned() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        runTest(false, () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(200)" +
                     ") TIMESTAMP (ts) PARTITION BY DAY;",
@@ -647,6 +653,39 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
             engine.releaseInactive();
         });
+    }
+
+    private final AtomicInteger busyCount = new AtomicInteger();
+
+    private void runTest(boolean threaded, LeakProneCode runnable) throws Exception {
+        final SOCountDownLatch running = new SOCountDownLatch(1);
+        final SOCountDownLatch finished = new SOCountDownLatch(1);
+        Thread t = null;
+        if (threaded) {
+            busyCount.set(0);
+            final TableBlockWriterJob job = new TableBlockWriterJob(engine.getMessageBus());
+            t = new Thread() {
+                @Override
+                public void run() {
+                    while (running.getCount() > 0) {
+                        boolean busy = job.run(0);
+                        if (busy) {
+                            busyCount.incrementAndGet();
+                        }
+                        Thread.yield();
+                    }
+                    finished.countDown();
+                }
+            };
+            t.start();
+        } else {
+            busyCount.set(1);
+        }
+        TestUtils.assertMemoryLeak(runnable);
+        if (null != t) {
+            running.countDown();
+            finished.await();
+        }
     }
 
     private void replicateTable(String sourceTableName, String destTableName) {
@@ -698,6 +737,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     columnTops.setQuick(columnIndex, frame.getColumnTop(columnIndex));
                 }
                 if (commit) {
+                    while (busyCount.get() == 0) {
+                        LockSupport.parkNanos(0);
+                    }
                     blockWriter.commitAppendedBlock(firstTimestamp, lastTimestamp, pageRowCount, columnTops);
                 }
                 nFrames++;

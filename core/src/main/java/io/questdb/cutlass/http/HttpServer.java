@@ -33,6 +33,7 @@ import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.WorkerPoolAwareConfiguration.ServerFactory;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
+import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.cutlass.http.processors.StaticContentProcessor;
@@ -268,6 +269,7 @@ public class HttpServer implements Closeable {
         // jobs that help parallel execution of queries
         workerPool.assign(new ColumnIndexerJob(messageBus));
         workerPool.assign(new GroupByJob(messageBus));
+        workerPool.assign(new TableBlockWriterJob(messageBus));
      }
 
     public void bind(HttpRequestProcessorFactory factory) {

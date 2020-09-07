@@ -1,10 +1,15 @@
 package io.questdb.cairo;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -24,6 +29,9 @@ public class TableBlockWriter implements Closeable {
     private final FilesFacade ff;
     private final int mkDirMode;
     private final Path path = new Path();
+    private final RingQueue<TableBlockWriterTask> queue;
+    private final Sequence pubSeq;
+    private final Sequence subSeq;
 
     private int rootLen;
     private RecordMetadata metadata;
@@ -35,15 +43,25 @@ public class TableBlockWriter implements Closeable {
     private final ObjList<PartitionBlockWriter> partitionBlockWriters = new ObjList<>();
     private int nextPartitionBlockWriterIndex;
 
-    TableBlockWriter(CairoConfiguration configuration) {
+    TableBlockWriter(CairoConfiguration configuration, MessageBus messageBus) {
         root = configuration.getRoot();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
+        queue = messageBus.getTableBlockWriterQueue();
+        pubSeq = messageBus.getTableBlockWriterPubSequence();
+        subSeq = messageBus.getTableBlockWriterSubSequence();
     }
 
     public void appendBlock(long timestamp, int columnIndex, long blockLength, long sourceAddress) {
         PartitionBlockWriter partWriter = getPartitionBlockWriter(timestamp);
-        partWriter.appendBlock(columnIndex, blockLength, sourceAddress);
+        long seq = pubSeq.next();
+        if (seq < 0) {
+            partWriter.appendBlock(columnIndex, blockLength, sourceAddress);
+        } else {
+            TableBlockWriterTask task = queue.get(seq);
+            task.assingAppendBlock(partWriter, columnIndex, blockLength, sourceAddress);
+            pubSeq.done(seq);
+        }
     }
 
     public void appendSymbolCharsBlock(int columnIndex, long blockLength, long sourceAddress) {
@@ -52,8 +70,9 @@ public class TableBlockWriter implements Closeable {
 
     public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded, LongList columnTops) {
         LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
-        writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded, columnTops);
         PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
+        partWriter.completePendingTasks();
+        writer.commitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded, columnTops);
         partWriter.clear();
     }
 
@@ -127,6 +146,7 @@ public class TableBlockWriter implements Closeable {
         private final ObjList<AppendMemory> columns = new ObjList<>();
         private long timestampLo;
         private boolean opened;
+        private AtomicInteger nActiveTasks = new AtomicInteger();
 
         private void of(long timestampLo) {
             this.timestampLo = timestampLo;
@@ -171,7 +191,19 @@ public class TableBlockWriter implements Closeable {
             }
         }
 
+        private void completePendingTasks() {
+            while (nActiveTasks.get() > 0) {
+                long seq = subSeq.next();
+                if (seq >= 0) {
+                    final TableBlockWriterTask task = queue.get(seq);
+                    subSeq.done(seq);
+                    task.run();
+                }
+            }
+        }
+
         private void clear() {
+            completePendingTasks();
             for (int i = 0, sz = columns.size(); i < sz; i++) {
                 columns.getQuick(i).close(false);
             }
@@ -182,6 +214,60 @@ public class TableBlockWriter implements Closeable {
             columns.clear();
             timestampLo = 0;
             opened = false;
+        }
+    }
+
+    public static class TableBlockWriterTask {
+        private PartitionBlockWriter partWriter;
+        private int columnIndex;
+        private long blockLength;
+        private long sourceAddress;
+
+        private boolean run() {
+            if (null != partWriter) {
+                partWriter.appendBlock(columnIndex, blockLength, sourceAddress);
+                partWriter.nActiveTasks.decrementAndGet();
+                partWriter = null;
+                return true;
+            }
+
+            return false;
+        }
+
+        private void assingAppendBlock(PartitionBlockWriter partWriter, int columnIndex, long blockLength, long sourceAddress) {
+            assert this.partWriter == null;
+            this.partWriter = partWriter;
+            this.columnIndex = columnIndex;
+            this.blockLength = blockLength;
+            this.sourceAddress = sourceAddress;
+            partWriter.nActiveTasks.incrementAndGet();
+        }
+    }
+
+    public static class TableBlockWriterJob implements Job {
+        private final RingQueue<TableBlockWriterTask> queue;
+        private final Sequence subSeq;
+
+        public TableBlockWriterJob(MessageBus messageBus) {
+            this.queue = messageBus.getTableBlockWriterQueue();
+            this.subSeq = messageBus.getTableBlockWriterSubSequence();
+        }
+
+        @Override
+        public boolean run(int workerId) {
+            boolean useful = false;
+            while (true) {
+                long cursor = subSeq.next();
+                if (cursor == -1) {
+                    return useful;
+                }
+
+                if (cursor != -2) {
+                    final TableBlockWriterTask task = queue.get(cursor);
+                    useful |= task.run();
+                    subSeq.done(cursor);
+                }
+            }
         }
     }
 }

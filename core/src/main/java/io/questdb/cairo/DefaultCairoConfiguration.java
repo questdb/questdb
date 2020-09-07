@@ -402,4 +402,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         return telemetryConfiguration;
     }
 
+    @Override
+    public int getTableBlockWriterQueueSize() {
+        return 4;
+    }
 }

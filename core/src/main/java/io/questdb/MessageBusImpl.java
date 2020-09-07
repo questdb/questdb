@@ -24,14 +24,16 @@
 
 package io.questdb;
 
+import org.jetbrains.annotations.NotNull;
+
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableBlockWriter.TableBlockWriterTask;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.VectorAggregateTask;
-import org.jetbrains.annotations.NotNull;
 
 public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnIndexerTask> indexerQueue;
@@ -42,6 +44,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence vectorAggregatePubSeq;
     private final MCSequence vectorAggregateSubSeq;
 
+    private final RingQueue<TableBlockWriterTask> tableBlockWriterQueue;
+    private final MPSequence tableBlockWriterPubSeq;
+    private final MCSequence tableBlockWriterSubSeq;
 
     private final CairoConfiguration configuration;
 
@@ -58,6 +63,11 @@ public class MessageBusImpl implements MessageBus {
 
         indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
+
+        this.tableBlockWriterQueue = new RingQueue<>(TableBlockWriterTask::new, configuration.getTableBlockWriterQueueSize());
+        this.tableBlockWriterPubSeq = new MPSequence(tableBlockWriterQueue.getCapacity());
+        this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
+        tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
     }
 
     @Override
@@ -93,5 +103,20 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getVectorAggregateSubSequence() {
         return vectorAggregateSubSeq;
+    }
+
+    @Override
+    public RingQueue<TableBlockWriterTask> getTableBlockWriterQueue() {
+        return tableBlockWriterQueue;
+    }
+
+    @Override
+    public Sequence getTableBlockWriterPubSequence() {
+        return tableBlockWriterPubSeq;
+    }
+
+    @Override
+    public Sequence getTableBlockWriterSubSequence() {
+        return tableBlockWriterSubSeq;
     }
 }

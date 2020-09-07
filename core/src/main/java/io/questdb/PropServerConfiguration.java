@@ -1418,6 +1418,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
+
+        @Override
+        public int getTableBlockWriterQueueSize() {
+            return 1024;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
