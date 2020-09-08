@@ -1112,7 +1112,7 @@ public class TableWriter implements Closeable {
                 return mid - BinarySearch.SCAN_DOWN;
             }
         }
-        return low;
+        return low - 1;
     }
 
     private static int msGetOffsetDataFd(int columnIndex) {
@@ -1131,10 +1131,6 @@ public class TableWriter implements Closeable {
         return columnIndex * 16 + 4;
     }
 
-    private static int msGetOffsetDestOffet(int columnIndex) {
-        return columnIndex * 16 + 6;
-    }
-
     private static long mapReadOnlyOrFail(FilesFacade ff, Path path, long fd, long size) {
         long dataAddr = ff.mmap(fd, size + Integer.BYTES, 0, Files.MAP_RO);
         if (dataAddr == -1) {
@@ -1148,11 +1144,11 @@ public class TableWriter implements Closeable {
         if (addr != -1) {
             return addr;
         }
-        throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(']');
+        throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(", fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    private static void truncateToSizeOrFail(FilesFacade ff, Path path, long mergeFd, long mergeSize) {
-        if (!ff.truncate(mergeFd, mergeSize)) {
+    private static void truncateToSizeOrFail(FilesFacade ff, Path path, long fd, long mergeSize) {
+        if (!ff.truncate(fd, mergeSize)) {
             throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(mergeSize).put(']');
         }
     }
@@ -1334,6 +1330,20 @@ public class TableWriter implements Closeable {
     private void cancelRowAndBump() {
         cancelRow();
         masterRef++;
+    }
+
+    private long ceilMaxTimestamp() {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.ceilDD(this.maxTimestamp);
+            case PartitionBy.MONTH:
+                return Timestamps.ceilMM(this.maxTimestamp);
+            case PartitionBy.YEAR:
+                return Timestamps.ceilYYYY(this.maxTimestamp);
+            default:
+                assert false;
+                return -1;
+        }
     }
 
     private void checkDistressed() {
@@ -1519,6 +1529,35 @@ public class TableWriter implements Closeable {
         copyColumnData(src, mergeStruct, columnIndex, lo, hi - lo);
     }
 
+    private void copyFixedSizeColumnData2(
+            long src,
+            long[] mergeStruct,
+            int columnIndex,
+            long srcLo,
+            long srcHi
+    ) {
+        final int shl = 4;
+        final long lo = srcLo << shl;
+        final long hi = (srcHi + 1) << shl;
+        final long start = src + lo;
+        final long tgt = mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6];
+        final long len = hi - lo;
+        for (long l = 0; l < len; l += 16) {
+            Unsafe.getUnsafe().putLong(tgt + l / 2, Unsafe.getUnsafe().getLong(start + l));
+        }
+//        Unsafe.getUnsafe().copyMemory(src + lo, mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6], hi - lo);
+        mergeStruct[columnIndex + 6] += len / 2;
+    }
+
+    private void copyIndex(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int i) {
+        long dst = mergeStruct[msGetOffsetTargetPtr(i)] + mergeStruct[i * 16 + 6];
+        for (long l = 0; l < dataOOMergeIndexLen; l++) {
+            final long ts = Unsafe.getUnsafe().getLong(dataOOMergeIndex + (l * 16));
+            Unsafe.getUnsafe().putLong(dst + l * Long.BYTES, ts);
+        }
+        mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Long.BYTES;
+    }
+
     private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -1582,7 +1621,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct) {
+    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct, int timestampIndex) {
         for (int i = 0; i < columnCount; i++) {
             ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
             ContiguousVirtualMemory mem2;
@@ -1608,7 +1647,11 @@ public class TableWriter implements Closeable {
                     shiftCopyFixedSizeColumnData(lo, mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
                     break;
                 default:
-                    copyFixedSizeColumnData(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, columnType);
+                    if (i != timestampIndex) {
+                        copyFixedSizeColumnData(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, columnType);
+                    } else {
+                        copyFixedSizeColumnData2(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi);
+                    }
                     break;
             }
         }
@@ -1709,7 +1752,7 @@ public class TableWriter implements Closeable {
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
-    private long[] createTempPartition(Path path, long indexLo, long indexHi, long dataIndexMax, int destIndex, boolean reuseFds) {
+    private long[] createTempPartition(Path path, long indexLo, long indexHi, long dataIndexMax, int destIndex, boolean reuseFds, int timestmpIndex, long timestampFd) {
         final int PAD = 16;
         long[] mergeStruct = new long[columnCount * PAD];
 
@@ -1751,10 +1794,12 @@ public class TableWriter implements Closeable {
                             dataSize = Unsafe.getUnsafe().getLong(indexAddr + indexSize - Long.BYTES);
                             long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
 
-                            int len = Unsafe.getUnsafe().getInt(dataAddr + dataSize) * Character.BYTES;
-                            ff.munmap(dataAddr, dataSize + Integer.BYTES);
-                            dataSize += len;
-                            dataAddr = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
+                            int len = Unsafe.getUnsafe().getInt(dataAddr + dataSize);
+                            if (len > 0) {
+                                ff.munmap(dataAddr, dataSize + Integer.BYTES);
+                                dataSize += len * Character.BYTES;
+                                dataAddr = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
+                            }
                             mergeStruct[i * PAD + 8 + 1] = dataAddr;
                             mergeStruct[i * PAD + 8 + 2] = dataSize;
                         } else {
@@ -1841,7 +1886,14 @@ public class TableWriter implements Closeable {
                         if (dataIndexMax > 0) {
                             dFile(path, metadata.getColumnName(i));
                             dataSize = dataIndexMax << shl;
-                            long dataFd = reuseFds ? columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
+
+                            long dataFd;
+                            if (timestmpIndex == i && timestampFd != 0) {
+                                // ensure timestamp fd is always negative, we will close it externally
+                                dataFd = timestampFd > 0 ? -timestampFd : timestampFd;
+                            } else {
+                                dataFd = reuseFds ? -columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
+                            }
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`]").$();
                             mergeStruct[i * PAD] = dataFd;
                             mergeStruct[i * PAD + 1] = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
@@ -2215,21 +2267,7 @@ public class TableWriter implements Closeable {
             // to determine that 'ooTimestampLo' goes into current partition
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
-            long maxTruncated = 0;
-            switch (partitionBy) {
-                case PartitionBy.DAY:
-                    maxTruncated = Timestamps.ceilDD(this.maxTimestamp);
-                    break;
-                case PartitionBy.MONTH:
-                    maxTruncated = Timestamps.ceilMM(this.maxTimestamp);
-                    break;
-                case PartitionBy.YEAR:
-                    maxTruncated = Timestamps.ceilYYYY(this.maxTimestamp);
-                    break;
-                default:
-                    assert false;
-            }
-
+            final long ceilOfMaxTimestamp = ceilMaxTimestamp();
             LOG.info().$("sorting [name=").$(name).$(']').$();
             final long mergedTimestamps = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(mergedTimestamps, timestampMergeMem.getAppendOffset() / TIMESTAMP_MERGE_ENTRY_BYTES);
@@ -2265,33 +2303,30 @@ public class TableWriter implements Closeable {
                 long fd = 0;
                 long dataTimestampLo;
                 long dataTimestampHi = Long.MIN_VALUE;
-                long dataIndexMax;
+                long dataIndexMax = 0;
 
                 // is out of order data hitting the last partition?
                 // if so we do not need to re-open files and and write to existing file descriptors
 
-                long partitionSize;
 
-                if (partitionTimestampHi > maxTruncated) {
+                if (partitionTimestampHi > ceilOfMaxTimestamp) {
 
                     // this has to be a brand new partition
                     LOG.info().$("copy oo to [path=").$(path).$(", from=").$(indexLo).$(", to=").$(indexHi).$(']').$();
                     // pure OOO data copy into new partition
-                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, 0, 0, false);
+                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, 0, 0, false, -1, 0);
                     try {
-                        copyOutOfOrderData(indexLo, indexHi, mergeStruct);
+                        copyOutOfOrderData(indexLo, indexHi, mergeStruct, timestampIndex);
                     } finally {
                         freeMergeStruct(mergeStruct);
                     }
-
-                    partitionSize = indexHi - indexLo + 1;
                 } else {
 
                     // out of order is hitting existing partition
 
                     try {
                         dFile(path, metadata.getColumnName(timestampIndex));
-                        if (partitionTimestampHi == maxTruncated) {
+                        if (partitionTimestampHi == ceilOfMaxTimestamp) {
                             dataTimestampHi = this.maxTimestamp;
                             dataIndexMax = transientRowCountBeforeOutOfOrder;
                             fd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
@@ -2348,7 +2383,8 @@ public class TableWriter implements Closeable {
                         long suffixHi = -1;
 
                         // this is an overloaded function, page size is derived from the file size
-                        timestampSearchColumn.of(ff, path, 0, dataIndexMax * Long.BYTES);
+//                        timestampSearchColumn.of(ff, path, 0, dataIndexMax * Long.BYTES);
+                        timestampSearchColumn.of(ff, Math.abs(fd), path, dataIndexMax * Long.BYTES);
 
                         try {
                             if (ooTimestampLo < dataTimestampLo) {
@@ -2392,6 +2428,10 @@ public class TableWriter implements Closeable {
 
                                         mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, mergeOOOLo, indexHi);
                                         mergeDataHi = dataIndexMax - 1;
+
+                                        suffixType = 1;
+                                        suffixLo = mergeOOOHi + 1;
+                                        suffixHi = indexHi;
                                     } else {
 
                                         // |      | |     |
@@ -2499,25 +2539,18 @@ public class TableWriter implements Closeable {
                                 }
                             }
                         } finally {
-                            Misc.free(timestampSearchColumn);
+                            // disconnect memory from fd, so that we don't accidentally close it
+                            timestampSearchColumn.detach();
                         }
-
-                        // calculate partition size to maintain consistency
-                        partitionSize = prefixHi - prefixLo + 1 + suffixHi - suffixLo + 1;
-                        if (mergeDataLo != -1) {
-                            partitionSize += mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
-                        }
-
-                        // we also need to calculate max timestamp
 
                         path.trimTo(plen);
-                        long[] mergeStruct = createTempPartition(path, indexLo, indexHi, dataIndexMax, 1, fd < 0);
+                        long[] mergeStruct = createTempPartition(path, indexLo, indexHi, dataIndexMax, 1, fd < 0, timestampIndex, fd);
                         try {
 
                             switch (prefixType) {
                                 case 1:
                                     LOG.info().$("copy ooo prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
-                                    copyOutOfOrderData(prefixLo, prefixHi, mergeStruct);
+                                    copyOutOfOrderData(prefixLo, prefixHi, mergeStruct, timestampIndex);
                                     break;
                                 case 2:
                                     LOG.info().$("copy data prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
@@ -2548,7 +2581,8 @@ public class TableWriter implements Closeable {
                                         Unsafe.getUnsafe().putLong(ss + Long.BYTES, mergeDataHi - mergeDataLo + 1);
                                         Unsafe.getUnsafe().putLong(ss + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
                                         Unsafe.getUnsafe().putLong(ss + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
-//
+
+                                        // todo: free
                                         dataOOMergeIndex = Vect.mergeLongIndexesAsc(ss, 2);
                                     } finally {
                                         Unsafe.free(index, (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES);
@@ -2569,6 +2603,11 @@ public class TableWriter implements Closeable {
                                             case ColumnType.LONG:
                                             case ColumnType.DATE:
                                             case ColumnType.TIMESTAMP:
+                                                if (i == timestampIndex) {
+                                                    // copy timestamp values from the merge index
+                                                    copyIndex(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                                                    break;
+                                                }
                                             case ColumnType.DOUBLE:
                                                 mergeCopyLong(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
                                                 break;
@@ -2589,7 +2628,7 @@ public class TableWriter implements Closeable {
                             switch (suffixType) {
                                 case 1:
                                     LOG.info().$("copy ooo suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
-                                    copyOutOfOrderData(suffixLo, suffixHi, mergeStruct);
+                                    copyOutOfOrderData(suffixLo, suffixHi, mergeStruct, timestampIndex);
                                     break;
                                 case 2:
                                     LOG.info().$("copy data suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
@@ -2611,16 +2650,34 @@ public class TableWriter implements Closeable {
                     }
                 }
 
+                final long partitionSize = dataIndexMax + indexHi - indexLo + 1;
                 if (indexHi + 1 < indexMax) {
-                    // we are exiting current partition
-                    txPartitionCount++;
-                    txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
+
                     fixedRowCount += partitionSize;
-//                    txPrevTransientRowCount = transientRowCount;
-//                    transientRowCount = 0;
-//                    openPartition(timestamp);
-//                    setAppendPosition(0);
-//
+
+                    // We just updated non-last partition. It is possible that this partition
+                    // has already been updated by transaction or out of order logic was the only
+                    // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
+                    // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
+                    // (it has been incremented before out-of-order logic kicked in) and
+                    // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
+
+                    boolean missing = true;
+                    long x = txPendingPartitionSizes.getAppendOffset() / 16;
+                    for (long l = 0; l < x; l++) {
+                        long ts = txPendingPartitionSizes.getLong(l * 16 + Long.BYTES);
+                        if (ts == partitionTimestampHi) {
+                            fixedRowCount -= txPendingPartitionSizes.getLong(l * 16);
+                            txPendingPartitionSizes.putLong(l * 16, partitionSize);
+                            missing = false;
+                            break;
+                        }
+                    }
+
+                    if (missing) {
+                        txPartitionCount++;
+                        txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
+                    }
 
                     indexLo = indexHi + 1;
                 } else {
@@ -3452,7 +3509,7 @@ public class TableWriter implements Closeable {
         // For simplicity use partitionLo, which can be
         // translated to directory name when needed
         if (txPartitionCount++ > 0) {
-            txPendingPartitionSizes.putLong128(transientRowCount, maxTimestamp);
+            txPendingPartitionSizes.putLong128(transientRowCount, ceilMaxTimestamp());
         }
         fixedRowCount += transientRowCount;
         txPrevTransientRowCount = transientRowCount;

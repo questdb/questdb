@@ -47,13 +47,40 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return ex;
     }
 
+    public int getErrno() {
+        return errno;
+    }
+
+    @Override
+    public CharSequence getFlyweightMessage() {
+        return message;
+    }
+
     @Override
     public String getMessage() {
         return "[" + errno + "] " + message.toString();
     }
 
-    public CairoException put(long value) {
-        message.put(value);
+    @Override
+    public StackTraceElement[] getStackTrace() {
+        return EMPTY_STACK_TRACE;
+    }
+
+    public boolean isCacheable() {
+        return cacheable;
+    }
+
+    public CairoException setCacheable(boolean cacheable) {
+        this.cacheable = cacheable;
+        return this;
+    }
+
+    public boolean isInterruption() {
+        return interruption;
+    }
+
+    public CairoException setInterruption(boolean interruption) {
+        this.interruption = interruption;
         return this;
     }
 
@@ -67,36 +94,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
-    @Override
-    public CharSequence getFlyweightMessage() {
-        return message;
+    public CairoException put(long value) {
+        message.put(value);
+        return this;
     }
 
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(errno).put("]: ").put(message);
-    }
-
-    public CairoException setCacheable(boolean cacheable) {
-        this.cacheable = cacheable;
-        return this;
-    }
-
-    public boolean isCacheable() {
-        return cacheable;
-    }
-
-    public CairoException setInterruption(boolean interruption) {
-        this.interruption = interruption;
-        return this;
-    }
-
-    public boolean isInterruption() {
-        return interruption;
-    }
-
-    @Override
-    public StackTraceElement[] getStackTrace() {
-        return EMPTY_STACK_TRACE;
     }
 }
