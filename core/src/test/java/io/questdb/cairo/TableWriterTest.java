@@ -3413,7 +3413,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 int i = 0;
                 while (i < N) {
                     TableWriter.Row r;
-                    boolean fail = rnd.nextBoolean();
                     if (i > N / 2) {
                         ts2 += 60 * 1000L;
                         ts = ts2;

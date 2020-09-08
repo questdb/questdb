@@ -70,11 +70,226 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
     }
 
     @Override
+    public void clear() {
+        releaseMemory();
+    }
+
+    @Override
     public void close() {
         releaseMemory();
         baseAddress = 0;
         baseAddressHi = 0;
         appendAddress = 0;
+    }
+
+    @Override
+    public final long putBin(BinarySequence value) {
+        final long offset = getAppendOffset();
+        if (value != null) {
+            final long len = value.length();
+            checkLimits(len + Long.BYTES);
+            putLong(len);
+            value.copyTo(appendAddress, 0, len);
+            appendAddress += len;
+        } else {
+            putLong(TableUtils.NULL_LEN);
+        }
+        return offset;
+    }
+
+    public final long putBin(long from, long len) {
+        checkLimits(len + Long.BYTES);
+        final long offset = getAppendOffset();
+        putLong(len > 0 ? len : TableUtils.NULL_LEN);
+        if (len < 1) {
+            return offset;
+        }
+
+        Unsafe.getUnsafe().copyMemory(from, appendAddress, len);
+        appendAddress += len;
+        return offset;
+    }
+
+    public void putBool(boolean value) {
+        putByte((byte) (value ? 1 : 0));
+    }
+
+    public void putBool(long offset, boolean value) {
+        putByte(offset, (byte) (value ? 1 : 0));
+    }
+
+    public final void putByte(long offset, byte value) {
+        checkLimits(offset, Byte.BYTES);
+        Unsafe.getUnsafe().putByte(baseAddress + offset, value);
+    }
+
+    public void putByte(byte b) {
+        checkLimits(Byte.BYTES);
+        Unsafe.getUnsafe().putByte(appendAddress, b);
+        appendAddress++;
+    }
+
+    public void putChar(long offset, char value) {
+        checkLimits(offset, Character.BYTES);
+        Unsafe.getUnsafe().putChar(baseAddress + offset, value);
+    }
+
+    public final void putChar(char value) {
+        checkLimits(Character.BYTES);
+        Unsafe.getUnsafe().putChar(appendAddress, value);
+        appendAddress += Character.BYTES;
+    }
+
+    public void putDouble(long offset, double value) {
+        checkLimits(offset, Double.BYTES);
+        Unsafe.getUnsafe().putDouble(baseAddress + offset, value);
+    }
+
+    public final void putDouble(double value) {
+        checkLimits(Double.BYTES);
+        Unsafe.getUnsafe().putDouble(appendAddress, value);
+        appendAddress += Double.BYTES;
+    }
+
+    public void putFloat(long offset, float value) {
+        checkLimits(offset, Float.BYTES);
+        Unsafe.getUnsafe().putFloat(baseAddress + offset, value);
+    }
+
+    public final void putFloat(float value) {
+        checkLimits(Float.BYTES);
+        Unsafe.getUnsafe().putFloat(appendAddress, value);
+        appendAddress += Float.BYTES;
+    }
+
+    public void putInt(long offset, int value) {
+        checkLimits(offset, Integer.BYTES);
+        Unsafe.getUnsafe().putInt(baseAddress + offset, value);
+    }
+
+    public final void putInt(int value) {
+        checkLimits(Integer.BYTES);
+        Unsafe.getUnsafe().putInt(appendAddress, value);
+        appendAddress += Integer.BYTES;
+    }
+
+    public void putLong(long offset, long value) {
+        checkLimits(offset, Long.BYTES);
+        Unsafe.getUnsafe().putLong(baseAddress + offset, value);
+    }
+
+    public final void putLong(long value) {
+        checkLimits(8);
+        Unsafe.getUnsafe().putLong(appendAddress, value);
+        appendAddress += Long.BYTES;
+    }
+
+    public final void putLong128(long l1, long l2) {
+        putLong(l1);
+        putLong(l2);
+    }
+
+    public void putLong256(long offset, Long256 value) {
+        putLong256(
+                offset,
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3());
+    }
+
+    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
+        putLong(offset, l0);
+        putLong(offset + Long.BYTES, l1);
+        putLong(offset + Long.BYTES * 2, l2);
+        putLong(offset + Long.BYTES * 3, l3);
+    }
+
+    public final void putLong256(long l0, long l1, long l2, long l3) {
+        putLong(l0);
+        putLong(l1);
+        putLong(l2);
+        putLong(l3);
+    }
+
+    public final void putLong256(Long256 value) {
+        putLong256(
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3());
+    }
+
+    public final void putLong256(CharSequence hexString) {
+        inPageLong256Decoder.putLong256(hexString);
+    }
+
+    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        inPageLong256Decoder.putLong256(hexString, start, end);
+    }
+
+    public final long putNullBin() {
+        final long offset = getAppendOffset();
+        putLong(TableUtils.NULL_LEN);
+        return offset;
+    }
+
+    public final long putNullStr() {
+        final long offset = getAppendOffset();
+        putInt(TableUtils.NULL_LEN);
+        return offset;
+    }
+
+    public final void putNullStr(long offset) {
+        putInt(offset, TableUtils.NULL_LEN);
+    }
+
+    public void putShort(long offset, short value) {
+        checkLimits(offset, 2);
+        Unsafe.getUnsafe().putShort(baseAddress + offset, value);
+    }
+
+    public final void putShort(short value) {
+        checkLimits(2);
+        Unsafe.getUnsafe().putShort(appendAddress, value);
+        appendAddress += 2;
+    }
+
+    public final long putStr(CharSequence value) {
+        return value != null ? putStr0(value, 0, value.length()) : putNullStr();
+    }
+
+    public final long putStr(char value) {
+        if (value != 0) {
+            checkLimits(6);
+            final long offset = getAppendOffset();
+            putInt(1);
+            Unsafe.getUnsafe().putChar(appendAddress, value);
+            appendAddress += Character.BYTES;
+            return offset;
+        }
+        return putNullStr();
+    }
+
+    public final long putStr(CharSequence value, int pos, int len) {
+        if (value != null) {
+            return putStr0(value, pos, len);
+        }
+        return putNullStr();
+    }
+
+    public void putStr(long offset, CharSequence value) {
+        if (value != null) {
+            putStr(offset, value, 0, value.length());
+        } else {
+            putNullStr(offset);
+        }
+    }
+
+    public void putStr(long offset, CharSequence value, int pos, int len) {
+        checkLimits(offset, len * 2 + STRING_LENGTH_BYTES);
+        putInt(offset, len);
+        copyStrChars(value, pos, len, baseAddress + offset + STRING_LENGTH_BYTES);
     }
 
     public final long getAppendOffset() {
@@ -197,221 +412,6 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
         appendAddress = baseAddress + offset;
     }
 
-    @Override
-    public final long putBin(BinarySequence value) {
-        final long offset = getAppendOffset();
-        if (value != null) {
-            final long len = value.length();
-            checkLimits(len + Long.BYTES);
-            putLong(len);
-            value.copyTo(appendAddress, 0, len);
-            appendAddress += len;
-        } else {
-            putLong(TableUtils.NULL_LEN);
-        }
-        return offset;
-    }
-
-    public final long putBin(long from, long len) {
-        checkLimits(len + Long.BYTES);
-        final long offset = getAppendOffset();
-        putLong(len > 0 ? len : TableUtils.NULL_LEN);
-        if (len < 1) {
-            return offset;
-        }
-
-        Unsafe.getUnsafe().copyMemory(from, appendAddress, len);
-        appendAddress += len;
-        return offset;
-    }
-
-    public void putBool(boolean value) {
-        putByte((byte) (value ? 1 : 0));
-    }
-
-    public void putBool(long offset, boolean value) {
-        putByte(offset, (byte) (value ? 1 : 0));
-    }
-
-    public final void putByte(long offset, byte value) {
-        checkLimits(offset, Byte.BYTES);
-        Unsafe.getUnsafe().putByte(baseAddress + offset, value);
-    }
-
-    public void putByte(byte b) {
-        checkLimits(Byte.BYTES);
-        Unsafe.getUnsafe().putByte(appendAddress, b);
-        appendAddress++;
-    }
-
-    public void putChar(long offset, char value) {
-        checkLimits(offset, Character.BYTES);
-        Unsafe.getUnsafe().putChar(baseAddress + offset, value);
-    }
-
-    public final void putChar(char value) {
-        checkLimits(Character.BYTES);
-        Unsafe.getUnsafe().putChar(appendAddress, value);
-        appendAddress += Character.BYTES;
-    }
-
-    public void putDouble(long offset, double value) {
-        checkLimits(offset, Double.BYTES);
-        Unsafe.getUnsafe().putDouble(baseAddress + offset, value);
-    }
-
-    public final void putDouble(double value) {
-        checkLimits(Double.BYTES);
-        Unsafe.getUnsafe().putDouble(appendAddress, value);
-        appendAddress += Double.BYTES;
-    }
-
-    public void putFloat(long offset, float value) {
-        checkLimits(offset, Float.BYTES);
-        Unsafe.getUnsafe().putFloat(baseAddress + offset, value);
-    }
-
-    public final void putFloat(float value) {
-        checkLimits(Float.BYTES);
-        Unsafe.getUnsafe().putFloat(appendAddress, value);
-        appendAddress += Float.BYTES;
-    }
-
-    public void putInt(long offset, int value) {
-        checkLimits(offset, Integer.BYTES);
-        Unsafe.getUnsafe().putInt(baseAddress + offset, value);
-    }
-
-    public final void putInt(int value) {
-        checkLimits(Integer.BYTES);
-        Unsafe.getUnsafe().putInt(appendAddress, value);
-        appendAddress += Integer.BYTES;
-    }
-
-    public void putLong(long offset, long value) {
-        checkLimits(offset, Long.BYTES);
-        Unsafe.getUnsafe().putLong(baseAddress + offset, value);
-    }
-
-    public final void putLong(long value) {
-        checkLimits(8);
-        Unsafe.getUnsafe().putLong(appendAddress, value);
-        appendAddress += Long.BYTES;
-    }
-
-    @Override
-    public void clear() {
-        releaseMemory();
-    }
-
-    public final void putLong128(long l1, long l2) {
-        putLong(l1);
-        putLong(l2);
-    }
-
-    public void putLong256(long offset, Long256 value) {
-        putLong256(
-                offset,
-                value.getLong0(),
-                value.getLong1(),
-                value.getLong2(),
-                value.getLong3());
-    }
-
-    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
-        putLong(offset, l0);
-        putLong(offset + Long.BYTES, l1);
-        putLong(offset + Long.BYTES * 2, l2);
-        putLong(offset + Long.BYTES * 3, l3);
-    }
-
-    public final void putLong256(long l0, long l1, long l2, long l3) {
-        putLong(l0);
-        putLong(l1);
-        putLong(l2);
-        putLong(l3);
-    }
-
-    public final void putLong256(Long256 value) {
-        putLong256(
-                value.getLong0(),
-                value.getLong1(),
-                value.getLong2(),
-                value.getLong3());
-    }
-
-    public final void putLong256(CharSequence hexString) {
-        inPageLong256Decoder.putLong256(hexString);
-    }
-
-    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        inPageLong256Decoder.putLong256(hexString, start, end);
-    }
-
-    public final long putNullBin() {
-        final long offset = getAppendOffset();
-        putLong(TableUtils.NULL_LEN);
-        return offset;
-    }
-
-    public final long putNullStr() {
-        final long offset = getAppendOffset();
-        putInt(TableUtils.NULL_LEN);
-        return offset;
-    }
-
-    public final void putNullStr(long offset) {
-        putInt(offset, TableUtils.NULL_LEN);
-    }
-
-    public void putShort(long offset, short value) {
-        checkLimits(offset, 2);
-        Unsafe.getUnsafe().putShort(baseAddress + offset, value);
-    }
-
-    public final void putShort(short value) {
-        checkLimits(2);
-        Unsafe.getUnsafe().putShort(appendAddress, value);
-        appendAddress += 2;
-    }
-
-    public final long putStr(CharSequence value) {
-        return value != null ? putStr0(value, 0, value.length()) : putNullStr();
-    }
-
-    public final long putStr(char value) {
-        if (value != 0) {
-            checkLimits(6);
-            final long offset = getAppendOffset();
-            putInt(1);
-            Unsafe.getUnsafe().putChar(appendAddress, value);
-            appendAddress += Character.BYTES;
-            return offset;
-        }
-        return putNullStr();
-    }
-
-    public final long putStr(CharSequence value, int pos, int len) {
-        if (value != null) {
-            return putStr0(value, pos, len);
-        }
-        return putNullStr();
-    }
-
-    public void putStr(long offset, CharSequence value) {
-        if (value != null) {
-            putStr(offset, value, 0, value.length());
-        } else {
-            putNullStr(offset);
-        }
-    }
-
-    public void putStr(long offset, CharSequence value, int pos, int len) {
-        checkLimits(offset, len * 2 + STRING_LENGTH_BYTES);
-        putInt(offset, len);
-        copyStrChars(value, pos, len, baseAddress + offset + STRING_LENGTH_BYTES);
-    }
-
     /**
      * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
      * no memory write takes place.
@@ -457,11 +457,11 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
         long nPages = (newSize / pageSize) + 1;
         newSize = nPages * pageSize;
         long oldSize = getMemorySize();
-        LOG.info().$("extending [oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
         if (nPages > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
         long newBaseAddress = reallocateMemory(baseAddress, getMemorySize(), newSize);
+        LOG.info().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
         handleMemoryReallocation(newBaseAddress, newSize);
     }
 
