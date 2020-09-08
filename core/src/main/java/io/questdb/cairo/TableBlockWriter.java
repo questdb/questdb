@@ -17,6 +17,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
@@ -269,15 +270,7 @@ public class TableBlockWriter implements Closeable {
 		private void updateSymbolCache(int columnIndex, long colNRowsAdded) {
 			int i = columnIndex << 1;
 			AppendMemory mem = columns.getQuick(i++);
-			int nSymbols = 0;
-			long offset = mem.getAppendOffset();
-			// TODO: Use vector instructions (rosti) to find max
-			for (int row = 0; row < colNRowsAdded; row++) {
-				int symIndex = mem.getInt(offset);
-				offset += Integer.BYTES;
-				nSymbols = Math.max(nSymbols, symIndex);
-			}
-
+			int nSymbols = Vect.maxInt(mem.addressOf(mem.getAppendOffset()), colNRowsAdded);
 			nSymbols++;
 			SymbolMapWriter symWriter = writer.getSymbolMapWriter(columnIndex);
 			if (nSymbols > symWriter.getSymbolCount()) {
