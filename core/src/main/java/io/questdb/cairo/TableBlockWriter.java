@@ -62,7 +62,8 @@ public class TableBlockWriter implements Closeable {
 		subSeq = messageBus.getTableBlockWriterSubSequence();
 	}
 
-	public void appendBlock(long partitionTimestamp, int columnIndex, long blockLength, long sourceAddress) {
+	public void appendBlock(long partitionTimestamp, int columnIndex, long blockLength, long sourceAddress,
+			long columnTop) {
 		if (columnIndex == 0) {
 			nRowsAdded += blockLength >> firstColumnPow2Size;
 		}
@@ -78,10 +79,13 @@ public class TableBlockWriter implements Closeable {
 			}
 		}
 		PartitionBlockWriter partWriter = getPartitionBlockWriter(partitionTimestamp);
-		long seq = getNextTaskSequence();
-		TableBlockWriterTask task = queue.get(seq);
-		task.assignAppendBlock(partWriter, columnIndex, blockLength, sourceAddress);
-		pubSeq.done(seq);
+		partWriter.setColumnTop(columnIndex, columnTop);
+		if (sourceAddress != 0) {
+			long seq = getNextTaskSequence();
+			TableBlockWriterTask task = queue.get(seq);
+			task.assignAppendBlock(partWriter, columnIndex, blockLength, sourceAddress);
+			pubSeq.done(seq);
+		}
 	}
 
 	private long getNextTaskSequence() {
@@ -103,11 +107,11 @@ public class TableBlockWriter implements Closeable {
 		writer.getSymbolMapWriter(columnIndex).appendSymbolCharsBlock(blockLength, sourceAddress);
 	}
 
-	public void commitAppendedBlock(LongList columnTops) {
+	public void commitAppendedBlock() {
 		LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=")
 				.$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
 		PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
-		partWriter.startCommitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded, columnTops);
+		partWriter.startCommitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded);
 		partWriter.completePendingTasks();
 		writer.commitBlock(firstTimestamp, lastTimestamp, nRowsAdded);
 		partWriter.clear();
@@ -190,6 +194,7 @@ public class TableBlockWriter implements Closeable {
 
 	private class PartitionBlockWriter {
 		private final ObjList<AppendMemory> columns = new ObjList<>();
+		private final LongList columnTops = new LongList();
 		private long timestampLo;
 		private boolean opened;
 		private AtomicInteger nActiveTasks = new AtomicInteger();
@@ -198,6 +203,7 @@ public class TableBlockWriter implements Closeable {
 			this.timestampLo = timestampLo;
 			opened = false;
 			int columnsSize = columns.size();
+			columnTops.ensureCapacity(columnCount);
 			int requiredColumnsSize = columnCount << 1;
 			while (columnsSize < requiredColumnsSize) {
 				int columnIndex = columnsSize >> 1;
@@ -224,6 +230,7 @@ public class TableBlockWriter implements Closeable {
 					}
 
 					assert columnCount > 0;
+					columnTops.setAll(columnCount, 0);
 					for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
 						final CharSequence name = metadata.getColumnName(columnIndex);
 						int i = columnIndex * 2;
@@ -238,6 +245,7 @@ public class TableBlockWriter implements Closeable {
 						}
 
 					}
+
 					opened = true;
 					LOG.info().$("opened partition to '").$(path).$('\'').$();
 				} finally {
@@ -256,9 +264,12 @@ public class TableBlockWriter implements Closeable {
 			}
 		}
 
-		private void startCommitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded,
-				LongList blockColumnTops) {
-			writer.startAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded, blockColumnTops, columnRowsAdded);
+		private void setColumnTop(int columnIndex, long columnTop) {
+			columnTops.set(columnIndex, columnTop);
+		}
+
+		private void startCommitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
+			writer.startAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded, columnTops, columnRowsAdded);
 
 			for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
 				int columnType = metadata.getColumnType(columnIndex);

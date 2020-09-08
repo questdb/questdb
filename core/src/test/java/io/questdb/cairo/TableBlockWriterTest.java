@@ -724,21 +724,19 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             int timestampColumnIndex = reader.getMetadata().getTimestampIndex();
             TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, timestampColumnIndex, nFirstRow);
             PageFrame frame;
-            LongList columnTops = new LongList(columnCount);
             while ((frame = cursor.next()) != null) {
                 long firstTimestamp = frame.getFirstTimestamp();
                 LOG.info().$("Replicating frame from ").$ts(firstTimestamp).$();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long pageAddress = frame.getPageAddress(columnIndex);
                     long blockLength = frame.getPageLength(columnIndex);
-                    blockWriter.appendBlock(firstTimestamp, columnIndex, blockLength, pageAddress);
-                    columnTops.setQuick(columnIndex, frame.getColumnTop(columnIndex));
+                    blockWriter.appendBlock(firstTimestamp, columnIndex, blockLength, pageAddress, frame.getColumnTop(columnIndex));
                 }
                 if (commit) {
                     while (busyCount.get() == 0) {
                         LockSupport.parkNanos(0);
                     }
-                    blockWriter.commitAppendedBlock(columnTops);
+                    blockWriter.commitAppendedBlock();
                 }
                 nFrames++;
             }

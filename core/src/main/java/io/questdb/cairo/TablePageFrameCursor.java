@@ -180,7 +180,8 @@ public class TablePageFrameCursor implements PageFrameCursor {
                     }
                 } else {
                     columnFrameAddresses.setQuick(i, 0);
-                    columnFrameLengths.setQuick(i, 0);
+                    // Frame length is the number of rows missing
+                    columnFrameLengths.setQuick(i, nFrameRows - frameFirstRow);
                 }
             }
 
