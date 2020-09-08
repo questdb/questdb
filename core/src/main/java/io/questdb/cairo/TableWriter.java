@@ -1705,6 +1705,18 @@ public class TableWriter implements Closeable {
         return columns.get(getPrimaryColumnIndex(columnIndex)).getAppendOffset();
     }
 
+    long getSecondaryAppendOffset(long timestamp, int columnIndex) {
+        if (txPartitionCount == 0) {
+            openFirstPartition(maxTimestamp);
+        }
+
+        if (timestamp > partitionHi) {
+            return 0;
+        }
+
+        return columns.get(getSecondaryColumnIndex(columnIndex)).getAppendOffset();
+    }
+
     private long getNextMinTimestamp(
             Timestamps.TimestampFloorMethod timestampFloorMethod,
             Timestamps.TimestampAddMethod timestampAddMethod
@@ -2766,7 +2778,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded, LongList blockColumnTops) {
+    void startAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded, LongList blockColumnTops, LongList blockColumnRowsAdded) {
         bumpMasterRef();
         if (txPartitionCount == 0) {
             openFirstPartition(firstTimestamp);
@@ -2778,10 +2790,8 @@ public class TableWriter implements Closeable {
 
         // Entire block must be in the same partition
         assert lastTimestamp < partitionHi;
-
+  	
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int columnType = metadata.getColumnType(columnIndex);
-
             // Handle column tops
             long blockColumnTop = blockColumnTops.getQuick(columnIndex);
             long columnTop = columnTops.getQuick(columnIndex);
@@ -2798,79 +2808,16 @@ public class TableWriter implements Closeable {
             }
 
             long colNRowsAdded;
-            if (columnTop <= transientRowCount) {
+            if (blockColumnTop <= transientRowCount) {
                 colNRowsAdded = nRowsAdded;
             } else {
-                colNRowsAdded = nRowsAdded - (columnTop - transientRowCount);
+                colNRowsAdded = nRowsAdded - (blockColumnTop - transientRowCount);
             }
-
-            // Add binary and string indexes
-            switch (columnType) {
-                case ColumnType.STRING: {
-                    AppendMemory mem = getPrimaryColumn(columnIndex);
-                    AppendMemory imem = getSecondaryColumn(columnIndex);
-
-                    long offset = mem.getAppendOffset();
-                    for (int row = 0; row < colNRowsAdded; row++) {
-                        imem.putLong(offset);
-                        mem.jumpTo(offset);
-                        int strLen = mem.getStrLen(offset);
-                        if (strLen == TableUtils.NULL_LEN) {
-                            offset += VirtualMemory.STRING_LENGTH_BYTES;
-                        } else {
-                            offset += VirtualMemory.STRING_LENGTH_BYTES + 2 * strLen;
-                        }
-                    }
-
-                    break;
-                }
-
-                case ColumnType.BINARY: {
-                    AppendMemory mem = getPrimaryColumn(columnIndex);
-                    AppendMemory imem = getSecondaryColumn(columnIndex);
-
-                    long offset = mem.getAppendOffset();
-                    for (int row = 0; row < colNRowsAdded; row++) {
-                        imem.putLong(offset);
-                        mem.jumpTo(offset);
-                        long binLen = mem.getBinLen(offset);
-                        if (binLen == TableUtils.NULL_LEN) {
-                            offset += Long.BYTES;
-                        } else {
-                            offset += Long.BYTES + binLen;
-                        }
-                    }
-
-                    break;
-                }
-
-                case ColumnType.SYMBOL: {
-                    AppendMemory mem = getPrimaryColumn(columnIndex);
-                    int nSymbols = 0;
-                    long offset = mem.getAppendOffset();
-                    // TODO: Use vector instructions (vector) to find max
-                    for (int row = 0; row < colNRowsAdded; row++) {
-                        int symIndex = mem.getInt(offset);
-                        offset += Integer.BYTES;
-                        nSymbols = Math.max(nSymbols, symIndex);
-                    }
-
-                    nSymbols++;
-                    SymbolMapWriter symWriter = getSymbolMapWriter(columnIndex);
-                    if (nSymbols > symWriter.getSymbolCount()) {
-                        symWriter.commitAppendedBlock(nSymbols - symWriter.getSymbolCount());
-                    }
-                }
-
-                default:
-            }
+            blockColumnRowsAdded.setQuick(columnIndex, colNRowsAdded);
         }
-
-        commitBlock(firstTimestamp, lastTimestamp, nRowsAdded);
-        setAppendPosition(transientRowCount);
     }
 
-    private void commitBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
+    void commitBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
         if (lastTimestamp < maxTimestamp) {
             throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
         }
@@ -2892,6 +2839,7 @@ public class TableWriter implements Closeable {
         }
 
         TableWriter.this.commit();
+        setAppendPosition(transientRowCount);
     }
 
     public TableBlockWriter getBlockWriter() {
