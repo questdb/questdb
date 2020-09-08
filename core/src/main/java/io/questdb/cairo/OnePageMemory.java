@@ -87,6 +87,23 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         map(ff, name, size);
     }
 
+    public void of(FilesFacade ff, long fd, LPSZ name, long size) {
+        close();
+        this.ff = ff;
+        this.fd = fd;
+        if (fd != -1) {
+            map(ff, name, size);
+        }
+    }
+
+    public void detach() {
+        if (page != -1) {
+            ff.munmap(page, size);
+        }
+        fd = -1;
+        this.size = 0;
+    }
+
     protected void map(FilesFacade ff, LPSZ name, long size) {
         this.size = size;
         if (size > 0) {
