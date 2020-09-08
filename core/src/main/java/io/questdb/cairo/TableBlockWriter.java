@@ -17,6 +17,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -42,6 +43,9 @@ public class TableBlockWriter implements Closeable {
 	private int columnCount;
 	private int partitionBy;
 	private Timestamps.TimestampFloorMethod timestampFloorMethod;
+	private int timestampColumnIndex;
+	private long firstTimestamp;
+	private long lastTimestamp;
 
 	private final LongObjHashMap<PartitionBlockWriter> partitionBlockWriterByTimestamp = new LongObjHashMap<>();
 	private final ObjList<PartitionBlockWriter> partitionBlockWriters = new ObjList<>();
@@ -56,8 +60,19 @@ public class TableBlockWriter implements Closeable {
 		subSeq = messageBus.getTableBlockWriterSubSequence();
 	}
 
-	public void appendBlock(long timestamp, int columnIndex, long blockLength, long sourceAddress) {
-		PartitionBlockWriter partWriter = getPartitionBlockWriter(timestamp);
+	public void appendBlock(long partitionTimestamp, int columnIndex, long blockLength, long sourceAddress) {
+		if (columnIndex == timestampColumnIndex) {
+			long firstBlockTimetamp = Unsafe.getUnsafe().getLong(sourceAddress);
+			if (firstBlockTimetamp < firstTimestamp) {
+				firstTimestamp = firstBlockTimetamp;
+			}
+			long addr = sourceAddress + blockLength - Long.BYTES;
+			long lastBlockTimestamp = Unsafe.getUnsafe().getLong(addr);
+			if (lastBlockTimestamp > lastTimestamp) {
+				lastTimestamp = lastBlockTimestamp;
+			}
+		}
+		PartitionBlockWriter partWriter = getPartitionBlockWriter(partitionTimestamp);
 		long seq = getNextTaskSequence();
 		TableBlockWriterTask task = queue.get(seq);
 		task.assignAppendBlock(partWriter, columnIndex, blockLength, sourceAddress);
@@ -83,7 +98,7 @@ public class TableBlockWriter implements Closeable {
 		writer.getSymbolMapWriter(columnIndex).appendSymbolCharsBlock(blockLength, sourceAddress);
 	}
 
-	public void commitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded, LongList columnTops) {
+	public void commitAppendedBlock(long nRowsAdded, LongList columnTops) {
 		LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=")
 				.$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
 		PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
@@ -91,6 +106,8 @@ public class TableBlockWriter implements Closeable {
 		partWriter.completePendingTasks();
 		writer.commitBlock(firstTimestamp, lastTimestamp, nRowsAdded);
 		partWriter.clear();
+		this.firstTimestamp = Long.MAX_VALUE;
+		this.lastTimestamp = Long.MIN_VALUE;
 	}
 
 	void open(TableWriter writer) {
@@ -102,6 +119,9 @@ public class TableBlockWriter implements Closeable {
 		columnCount = metadata.getColumnCount();
 		partitionBy = writer.getPartitionBy();
 		columnRowsAdded.ensureCapacity(columnCount);
+		timestampColumnIndex = metadata.getTimestampIndex();
+		firstTimestamp = timestampColumnIndex >= 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
+		lastTimestamp = timestampColumnIndex >= 0 ? Long.MIN_VALUE : 0;
 		switch (partitionBy) {
 		case PartitionBy.DAY:
 			timestampFloorMethod = Timestamps.FLOOR_DD;

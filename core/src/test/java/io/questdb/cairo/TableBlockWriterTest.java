@@ -702,7 +702,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);) {
 
-            TableBlockWriter blockWriter = writer.getBlockWriter();
+            TableBlockWriter blockWriter = writer.newBlock();
 
             final int columnCount = writer.getMetadata().getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -727,9 +727,8 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             LongList columnTops = new LongList(columnCount);
             while ((frame = cursor.next()) != null) {
                 long firstTimestamp = frame.getFirstTimestamp();
-                long lastTimestamp = frame.getLastTimestamp();
                 long pageRowCount = frame.getPageValueCount(0);
-                LOG.info().$("Replicating frame with ").$(pageRowCount).$(" rows,  from ").$ts(firstTimestamp).$(" to ").$ts(lastTimestamp).$();
+                LOG.info().$("Replicating frame with ").$(pageRowCount).$(" rows, from ").$ts(firstTimestamp).$();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long pageAddress = frame.getPageAddress(columnIndex);
                     long blockLength = frame.getPageLength(columnIndex);
@@ -740,7 +739,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     while (busyCount.get() == 0) {
                         LockSupport.parkNanos(0);
                     }
-                    blockWriter.commitAppendedBlock(firstTimestamp, lastTimestamp, pageRowCount, columnTops);
+                    blockWriter.commitAppendedBlock(pageRowCount, columnTops);
                 }
                 nFrames++;
             }

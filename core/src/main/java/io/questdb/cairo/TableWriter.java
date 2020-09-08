@@ -2842,7 +2842,7 @@ public class TableWriter implements Closeable {
         setAppendPosition(transientRowCount);
     }
 
-    public TableBlockWriter getBlockWriter() {
+    public TableBlockWriter newBlock() {
         blockWriter.open(this);
         return blockWriter;
     }

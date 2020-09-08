@@ -41,6 +41,7 @@ public interface PageFrame {
         throw new UnsupportedOperationException();
     }
 
+    // TODO: Remove this
     default long getLastTimestamp() {
         throw new UnsupportedOperationException();
     }
