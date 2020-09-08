@@ -727,8 +727,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             LongList columnTops = new LongList(columnCount);
             while ((frame = cursor.next()) != null) {
                 long firstTimestamp = frame.getFirstTimestamp();
-                long pageRowCount = frame.getPageValueCount(0);
-                LOG.info().$("Replicating frame with ").$(pageRowCount).$(" rows, from ").$ts(firstTimestamp).$();
+                LOG.info().$("Replicating frame from ").$ts(firstTimestamp).$();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long pageAddress = frame.getPageAddress(columnIndex);
                     long blockLength = frame.getPageLength(columnIndex);
@@ -739,7 +738,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     while (busyCount.get() == 0) {
                         LockSupport.parkNanos(0);
                     }
-                    blockWriter.commitAppendedBlock(pageRowCount, columnTops);
+                    blockWriter.commitAppendedBlock(columnTops);
                 }
                 nFrames++;
             }

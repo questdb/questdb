@@ -46,6 +46,8 @@ public class TableBlockWriter implements Closeable {
 	private int timestampColumnIndex;
 	private long firstTimestamp;
 	private long lastTimestamp;
+	private long nRowsAdded;
+	private int firstColumnPow2Size;
 
 	private final LongObjHashMap<PartitionBlockWriter> partitionBlockWriterByTimestamp = new LongObjHashMap<>();
 	private final ObjList<PartitionBlockWriter> partitionBlockWriters = new ObjList<>();
@@ -61,6 +63,9 @@ public class TableBlockWriter implements Closeable {
 	}
 
 	public void appendBlock(long partitionTimestamp, int columnIndex, long blockLength, long sourceAddress) {
+		if (columnIndex == 0) {
+			nRowsAdded += blockLength >> firstColumnPow2Size;
+		}
 		if (columnIndex == timestampColumnIndex) {
 			long firstBlockTimetamp = Unsafe.getUnsafe().getLong(sourceAddress);
 			if (firstBlockTimetamp < firstTimestamp) {
@@ -98,7 +103,7 @@ public class TableBlockWriter implements Closeable {
 		writer.getSymbolMapWriter(columnIndex).appendSymbolCharsBlock(blockLength, sourceAddress);
 	}
 
-	public void commitAppendedBlock(long nRowsAdded, LongList columnTops) {
+	public void commitAppendedBlock(LongList columnTops) {
 		LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=")
 				.$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
 		PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
@@ -106,8 +111,9 @@ public class TableBlockWriter implements Closeable {
 		partWriter.completePendingTasks();
 		writer.commitBlock(firstTimestamp, lastTimestamp, nRowsAdded);
 		partWriter.clear();
-		this.firstTimestamp = Long.MAX_VALUE;
-		this.lastTimestamp = Long.MIN_VALUE;
+		firstTimestamp = Long.MAX_VALUE;
+		lastTimestamp = Long.MIN_VALUE;
+		this.nRowsAdded = 0;
 	}
 
 	void open(TableWriter writer) {
@@ -122,6 +128,8 @@ public class TableBlockWriter implements Closeable {
 		timestampColumnIndex = metadata.getTimestampIndex();
 		firstTimestamp = timestampColumnIndex >= 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
 		lastTimestamp = timestampColumnIndex >= 0 ? Long.MIN_VALUE : 0;
+		nRowsAdded = 0;
+		firstColumnPow2Size = ColumnType.pow2SizeOf(metadata.getColumnType(0));
 		switch (partitionBy) {
 		case PartitionBy.DAY:
 			timestampFloorMethod = Timestamps.FLOOR_DD;
