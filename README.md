@@ -219,7 +219,8 @@ Concepts:
 [Our roadmap is here](https://github.com/questdb/questdb/projects/3)
 
 ## Guides
-[QuestDB in Python](https://tutswiki.com/setup-access-questdb-python-notebook/)
+- [QuestDB in Go](https://questdb.io/docs/tutorial/go)
+- [QuestDB in Python](https://tutswiki.com/setup-access-questdb-python-notebook/)
 
 ## Contribution
 
