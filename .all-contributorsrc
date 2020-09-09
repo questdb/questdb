@@ -125,6 +125,15 @@
         "code",
         "test"
       ]
+    },
+    {
+      "login": "chankeypathak",
+      "name": "Chankey Pathak",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/424822?v=4",
+      "profile": "https://tutswiki.com/",
+      "contributions": [
+        "blog"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
