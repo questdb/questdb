@@ -1166,6 +1166,14 @@ public class TableWriter implements Closeable {
         mergeStruct[columnDataOffset + 6] += len;
     }
 
+    private static long getRowFromTimestampIndex(long timestampIndex, long indexRow) {
+        return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16 + Long.BYTES);
+    }
+
+    private static long getLongValue(long longValueColumn, long valueIndex) {
+        return Unsafe.getUnsafe().getLong(longValueColumn + valueIndex * Long.BYTES);
+    }
+
     private int addColumnToMeta(
             CharSequence name,
             int type,
@@ -1545,7 +1553,6 @@ public class TableWriter implements Closeable {
         for (long l = 0; l < len; l += 16) {
             Unsafe.getUnsafe().putLong(tgt + l / 2, Unsafe.getUnsafe().getLong(start + l));
         }
-//        Unsafe.getUnsafe().copyMemory(src + lo, mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6], hi - lo);
         mergeStruct[columnIndex + 6] += len / 2;
     }
 
@@ -1621,7 +1628,108 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct, int timestampIndex) {
+    private void copyOO16Bit(
+            long src,
+            long[] mergeStruct,
+            int columnIndex,
+            long srcLo,
+            long srcHi,
+            long mergedTimestamps
+    ) {
+        long tsStart = mergedTimestamps + srcLo * 16;
+        long tgt = mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6];
+        long len = (srcHi - srcLo + 1);
+        for (long l = 0; l < len; l++) {
+            long row = Unsafe.getUnsafe().getLong(tsStart + l * 16 + Long.BYTES);
+            Unsafe.getUnsafe().putShort(tgt + l * Short.BYTES, Unsafe.getUnsafe().getShort(src + row * Short.BYTES));
+        }
+        mergeStruct[columnIndex + 6] += len * Short.BYTES;
+    }
+
+    private void copyOO32Bit(
+            long src,
+            long[] mergeStruct,
+            int columnIndex,
+            long srcLo,
+            long srcHi,
+            long mergedTimestamps
+    ) {
+        long tsStart = mergedTimestamps + srcLo * 16;
+        long tgt = mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6];
+        long len = (srcHi - srcLo + 1);
+        for (long l = 0; l < len; l++) {
+            long row = Unsafe.getUnsafe().getLong(tsStart + l * 16 + Long.BYTES);
+            Unsafe.getUnsafe().putInt(tgt + l * Integer.BYTES, Unsafe.getUnsafe().getInt(src + row * Integer.BYTES));
+        }
+        mergeStruct[columnIndex + 6] += len * Integer.BYTES;
+    }
+
+    private void copyOO64Bit(
+            long src,
+            long[] mergeStruct,
+            int columnIndex,
+            long srcLo,
+            long srcHi,
+            long mergedTimestamps
+    ) {
+        long tsStart = mergedTimestamps + srcLo * 16;
+        long tgt = mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6];
+        long len = (srcHi - srcLo + 1);
+        for (long l = 0; l < len; l++) {
+            long row = Unsafe.getUnsafe().getLong(tsStart + l * 16 + Long.BYTES);
+            Unsafe.getUnsafe().putLong(tgt + l * Long.BYTES, Unsafe.getUnsafe().getLong(src + row * Long.BYTES));
+        }
+        mergeStruct[columnIndex + 6] += len * Long.BYTES;
+    }
+
+    private void copyOOVar(
+            long srcIndex,
+            long srcIndexLen,
+            long srcData,
+            long srcDataLen,
+            long[] mergeStruct,
+            int columnIndex,
+            long srcLo,
+            long srcHi,
+            long mergedTimestamps
+    ) {
+        long tsStart = mergedTimestamps + srcLo * 16;
+        long tgtIndex = mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6];
+        long tgtOffset = mergeStruct[columnIndex + 8 + 6];
+        long tgtData = mergeStruct[columnIndex + 8 + 4];
+        long len = (srcHi - srcLo + 1);
+        for (long l = 0; l < len; l++) {
+            // row number from sorted timestamp index
+            long row = getRowFromTimestampIndex(tsStart, l);
+
+            // offset of string/binary block in data column
+            long offset = getLongValue(srcIndex, row);
+            long offsetOfNextBlock = row + 1 < srcIndexLen ? getLongValue(srcIndex, row + 1) : srcDataLen;
+            long blockLen = offsetOfNextBlock - offset;
+
+            // copy block from source data column to target data column
+            if (blockLen < 0) {
+                System.out.println("fook");
+            }
+            Unsafe.getUnsafe().copyMemory(srcData + offset, tgtData + tgtOffset, blockLen);
+
+            // store offset of data block in target index column
+            Unsafe.getUnsafe().putLong(tgtIndex, tgtOffset);
+
+            // advance offset in target data column
+            tgtOffset += blockLen;
+
+            // advance offset in target index column
+            tgtIndex += Long.BYTES;
+        }
+
+        // update offset in target index column
+        mergeStruct[columnIndex + 6] += len * Long.BYTES;
+        // update offset in target data column
+        mergeStruct[columnIndex + 8 + 6] = tgtOffset;
+    }
+
+    private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct, int timestampIndex, long mergedTimestamps) {
         for (int i = 0; i < columnCount; i++) {
             ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
             ContiguousVirtualMemory mem2;
@@ -1630,28 +1738,53 @@ public class TableWriter implements Closeable {
             long lo;
             long hi;
             switch (columnType) {
-                // todo: review removing case statement
                 case ColumnType.STRING:
                 case ColumnType.BINARY:
                     // we can find out the edge of string column in one of two ways
                     // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
                     // 2  if there are more items behind indexHi we can get offset of indexHi+1
                     mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                    lo = mem2.getLong(indexLo * Long.BYTES);
-                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
-                        hi = mem.getAppendOffset();
-                    } else {
-                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
-                    }
-                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
-                    shiftCopyFixedSizeColumnData(lo, mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
+//                    lo = mem2.getLong(indexLo * Long.BYTES);
+//                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
+//                        hi = mem.getAppendOffset();
+//                    } else {
+//                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
+//                    }
+//                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
+//                    shiftCopyFixedSizeColumnData(lo, mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
+                    copyOOVar(
+                            mem2.addressOf(0),
+                            mem2.getAppendOffset() / Long.BYTES,
+                            mem.addressOf(0),
+                            mem.getAppendOffset(),
+                            mergeStruct,
+                            i * 16,
+                            indexLo,
+                            indexHi,
+                            mergedTimestamps
+                    );
                     break;
-                default:
+                case ColumnType.CHAR:
+                case ColumnType.SHORT:
+                    copyOO16Bit(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, mergedTimestamps);
+                    break;
+                case ColumnType.INT:
+                case ColumnType.FLOAT:
+                    copyOO32Bit(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, mergedTimestamps);
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.DATE:
+                case ColumnType.DOUBLE:
+                    copyOO64Bit(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, mergedTimestamps);
+                    break;
+                case ColumnType.TIMESTAMP:
                     if (i != timestampIndex) {
-                        copyFixedSizeColumnData(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, columnType);
+                        copyOO64Bit(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, mergedTimestamps);
                     } else {
                         copyFixedSizeColumnData2(mem.addressOf(0), mergeStruct, i * 16, indexLo, indexHi);
                     }
+                    break;
+                default:
                     break;
             }
         }
@@ -2272,7 +2405,6 @@ public class TableWriter implements Closeable {
             final long mergedTimestamps = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(mergedTimestamps, timestampMergeMem.getAppendOffset() / TIMESTAMP_MERGE_ENTRY_BYTES);
 
-
             // we have three frames:
             // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
             // partition actual data "lo" and "hi" (dataLo, dataHi)
@@ -2316,7 +2448,7 @@ public class TableWriter implements Closeable {
                     // pure OOO data copy into new partition
                     long[] mergeStruct = createTempPartition(path, indexLo, indexHi, 0, 0, false, -1, 0);
                     try {
-                        copyOutOfOrderData(indexLo, indexHi, mergeStruct, timestampIndex);
+                        copyOutOfOrderData(indexLo, indexHi, mergeStruct, timestampIndex, mergedTimestamps);
                     } finally {
                         freeMergeStruct(mergeStruct);
                     }
@@ -2374,6 +2506,7 @@ public class TableWriter implements Closeable {
                         int prefixType = -1;
                         long prefixLo = -1;
                         long prefixHi = -1;
+                        long mergeType = -1;
                         long mergeDataLo = -1;
                         long mergeDataHi = -1;
                         long mergeOOOLo = -1;
@@ -2426,11 +2559,19 @@ public class TableWriter implements Closeable {
                                         // +------+ |     |
                                         //          +-----+
 
-                                        mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, mergeOOOLo, indexHi);
                                         mergeDataHi = dataIndexMax - 1;
 
+                                        // check if data is regressed to single timestamp
+                                        if (dataTimestampLo == dataTimestampHi) {
+                                            mergeType = 1;
+                                            suffixLo = Math.min(prefixHi + 1, indexHi);
+                                        } else {
+                                            mergeType = 3;
+                                            mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, mergeOOOLo, indexHi);
+                                            suffixLo = mergeOOOHi + 1;
+                                        }
+
                                         suffixType = 1;
-                                        suffixLo = mergeOOOHi + 1;
                                         suffixHi = indexHi;
                                     } else {
 
@@ -2550,7 +2691,7 @@ public class TableWriter implements Closeable {
                             switch (prefixType) {
                                 case 1:
                                     LOG.info().$("copy ooo prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
-                                    copyOutOfOrderData(prefixLo, prefixHi, mergeStruct, timestampIndex);
+                                    copyOutOfOrderData(prefixLo, prefixHi, mergeStruct, timestampIndex, mergedTimestamps);
                                     break;
                                 case 2:
                                     LOG.info().$("copy data prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
@@ -2560,7 +2701,7 @@ public class TableWriter implements Closeable {
                                     break;
                             }
 
-                            if (mergeDataLo != -1) {
+                            if (mergeType == 3) {
                                 long dataOOMergeIndex;
                                 long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
                                 // copy timestamp column of the partition into a "index" memory
@@ -2600,6 +2741,7 @@ public class TableWriter implements Closeable {
                                             case ColumnType.SYMBOL:
                                                 mergeCopyInt(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
                                                 break;
+                                            case ColumnType.DOUBLE:
                                             case ColumnType.LONG:
                                             case ColumnType.DATE:
                                             case ColumnType.TIMESTAMP:
@@ -2608,7 +2750,6 @@ public class TableWriter implements Closeable {
                                                     copyIndex(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
                                                     break;
                                                 }
-                                            case ColumnType.DOUBLE:
                                                 mergeCopyLong(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
                                                 break;
                                         }
@@ -2623,12 +2764,15 @@ public class TableWriter implements Closeable {
                                         .$(", oooFrom=").$(mergeOOOLo)
                                         .$(", oooTo=").$(mergeOOOHi)
                                         .$(']').$();
+                            } else if (mergeType == 1) {
+                                LOG.info().$("copy data middle set [from=").$(mergeDataLo).$(", to=").$(mergeDataHi).$(']').$();
+                                copyPartitionData(mergeDataLo, mergeDataHi, mergeStruct);
                             }
 
                             switch (suffixType) {
                                 case 1:
                                     LOG.info().$("copy ooo suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
-                                    copyOutOfOrderData(suffixLo, suffixHi, mergeStruct, timestampIndex);
+                                    copyOutOfOrderData(suffixLo, suffixHi, mergeStruct, timestampIndex, mergedTimestamps);
                                     break;
                                 case 2:
                                     LOG.info().$("copy data suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
