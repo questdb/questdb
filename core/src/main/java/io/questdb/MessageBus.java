@@ -25,7 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableBlockWriter.TableBlockWriterTask;
+import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.ColumnIndexerTask;
@@ -44,7 +44,7 @@ public interface MessageBus {
 
     Sequence getVectorAggregateSubSequence();
 
-    default RingQueue<TableBlockWriterTask> getTableBlockWriterQueue() {
+    default RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
         return null;
     }
 

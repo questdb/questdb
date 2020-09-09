@@ -3,7 +3,9 @@ package io.questdb.cairo;
 import static io.questdb.cairo.TableUtils.iFile;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -33,9 +35,8 @@ public class TableBlockWriter implements Closeable {
     private final FilesFacade ff;
     private final int mkDirMode;
     private final Path path = new Path();
-    private final RingQueue<TableBlockWriterTask> queue;
+    private final RingQueue<TableBlockWriterTaskHolder> queue;
     private final Sequence pubSeq;
-    private final Sequence subSeq;
     private final LongList columnRowsAdded = new LongList();
 
     private int rootLen;
@@ -52,6 +53,9 @@ public class TableBlockWriter implements Closeable {
     private final LongObjHashMap<PartitionBlockWriter> partitionBlockWriterByTimestamp = new LongObjHashMap<>();
     private final ObjList<PartitionBlockWriter> partitionBlockWriters = new ObjList<>();
     private int nextPartitionBlockWriterIndex;
+    private final ObjList<TableBlockWriterTask> concurrentTasks = new ObjList<>();
+    private int nEnqueuedConcurrentTasks;
+    private final AtomicInteger nCompletedConcurrentTasks = new AtomicInteger();;
 
     TableBlockWriter(CairoConfiguration configuration, MessageBus messageBus) {
         root = configuration.getRoot();
@@ -59,7 +63,6 @@ public class TableBlockWriter implements Closeable {
         this.mkDirMode = configuration.getMkDirMode();
         queue = messageBus.getTableBlockWriterQueue();
         pubSeq = messageBus.getTableBlockWriterPubSequence();
-        subSeq = messageBus.getTableBlockWriterSubSequence();
     }
 
     public void appendBlock(long partitionTimestamp, int columnIndex, long blockLength, long sourceAddress) {
@@ -79,29 +82,56 @@ public class TableBlockWriter implements Closeable {
         }
         PartitionBlockWriter partWriter = getPartitionBlockWriter(partitionTimestamp);
         if (sourceAddress != 0) {
-            long seq = getNextTaskSequence();
-            TableBlockWriterTask task = queue.get(seq);
+            TableBlockWriterTask task = getConcurrentTask();
             task.assignAppendBlock(partWriter, columnIndex, blockLength, sourceAddress);
-            pubSeq.done(seq);
+            enqueueConcurrentTask(task);
         } else {
             partWriter.setColumnTop(columnIndex, blockLength);
         }
-
     }
 
-    private long getNextTaskSequence() {
-        while (true) {
-            long seq = pubSeq.next();
-            if (seq >= 0) {
-                return seq;
-            }
-            seq = subSeq.next();
-            if (seq >= 0) {
-                final TableBlockWriterTask task = queue.get(seq);
-                task.run();
-                subSeq.done(seq);
+    private TableBlockWriterTask getConcurrentTask() {
+        if (concurrentTasks.size() <= nEnqueuedConcurrentTasks) {
+            concurrentTasks.extendAndSet(nEnqueuedConcurrentTasks, new TableBlockWriterTask());
+        }
+        return concurrentTasks.getQuick(nEnqueuedConcurrentTasks);
+    }
+
+    private void enqueueConcurrentTask(TableBlockWriterTask task) {
+        assert concurrentTasks.getQuick(nEnqueuedConcurrentTasks) == task;
+        assert !task.ready.get();
+        task.ready.set(true);
+        nEnqueuedConcurrentTasks++;
+
+        long seq = pubSeq.next();
+        if (seq < 0) {
+            task.run();
+            return;
+        }
+        try {
+            queue.get(seq).task = task;
+        } finally {
+            pubSeq.done(seq);
+        }
+    }
+
+    private void completePendingConcurrentTasks(boolean cancel) {
+        if (nCompletedConcurrentTasks.get() < nEnqueuedConcurrentTasks) {
+            for (int n = 0; n < nEnqueuedConcurrentTasks; n++) {
+                TableBlockWriterTask task = concurrentTasks.getQuick(n);
+                if (cancel) {
+                    task.cancel();
+                } else {
+                    task.run();
+                }
             }
         }
+
+        while (nCompletedConcurrentTasks.get() < nEnqueuedConcurrentTasks) {
+            LockSupport.parkNanos(0);
+        }
+        nEnqueuedConcurrentTasks = 0;
+        nCompletedConcurrentTasks.set(0);
     }
 
     public void appendSymbolCharsBlock(int columnIndex, long blockLength, long sourceAddress) {
@@ -112,19 +142,22 @@ public class TableBlockWriter implements Closeable {
         LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=")
                 .$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
+        // Need to complete all data tasks before we can start index tasks
+        completePendingConcurrentTasks(false);
         partWriter.startCommitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded);
-        partWriter.completePendingTasks();
+        completePendingConcurrentTasks(false);
         writer.commitBlock(firstTimestamp, lastTimestamp, nRowsAdded);
         partWriter.clear();
         firstTimestamp = Long.MAX_VALUE;
         lastTimestamp = Long.MIN_VALUE;
         this.nRowsAdded = 0;
+        LOG.info().$("commited new block [table=").$(writer.getName()).$(']').$();
     }
 
     public void cancel() {
-        PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
-        partWriter.completePendingTasks();
+        completePendingConcurrentTasks(true);
         writer.cancelRow();
+        LOG.info().$("cancelled new block [table=").$(writer.getName()).$(']').$();
     }
 
     void open(TableWriter writer) {
@@ -141,6 +174,8 @@ public class TableBlockWriter implements Closeable {
         lastTimestamp = timestampColumnIndex >= 0 ? Long.MIN_VALUE : 0;
         nRowsAdded = 0;
         firstColumnPow2Size = ColumnType.pow2SizeOf(metadata.getColumnType(0));
+        nEnqueuedConcurrentTasks = 0;
+        nCompletedConcurrentTasks.set(0);
         switch (partitionBy) {
             case PartitionBy.DAY:
                 timestampFloorMethod = Timestamps.FLOOR_DD;
@@ -155,13 +190,16 @@ public class TableBlockWriter implements Closeable {
                 timestampFloorMethod = NO_PARTITIONING_FLOOR;
                 break;
         }
+        LOG.info().$("started new block [table=").$(writer.getName()).$(']').$();
     }
 
     void clear() {
-        if (null != writer) {
-            metadata = null;
-            writer = null;
+        if (nCompletedConcurrentTasks.get() < nEnqueuedConcurrentTasks) {
+            LOG.error().$("new block should have been either committed or cancelled [table=").$(writer.getName()).$(']').$();
+            completePendingConcurrentTasks(true);
         }
+        metadata = null;
+        writer = null;
         for (int i = 0; i < nextPartitionBlockWriterIndex; i++) {
             partitionBlockWriters.getQuick(i).clear();
         }
@@ -204,7 +242,6 @@ public class TableBlockWriter implements Closeable {
         private final LongList columnTops = new LongList();
         private long timestampLo;
         private boolean opened;
-        private AtomicInteger nActiveTasks = new AtomicInteger();
 
         private void of(long timestampLo) {
             this.timestampLo = timestampLo;
@@ -284,27 +321,25 @@ public class TableBlockWriter implements Closeable {
 
                 // Add binary and string indexes
                 switch (columnType) {
+
                     case ColumnType.STRING: {
-                        long seq = getNextTaskSequence();
-                        TableBlockWriterTask task = queue.get(seq);
+                        TableBlockWriterTask task = getConcurrentTask();
                         task.assignUpdateStringIndex(this, columnIndex, colNRowsAdded);
-                        pubSeq.done(seq);
+                        enqueueConcurrentTask(task);
                         break;
                     }
 
                     case ColumnType.BINARY: {
-                        long seq = getNextTaskSequence();
-                        TableBlockWriterTask task = queue.get(seq);
+                        TableBlockWriterTask task = getConcurrentTask();
                         task.assignUpdateBinaryIndex(this, columnIndex, colNRowsAdded);
-                        pubSeq.done(seq);
+                        enqueueConcurrentTask(task);
                         break;
                     }
 
                     case ColumnType.SYMBOL: {
-                        long seq = getNextTaskSequence();
-                        TableBlockWriterTask task = queue.get(seq);
+                        TableBlockWriterTask task = getConcurrentTask();
                         task.assignUpdateSymbolCache(this, columnIndex, colNRowsAdded);
-                        pubSeq.done(seq);
+                        enqueueConcurrentTask(task);
                         break;
                     }
 
@@ -360,20 +395,7 @@ public class TableBlockWriter implements Closeable {
             }
         }
 
-        private void completePendingTasks() {
-            while (nActiveTasks.get() > 0) {
-                long seq = subSeq.next();
-                if (seq >= 0) {
-                    final TableBlockWriterTask task = queue.get(seq);
-                    task.run();
-                    subSeq.done(seq);
-                }
-            }
-        }
-
         private void clear() {
-            // TODO 
-            completePendingTasks();
             for (int i = 0, sz = columns.size(); i < sz; i++) {
                 AppendMemory mem = columns.getQuick(i);
                 if (null != mem) {
@@ -390,12 +412,17 @@ public class TableBlockWriter implements Closeable {
         }
     }
 
-    public static class TableBlockWriterTask {
-        private enum TaskType {
-            AppendBlock, GenerateStringIndex, GenerateBinaryIndex, UpdateSymbolCache
-        };
+    public static class TableBlockWriterTaskHolder {
+        private TableBlockWriterTask task;
+    }
 
+    private enum TaskType {
+        AppendBlock, GenerateStringIndex, GenerateBinaryIndex, UpdateSymbolCache
+    };
+
+    private class TableBlockWriterTask {
         private TaskType taskType;
+        private final AtomicBoolean ready = new AtomicBoolean(false);
         private PartitionBlockWriter blockWriter;
         private int columnIndex;
         private long blockLength;
@@ -403,78 +430,74 @@ public class TableBlockWriter implements Closeable {
         private long colNRowsAdded;
 
         private boolean run() {
-            switch (taskType) {
-                case AppendBlock:
-                    blockWriter.appendBlock(columnIndex, blockLength, sourceAddress);
-                    blockWriter.nActiveTasks.decrementAndGet();
-                    blockWriter = null;
-                    return true;
+            if (ready.compareAndSet(true, false)) {
+                try {
+                    switch (taskType) {
+                        case AppendBlock:
+                            blockWriter.appendBlock(columnIndex, blockLength, sourceAddress);
+                            return true;
 
-                case GenerateStringIndex:
-                    blockWriter.updateStringIndex(columnIndex, colNRowsAdded);
-                    blockWriter.nActiveTasks.decrementAndGet();
-                    blockWriter = null;
-                    return true;
+                        case GenerateStringIndex:
+                            blockWriter.updateStringIndex(columnIndex, colNRowsAdded);
+                            return true;
 
-                case GenerateBinaryIndex:
-                    blockWriter.updateBinaryIndex(columnIndex, colNRowsAdded);
-                    blockWriter.nActiveTasks.decrementAndGet();
-                    blockWriter = null;
-                    return true;
+                        case GenerateBinaryIndex:
+                            blockWriter.updateBinaryIndex(columnIndex, colNRowsAdded);
+                            return true;
 
-                case UpdateSymbolCache:
-                    blockWriter.updateSymbolCache(columnIndex, colNRowsAdded);
-                    blockWriter.nActiveTasks.decrementAndGet();
-                    blockWriter = null;
-                    return true;
+                        case UpdateSymbolCache:
+                            blockWriter.updateSymbolCache(columnIndex, colNRowsAdded);
+                            return true;
+                    }
+                } finally {
+                    nCompletedConcurrentTasks.incrementAndGet();
+                }
             }
 
             return false;
+        }
+
+        private void cancel() {
+            if (ready.compareAndSet(true, false)) {
+                nCompletedConcurrentTasks.incrementAndGet();
+            }
         }
 
         private void assignAppendBlock(
                 PartitionBlockWriter partWriter, int columnIndex, long blockLength,
                 long sourceAddress
         ) {
-            assert this.blockWriter == null;
             taskType = TaskType.AppendBlock;
             this.blockWriter = partWriter;
             this.columnIndex = columnIndex;
             this.blockLength = blockLength;
             this.sourceAddress = sourceAddress;
-            partWriter.nActiveTasks.incrementAndGet();
         }
 
         private void assignUpdateStringIndex(PartitionBlockWriter partWriter, int columnIndex, long colNRowsAdded) {
-            assert this.blockWriter == null;
             taskType = TaskType.GenerateStringIndex;
             this.blockWriter = partWriter;
             this.columnIndex = columnIndex;
             this.colNRowsAdded = colNRowsAdded;
-            partWriter.nActiveTasks.incrementAndGet();
         }
 
         private void assignUpdateBinaryIndex(PartitionBlockWriter partWriter, int columnIndex, long colNRowsAdded) {
-            assert this.blockWriter == null;
             taskType = TaskType.GenerateBinaryIndex;
             this.blockWriter = partWriter;
             this.columnIndex = columnIndex;
             this.colNRowsAdded = colNRowsAdded;
-            partWriter.nActiveTasks.incrementAndGet();
         }
 
         private void assignUpdateSymbolCache(PartitionBlockWriter partWriter, int columnIndex, long colNRowsAdded) {
-            assert this.blockWriter == null;
             taskType = TaskType.UpdateSymbolCache;
             this.blockWriter = partWriter;
             this.columnIndex = columnIndex;
             this.colNRowsAdded = colNRowsAdded;
-            partWriter.nActiveTasks.incrementAndGet();
         }
     }
 
     public static class TableBlockWriterJob implements Job {
-        private final RingQueue<TableBlockWriterTask> queue;
+        private final RingQueue<TableBlockWriterTaskHolder> queue;
         private final Sequence subSeq;
 
         public TableBlockWriterJob(MessageBus messageBus) {
@@ -492,9 +515,13 @@ public class TableBlockWriter implements Closeable {
                 }
 
                 if (cursor != -2) {
-                    final TableBlockWriterTask task = queue.get(cursor);
-                    useful |= task.run();
-                    subSeq.done(cursor);
+                    try {
+                        final TableBlockWriterTaskHolder holder = queue.get(cursor);
+                        useful |= holder.task.run();
+                        holder.task = null;
+                    } finally {
+                        subSeq.done(cursor);
+                    }
                 }
             }
         }

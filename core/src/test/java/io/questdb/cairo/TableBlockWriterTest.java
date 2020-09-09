@@ -361,7 +361,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     public void testAllTypesResumeBlock(long maxRowsPerFrame) throws Exception {
         runTest(true, () -> {
-            int nConsecuriveRows = 50;
+            int nConsecutiveRows = 50;
             long tsStart = 0;
             long tsInc = 1000000000;
             compiler.compile("CREATE TABLE source AS (" +
@@ -384,7 +384,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts," +
                     " rnd_byte(2,50) l," +
                     " rnd_bin(10, 20, 2) m" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
+                    " from long_sequence(" + nConsecutiveRows + ")" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
@@ -397,7 +397,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             String actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);
 
-            tsStart += nConsecuriveRows * tsInc;
+            tsStart += nConsecutiveRows * tsInc;
             compiler.compile("INSERT INTO source(ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m) " +
                     "SELECT" +
                     " rnd_char() ch," +
@@ -418,11 +418,11 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts," +
                     " rnd_byte(2,50) l," +
                     " rnd_bin(10, 20, 2) m" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
+                    " from long_sequence(" + nConsecutiveRows + ")" +
                     ";",
                     sqlExecutionContext);
             expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", nConsecuriveRows);
+            replicateTable("source", "dest", nConsecutiveRows);
 
             engine.releaseInactive();
         });
