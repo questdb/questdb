@@ -2790,20 +2790,22 @@ public class TableWriter implements Closeable {
 
         // Entire block must be in the same partition
         assert lastTimestamp < partitionHi;
-  	
+
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             // Handle column tops
             long blockColumnTop = blockColumnTops.getQuick(columnIndex);
-            long columnTop = columnTops.getQuick(columnIndex);
-            if (blockColumnTop != columnTop) {
-                try {
-                    assert columnTop == 0;
-                    assert blockColumnTop > 0;
-                    TableUtils.setPathForPartition(path, partitionBy, firstTimestamp);
-                    columnTops.setQuick(columnIndex, blockColumnTop);
-                    writeColumnTop(getMetadata().getColumnName(columnIndex), blockColumnTop);
-                } finally {
-                    path.trimTo(rootLen);
+            if (blockColumnTop != -1) {
+                long columnTop = columnTops.getQuick(columnIndex);
+                if (blockColumnTop != columnTop) {
+                    try {
+                        assert columnTop == 0;
+                        assert blockColumnTop > 0;
+                        TableUtils.setPathForPartition(path, partitionBy, firstTimestamp);
+                        columnTops.setQuick(columnIndex, blockColumnTop);
+                        writeColumnTop(getMetadata().getColumnName(columnIndex), blockColumnTop);
+                    } finally {
+                        path.trimTo(rootLen);
+                    }
                 }
             }
 

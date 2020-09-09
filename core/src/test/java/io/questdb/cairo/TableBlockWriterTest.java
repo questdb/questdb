@@ -702,43 +702,45 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);) {
 
-            TableBlockWriter blockWriter = writer.newBlock();
-
             final int columnCount = writer.getMetadata().getColumnCount();
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                int columnType = writer.getMetadata().getColumnType(columnIndex);
-                if (columnType == ColumnType.SYMBOL) {
-                    SymbolMapReader symReader = reader.getSymbolMapReader(columnIndex);
-                    int nSourceSymbols = symReader.size();
-                    int nDestinationSymbols = writer.getSymbolMapWriter(columnIndex).getSymbolCount();
-
-                    if (nSourceSymbols > nDestinationSymbols) {
-                        long address = symReader.symbolCharsAddressOf(nDestinationSymbols);
-                        long addressHi = symReader.symbolCharsAddressOf(nSourceSymbols);
-                        blockWriter.appendSymbolCharsBlock(columnIndex, addressHi - address, address);
-                    }
-                }
-            }
-
             int nFrames = 0;
             int timestampColumnIndex = reader.getMetadata().getTimestampIndex();
             TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, timestampColumnIndex, nFirstRow);
             PageFrame frame;
             while ((frame = cursor.next()) != null) {
+                TableBlockWriter blockWriter = writer.newBlock();
+
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int columnType = writer.getMetadata().getColumnType(columnIndex);
+                    if (columnType == ColumnType.SYMBOL) {
+                        SymbolMapReader symReader = reader.getSymbolMapReader(columnIndex);
+                        int nSourceSymbols = symReader.size();
+                        int nDestinationSymbols = writer.getSymbolMapWriter(columnIndex).getSymbolCount();
+
+                        if (nSourceSymbols > nDestinationSymbols) {
+                            long address = symReader.symbolCharsAddressOf(nDestinationSymbols);
+                            long addressHi = symReader.symbolCharsAddressOf(nSourceSymbols);
+                            blockWriter.appendSymbolCharsBlock(columnIndex, addressHi - address, address);
+                        }
+                    }
+                }
+
                 long firstTimestamp = frame.getFirstTimestamp();
                 LOG.info().$("Replicating frame from ").$ts(firstTimestamp).$();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long pageAddress = frame.getPageAddress(columnIndex);
                     long blockLength = frame.getPageLength(columnIndex);
-                    blockWriter.appendBlock(firstTimestamp, columnIndex, blockLength, pageAddress, frame.getColumnTop(columnIndex));
+                    blockWriter.appendBlock(firstTimestamp, columnIndex, blockLength, pageAddress);
                 }
+                nFrames++;
                 if (commit) {
                     while (busyCount.get() == 0) {
                         LockSupport.parkNanos(0);
                     }
                     blockWriter.commitAppendedBlock();
+                } else {
+                    break;
                 }
-                nFrames++;
             }
             LOG.info().$("Replication finished in ").$(nFrames).$(" frames per row").$();
         }
