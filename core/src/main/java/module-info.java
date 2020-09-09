@@ -438,6 +438,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory,
+            //      'haversine_dist_degree' group by function
+            io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,
 //                  round()
