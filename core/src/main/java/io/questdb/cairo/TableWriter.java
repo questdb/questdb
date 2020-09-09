@@ -1267,7 +1267,7 @@ public class TableWriter implements Closeable {
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
     }
 
-    private void cancelRow() {
+    void cancelRow() {
 
         if ((masterRef & 1) == 0) {
             return;
@@ -2779,7 +2779,6 @@ public class TableWriter implements Closeable {
     }
 
     void startAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded, LongList blockColumnTops, LongList blockColumnRowsAdded) {
-        bumpMasterRef();
         if (txPartitionCount == 0) {
             openFirstPartition(firstTimestamp);
         }
@@ -2845,6 +2844,7 @@ public class TableWriter implements Closeable {
     }
 
     public TableBlockWriter newBlock() {
+        bumpMasterRef();
         blockWriter.open(this);
         return blockWriter;
     }

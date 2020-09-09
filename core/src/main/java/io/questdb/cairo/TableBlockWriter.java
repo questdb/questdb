@@ -108,7 +108,7 @@ public class TableBlockWriter implements Closeable {
         writer.getSymbolMapWriter(columnIndex).appendSymbolCharsBlock(blockLength, sourceAddress);
     }
 
-    public void commitAppendedBlock() {
+    public void commit() {
         LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=")
                 .$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
@@ -119,6 +119,12 @@ public class TableBlockWriter implements Closeable {
         firstTimestamp = Long.MAX_VALUE;
         lastTimestamp = Long.MIN_VALUE;
         this.nRowsAdded = 0;
+    }
+
+    public void cancel() {
+        PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
+        partWriter.completePendingTasks();
+        writer.cancelRow();
     }
 
     void open(TableWriter writer) {
@@ -366,6 +372,7 @@ public class TableBlockWriter implements Closeable {
         }
 
         private void clear() {
+            // TODO 
             completePendingTasks();
             for (int i = 0, sz = columns.size(); i < sz; i++) {
                 AppendMemory mem = columns.getQuick(i);
