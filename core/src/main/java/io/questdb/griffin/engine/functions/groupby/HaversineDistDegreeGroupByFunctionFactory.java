@@ -32,7 +32,7 @@ import io.questdb.std.ObjList;
 public class HaversineDistDegreeGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "haversine_dist_degree(DD)";
+        return "haversine_dist_deg(DD)";
     }
 
     @Override

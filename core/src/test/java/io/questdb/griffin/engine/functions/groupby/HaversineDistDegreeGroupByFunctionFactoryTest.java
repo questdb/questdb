@@ -63,7 +63,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -94,7 +94,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
 //            r.append();
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -135,7 +135,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         }
 
         double distance1;
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab1", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab1", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -145,7 +145,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         }
 
         double distance2;
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab2", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab2", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -175,7 +175,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -185,7 +185,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         }
     }
 
-    //"select s, haversine_dist_degree(lat, lon) from tab",
+    //"select s, haversine_dist_deg(lat, lon) from tab",
     @Test
     public void testAggregationBySymbol() throws SqlException {
 
@@ -223,7 +223,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select s, haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select s, haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(2, cursor.size());
@@ -237,52 +237,184 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
         }
     }
 
-    //select s, haversine_dist_degree(lat, lon), k from tab sample by 3h fill(linear)
+    //select s, haversine_dist_deg(lat, lon), k from tab sample by 3h fill(linear)
     @Test
-    public void testAggregationWithSampleFill() throws SqlException {
+    public void testAggregationWithSampleFill1() throws Exception {
 
-        compiler.compile("create table tab (s symbol, lat double, lon double, k timestamp) timestamp(k) partition by NONE", sqlExecutionContext);
+        assertQuery("s\tlat\tlon\tk\n" +
+                        "AAA\t-5.0\t-6.0\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t-4.0\t-5.0\t1970-01-01T00:08:20.000000Z\n" +
+                        "BBB\t-3.0\t-4.0\t1970-01-01T00:16:40.000000Z\n" +
+                        "BBB\t-2.0\t-3.0\t1970-01-01T00:25:00.000000Z\n" +
+                        "BBB\t-1.0\t-2.0\t1970-01-01T00:33:20.000000Z\n" +
+                        "BBB\t0.0\t-1.0\t1970-01-01T00:41:40.000000Z\n" +
+                        "AAA\t1.0\t0.0\t1970-01-01T00:50:00.000000Z\n" +
+                        "BBB\t2.0\t1.0\t1970-01-01T00:58:20.000000Z\n" +
+                        "AAA\t3.0\t2.0\t1970-01-01T01:06:40.000000Z\n" +
+                        "AAA\t4.0\t3.0\t1970-01-01T01:15:00.000000Z\n" +
+                        "AAA\t5.0\t4.0\t1970-01-01T01:23:20.000000Z\n" +
+                        "AAA\t6.0\t5.0\t1970-01-01T01:31:40.000000Z\n" +
+                        "AAA\t7.0\t6.0\t1970-01-01T01:40:00.000000Z\n" +
+                        "BBB\t8.0\t7.0\t1970-01-01T01:48:20.000000Z\n" +
+                        "BBB\t9.0\t8.0\t1970-01-01T01:56:40.000000Z\n" +
+                        "AAA\t10.0\t9.0\t1970-01-01T02:05:00.000000Z\n" +
+                        "AAA\t11.0\t10.0\t1970-01-01T02:13:20.000000Z\n" +
+                        "BBB\t12.0\t11.0\t1970-01-01T02:21:40.000000Z\n" +
+                        "BBB\t13.0\t12.0\t1970-01-01T02:30:00.000000Z\n" +
+                        "AAA\t14.0\t13.0\t1970-01-01T02:38:20.000000Z\n",
+                "tab",
+                "create table tab as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AAA','BBB') s," +
+                        " (-6.0 + (1*x)) lat," +
+                        " (-7.0 + (1*x)) lon," +
+                        " timestamp_sequence(0, 500000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true, true, true);
 
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
-            double aaaLatDegree = -5;
-            double aaaLonDegree = -6;
-            double bbbLatDegree = -20;
-            double bbbLonDegree = 10;
-            long ts = 0;
-            for (int i = 0; i < 140; i++) {
-                TableWriter.Row r = w.newRow();
-                if (i % 2 == 0) {
-                    r.putSym(0, "AAA");
-                    r.putDouble(1, aaaLatDegree);
-                    r.putDouble(2, aaaLonDegree);
-                    aaaLatDegree += 1;
-                    aaaLonDegree += 1;
-                } else {
-                    r.putSym(0, "BBB");
-                    r.putDouble(1, bbbLatDegree);
-                    r.putDouble(2, bbbLonDegree);
-                    bbbLatDegree += 0.1;
-                    bbbLonDegree += 0.1;
-                }
-                r.putTimestamp(3, ts);
-                r.append();
-                ts += 600_000_000L;
-            }
-            w.commit();
-        }
+        assertQuery("s\thaversine_dist_deg\tk\n" +
+                        "AAA\t943.0302845043686\t1970-01-01T00:00:00.000000Z\n" +
+                        "BBB\t786.1380286764727\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t627.7631171110919\t1970-01-01T01:00:00.000000Z\n" +
+                        "BBB\t156.39320314017536\t1970-01-01T01:00:00.000000Z\n" +
+                        "AAA\t622.1211154227233\t1970-01-01T02:00:00.000000Z\n" +
+                        "BBB\t155.40178053801114\t1970-01-01T02:00:00.000000Z\n",
+                "select s, haversine_dist_deg(lat, lon), k from tab sample by 1h fill(linear)",
+                null,
+                "k",
+                true, true, true);
 
-        try (RecordCursorFactory factory = compiler.compile("select s, haversine_dist_degree(lat, lon), k from tab sample by 1h fill(linear)", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(24, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("AAA", record.getSym(0));
-                Assert.assertEquals(9971.364670187557, record.getDouble(1), DELTA);
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("BBB", record.getSym(0));
-                Assert.assertEquals(76.35009626485352, record.getDouble(1), DELTA);
-            }
-        }
+    }
+
+    @Test
+    public void testAggregationWithSampleFill2_DataStartsOnTheClock() throws Exception {
+        assertQuery("s\tlat\tlon\tk\n" +
+                        "AAA\t-5.0\t-6.0\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t-4.0\t-5.0\t1970-01-01T00:10:00.000000Z\n" +
+                        "AAA\t-3.0\t-4.0\t1970-01-01T00:20:00.000000Z\n" +
+                        "AAA\t-2.0\t-3.0\t1970-01-01T00:30:00.000000Z\n" +
+                        "AAA\t-1.0\t-2.0\t1970-01-01T00:40:00.000000Z\n" +
+                        "AAA\t0.0\t-1.0\t1970-01-01T00:50:00.000000Z\n" +
+                        "AAA\t1.0\t0.0\t1970-01-01T01:00:00.000000Z\n" +
+                        "AAA\t2.0\t1.0\t1970-01-01T01:10:00.000000Z\n" +
+                        "AAA\t3.0\t2.0\t1970-01-01T01:20:00.000000Z\n" +
+                        "AAA\t4.0\t3.0\t1970-01-01T01:30:00.000000Z\n" +
+                        "AAA\t5.0\t4.0\t1970-01-01T01:40:00.000000Z\n" +
+                        "AAA\t6.0\t5.0\t1970-01-01T01:50:00.000000Z\n" +
+                        "AAA\t7.0\t6.0\t1970-01-01T02:00:00.000000Z\n" +
+                        "AAA\t8.0\t7.0\t1970-01-01T02:10:00.000000Z\n" +
+                        "AAA\t9.0\t8.0\t1970-01-01T02:20:00.000000Z\n" +
+                        "AAA\t10.0\t9.0\t1970-01-01T02:30:00.000000Z\n" +
+                        "AAA\t11.0\t10.0\t1970-01-01T02:40:00.000000Z\n" +
+                        "AAA\t12.0\t11.0\t1970-01-01T02:50:00.000000Z\n" +
+                        "AAA\t13.0\t12.0\t1970-01-01T03:00:00.000000Z\n" +
+                        "AAA\t14.0\t13.0\t1970-01-01T03:10:00.000000Z\n"
+                , "tab", "create table tab as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AAA') s," +
+                        " (-6.0 + (1*x)) lat," +
+                        " (-7.0 + (1*x)) lon," +
+                        " timestamp_sequence(0, 600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", true, false, true);
+
+        assertQuery("s\thaversine_dist_deg\tk\n" +
+                        "AAA\t785.779158355717\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t785.4205536161624\t1970-01-01T01:00:00.000000Z\n" +
+                        "AAA\t780.7836318756217\t1970-01-01T02:00:00.000000Z\n" +
+                        "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n"
+                , "select s, haversine_dist_deg(lat, lon), k from tab sample by 1h fill(linear)", null, "k", true, true, true);
+    }
+
+    @Test
+    public void testAggregationWithSampleFill3() throws Exception {
+
+        assertQuery("s	lat	lon	k\n" +
+                        "AAA\t-5.0\t-6.0\t1970-01-01T00:00:01.000000Z\n" +
+                        "AAA\t-4.0\t-5.0\t1970-01-01T00:08:21.000000Z\n" +
+                        "AAA\t-3.0\t-4.0\t1970-01-01T00:16:41.000000Z\n" +
+                        "AAA\t-2.0\t-3.0\t1970-01-01T00:25:01.000000Z\n" +
+                        "AAA\t-1.0\t-2.0\t1970-01-01T00:33:21.000000Z\n" +
+                        "AAA\t0.0\t-1.0\t1970-01-01T00:41:41.000000Z\n" +
+                        "AAA\t1.0\t0.0\t1970-01-01T00:50:01.000000Z\n" +
+                        "AAA\t2.0\t1.0\t1970-01-01T00:58:21.000000Z\n" +
+                        "AAA\t3.0\t2.0\t1970-01-01T01:06:41.000000Z\n" +
+                        "AAA\t4.0\t3.0\t1970-01-01T01:15:01.000000Z\n" +
+                        "AAA\t5.0\t4.0\t1970-01-01T01:23:21.000000Z\n" +
+                        "AAA\t6.0\t5.0\t1970-01-01T01:31:41.000000Z\n" +
+                        "AAA\t7.0\t6.0\t1970-01-01T01:40:01.000000Z\n" +
+                        "AAA\t8.0\t7.0\t1970-01-01T01:48:21.000000Z\n" +
+                        "AAA\t9.0\t8.0\t1970-01-01T01:56:41.000000Z\n" +
+                        "AAA\t10.0\t9.0\t1970-01-01T02:05:01.000000Z\n" +
+                        "AAA\t11.0\t10.0\t1970-01-01T02:13:21.000000Z\n" +
+                        "AAA\t12.0\t11.0\t1970-01-01T02:21:41.000000Z\n" +
+                        "AAA\t13.0\t12.0\t1970-01-01T02:30:01.000000Z\n" +
+                        "AAA\t14.0\t13.0\t1970-01-01T02:38:21.000000Z\n",
+                "tab",
+                "create table tab as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AAA') s," +
+                        " (-6.0 + (1*x)) lat," +
+                        " (-7.0 + (1*x)) lon," +
+                        " timestamp_sequence(1000000, 500000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true, true, true);
+
+        assertQuery("s\thaversine_dist_deg\tk\n" +
+                        "AAA\t1100.2583153768578\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t940.7395858291213\t1970-01-01T01:00:00.000000Z\n" +
+                        "AAA\t622.1261899611127\t1970-01-01T02:00:00.000000Z\n",
+                "select s, haversine_dist_deg(lat, lon), k from tab sample by 1h fill(linear)",
+                null,
+                "k",
+                true, true, true);
+    }
+
+    @Test
+    public void testAggregationWithSampleFill4() throws Exception {
+
+        assertQuery("s\tlat\tlon\tk\n" +
+                        "AAA\t-5.0\t-6.0\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t-4.0\t-5.0\t1970-01-01T00:30:00.000000Z\n" +
+                        "AAA\t-3.0\t-4.0\t1970-01-01T01:00:00.000000Z\n" +
+                        "AAA\t-2.0\t-3.0\t1970-01-01T01:30:00.000000Z\n" +
+                        "AAA\t-1.0\t-2.0\t1970-01-01T02:00:00.000000Z\n" +
+                        "AAA\t0.0\t-1.0\t1970-01-01T02:30:00.000000Z\n" +
+                        "AAA\t1.0\t0.0\t1970-01-01T03:00:00.000000Z\n" +
+                        "AAA\t2.0\t1.0\t1970-01-01T03:30:00.000000Z\n",
+                "tab",
+                "create table tab as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AAA') s," +
+                        " (-6.0 + (1*x)) lat," +
+                        " (-7.0 + (1*x)) lon," +
+                        " timestamp_sequence(0, 1800000000) k" +
+                        " from" +
+                        " long_sequence(8)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true, true, true);
+
+        assertQuery("s\thaversine_dist_deg\tk\n" +
+                        "AAA\t157.01233135733582\t1970-01-01T00:00:00.000000Z\n" +
+                        "AAA\t157.17972284345245\t1970-01-01T01:00:00.000000Z\n" +
+                        "AAA\t157.25155329290644\t1970-01-01T02:00:00.000000Z\n" +
+                        "AAA\t157.22760372823444\t1970-01-01T03:00:00.000000Z\n",
+                "select s, haversine_dist_deg(lat, lon), k from tab sample by 1h fill(linear)",
+                null,
+                "k",
+                true, true, true);
     }
 
     @Test
@@ -298,7 +430,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -324,7 +456,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -352,7 +484,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -384,7 +516,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -415,7 +547,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -444,7 +576,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -477,7 +609,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             w.commit();
         }
 
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
@@ -505,7 +637,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
             }
             w.commit();
         }
-        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_deg(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());

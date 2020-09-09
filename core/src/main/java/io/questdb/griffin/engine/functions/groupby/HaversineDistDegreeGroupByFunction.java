@@ -60,26 +60,26 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     public void computeNext(MapValue mapValue, Record record) {
         double lat1 = toRad(mapValue.getDouble(valueIndex));
         double lon1 = toRad(mapValue.getDouble(valueIndex + 1));
-        double lat2 = toRad(this.latDegree.getDouble(record));
-        double lon2 = toRad(this.lonDegree.getDouble(record));
-        if (Double.isNaN(lat1) || Double.isNaN(lon1)) {
-            mapValue.putDouble(this.valueIndex, this.latDegree.getDouble(record));
-            mapValue.putDouble(this.valueIndex + 1, this.lonDegree.getDouble(record));
-            return;
+        double lat2Degrees = this.latDegree.getDouble(record);
+        double lon2Degrees = this.lonDegree.getDouble(record);
+        double lat2 = toRad(lat2Degrees);
+        double lon2 = toRad(lon2Degrees);
+        if (!Double.isNaN(lat1) && !Double.isNaN(lon1)) {
+            if (!Double.isNaN(lat2) && !Double.isNaN(lon2)) {
+                double halfLatDist = (lat2 - lat1) / 2;
+                double halfLonDist = (lon2 - lon1) / 2;
+                double a = sin(halfLatDist) * sin(halfLatDist) + cos(lat1) * cos(lat2) * sin(halfLonDist) * sin(halfLonDist);
+                double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+                double distance = mapValue.getDouble(this.valueIndex + 2);
+                distance += EARTH_RADIUS * c;
+                mapValue.putDouble(this.valueIndex, lat2Degrees);
+                mapValue.putDouble(this.valueIndex + 1, lon2Degrees);
+                mapValue.putDouble(this.valueIndex + 2, distance);
+            }
+        } else {
+            mapValue.putDouble(this.valueIndex, lat2Degrees);
+            mapValue.putDouble(this.valueIndex + 1, lon2Degrees);
         }
-        if (Double.isNaN(lat2) || Double.isNaN(lon2)) {
-            return;
-        }
-        mapValue.putDouble(this.valueIndex, this.latDegree.getDouble(record));
-        mapValue.putDouble(this.valueIndex + 1, this.lonDegree.getDouble(record));
-        double halfLatDist = (lat2 - lat1) / 2;
-        double halfLonDist = (lon2 - lon1) / 2;
-        double a = sin(halfLatDist) * sin(halfLatDist) + cos(lat1) * cos(lat2) * sin(halfLonDist) * sin(halfLonDist);
-        double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-        double storedDistance = mapValue.getDouble(this.valueIndex + 2);
-        double distance = Double.isNaN(storedDistance) ? 0 : storedDistance;
-        distance += EARTH_RADIUS * c;
-        mapValue.putDouble(this.valueIndex + 2, distance);
     }
 
     @Override
@@ -92,9 +92,7 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(this.valueIndex, value);
-        mapValue.putDouble(this.valueIndex + 1, value);
-        mapValue.putDouble(this.valueIndex + 2, 0.0);
+        mapValue.putDouble(this.valueIndex + 2, value);
     }
 
     @Override
