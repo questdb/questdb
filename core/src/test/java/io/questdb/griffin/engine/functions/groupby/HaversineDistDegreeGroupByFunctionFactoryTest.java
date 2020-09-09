@@ -74,6 +74,37 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
     }
 
     @Test
+    public void test10RowsAndNullAtEnd() throws SqlException {
+
+        compiler.compile("create table tab (lat double, lon double)", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+            double latDegree = -5;
+            double lonDegree = -6;
+            TableWriter.Row r;
+            for (int i = 0; i < 10; i++) {
+                r = w.newRow();
+                r.putDouble(0, latDegree);
+                r.putDouble(1, lonDegree);
+                r.append();
+                latDegree += 1;
+                lonDegree += 1;
+            }
+//            r = w.newRow();
+//            r.append();
+            w.commit();
+        }
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(1414.545985354098, record.getDouble(0), DELTA);
+            }
+        }
+    }
+
+    @Test
     public void test2DistancesAtEquator() throws SqlException {
 
         compiler.compile("create table tab1 (lat double, lon double)", sqlExecutionContext);
@@ -332,7 +363,39 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
     }
 
     @Test
-    public void testOneNull() throws SqlException {
+    public void testOneNullAtEnd() throws SqlException {
+
+        compiler.compile("create table tab (lat double, lon double)", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+            TableWriter.Row r;
+            double latDegree = 1;
+            double lonDegree = 2;
+            for (int i = 0; i < 2; i++) {
+                r = w.newRow();
+                r.putDouble(0, latDegree);
+                r.putDouble(1, lonDegree);
+                r.append();
+                latDegree += 1;
+                lonDegree += 1;
+            }
+            r = w.newRow();
+            r.append();
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(157.22760372823444, record.getDouble(0), DELTA);
+            }
+        }
+    }
+
+    @Test
+    public void testOneNullAtTop() throws SqlException {
 
         compiler.compile("create table tab (lat double, lon double)", sqlExecutionContext);
 
@@ -349,6 +412,68 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
                 latDegree += 1;
                 lonDegree += 1;
             }
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(157.22760372823444, record.getDouble(0), DELTA);
+            }
+        }
+    }
+
+    @Test
+    public void testOneNullInMiddle() throws SqlException {
+
+        compiler.compile("create table tab (lat double, lon double)", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+            TableWriter.Row r = w.newRow();
+            r.putDouble(0, 1);
+            r.putDouble(1, 2);
+            r.append();
+            r = w.newRow();
+            r.append();
+            r = w.newRow();
+            r.putDouble(0, 2);
+            r.putDouble(1, 3);
+            r.append();
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select haversine_dist_degree(lat, lon) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(157.22760372823444, record.getDouble(0), DELTA);
+            }
+        }
+    }
+
+    @Test
+    public void testOneNullsInMiddle() throws SqlException {
+
+        compiler.compile("create table tab (lat double, lon double)", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+            TableWriter.Row r = w.newRow();
+            r.putDouble(0, 1);
+            r.putDouble(1, 2);
+            r.append();
+            r = w.newRow();
+            r.append();
+            r = w.newRow();
+            r.append();
+            r = w.newRow();
+            r.append();
+            r = w.newRow();
+            r.putDouble(0, 2);
+            r.putDouble(1, 3);
+            r.append();
             w.commit();
         }
 

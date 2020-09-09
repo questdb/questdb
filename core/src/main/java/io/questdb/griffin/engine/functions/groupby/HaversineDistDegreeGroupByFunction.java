@@ -62,11 +62,16 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         double lon1 = toRad(mapValue.getDouble(valueIndex + 1));
         double lat2 = toRad(this.latDegree.getDouble(record));
         double lon2 = toRad(this.lonDegree.getDouble(record));
-        mapValue.putDouble(this.valueIndex, this.latDegree.getDouble(record));
-        mapValue.putDouble(this.valueIndex + 1, this.lonDegree.getDouble(record));
-        if (Double.isNaN(lat1) || Double.isNaN(lat2) || Double.isNaN(lon1) || Double.isNaN(lon2)) {
+        if (Double.isNaN(lat1) || Double.isNaN(lon1)) {
+            mapValue.putDouble(this.valueIndex, this.latDegree.getDouble(record));
+            mapValue.putDouble(this.valueIndex + 1, this.lonDegree.getDouble(record));
             return;
         }
+        if (Double.isNaN(lat2) || Double.isNaN(lon2)) {
+            return;
+        }
+        mapValue.putDouble(this.valueIndex, this.latDegree.getDouble(record));
+        mapValue.putDouble(this.valueIndex + 1, this.lonDegree.getDouble(record));
         double halfLatDist = (lat2 - lat1) / 2;
         double halfLonDist = (lon2 - lon1) / 2;
         double a = sin(halfLatDist) * sin(halfLatDist) + cos(lat1) * cos(lat2) * sin(halfLonDist) * sin(halfLonDist);
