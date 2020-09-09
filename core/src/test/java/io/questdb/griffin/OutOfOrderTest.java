@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
@@ -73,14 +75,14 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-//                    sink.clear();
-//                    try (RecordCursorFactory factory = compiler.compile("select ts from y", sqlExecutionContext).getRecordCursorFactory()) {
-//                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-//                            printer.print(cursor, factory.getMetadata(), true);
-//                        }
-//                    }
-//
-//                    System.out.println(sink);
+                    sink.clear();
+                    try (RecordCursorFactory factory = compiler.compile("select n from y", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            printer.print(cursor, factory.getMetadata(), true);
+                        }
+                    }
+
+                    System.out.println(sink);
                 }
         );
         System.out.println("done");
