@@ -727,9 +727,8 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             while ((frame = cursor.next()) != null) {
                 TableBlockWriter blockWriter = writer.newBlock();
                 long firstTimestamp = frame.getFirstTimestamp();
-                long blockNRows = frame.getPageValueCount(0);
                 LOG.info().$("Replicating frame from ").$ts(firstTimestamp).$();
-                blockWriter.startPageFrame(firstTimestamp, blockNRows);
+                blockWriter.startPageFrame(firstTimestamp);
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     int columnType = writer.getMetadata().getColumnType(columnIndex);
@@ -748,8 +747,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long pageAddress = frame.getPageAddress(columnIndex);
-                    long blockLength = frame.getPageLength(columnIndex);
-                    blockWriter.appendPageFrameColumn(columnIndex, blockLength, pageAddress);
+                    long pageFrameLength = frame.getPageLength(columnIndex);
+                    long pageFrameNRows = frame.getPageValueCount(columnIndex);
+                    blockWriter.appendPageFrameColumn(columnIndex, pageFrameLength, pageAddress, pageFrameNRows);
                 }
                 nFrames++;
                 if (commit) {

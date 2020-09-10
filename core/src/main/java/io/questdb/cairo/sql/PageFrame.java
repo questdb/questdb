@@ -27,7 +27,6 @@ package io.questdb.cairo.sql;
 public interface PageFrame {
     long getPageAddress(int columnIndex);
 
-    // TODO: Remove this
     long getPageValueCount(int columnIndex);
 
     default long getPageLength(int columnIndex) {
