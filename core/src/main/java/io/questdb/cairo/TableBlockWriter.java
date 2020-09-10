@@ -141,17 +141,16 @@ public class TableBlockWriter implements Closeable {
     public void commit() {
         LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=")
                 .$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
-        PartitionBlockWriter partWriter = getPartitionBlockWriter(firstTimestamp);
         // Need to complete all data tasks before we can start index tasks
         completePendingConcurrentTasks(false);
-        partWriter.startCommitAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded);
+        for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
+            PartitionBlockWriter partWriter = partitionBlockWriters.get(n);
+            partWriter.startCommitAppendedBlock(nRowsAdded);
+        }
         completePendingConcurrentTasks(false);
         writer.commitBlock(firstTimestamp, lastTimestamp, nRowsAdded);
-        partWriter.clear();
-        firstTimestamp = Long.MAX_VALUE;
-        lastTimestamp = Long.MIN_VALUE;
-        this.nRowsAdded = 0;
         LOG.info().$("commited new block [table=").$(writer.getName()).$(']').$();
+        clear();
     }
 
     public void cancel() {
@@ -161,7 +160,6 @@ public class TableBlockWriter implements Closeable {
     }
 
     void open(TableWriter writer) {
-        clear();
         this.writer = writer;
         metadata = writer.getMetadata();
         path.of(root).concat(writer.getName());
@@ -241,6 +239,7 @@ public class TableBlockWriter implements Closeable {
         private final ObjList<AppendMemory> columns = new ObjList<>();
         private final LongList columnTops = new LongList();
         private long timestampLo;
+        private long timestampHi;
         private boolean opened;
 
         private void of(long timestampLo) {
@@ -267,7 +266,7 @@ public class TableBlockWriter implements Closeable {
         private void open() {
             if (!opened) {
                 try {
-                    TableUtils.setPathForPartition(path, partitionBy, timestampLo);
+                    timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo);
                     int plen = path.length();
                     if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                         throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
@@ -312,8 +311,8 @@ public class TableBlockWriter implements Closeable {
             columnTops.set(columnIndex, columnTop);
         }
 
-        private void startCommitAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
-            writer.startAppendedBlock(firstTimestamp, lastTimestamp, nRowsAdded, columnTops, columnRowsAdded);
+        private void startCommitAppendedBlock(long nRowsAdded) {
+            writer.startAppendedBlock(timestampLo, timestampHi, nRowsAdded, columnTops, columnRowsAdded);
 
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 int columnType = metadata.getColumnType(columnIndex);

@@ -2788,7 +2788,7 @@ public class TableWriter implements Closeable {
         }
 
         // Entire block must be in the same partition
-        assert lastTimestamp < partitionHi;
+        assert lastTimestamp <= partitionHi;
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             // Handle column tops
