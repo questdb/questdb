@@ -325,14 +325,15 @@ public class TableBlockWriter implements Closeable {
         }
 
         private void startCommitAppendedBlock() {
-            LOG.info().$("committing ").$(nRowsAdded).$(" rows to partition at ").$(path).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
             nRowsAdded += pageFrameMaxNRows;
             pageFrameMaxNRows = 0;
-            writer.startAppendedBlock(timestampLo, nRowsAdded, columnTops, columnRowsAdded);
+            LOG.info().$("committing ").$(nRowsAdded).$(" rows to partition at ").$(path).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
+            writer.startAppendedBlock(timestampLo, nRowsAdded, columnTops);
 
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 int columnType = metadata.getColumnType(columnIndex);
-                long colNRowsAdded = columnRowsAdded.getQuick(columnIndex);
+                long columnTop = columnTops.getQuick(columnIndex);
+                long colNRowsAdded = columnTop > 0 ? nRowsAdded - columnTop : nRowsAdded;
 
                 // Add binary and string indexes
                 switch (columnType) {

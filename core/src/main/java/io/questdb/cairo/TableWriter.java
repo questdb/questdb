@@ -2778,7 +2778,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void startAppendedBlock(long firstTimestamp, long nRowsAdded, LongList blockColumnTops, LongList blockColumnRowsAdded) {
+    void startAppendedBlock(long firstTimestamp, long nRowsAdded, LongList blockColumnTops) {
         if (txPartitionCount == 0) {
             openFirstPartition(firstTimestamp);
         }
@@ -2811,7 +2811,6 @@ public class TableWriter implements Closeable {
             } else {
                 colNRowsAdded = nRowsAdded - (blockColumnTop - transientRowCount);
             }
-            blockColumnRowsAdded.setQuick(columnIndex, colNRowsAdded);
         }
     }
 
