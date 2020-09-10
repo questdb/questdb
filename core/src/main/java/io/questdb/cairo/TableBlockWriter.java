@@ -47,8 +47,6 @@ public class TableBlockWriter implements Closeable {
     private int timestampColumnIndex;
     private long firstTimestamp;
     private long lastTimestamp;
-    private long nRowsAdded;
-    private int firstColumnPow2Size;
 
     private final LongObjHashMap<PartitionBlockWriter> partitionBlockWriterByTimestamp = new LongObjHashMap<>();
     private final ObjList<PartitionBlockWriter> partitionBlockWriters = new ObjList<>();
@@ -56,6 +54,7 @@ public class TableBlockWriter implements Closeable {
     private final ObjList<TableBlockWriterTask> concurrentTasks = new ObjList<>();
     private int nEnqueuedConcurrentTasks;
     private final AtomicInteger nCompletedConcurrentTasks = new AtomicInteger();;
+    private PartitionBlockWriter partWriter;
 
     TableBlockWriter(CairoConfiguration configuration, MessageBus messageBus) {
         root = configuration.getRoot();
@@ -65,10 +64,12 @@ public class TableBlockWriter implements Closeable {
         pubSeq = messageBus.getTableBlockWriterPubSequence();
     }
 
-    public void appendBlock(long partitionTimestamp, int columnIndex, long blockLength, long sourceAddress) {
-        if (columnIndex == 0) {
-            nRowsAdded += blockLength >> firstColumnPow2Size;
-        }
+    public void startPageFrame(long partitionTimestamp, long blockNRows) {
+        partWriter = getPartitionBlockWriter(partitionTimestamp);
+        partWriter.startPageFame(blockNRows);
+    }
+
+    public void appendPageFrameColumn(int columnIndex, long blockLength, long sourceAddress) {
         if (columnIndex == timestampColumnIndex) {
             long firstBlockTimetamp = Unsafe.getUnsafe().getLong(sourceAddress);
             if (firstBlockTimetamp < firstTimestamp) {
@@ -80,10 +81,9 @@ public class TableBlockWriter implements Closeable {
                 lastTimestamp = lastBlockTimestamp;
             }
         }
-        PartitionBlockWriter partWriter = getPartitionBlockWriter(partitionTimestamp);
         if (sourceAddress != 0) {
             TableBlockWriterTask task = getConcurrentTask();
-            task.assignAppendBlock(partWriter, columnIndex, blockLength, sourceAddress);
+            task.assignAppendPageFrameColumn(partWriter, columnIndex, blockLength, sourceAddress);
             enqueueConcurrentTask(task);
         } else {
             partWriter.setColumnTop(columnIndex, blockLength);
@@ -139,16 +139,17 @@ public class TableBlockWriter implements Closeable {
     }
 
     public void commit() {
-        LOG.info().$("committing block write of ").$(nRowsAdded).$(" rows to ").$(path).$(" [firstTimestamp=")
-                .$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
+        LOG.info().$("committing block write to ").$(path).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         // Need to complete all data tasks before we can start index tasks
         completePendingConcurrentTasks(false);
+        long nTotalRowsAdded = 0;
         for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
             PartitionBlockWriter partWriter = partitionBlockWriters.get(n);
-            partWriter.startCommitAppendedBlock(nRowsAdded);
+            nTotalRowsAdded += partWriter.nRowsAdded;
+            partWriter.startCommitAppendedBlock();
         }
         completePendingConcurrentTasks(false);
-        writer.commitBlock(firstTimestamp, lastTimestamp, nRowsAdded);
+        writer.commitBlock(firstTimestamp, lastTimestamp, nTotalRowsAdded);
         LOG.info().$("commited new block [table=").$(writer.getName()).$(']').$();
         clear();
     }
@@ -157,6 +158,7 @@ public class TableBlockWriter implements Closeable {
         completePendingConcurrentTasks(true);
         writer.cancelRow();
         LOG.info().$("cancelled new block [table=").$(writer.getName()).$(']').$();
+        clear();
     }
 
     void open(TableWriter writer) {
@@ -170,8 +172,6 @@ public class TableBlockWriter implements Closeable {
         timestampColumnIndex = metadata.getTimestampIndex();
         firstTimestamp = timestampColumnIndex >= 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
         lastTimestamp = timestampColumnIndex >= 0 ? Long.MIN_VALUE : 0;
-        nRowsAdded = 0;
-        firstColumnPow2Size = ColumnType.pow2SizeOf(metadata.getColumnType(0));
         nEnqueuedConcurrentTasks = 0;
         nCompletedConcurrentTasks.set(0);
         switch (partitionBy) {
@@ -198,6 +198,7 @@ public class TableBlockWriter implements Closeable {
         }
         metadata = null;
         writer = null;
+        partWriter = null;
         for (int i = 0; i < nextPartitionBlockWriterIndex; i++) {
             partitionBlockWriters.getQuick(i).clear();
         }
@@ -231,7 +232,6 @@ public class TableBlockWriter implements Closeable {
             partWriter.of(timestampLo);
         }
 
-        partWriter.open();
         return partWriter;
     }
 
@@ -239,7 +239,7 @@ public class TableBlockWriter implements Closeable {
         private final ObjList<AppendMemory> columns = new ObjList<>();
         private final LongList columnTops = new LongList();
         private long timestampLo;
-        private long timestampHi;
+        private long nRowsAdded;
         private boolean opened;
 
         private void of(long timestampLo) {
@@ -266,7 +266,7 @@ public class TableBlockWriter implements Closeable {
         private void open() {
             if (!opened) {
                 try {
-                    timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo);
+                    TableUtils.setPathForPartition(path, partitionBy, timestampLo);
                     int plen = path.length();
                     if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                         throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
@@ -289,6 +289,7 @@ public class TableBlockWriter implements Closeable {
 
                     }
 
+                    nRowsAdded = 0;
                     opened = true;
                     LOG.info().$("opened partition to '").$(path).$('\'').$();
                 } finally {
@@ -297,7 +298,12 @@ public class TableBlockWriter implements Closeable {
             }
         }
 
-        private void appendBlock(int columnIndex, long blockLength, long sourceAddress) {
+        private void startPageFame(long blockNRows) {
+            open();
+            nRowsAdded += blockNRows;
+        }
+
+        private void appendPageFrameColumn(int columnIndex, long blockLength, long sourceAddress) {
             AppendMemory mem = columns.getQuick(columnIndex * 2);
             long appendOffset = mem.getAppendOffset();
             try {
@@ -311,8 +317,9 @@ public class TableBlockWriter implements Closeable {
             columnTops.set(columnIndex, columnTop);
         }
 
-        private void startCommitAppendedBlock(long nRowsAdded) {
-            writer.startAppendedBlock(timestampLo, timestampHi, nRowsAdded, columnTops, columnRowsAdded);
+        private void startCommitAppendedBlock() {
+            LOG.info().$("committing ").$(nRowsAdded).$(" rows to partition at ").$(path).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
+            writer.startAppendedBlock(timestampLo, nRowsAdded, columnTops, columnRowsAdded);
 
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 int columnType = metadata.getColumnType(columnIndex);
@@ -426,26 +433,26 @@ public class TableBlockWriter implements Closeable {
         private int columnIndex;
         private long blockLength;
         private long sourceAddress;
-        private long colNRowsAdded;
+        private long nRows;
 
         private boolean run() {
             if (ready.compareAndSet(true, false)) {
                 try {
                     switch (taskType) {
                         case AppendBlock:
-                            blockWriter.appendBlock(columnIndex, blockLength, sourceAddress);
+                            blockWriter.appendPageFrameColumn(columnIndex, blockLength, sourceAddress);
                             return true;
 
                         case GenerateStringIndex:
-                            blockWriter.updateStringIndex(columnIndex, colNRowsAdded);
+                            blockWriter.updateStringIndex(columnIndex, nRows);
                             return true;
 
                         case GenerateBinaryIndex:
-                            blockWriter.updateBinaryIndex(columnIndex, colNRowsAdded);
+                            blockWriter.updateBinaryIndex(columnIndex, nRows);
                             return true;
 
                         case UpdateSymbolCache:
-                            blockWriter.updateSymbolCache(columnIndex, colNRowsAdded);
+                            blockWriter.updateSymbolCache(columnIndex, nRows);
                             return true;
                     }
                 } finally {
@@ -462,10 +469,7 @@ public class TableBlockWriter implements Closeable {
             }
         }
 
-        private void assignAppendBlock(
-                PartitionBlockWriter partWriter, int columnIndex, long blockLength,
-                long sourceAddress
-        ) {
+        private void assignAppendPageFrameColumn(PartitionBlockWriter partWriter, int columnIndex, long blockLength, long sourceAddress) {
             taskType = TaskType.AppendBlock;
             this.blockWriter = partWriter;
             this.columnIndex = columnIndex;
@@ -477,21 +481,21 @@ public class TableBlockWriter implements Closeable {
             taskType = TaskType.GenerateStringIndex;
             this.blockWriter = partWriter;
             this.columnIndex = columnIndex;
-            this.colNRowsAdded = colNRowsAdded;
+            this.nRows = colNRowsAdded;
         }
 
         private void assignUpdateBinaryIndex(PartitionBlockWriter partWriter, int columnIndex, long colNRowsAdded) {
             taskType = TaskType.GenerateBinaryIndex;
             this.blockWriter = partWriter;
             this.columnIndex = columnIndex;
-            this.colNRowsAdded = colNRowsAdded;
+            this.nRows = colNRowsAdded;
         }
 
         private void assignUpdateSymbolCache(PartitionBlockWriter partWriter, int columnIndex, long colNRowsAdded) {
             taskType = TaskType.UpdateSymbolCache;
             this.blockWriter = partWriter;
             this.columnIndex = columnIndex;
-            this.colNRowsAdded = colNRowsAdded;
+            this.nRows = colNRowsAdded;
         }
     }
 

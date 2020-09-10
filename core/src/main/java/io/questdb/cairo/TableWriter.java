@@ -2778,7 +2778,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void startAppendedBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded, LongList blockColumnTops, LongList blockColumnRowsAdded) {
+    void startAppendedBlock(long firstTimestamp, long nRowsAdded, LongList blockColumnTops, LongList blockColumnRowsAdded) {
         if (txPartitionCount == 0) {
             openFirstPartition(firstTimestamp);
         }
@@ -2786,9 +2786,6 @@ public class TableWriter implements Closeable {
         if (partitionBy != PartitionBy.NONE && firstTimestamp > partitionHi) {
             switchPartition(firstTimestamp);
         }
-
-        // Entire block must be in the same partition
-        assert lastTimestamp <= partitionHi;
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             // Handle column tops
