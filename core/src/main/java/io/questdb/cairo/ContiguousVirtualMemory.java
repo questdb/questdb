@@ -69,6 +69,15 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
         return baseAddress + offset;
     }
 
+    public long getAllocatedSize() {
+        return baseAddressHi - baseAddress;
+    }
+
+    public void replacePage(long address, long size) {
+        this.baseAddress = this.appendAddress = address;
+        this.baseAddressHi = baseAddress + size;
+    }
+
     @Override
     public void clear() {
         releaseMemory();

@@ -76,7 +76,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("select n from y", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile("select  from y", sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             printer.print(cursor, factory.getMetadata(), true);
                         }
