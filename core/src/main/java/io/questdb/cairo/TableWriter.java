@@ -99,6 +99,8 @@ public class TableWriter implements Closeable {
     private final ObjList<Runnable> nullers;
     private final ObjList<ContiguousVirtualMemory> mergeColumns;
     private final OnePageMemory timestampSearchColumn = new OnePageMemory();
+    private ContiguousVirtualMemory tmpShuffleIndex;
+    private ContiguousVirtualMemory tmpShuffleData;
     private ContiguousVirtualMemory timestampMergeMem;
     private int txPartitionCount = 0;
     private long lockFd;
@@ -205,6 +207,8 @@ public class TableWriter implements Closeable {
             this.columnCount = metadata.getColumnCount();
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txPendingPartitionSizes = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
+            this.tmpShuffleIndex = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
+            this.tmpShuffleData = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.mergeColumns = new ObjList<>(columnCount * 2);
@@ -1708,9 +1712,6 @@ public class TableWriter implements Closeable {
             long blockLen = offsetOfNextBlock - offset;
 
             // copy block from source data column to target data column
-            if (blockLen < 0) {
-                System.out.println("fook");
-            }
             Unsafe.getUnsafe().copyMemory(srcData + offset, tgtData + tgtOffset, blockLen);
 
             // store offset of data block in target index column
@@ -1735,8 +1736,6 @@ public class TableWriter implements Closeable {
             ContiguousVirtualMemory mem2;
             final int columnType = metadata.getColumnType(i);
 
-            long lo;
-            long hi;
             switch (columnType) {
                 case ColumnType.STRING:
                 case ColumnType.BINARY:
@@ -1744,25 +1743,26 @@ public class TableWriter implements Closeable {
                     // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
                     // 2  if there are more items behind indexHi we can get offset of indexHi+1
                     mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-//                    lo = mem2.getLong(indexLo * Long.BYTES);
-//                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
-//                        hi = mem.getAppendOffset();
-//                    } else {
-//                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
-//                    }
-//                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
-//                    shiftCopyFixedSizeColumnData(lo, mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
-                    copyOOVar(
-                            mem2.addressOf(0),
-                            mem2.getAppendOffset() / Long.BYTES,
-                            mem.addressOf(0),
-                            mem.getAppendOffset(),
-                            mergeStruct,
-                            i * 16,
-                            indexLo,
-                            indexHi,
-                            mergedTimestamps
-                    );
+                    long lo = mem2.getLong(indexLo * Long.BYTES);
+                    long hi;
+                    if (indexHi + 1 == mem2.getAppendOffset() / Long.BYTES) {
+                        hi = mem.getAppendOffset();
+                    } else {
+                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
+                    }
+                    copyColumnData(mem.addressOf(lo), mergeStruct, i * 16 + 8, lo, hi - lo);
+                    shiftCopyFixedSizeColumnData(lo, mem2.addressOf(0), mergeStruct, i * 16, indexLo, indexHi, ColumnType.LONG);
+//                    copyOOVar(
+//                            mem2.addressOf(0),
+//                            mem2.getAppendOffset() / Long.BYTES,
+//                            mem.addressOf(0),
+//                            mem.getAppendOffset(),
+//                            mergeStruct,
+//                            i * 16,
+//                            indexLo,
+//                            indexHi,
+//                            mergedTimestamps
+//                    );
                     break;
                 case ColumnType.CHAR:
                 case ColumnType.SHORT:
@@ -1929,8 +1929,8 @@ public class TableWriter implements Closeable {
 
                             int len = Unsafe.getUnsafe().getInt(dataAddr + dataSize);
                             if (len > 0) {
-                                ff.munmap(dataAddr, dataSize + Integer.BYTES);
-                                dataSize += len * Character.BYTES;
+                                ff.munmap(dataAddr, dataSize);
+                                dataSize += len * Character.BYTES + Integer.BYTES;
                                 dataAddr = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
                             }
                             mergeStruct[i * PAD + 8 + 1] = dataAddr;
@@ -2381,12 +2381,17 @@ public class TableWriter implements Closeable {
 
             long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
             long addr = srcVar[bit] + offset;
-            int len = Unsafe.getUnsafe().getInt(addr) * Character.BYTES + Integer.BYTES;
-            Unsafe.getUnsafe().copyMemory(addr, dstVar + dstVarOffset, len);
+            int len = Unsafe.getUnsafe().getInt(addr);
+            if (len > 0) {
+                Unsafe.getUnsafe().copyMemory(addr, dstVar + dstVarOffset, len * Character.BYTES + Integer.BYTES);
+                dstVarOffset += len * Character.BYTES + Integer.BYTES;
+            } else {
+                Unsafe.getUnsafe().putInt(dstVar + dstVarOffset, len);
+                dstVarOffset += Integer.BYTES;
+            }
             Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, dstVarOffset);
-            dstVarOffset += len;
         }
-        mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Integer.BYTES;
+        mergeStruct[i * 16 + 6] += dataOOMergeIndexLen * Long.BYTES;
         mergeStruct[i * 16 + 8 + 6] = dstVarOffset;
     }
 
@@ -2403,7 +2408,16 @@ public class TableWriter implements Closeable {
             final long ceilOfMaxTimestamp = ceilMaxTimestamp();
             LOG.info().$("sorting [name=").$(name).$(']').$();
             final long mergedTimestamps = timestampMergeMem.addressOf(0);
-            Vect.sortLongIndexAscInPlace(mergedTimestamps, timestampMergeMem.getAppendOffset() / TIMESTAMP_MERGE_ENTRY_BYTES);
+            Vect.sortLongIndexAscInPlace(mergedTimestamps, mergeRowCount);
+
+            // reshuffle all variable length columns
+            for (int i = 0; i < columnCount; i++) {
+                final int type = metadata.getColumnType(i);
+                if (type == ColumnType.STRING || type == ColumnType.BINARY) {
+                    // todo: this shuffling can be done in parallel
+                    shuffleVarLenValues(i, mergedTimestamps, mergeRowCount);
+                }
+            }
 
             // we have three frames:
             // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
@@ -3636,10 +3650,64 @@ public class TableWriter implements Closeable {
         for (long o = 0; o < len; o += Long.BYTES) {
             Unsafe.getUnsafe().putLong(tlo + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
         }
-//
-//
-//        Unsafe.getUnsafe().copyMemory(src + lo, mergeStruct[columnIndex + 4] + mergeStruct[columnIndex + 6], hi - lo);
         mergeStruct[columnIndex + 6] += hi - lo;
+    }
+
+    private void shuffleInt32Values(int columnIndex, long timestampIndex, long indexRowCount) {
+        final int primaryIndex = getPrimaryColumnIndex(columnIndex);
+        final ContiguousVirtualMemory dataMem = mergeColumns.getQuick(primaryIndex);
+        final long srcDataAddr = dataMem.addressOf(0);
+
+        // allocate new page
+        long tgtSize = indexRowCount*Integer.BYTES;
+        long tgtDataAddr = Unsafe.malloc(tgtSize);
+
+        for (long l = 0; l < indexRowCount; l++) {
+            long row = getRowFromTimestampIndex(timestampIndex, l);
+            int b = Unsafe.getUnsafe().getInt(srcDataAddr + row * Integer.BYTES);
+            Unsafe.getUnsafe().putInt(tgtDataAddr + l * Integer.BYTES, b);
+        }
+
+    }
+
+    private void shuffleVarLenValues(int columnIndex, long timestampIndex, long indexRowCount) {
+        final int primaryIndex = getPrimaryColumnIndex(columnIndex);
+        final int secondaryIndex = getSecondaryColumnIndex(columnIndex);
+
+
+        tmpShuffleIndex.jumpTo(0);
+        tmpShuffleData.jumpTo(0);
+
+        final ContiguousVirtualMemory dataMem = mergeColumns.getQuick(primaryIndex);
+        final ContiguousVirtualMemory indexMem = mergeColumns.getQuick(secondaryIndex);
+        final long dataSize = dataMem.getAppendOffset();
+        // ensure we have enough memory allocated
+        tmpShuffleData.jumpTo(dataSize);
+
+        final long srcDataAddr = dataMem.addressOf(0);
+        final long tgtDataAddr = tmpShuffleData.addressOf(0);
+
+        long offset = 0;
+        for (long l = 0; l < indexRowCount; l++) {
+            long row = getRowFromTimestampIndex(timestampIndex, l);
+            long o1 = indexMem.getLong(row * Long.BYTES);
+            long o2 = row + 1 < indexRowCount ? indexMem.getLong((row + 1) * Long.BYTES) : dataSize;
+            long len = o2 - o1;
+            Unsafe.getUnsafe().copyMemory(srcDataAddr + o1, tgtDataAddr + offset, len);
+            tmpShuffleIndex.putLong(l * Long.BYTES, offset);
+            offset += len;
+        }
+
+        // ensure that append offsets of these memory instances match data length
+        tmpShuffleData.jumpTo(offset);
+        tmpShuffleIndex.jumpTo(indexRowCount * Long.BYTES);
+
+        // now swap source and target memory
+        mergeColumns.setQuick(primaryIndex, tmpShuffleIndex);
+        mergeColumns.setQuick(secondaryIndex, tmpShuffleIndex);
+
+        tmpShuffleIndex = indexMem;
+        tmpShuffleData = dataMem;
     }
 
     private void switchPartition(long timestamp) {
@@ -3647,6 +3715,7 @@ public class TableWriter implements Closeable {
         // added so far. Index writers will start point to different
         // files after switch.
         updateIndexes();
+
 
         // We need to store reference on partition so that archive
         // file can be created in appropriate directory.
