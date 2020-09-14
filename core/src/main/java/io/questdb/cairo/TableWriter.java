@@ -2413,11 +2413,38 @@ public class TableWriter implements Closeable {
             // reshuffle all variable length columns
             for (int i = 0; i < columnCount; i++) {
                 final int type = metadata.getColumnType(i);
-                if (type == ColumnType.STRING || type == ColumnType.BINARY) {
-                    // todo: this shuffling can be done in parallel
-                    shuffleVarLenValues(i, mergedTimestamps, mergeRowCount);
+                switch (type) {
+                    case ColumnType.BINARY:
+                    case ColumnType.STRING:
+                        shuffleVarLenValues(i, mergedTimestamps, mergeRowCount);
+                        break;
+                    case ColumnType.FLOAT:
+                    case ColumnType.INT:
+                    case ColumnType.SYMBOL:
+                        shuffle32BitValues(i, mergedTimestamps, mergeRowCount);
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.DOUBLE:
+                    case ColumnType.DATE:
+                        shuffle64BitValues(i, mergedTimestamps, mergeRowCount);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        if (i != timestampIndex) {
+                            shuffle64BitValues(i, mergedTimestamps, mergeRowCount);
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                    case ColumnType.CHAR:
+                        shuffle16BitValues(i, mergedTimestamps, mergeRowCount);
+                        break;
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.BYTE:
+                        shuffle8BitValues(i, mergedTimestamps, mergeRowCount);
+                        break;
                 }
             }
+
+            Vect.flattenIndex(mergedTimestamps, mergeRowCount);
 
             // we have three frames:
             // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
@@ -3653,27 +3680,60 @@ public class TableWriter implements Closeable {
         mergeStruct[columnIndex + 6] += hi - lo;
     }
 
-    private void shuffleInt32Values(int columnIndex, long timestampIndex, long indexRowCount) {
-        final int primaryIndex = getPrimaryColumnIndex(columnIndex);
-        final ContiguousVirtualMemory dataMem = mergeColumns.getQuick(primaryIndex);
-        final long srcDataAddr = dataMem.addressOf(0);
+    private void shuffle16BitValues(int columnIndex, long timestampIndex, long indexRowCount) {
+        final ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        final long src = mem.addressOf(0);
+        final long srcSize = mem.getAllocatedSize();
 
         // allocate new page
-        long tgtSize = indexRowCount*Integer.BYTES;
+        long tgtSize = indexRowCount * Short.BYTES;
         long tgtDataAddr = Unsafe.malloc(tgtSize);
+        Vect.indexReshuffle16Bit(src, tgtDataAddr, timestampIndex, indexRowCount);
+        mem.replacePage(tgtDataAddr, tgtSize);
+        Unsafe.free(src, srcSize);
+    }
 
-        for (long l = 0; l < indexRowCount; l++) {
-            long row = getRowFromTimestampIndex(timestampIndex, l);
-            int b = Unsafe.getUnsafe().getInt(srcDataAddr + row * Integer.BYTES);
-            Unsafe.getUnsafe().putInt(tgtDataAddr + l * Integer.BYTES, b);
-        }
+    private void shuffle32BitValues(int columnIndex, long timestampIndex, long indexRowCount) {
+        final ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        final long src = mem.addressOf(0);
+        final long srcSize = mem.getAllocatedSize();
 
+        // allocate new page
+        long tgtSize = indexRowCount * Integer.BYTES;
+        long tgtDataAddr = Unsafe.malloc(tgtSize);
+        Vect.indexReshuffle32Bit(src, tgtDataAddr, timestampIndex, indexRowCount);
+        mem.replacePage(tgtDataAddr, tgtSize);
+        Unsafe.free(src, srcSize);
+    }
+
+    private void shuffle64BitValues(int columnIndex, long timestampIndex, long indexRowCount) {
+        final ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        final long src = mem.addressOf(0);
+        final long srcSize = mem.getAllocatedSize();
+
+        // allocate new page
+        long tgtSize = indexRowCount * Long.BYTES;
+        long tgtDataAddr = Unsafe.malloc(tgtSize);
+        Vect.indexReshuffle64Bit(src, tgtDataAddr, timestampIndex, indexRowCount);
+        mem.replacePage(tgtDataAddr, tgtSize);
+        Unsafe.free(src, srcSize);
+    }
+
+    private void shuffle8BitValues(int columnIndex, long timestampIndex, long indexRowCount) {
+        final ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        final long src = mem.addressOf(0);
+        final long srcSize = mem.getAllocatedSize();
+
+        // allocate new page
+        long tgtDataAddr = Unsafe.malloc(indexRowCount);
+        Vect.indexReshuffle8Bit(src, tgtDataAddr, timestampIndex, indexRowCount);
+        mem.replacePage(tgtDataAddr, indexRowCount);
+        Unsafe.free(src, srcSize);
     }
 
     private void shuffleVarLenValues(int columnIndex, long timestampIndex, long indexRowCount) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = getSecondaryColumnIndex(columnIndex);
-
 
         tmpShuffleIndex.jumpTo(0);
         tmpShuffleData.jumpTo(0);
