@@ -52,10 +52,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final static CharSequence configTableName = "telemetry_config";
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
-    private final boolean enabled;
-    private final TableWriter writer;
+    private boolean enabled;
+    private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
-    private final TableWriter writerConfig;
+    private TableWriter writerConfig;
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
 
@@ -89,47 +89,50 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 this.writer = new TableWriter(configuration, tableName);
             } catch (CairoException ex) {
                 LOG.error().$("could not open [table=").utf8(tableName).$("]").$();
-                throw ex;
+                enabled = false;
             }
 
-            // todo: close writerConfig. We currently keep it opened to prevent users from modifying the table.
+            // todo: close writerConfig. We currently keep it opened to prevent users from
+            // modifying the table.
             // Once we have a permission system, we can use that instead.
             try {
                 this.writerConfig = new TableWriter(configuration, configTableName);
             } catch (CairoException ex) {
                 Misc.free(writer);
                 LOG.error().$("could not open [table=").utf8(configTableName).$("]").$();
-                throw ex;
+                enabled = false;
             }
 
-            final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
+            if (enabled) {
+                final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
 
-            try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
-                if (cursor.hasNext()) {
-                    final Record record = cursor.getRecord();
-                    final boolean _enabled = record.getBool(1);
+                try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+                    if (cursor.hasNext()) {
+                        final Record record = cursor.getRecord();
+                        final boolean _enabled = record.getBool(1);
 
-                    if (enabled != _enabled) {
-                        final StringSink sink = new StringSink();
+                        if (enabled != _enabled) {
+                            final StringSink sink = new StringSink();
+                            final TableWriter.Row row = writerConfig.newRow();
+                            record.getLong256(0, sink);
+                            row.putLong256(0, sink);
+                            row.putBool(1, enabled);
+                            row.append();
+                            writerConfig.commit();
+                        }
+                    } else {
+                        final MicrosecondClock clock = configuration.getMicrosecondClock();
+                        final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
                         final TableWriter.Row row = writerConfig.newRow();
-                        record.getLong256(0, sink);
-                        row.putLong256(0, sink);
+                        row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
                         row.putBool(1, enabled);
                         row.append();
                         writerConfig.commit();
                     }
-                } else {
-                    final MicrosecondClock clock = configuration.getMicrosecondClock();
-                    final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
-                    final TableWriter.Row row = writerConfig.newRow();
-                    row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
-                    row.putBool(1, enabled);
-                    row.append();
-                    writerConfig.commit();
                 }
-            }
 
-            newRow(TelemetryEvent.UP);
+                newRow(TelemetryEvent.UP);
+            }
         }
     }
 
