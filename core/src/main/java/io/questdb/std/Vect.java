@@ -79,5 +79,15 @@ public final class Vect {
 
     public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
 
+    public static native void flattenIndex(long pIndex, long count);
+
+    public static native void indexReshuffle16Bit(long pSrc, long pDest, long pIndex, long count);
+
+    public static native void indexReshuffle32Bit(long pSrc, long pDest, long pIndex, long count);
+
+    public static native void indexReshuffle64Bit(long pSrc, long pDest, long pIndex, long count);
+
+    public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
+
     public static native void freeMergedIndex(long pIndex);
 }
