@@ -271,6 +271,29 @@ typedef struct {
     uint64_t size;
 } index_entry_t;
 
+typedef struct {
+    index_t *index;
+    int64_t size;
+} java_index_entry_t;
+
+
+template<class T>
+inline void re_shuffle(T *src, T *dest, index_t *index, int64_t count) {
+    for (int64_t i = 0; i < count; i++) {
+        dest[i] = src[index[i].i];
+    }
+}
+
+template<class T>
+inline void re_shuffle(jlong src, jlong dest, jlong index, jlong count) {
+    re_shuffle<T>(
+            reinterpret_cast<T *>(src),
+            reinterpret_cast<T *>(dest),
+            reinterpret_cast<index_t *>(index),
+            count
+    );
+}
+
 void k_way_merge_long_index(
         index_entry_t *indexes,
         uint32_t entries_count,
@@ -319,8 +342,6 @@ void k_way_merge_long_index(
     // full run
     while (sentinels_left > 0) {
 
-//        printf("sentinels = %d\n", sentinels_left);
-
         // back fill the winning index
         if (PREDICT_TRUE(++winner->pos < winner->size)) {
             tree[winner_index].value = winner->index[winner->pos].ts;
@@ -328,8 +349,6 @@ void k_way_merge_long_index(
             tree[winner_index].value = L_MAX;
             sentinels_left--;
         }
-
-//        printf("sentinels2 = %d\n", sentinels_left);
 
         if (sentinels_left == 0) {
             break;
@@ -349,7 +368,6 @@ void k_way_merge_long_index(
         winner_index = tree[1].index_index;
         winner = indexes + winner_index - entries_count;
         _mm_prefetch(winner, _MM_HINT_NTA);
-//        printf("would write: %lu\n", merged_index_pos++);
         dest[merged_index_pos++] = winner->index[winner->pos];
     }
 }
@@ -360,11 +378,6 @@ JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sortLongIndexAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
     sort(reinterpret_cast<index_t *>(pLong), len);
 }
-
-typedef struct {
-    index_t *index;
-    int64_t size;
-} java_index_entry_t;
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pIndexStructArray, jint count) {
@@ -398,7 +411,6 @@ Java_io_questdb_std_Vect_mergeLongIndexesAsc(JNIEnv *env, jclass cl, jlong pInde
         }
     }
 
-//    printf("merged size = %lu, size=%d, count=%d\n", merged_index_size, size, count);
     auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
     k_way_merge_long_index(entries, size, size - count, merged_index);
     return reinterpret_cast<jlong>(merged_index);
@@ -408,5 +420,40 @@ JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_freeMergedIndex(JNIEnv *env, jclass cl, jlong pIndex) {
     free(reinterpret_cast<void *>(pIndex));
 }
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_indexReshuffle32Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
+                                             jlong count) {
+    re_shuffle<uint32_t>(pSrc, pDest, pIndex, count);
 }
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
+                                             jlong count) {
+    re_shuffle<uint64_t>(pSrc, pDest, pIndex, count);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_indexReshuffle16Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
+                                             jlong count) {
+    re_shuffle<uint16_t>(pSrc, pDest, pIndex, count);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_indexReshuffle8Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
+                                            jlong count) {
+    re_shuffle<uint8_t>(pSrc, pDest, pIndex, count);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_flattenIndex(JNIEnv *env, jclass cl, jlong pIndex,
+                                            jlong count) {
+    auto* index = reinterpret_cast<index_t*>(pIndex);
+    for (int64_t i = 0; i < count; i++) {
+        index[i].i = i;
+    }
+}
+
+
+        }
 
