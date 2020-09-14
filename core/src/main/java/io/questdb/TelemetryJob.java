@@ -75,7 +75,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
 
             try (final Path path = new Path()) {
-
                 if (getTableStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
                     compiler.compile("CREATE TABLE " + tableName + " (created timestamp, event short, origin short) timestamp(created)", sqlExecutionContext);
                 }
@@ -90,6 +89,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             } catch (CairoException ex) {
                 LOG.error().$("could not open [table=").utf8(tableName).$("]").$();
                 enabled = false;
+                return;
             }
 
             // todo: close writerConfig. We currently keep it opened to prevent users from
@@ -101,38 +101,37 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 Misc.free(writer);
                 LOG.error().$("could not open [table=").utf8(configTableName).$("]").$();
                 enabled = false;
+                return;
             }
 
-            if (enabled) {
-                final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
+            final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
 
-                try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
-                    if (cursor.hasNext()) {
-                        final Record record = cursor.getRecord();
-                        final boolean _enabled = record.getBool(1);
+            try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+                if (cursor.hasNext()) {
+                    final Record record = cursor.getRecord();
+                    final boolean _enabled = record.getBool(1);
 
-                        if (enabled != _enabled) {
-                            final StringSink sink = new StringSink();
-                            final TableWriter.Row row = writerConfig.newRow();
-                            record.getLong256(0, sink);
-                            row.putLong256(0, sink);
-                            row.putBool(1, enabled);
-                            row.append();
-                            writerConfig.commit();
-                        }
-                    } else {
-                        final MicrosecondClock clock = configuration.getMicrosecondClock();
-                        final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
+                    if (enabled != _enabled) {
+                        final StringSink sink = new StringSink();
                         final TableWriter.Row row = writerConfig.newRow();
-                        row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
+                        record.getLong256(0, sink);
+                        row.putLong256(0, sink);
                         row.putBool(1, enabled);
                         row.append();
                         writerConfig.commit();
                     }
+                } else {
+                    final MicrosecondClock clock = configuration.getMicrosecondClock();
+                    final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
+                    final TableWriter.Row row = writerConfig.newRow();
+                    row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
+                    row.putBool(1, enabled);
+                    row.append();
+                    writerConfig.commit();
                 }
-
-                newRow(TelemetryEvent.UP);
             }
+
+            newRow(TelemetryEvent.UP);
         }
     }
 
