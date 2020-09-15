@@ -665,9 +665,16 @@ public class IODispatcherTest {
     }
 
     public void testImport(int workerCount, HttpClientCode code) throws Exception {
+        testImport(workerCount, NetworkFacadeImpl.INSTANCE, code);
+    }
+
+    public void testImport(int workerCount, NetworkFacade nf, HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir,
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
+                    nf,
+                    baseDir,
+                    1024 * 1024,
                     false,
                     false
             );
@@ -1144,6 +1151,7 @@ public class IODispatcherTest {
                         return 0;
                     }
                 },
+
                 false,
                 1 // todo: fix writer queue and increase request count
         );
@@ -4602,7 +4610,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testInsertWaitsWhenWriterLockedLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
@@ -4615,7 +4622,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testInsertsIsPerformedWhenWriterLockedAndDisconnectedLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
@@ -4628,7 +4634,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testImportWaitsWhenWriterLockedLoop() throws Exception {
         for (int i = 0; i < 100; i++) {
             System.out.println("*************************************************************************************");
@@ -4641,7 +4646,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testImportProcessedWhenClientDisconnectedLoop() throws Exception {
         for (int i = 0; i < 100; i++) {
             System.out.println("*************************************************************************************");
@@ -4654,7 +4658,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testInsertWaitsExceedsRerunProcessingQueueSizeLoop() throws Exception {
         for (int i = 0; i < 100; i++) {
             System.out.println("*************************************************************************************");
@@ -4667,13 +4670,12 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testImportRerunsExceedsRerunProcessingQueueSizeLoop() throws Exception {
         for (int i = 0; i < 100; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testImportRerunsExceedsRerunProcessingQueueSize();
+            testImportRerunsExceedsRerunProcessingQueueSize(1000);
             temp.delete();
             temp.create();
         }
@@ -4850,7 +4852,6 @@ public class IODispatcherTest {
 
     // TODO: investigate failure
     @Test
-    @Ignore
     public void queryAndDisconnect() throws Exception {
         final int parallelCount = 4;
         final int requestMult = 4;
@@ -5165,10 +5166,16 @@ public class IODispatcherTest {
 
     @Test
     public void testImportRerunsExceedsRerunProcessingQueueSize() throws Exception {
+        testImportRerunsExceedsRerunProcessingQueueSize(0);
+    }
+
+
+    public void testImportRerunsExceedsRerunProcessingQueueSize(int startDelay) throws Exception {
         try {
             rerunProcessingQueueSize = 1;
             final int parallelCount = 4;
-            testImport(2, (engine) -> {
+
+            testImport(2, getSendDelayNetworkFacade(startDelay), (engine) -> {
                 // create table and do 1 import
                 sendAndReceive(
                         NetworkFacadeImpl.INSTANCE,
@@ -5244,6 +5251,31 @@ public class IODispatcherTest {
         } finally {
             rerunProcessingQueueSize = DEFAULT_RERUN_QUEUE_SIZE;
         }
+    }
+
+    @NotNull
+    private NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
+        if (startDelayDelayAfter  == 0)
+            return NetworkFacadeImpl.INSTANCE;
+
+        return new NetworkFacadeImpl() {
+            int totalSent = 0;
+
+            @Override
+            public int send(long fd, long buffer, int bufferLen) {
+                if (bufferLen > 0) {
+                    if (totalSent == startDelayDelayAfter) {
+                        totalSent = 0;
+                        return 0;
+                    }
+
+                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - totalSent));
+                    totalSent += result;
+                    return result;
+                }
+                return 0;
+            }
+        };
     }
 
     @NotNull
