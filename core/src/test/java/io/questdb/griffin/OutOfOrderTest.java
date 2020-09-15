@@ -27,7 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -59,7 +61,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " timestamp_shuffle(0,100000000000L) ts," +
                                     " rnd_byte(2,50) l," +
 //                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n" +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
                                     " from long_sequence(1000)" +
                                     ")",
                             sqlExecutionContext
@@ -75,16 +78,25 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
+                    final String sqlTemplate = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,ts,l,n,t from ";
+
                     sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("select  from y", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "x", sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             printer.print(cursor, factory.getMetadata(), true);
                         }
                     }
 
-                    System.out.println(sink);
+                    String expected = Chars.toString(sink);
+
+                    sink.clear();
+                    try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "y", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            printer.print(cursor, factory.getMetadata(), true);
+                        }
+                    }
+                    TestUtils.assertEquals(expected, sink);
                 }
         );
-        System.out.println("done");
     }
 }

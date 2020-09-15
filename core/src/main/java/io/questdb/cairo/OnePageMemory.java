@@ -210,6 +210,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     public void detach() {
         if (page != -1) {
             ff.munmap(page, size);
+            page = -1;
         }
         fd = -1;
         this.size = 0;
