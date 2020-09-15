@@ -97,14 +97,6 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         }
     }
 
-    public void detach() {
-        if (page != -1) {
-            ff.munmap(page, size);
-        }
-        fd = -1;
-        this.size = 0;
-    }
-
     protected void map(FilesFacade ff, LPSZ name, long size) {
         this.size = size;
         if (size > 0) {
@@ -251,6 +243,15 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     @Override
     public long getPageAddress(int pageIndex) {
         return absolutePointer;
+    }
+
+    public void detach() {
+        if (page != -1) {
+            ff.munmap(page, size);
+            page = -1;
+        }
+        fd = -1;
+        this.size = 0;
     }
 
     public void getLong256(long offset, Long256Sink sink) {
