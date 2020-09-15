@@ -43,6 +43,8 @@ public class InterpolationUtil {
     static final InterpolatorFunction INTERPOLATE_INT = InterpolationUtil::interpolateInt;
     static final InterpolatorFunction INTERPOLATE_LONG = InterpolationUtil::interpolateLong;
 
+    static final InterpolatorScalarFunction INTERPOLATE_SCALAR_DOUBLE = InterpolationUtil::interpolateDouble;
+
     public static void interpolateByte(
             GroupByFunction function,
             MapValue mapValue,
@@ -173,6 +175,20 @@ public class InterpolationUtil {
         );
     }
 
+    static void interpolateDouble(
+            GroupByFunction function,
+            MapValue mapValue,
+            long x,
+            MapValue x1Value,
+            MapValue x2Value
+    ) {
+        function.interpolateAndSetDouble(
+                mapValue,
+                x1Value,
+                x2Value,
+                x);
+    }
+
     static void storeYDouble(GroupByFunction function, MapValue mapValue, long targetAddress) {
         Unsafe.getUnsafe().putDouble(targetAddress, function.getDouble(mapValue));
     }
@@ -204,5 +220,9 @@ public class InterpolationUtil {
 
     interface InterpolatorFunction {
         void interpolateAndStore(GroupByFunction function, MapValue mapValue, long x, long x1, long x2, long y1Address, long y2Address);
+    }
+
+    interface InterpolatorScalarFunction {
+        void interpolateAndStore(GroupByFunction function, MapValue mapValue, long x, MapValue x1, MapValue x2);
     }
 }

@@ -32,7 +32,7 @@ import io.questdb.std.ObjList;
 public class HaversineDistDegreeGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "haversine_dist_deg(DD)";
+        return "haversine_dist_deg(DDN)";
     }
 
     @Override
@@ -42,6 +42,6 @@ public class HaversineDistDegreeGroupByFunctionFactory implements FunctionFactor
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new HaversineDistDegreeGroupByFunction(position, args.getQuick(0), args.getQuick(1));
+        return new HaversineDistDegreeGroupByFunction(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 }

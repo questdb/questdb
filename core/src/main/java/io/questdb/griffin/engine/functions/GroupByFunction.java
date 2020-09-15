@@ -30,9 +30,18 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 
 public interface GroupByFunction extends Function {
+
+    default void interpolateAndSetDouble(MapValue mapValue, MapValue x1Value, MapValue x2Value, long x) {
+        throw new UnsupportedOperationException();
+    }
+
     void computeFirst(MapValue mapValue, Record record);
 
     void computeNext(MapValue mapValue, Record record);
+
+    default boolean isScalar() {
+        return false;
+    }
 
     void pushValueTypes(ArrayColumnTypes columnTypes);
 

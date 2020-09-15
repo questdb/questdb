@@ -51,6 +51,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
+    private final ObjList<InterpolationUtil.InterpolatorScalarFunction> interpolatorScalarFunctions;
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
@@ -59,6 +60,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final TimestampSampler sampler;
     private final int yDataSize;
     private long yData;
+    private final MapValue tempValue;
 
     public SampleByInterpolateRecordCursorFactory(
             CairoConfiguration configuration,
@@ -105,6 +107,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
         this.storeYFunctions = new ObjList<>(columnCount);
         this.interpolatorFunctions = new ObjList<>(columnCount);
+        this.interpolatorScalarFunctions = new ObjList<>(columnCount);
+        this.tempValue = new SimpleMapValue(columnCount);
 
         // create timestamp column
         TimestampColumn timestampColumn = new TimestampColumn(0, valueTypes.getColumnCount() + keyTypes.getColumnCount());
@@ -136,6 +140,9 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 case ColumnType.DOUBLE:
                     storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
                     interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
+                    if (function.isScalar()) {
+                        interpolatorScalarFunctions.add(InterpolationUtil.INTERPOLATE_SCALAR_DOUBLE);
+                    }
                     break;
                 case ColumnType.FLOAT:
                     storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
@@ -444,7 +451,14 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             assert value != null && value.getByte(0) == 1;
             value.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
             for (int i = 0, m = groupByFunctions.size(); i < m; i++) {
-                interpolatorFunctions.getQuick(i).interpolateAndStore(groupByFunctions.getQuick(i), value, x, x1, x2, yData + i * 16, yData + i * 16 + 8);
+                GroupByFunction function = groupByFunctions.getQuick(i);
+                if (!function.isScalar()) {
+                    interpolatorFunctions.getQuick(i).interpolateAndStore(function, value, x, x1, x2, yData + i * 16, yData + i * 16 + 8);
+                } else {
+                    MapValue x1Value = findDataMapValue(record, x1);
+                    MapValue x2Value = findDataMapValue(tempValue, x2);
+                    interpolatorScalarFunctions.getQuick(i).interpolateAndStore(function, value, x, x1Value, x2Value);
+                }
             }
         }
     }
