@@ -278,7 +278,7 @@ typedef struct {
 
 
 template<class T>
-inline void re_shuffle(T *src, T *dest, index_t *index, int64_t count) {
+inline void re_shuffle_internal(T *src, T *dest, index_t *index, int64_t count) {
     for (int64_t i = 0; i < count; i++) {
         dest[i] = src[index[i].i];
     }
@@ -286,8 +286,30 @@ inline void re_shuffle(T *src, T *dest, index_t *index, int64_t count) {
 
 template<class T>
 inline void re_shuffle(jlong src, jlong dest, jlong index, jlong count) {
-    re_shuffle<T>(
+    re_shuffle_internal<T>(
             reinterpret_cast<T *>(src),
+            reinterpret_cast<T *>(dest),
+            reinterpret_cast<index_t *>(index),
+            count
+    );
+}
+
+template<class T>
+inline void merge_shuffle_internal(T *src1, T *src2, T *dest, index_t *index, int64_t count) {
+    T *sources[] = {src2, src1};
+    for (long i = 0; i < count; i++) {
+        const auto r = reinterpret_cast<uint64_t>(index[i].i);
+        const uint64_t pick = r >> 63u;
+        const auto row = r & ~(1LLu << 63u);
+        dest[i] = sources[pick][row];
+    }
+}
+
+template<class T>
+inline void merge_shuffle(jlong src1, jlong src2, jlong dest, jlong index, jlong count) {
+    merge_shuffle_internal<T>(
+            reinterpret_cast<T *>(src1),
+            reinterpret_cast<T *>(src2),
             reinterpret_cast<T *>(dest),
             reinterpret_cast<index_t *>(index),
             count
@@ -446,14 +468,36 @@ Java_io_questdb_std_Vect_indexReshuffle8Bit(JNIEnv *env, jclass cl, jlong pSrc, 
 }
 
 JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle8Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
+                                          jlong count) {
+    merge_shuffle<int8_t>(src1, src2, dest, index, count);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle16Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
+                                          jlong count) {
+    merge_shuffle<int16_t>(src1, src2, dest, index, count);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle32Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
+                                           jlong count) {
+    merge_shuffle<int32_t>(src1, src2, dest, index, count);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
+                                           jlong count) {
+    merge_shuffle<int64_t>(src1, src2, dest, index, count);
+}
+
+JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_flattenIndex(JNIEnv *env, jclass cl, jlong pIndex,
-                                            jlong count) {
-    auto* index = reinterpret_cast<index_t*>(pIndex);
+                                      jlong count) {
+    auto *index = reinterpret_cast<index_t *>(pIndex);
     for (int64_t i = 0; i < count; i++) {
         index[i].i = i;
     }
 }
-
-
-        }
+}
 
