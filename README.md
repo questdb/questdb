@@ -16,8 +16,8 @@
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
   </a>
-  <a href="https://serieux-saucisson-79115.herokuapp.com/">
-    <img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg" />
+  <a href="https://slack.questdb.io">
+    <img src="https://slack.questdb.io/badge.svg" />
   </a>
 </p>
 
@@ -212,13 +212,14 @@ Concepts:
 
 ## Support / Contact
 
-[Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
+[Slack Channel](https://slack.questdb.io)
 
 ## Roadmap
 
 [Our roadmap is here](https://github.com/questdb/questdb/projects/3)
 
 ## Guides
+
 - [QuestDB in Go](https://questdb.io/docs/tutorial/go)
 - [QuestDB in Python](https://tutswiki.com/setup-access-questdb-python-notebook/)
 
