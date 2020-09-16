@@ -89,5 +89,13 @@ public final class Vect {
 
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
 
+    public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native void mergeShuffle32Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native void mergeShuffle64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
     public static native void freeMergedIndex(long pIndex);
 }
