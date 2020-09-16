@@ -61,6 +61,17 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         return metadata;
     }
 
+    public static RecordMetadata removeTimestamp(RecordMetadata that) {
+        if (that.getTimestampIndex() != -1) {
+            if (that instanceof GenericRecordMetadata) {
+                ((GenericRecordMetadata) that).setTimestampIndex(-1);
+                return that;
+            }
+            return GenericRecordMetadata.copyOfSansTimestamp(that);
+        }
+        return that;
+    }
+
     public GenericRecordMetadata add(TableColumnMetadata meta) {
         int index = columnNameIndexMap.keyIndex(meta.getName());
         if (index > -1) {
