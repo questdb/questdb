@@ -62,7 +62,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_sequence(10000000000,1000000L) ts," +
                                     " rnd_byte(2,50) l," +
-//                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_bin(10, 20, 2) m," +
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
@@ -89,7 +89,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_sequence(0,1000000L) ts," +
                                     " rnd_byte(2,50) l," +
-//                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_bin(10, 20, 2) m," +
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
@@ -145,7 +145,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_shuffle(0,100000000000L) ts," +
                                     " rnd_byte(2,50) l," +
-//                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_bin(10, 20, 2) m," +
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000)" +
@@ -163,7 +163,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-                    final String sqlTemplate = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,ts,l,n,t from ";
+                    final String sqlTemplate = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,ts,l,n,t,m from ";
 
                     sink.clear();
                     try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "x", sqlExecutionContext).getRecordCursorFactory()) {
