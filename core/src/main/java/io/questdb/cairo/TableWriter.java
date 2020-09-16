@@ -1655,7 +1655,16 @@ public class TableWriter implements Closeable {
                     // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
                     // 2  if there are more items behind indexHi we can get offset of indexHi+1
                     mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                    copyVarSizeCol(mem2.addressOf(0), mem2.getAppendOffset(), mem.addressOf(0), mem.getAppendOffset(), mergeStruct, i, indexLo, indexHi);
+                    copyVarSizeCol(
+                            mem2.addressOf(0),
+                            mem2.getAppendOffset(),
+                            mem.addressOf(0),
+                            mem.getAppendOffset(),
+                            mergeStruct,
+                            i,
+                            indexLo,
+                            indexHi
+                    );
                     break;
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
@@ -1818,7 +1827,17 @@ public class TableWriter implements Closeable {
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
-    private long[] createTempPartition(Path path, long indexLo, long indexHi, long dataIndexMax, int destIndex, boolean reuseFds, int timestmpIndex, long timestampFd) {
+    private long[] createTempPartition(
+            Path path,
+            long indexLo,
+            long indexHi,
+            long indexMax,
+            long dataIndexMax,
+            int destIndex,
+            boolean reuseFds,
+            int timestmpIndex,
+            long timestampFd
+    ) {
         long[] mergeStruct = new long[columnCount * MergeStruct.MERGE_STRUCT_ENTRY_SIZE];
 
         int plen = path.length();
@@ -1833,6 +1852,7 @@ public class TableWriter implements Closeable {
             long dataSize;
             try {
                 switch (columnType) {
+                    case ColumnType.BINARY:
                     case ColumnType.STRING:
                         shl = ColumnType.pow2SizeOf(ColumnType.LONG);
 
@@ -1856,15 +1876,12 @@ public class TableWriter implements Closeable {
                             dFile(path, metadata.getColumnName(i));
                             final long dataFd = reuseFds ? -columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
                             MergeStruct.setSrcVarFd(mergeStruct, i, dataFd);
-                            dataSize = Unsafe.getUnsafe().getLong(indexAddr + indexSize - Long.BYTES) + Integer.BYTES;
-                            long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
-
-                            int len = Unsafe.getUnsafe().getInt(dataAddr + dataSize - Integer.BYTES);
-                            if (len > 0) {
-                                ff.munmap(dataAddr, dataSize);
-                                dataSize += len * Character.BYTES;
-                                dataAddr = mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize);
+                            dataSize = ff.length(Math.abs(dataFd));
+                            if (dataSize == -1) {
+                                throw CairoException.instance(ff.errno()).put("Could not fstat [fd=").put(dataFd).put(']');
                             }
+
+                            long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
                             MergeStruct.setSrcVarAddress(mergeStruct, i, dataAddr);
                             MergeStruct.setSrcVarAddressSize(mergeStruct, i, dataSize);
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`, addr=").$(dataAddr).$(", size=").$(dataSize).$(']').$();
@@ -1912,8 +1929,11 @@ public class TableWriter implements Closeable {
 
                         mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
                         lo = mem2.getLong(indexLo * Long.BYTES);
-                        hi = mem2.getLong(indexHi * Long.BYTES);
-                        hi += mem.getInt(hi) * Character.BYTES + Integer.BYTES;
+                        if (indexHi  == indexMax - 1) {
+                            hi = mem.getAppendOffset();
+                        } else {
+                            hi = mem2.getLong((indexHi + 1) * Long.BYTES);
+                        }
 
                         dataSize += (hi - lo);
 
@@ -1924,26 +1944,8 @@ public class TableWriter implements Closeable {
                         MergeStruct.setDestVarAppendOffset(mergeStruct, i, 0L);
                         LOG.info().$("open [fd=").$(dataMergeFd).$(", path=`").utf8(path).$("`, addr=").$(dataMergeAddr).$(", size=").$(dataSize).$(']').$();
                         break;
-                    case ColumnType.BINARY:
-                        // todo: do the same for binary as we have for STRING
-                        //     we may need to refactor a little bit to avoid extreme duplication
-/*
-                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
-                        lo = mem2.getLong(indexLo * Long.BYTES);
-                        hi = mem2.getLong(indexHi * Long.BYTES);
-                        hi += mem.getLong(hi) + Long.BYTES;
-
-                        dFile(path, metadata.getColumnName(i));
-                        createColumnAndCopyMergedData(path, mem, lo, hi - lo);
-
-                        path.trimTo(plen);
-                        iFile(path, metadata.getColumnName(i));
-                        copyOOO(mem2, indexLo, indexHi, path, ColumnType.LONG);
-*/
-                        break;
 
                     default:
-
                         shl = ColumnType.pow2SizeOf(columnType);
 
                         if (dataIndexMax > 0) {
@@ -2305,7 +2307,6 @@ public class TableWriter implements Closeable {
             final long mergedTimestamps = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(mergedTimestamps, mergeRowCount);
 
-
             // reshuffle all variable length columns
             for (int i = 0; i < columnCount; i++) {
                 final int type = metadata.getColumnType(i);
@@ -2383,7 +2384,17 @@ public class TableWriter implements Closeable {
                     // this has to be a brand new partition
                     LOG.info().$("copy oo to [path=").$(path).$(", from=").$(indexLo).$(", to=").$(indexHi).$(']').$();
                     // pure OOO data copy into new partition
-                    long[] mergeStruct = createTempPartition(path, indexLo, indexHi, 0, 0, false, -1, 0);
+                    long[] mergeStruct = createTempPartition(
+                            path,
+                            indexLo,
+                            indexHi,
+                            indexMax,
+                            0,
+                            0,
+                            false,
+                            -1,
+                            0
+                    );
                     try {
                         copyOutOfOrderData(indexLo, indexHi, mergeStruct, timestampIndex);
                     } finally {
@@ -2626,7 +2637,7 @@ public class TableWriter implements Closeable {
                         }
 
                         path.trimTo(plen);
-                        long[] mergeStruct = createTempPartition(path, indexLo, indexHi, dataIndexMax, 1, fd < 0, timestampIndex, fd);
+                        long[] mergeStruct = createTempPartition(path, indexLo, indexHi, indexMax, dataIndexMax, 1, fd < 0, timestampIndex, fd);
                         try {
 
                             switch (prefixType) {
@@ -2643,7 +2654,7 @@ public class TableWriter implements Closeable {
                             }
 
                             if (mergeType == 3) {
-                                long dataOOMergeIndex;
+                                long dataOOMergeIndex = 0;
                                 long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
                                 // copy timestamp column of the partition into a "index" memory
 
@@ -2665,7 +2676,6 @@ public class TableWriter implements Closeable {
                                         Unsafe.getUnsafe().putLong(ss + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
                                         Unsafe.getUnsafe().putLong(ss + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
 
-                                        // todo: free
                                         dataOOMergeIndex = Vect.mergeLongIndexesAsc(ss, 2);
                                     } finally {
                                         Unsafe.free(index, indexSize);
@@ -2706,6 +2716,9 @@ public class TableWriter implements Closeable {
                                     }
                                 } finally {
                                     Unsafe.free(ss, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+                                    if (dataOOMergeIndex > 0) {
+                                        Vect.freeMergedIndex(dataOOMergeIndex);
+                                    }
                                 }
 
                                 LOG.info()
@@ -2801,7 +2814,7 @@ public class TableWriter implements Closeable {
         shuffleFunc.shuffle(
                 MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex),
                 mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0),
-                MergeStruct.getDestFixedAddress(mergeStruct, columnIndex)+ offset,
+                MergeStruct.getDestFixedAddress(mergeStruct, columnIndex) + offset,
                 dataOOMergeIndex,
                 count
         );
