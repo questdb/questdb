@@ -860,7 +860,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 super.commitNewEvent(event, complete);
             }
         };
-        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, MillisecondClockImpl.INSTANCE);
+        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
         disconnected = false;
         recvBuffer = null;
         IODispatcher<LineTcpConnectionContext> dispatcher = new IODispatcher<>() {

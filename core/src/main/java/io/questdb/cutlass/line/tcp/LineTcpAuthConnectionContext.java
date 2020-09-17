@@ -15,7 +15,6 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.time.MillisecondClock;
 
 class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -31,8 +30,8 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private boolean challengeGenerated;
     private boolean challengeSent;
 
-    LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler, MillisecondClock clock) {
-        super(configuration, scheduler, clock);
+    LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler) {
+        super(configuration, scheduler);
         if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
             throw CairoException.instance(0).put("Minimum buffer length is " + MIN_BUF_SIZE);
         }

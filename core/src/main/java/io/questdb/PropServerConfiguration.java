@@ -1692,6 +1692,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public MillisecondClock getMillisecondClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
         public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
             return lineTcpWorkerPoolConfiguration;
         }

@@ -51,10 +51,10 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private long lastQueueFullLogMillis = 0;
 
-    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, MillisecondClock clock) {
+    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         nf = configuration.getNetworkFacade();
         this.scheduler = scheduler;
-        this.milliClock = clock;
+        this.milliClock = configuration.getMillisecondClock();
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize());
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
     }
@@ -63,7 +63,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     boolean handleIO() {
         try {
             // Read as much data as possible
-            int len;
             read();
 
             // Process as much data as possible

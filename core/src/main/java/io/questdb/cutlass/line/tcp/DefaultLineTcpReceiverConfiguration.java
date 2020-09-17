@@ -35,6 +35,8 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.time.MillisecondClockImpl;
 
 public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
@@ -87,6 +89,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     @Override
     public MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
     }
 
     @Override

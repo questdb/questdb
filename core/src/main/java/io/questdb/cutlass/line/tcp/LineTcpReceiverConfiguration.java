@@ -30,6 +30,7 @@ import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.time.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
     boolean isEnabled();
@@ -51,6 +52,8 @@ public interface LineTcpReceiverConfiguration {
     int getWriterQueueSize();
 
     MicrosecondClock getMicrosecondClock();
+
+    MillisecondClock getMillisecondClock();
 
     WorkerPoolAwareConfiguration getWorkerPoolConfiguration();
 

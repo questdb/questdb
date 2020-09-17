@@ -136,10 +136,10 @@ public class LineTcpServer implements Closeable {
         public LineTcpConnectionContextFactory(CairoEngine engine, LineTcpReceiverConfiguration configuration, @Nullable MessageBus messageBus) {
             ObjectFactory<LineTcpConnectionContext> factory;
             if (null == configuration.getAuthDbPath()) {
-                factory = () -> new LineTcpConnectionContext(configuration, scheduler, engine.getConfiguration().getMillisecondClock());
+                factory = () -> new LineTcpConnectionContext(configuration, scheduler);
             } else {
                 AuthDb authDb = new AuthDb(configuration);
-                factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, engine.getConfiguration().getMillisecondClock());
+                factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler);
             }
 
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
