@@ -8,6 +8,7 @@ import java.security.Signature;
 import java.security.SignatureException;
 import java.util.Base64;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IODispatcher;
@@ -19,6 +20,7 @@ import io.questdb.std.time.MillisecondClock;
 class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final int CHALLENGE_LEN = 512;
+    private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
     private final SecureRandom srand = new SecureRandom();
     private final AuthDb authDb;
     private final Signature sig;
@@ -31,6 +33,9 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
 
     LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler, MillisecondClock clock) {
         super(configuration, scheduler, clock);
+        if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
+            throw CairoException.instance(0).put("Minimum buffer length is " + MIN_BUF_SIZE);
+        }
         this.authDb = authDb;
         try {
             sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE);
@@ -43,6 +48,12 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     boolean handleIO() {
         if (authenticated) {
             return super.handleIO();
+        }
+
+        if (peerDisconnected) {
+            LOG.info().$('[').$(fd).$("] peer disconnected before authentication completed").$();
+            dispatcher.disconnect(this);
+            return false;
         }
 
         if (challengeSent) {
@@ -112,10 +123,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                 return nWritten > 0;
             }
             peerDisconnected = true;
-        }
-
-        if (peerDisconnected) {
-            LOG.info().$('[').$(fd).$("] peer disconnected before authentication completed").$();
+            LOG.info().$('[').$(fd).$("] peer disconnected when challenge was being sent").$();
             dispatcher.disconnect(this);
             return false;
         }
@@ -143,6 +151,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             n = 0;
             while (n < CHALLENGE_LEN) {
+                assert recvBufStart + n < recvBufEnd;
                 int r = (int) (srand.nextDouble() * 0x5f) + 0x20;
                 Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) r);
                 challengeBytes[n] = (byte) r;

@@ -93,6 +93,7 @@ public class AuthenticatedLineTCPProtoSender extends LineTCPProtoSender {
         if (nf.send(fd, buffer, n) != n) {
             throw NetworkError.instance(nf.errno()).put("send error");
         }
+        LOG.info().$("authenticated").$();
     }
 
     @Override

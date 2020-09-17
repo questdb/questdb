@@ -49,6 +49,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.microtime.TimestampFormatUtils;
@@ -57,20 +58,32 @@ import io.questdb.std.str.StringSink;
 
 public class LineTcpServerTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
-    private final static String AUTH_KEY_ID = "testUser1";
-    private final static PrivateKey AUTH_PRIVATE_KEY = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
+    private final static String AUTH_KEY_ID1 = "testUser1";
+    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
+    private final static String AUTH_KEY_ID2 = "testUser2";
+    private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
 
     @Test(timeout = 120000)
     public void testUnauthenticated() {
-        test(false);
+        test(null, null, 200);
     }
 
-    @Test(timeout = 12000000)
+    @Test(timeout = 120000)
     public void testGoodAuthenticated() {
-        test(true);
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768);
     }
 
-    private void test(boolean authenticated) {
+    @Test(timeout = 120000, expected = NetworkError.class)
+    public void testInvalidUser() {
+        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768);
+    }
+
+    @Test(timeout = 120000, expected = NetworkError.class)
+    public void testInvalidSignature() {
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768);
+    }
+
+    private void test(String authKeyId, PrivateKey authPrivateKey, int msgBufferSize) {
         WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
             private final int[] affinity = { -1, -1 };
 
@@ -116,7 +129,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             @Override
             public int getNetMsgBufferSize() {
-                return 200;
+                return msgBufferSize;
             }
 
             @Override
@@ -137,7 +150,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             @Override
             public String getAuthDbPath() {
-                if (!authenticated) {
+                if (null == authKeyId) {
                     return null;
                 }
                 URL u = getClass().getResource("authDb.txt");
@@ -180,8 +193,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             final LineProtoSender[] senders = new LineProtoSender[tables.length];
             for (int n = 0; n < senders.length; n++) {
-                if (authenticated) {
-                    AuthenticatedLineTCPProtoSender sender = new AuthenticatedLineTCPProtoSender(AUTH_KEY_ID, AUTH_PRIVATE_KEY, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                if (null != authKeyId) {
+                    AuthenticatedLineTCPProtoSender sender = new AuthenticatedLineTCPProtoSender(authKeyId, authPrivateKey, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
                     sender.authenticate();
                     senders[n] = sender;
                 } else {
@@ -215,10 +228,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 sender.$(ts * 1000);
                 sender.flush();
                 ts += rand.nextInt(1000);
-
-                if (nRow == tables.length) {
-                    tablesCreated.await();
-                }
             }
 
             for (int n = 0; n < senders.length; n++) {
@@ -226,6 +235,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 sender.close();
             }
 
+            tablesCreated.await();
             int nRowsWritten;
             do {
                 nRowsWritten = 0;
@@ -239,13 +249,14 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     }
                 }
             } while (nRowsWritten < nRows);
-
+            LOG.info().$(nRowsWritten).$(" rows written").$();
+            sharedWorkerPool.halt();
             Misc.free(tcpServer);
         }
-        sharedWorkerPool.halt();
 
         for (int n = 0; n < tables.length; n++) {
             String tableName = tables[n];
+            LOG.info().$("checking table ").$(tableName).$();
             assertTable(expectedSbs[n].toString(), tableName);
         }
     }

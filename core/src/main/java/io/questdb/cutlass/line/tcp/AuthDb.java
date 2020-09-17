@@ -108,35 +108,6 @@ public class AuthDb {
                 ECPublicKeySpec pubKeySpec = new ECPublicKeySpec(point, ecParameters);
                 PublicKey publicKey = KeyFactory.getInstance(EC_ALGORITHM).generatePublic(pubKeySpec);
                 publicKeyByKeyId.put(keyId, publicKey);
-
-                // byte[] dBytes = Base64.getUrlDecoder().decode("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
-                //
-                // BigInteger privateKeyInt = new BigInteger(dBytes);
-                // KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC");
-                // AlgorithmParameterSpec prime256v1ParamSpec = new ECGenParameterSpec("secp256r1");
-                // keyPairGenerator.initialize(prime256v1ParamSpec);
-                // ECParameterSpec parameterSpec = ((ECKey) keyPairGenerator.generateKeyPair().getPrivate()).getParams();
-                // ECPrivateKeySpec privateKeySpec = new ECPrivateKeySpec(privateKeyInt, parameterSpec);
-                // PrivateKey privateKey = KeyFactory.getInstance("EC", "SunEC").generatePrivate(privateKeySpec);
-                // PrivateKey privateKey2 = importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
-                //
-                // assert null != privateKeySpec.getParams();
-                //
-                // Signature sig = Signature.getInstance("SHA256withECDSA");
-                // sig.initSign(privateKey);
-                // byte[] data = "test".getBytes();
-                // sig.update(data);
-                // byte[] s = sig.sign();
-                // System.out.println("Signed with hardware key.");
-                //
-                // // verify the signature
-                // sig = Signature.getInstance("SHA256withECDSA");
-                // sig.initVerify(publicKey);
-                // sig.update(data);
-                // if (!sig.verify(s)) {
-                // throw new IllegalArgumentException("signature did not verify");
-                // }
-                // System.out.println("Verified with hardware key.");
             } while (null != line);
         } catch (Exception ex) {
             throw new IllegalArgumentException("IO error, failed to read auth db file " + configuration.getAuthDbPath() + " at line " + nLine, ex);
