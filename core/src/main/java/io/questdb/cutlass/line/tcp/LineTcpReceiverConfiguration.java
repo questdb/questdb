@@ -32,7 +32,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.microtime.MicrosecondClock;
 
 public interface LineTcpReceiverConfiguration {
-
     boolean isEnabled();
 
     CairoSecurityContext getCairoSecurityContext();
@@ -62,4 +61,6 @@ public interface LineTcpReceiverConfiguration {
     int getMaxUncommittedRows();
 
     long getMaintenanceJobHysteresisInMs();
+    
+    String getAuthDbPath();
 }

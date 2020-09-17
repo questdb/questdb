@@ -39,15 +39,15 @@ import io.questdb.std.time.MillisecondClock;
 class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
-    private final NetworkFacade nf;
+    protected final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;
     private final MillisecondClock milliClock;
-    private long fd;
-    private IODispatcher<LineTcpConnectionContext> dispatcher;
-    private long recvBufStart;
-    private long recvBufEnd;
-    private long recvBufPos;
-    private boolean peerDisconnected;
+    protected long fd;
+    protected IODispatcher<LineTcpConnectionContext> dispatcher;
+    protected long recvBufStart;
+    protected long recvBufEnd;
+    protected long recvBufPos;
+    protected boolean peerDisconnected;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private long lastQueueFullLogMillis = 0;
 
@@ -63,25 +63,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     boolean handleIO() {
         try {
             // Read as much data as possible
-            int len = (int) (recvBufEnd - recvBufPos);
-            while (len > 0 && !peerDisconnected) {
-                int nRead = nf.recv(fd, recvBufPos, len);
-                if (nRead < 0) {
-                    if (recvBufPos != recvBufStart) {
-                        LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
-                    } else {
-                        LOG.info().$('[').$(fd).$("] peer disconnected").$();
-                    }
-                    peerDisconnected = true;
-                } else {
-                    if (nRead > 0) {
-                        recvBufPos += nRead;
-                        len -= nRead;
-                    } else {
-                        break;
-                    }
-                }
-            }
+            int len;
+            read();
 
             // Process as much data as possible
             long recvBufLineStart = recvBufStart;
@@ -116,11 +99,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
             // Compact input buffer
             if (recvBufLineStart != recvBufStart) {
-                len = (int) (recvBufPos - recvBufLineStart);
-                if (len > 0) {
-                    Unsafe.getUnsafe().copyMemory(recvBufLineStart, recvBufStart, len);
-                }
-                recvBufPos = recvBufStart + len;
+                compactBuffer(recvBufLineStart);
             }
 
             if (queueFull) {
@@ -146,6 +125,38 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             LOG.error().$('[').$(fd).$("] could not process line data").$(ex).$();
             dispatcher.disconnect(this);
             return false;
+        }
+    }
+
+    protected final void compactBuffer(long recvBufNewStart) {
+        assert recvBufNewStart <= recvBufPos;
+        int len;
+        len = (int) (recvBufPos - recvBufNewStart);
+        if (len > 0) {
+            Unsafe.getUnsafe().copyMemory(recvBufNewStart, recvBufStart, len);
+        }
+        recvBufPos = recvBufStart + len;
+    }
+
+    protected final void read() {
+        int len = (int) (recvBufEnd - recvBufPos);
+        while (len > 0 && !peerDisconnected) {
+            int nRead = nf.recv(fd, recvBufPos, len);
+            if (nRead < 0) {
+                if (recvBufPos != recvBufStart) {
+                    LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+                } else {
+                    LOG.info().$('[').$(fd).$("] peer disconnected").$();
+                }
+                peerDisconnected = true;
+            } else {
+                if (nRead > 0) {
+                    recvBufPos += nRead;
+                    len -= nRead;
+                } else {
+                    break;
+                }
+            }
         }
     }
 

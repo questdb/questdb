@@ -24,6 +24,10 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.WorkerPoolAwareConfiguration.ServerFactory;
@@ -39,11 +43,9 @@ import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 public class LineTcpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpServer.class);
@@ -112,11 +114,11 @@ public class LineTcpServer implements Closeable {
         }
 
         ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (netWorkerPoolConfiguration, engine, workerPool, local, bus,
-                                                                              functionfactory) -> new LineTcpServer(
-                lineConfiguration,
-                cairoEngine,
-                workerPool,
-                bus);
+                functionfactory) -> new LineTcpServer(
+                        lineConfiguration,
+                        cairoEngine,
+                        workerPool,
+                        bus);
         return WorkerPoolAwareConfiguration.create(lineConfiguration.getWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, null);
     }
 
@@ -131,11 +133,16 @@ public class LineTcpServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<LineTcpConnectionContext>> contextPool;
         private boolean closed = false;
 
-        @SuppressWarnings("unused")
         public LineTcpConnectionContextFactory(CairoEngine engine, LineTcpReceiverConfiguration configuration, @Nullable MessageBus messageBus) {
-            this.contextPool = new ThreadLocal<>(
-                    () -> new WeakObjectPool<>(() -> new LineTcpConnectionContext(configuration, scheduler, engine.getConfiguration().getMillisecondClock()),
-                            configuration.getConnectionPoolInitialCapacity()));
+            ObjectFactory<LineTcpConnectionContext> factory;
+            if (null == configuration.getAuthDbPath()) {
+                factory = () -> new LineTcpConnectionContext(configuration, scheduler, engine.getConfiguration().getMillisecondClock());
+            } else {
+                AuthDb authDb = new AuthDb(configuration);
+                factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, engine.getConfiguration().getMillisecondClock());
+            }
+
+            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

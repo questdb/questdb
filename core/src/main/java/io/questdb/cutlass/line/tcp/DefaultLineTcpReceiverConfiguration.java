@@ -113,4 +113,9 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public long getMaintenanceJobHysteresisInMs() {
         return 100;
     }
+	
+	@Override
+	public String getAuthDbPath() {
+	    return null;
+	}
 }

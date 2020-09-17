@@ -24,8 +24,20 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import java.net.URL;
+import java.security.PrivateKey;
+import java.util.Random;
+import java.util.function.Supplier;
+
+import org.junit.Test;
+
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.line.udp.AuthenticatedLineTCPProtoSender;
 import io.questdb.cutlass.line.udp.LineProtoSender;
 import io.questdb.cutlass.line.udp.LineTCPProtoSender;
 import io.questdb.log.Log;
@@ -42,16 +54,23 @@ import io.questdb.std.Os;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import org.junit.Test;
-
-import java.util.Random;
-import java.util.function.Supplier;
 
 public class LineTcpServerTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
+    private final static String AUTH_KEY_ID = "testUser1";
+    private final static PrivateKey AUTH_PRIVATE_KEY = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
 
     @Test(timeout = 120000)
-    public void test() {
+    public void testUnauthenticated() {
+        test(false);
+    }
+
+    @Test(timeout = 12000000)
+    public void testGoodAuthenticated() {
+        test(true);
+    }
+
+    private void test(boolean authenticated) {
         WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
             private final int[] affinity = { -1, -1 };
 
@@ -115,11 +134,20 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 // Always rebalance as long as there are more tables than threads;
                 return 1;
             }
+
+            @Override
+            public String getAuthDbPath() {
+                if (!authenticated) {
+                    return null;
+                }
+                URL u = getClass().getResource("authDb.txt");
+                return u.getFile();
+            }
         };
 
         final int nRows = 1000;
-        final String[] tables = {"weather1", "weather2", "weather3"};
-        final String[] locations = {"london", "paris", "rome"};
+        final String[] tables = { "weather1", "weather2", "weather3" };
+        final String[] locations = { "london", "paris", "rome" };
 
         final Random rand = new Random(0);
         final StringBuilder[] expectedSbs = new StringBuilder[tables.length];
@@ -152,7 +180,13 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
             final LineProtoSender[] senders = new LineProtoSender[tables.length];
             for (int n = 0; n < senders.length; n++) {
-                senders[n] = new LineTCPProtoSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                if (authenticated) {
+                    AuthenticatedLineTCPProtoSender sender = new AuthenticatedLineTCPProtoSender(AUTH_KEY_ID, AUTH_PRIVATE_KEY, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                    sender.authenticate();
+                    senders[n] = sender;
+                } else {
+                    senders[n] = new LineTCPProtoSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                }
                 StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
                 sb.append("location\ttemp\ttimestamp\n");
                 expectedSbs[n] = sb;
