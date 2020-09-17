@@ -26,13 +26,11 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.std.Misc;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
-class ByteCaseFunction extends ByteFunction {
+class ByteCaseFunction extends ByteFunction implements MultiArgFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 
@@ -43,22 +41,12 @@ class ByteCaseFunction extends ByteFunction {
     }
 
     @Override
+    public ObjList<Function> getArgs() {
+        return args;
+    }
+
+    @Override
     public byte getByte(Record rec) {
         return picker.pick(rec).getByte(rec);
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        Function.init(args, symbolTableSource, executionContext);
-    }
-
-    @Override
-    public void toTop() {
-        Function.toTop(args);
-    }
-
-    @Override
-    public void close() {
-        Misc.freeObjList(args);
     }
 }

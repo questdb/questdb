@@ -24,54 +24,19 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class LastTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
-    private final Function arg;
-    private int valueIndex;
+public class LastTimestampGroupByFunction extends FirstTimestampGroupByFunction {
 
     public LastTimestampGroupByFunction(int position, @NotNull Function arg) {
-        super(position);
-        this.arg = arg;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putTimestamp(valueIndex, arg.getTimestamp(record));
+        super(position, arg);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        computeFirst(mapValue, record);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.TIMESTAMP);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putTimestamp(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public long getTimestamp(Record rec) {
-        return rec.getTimestamp(valueIndex);
+        super.computeFirst(mapValue, record);
     }
 }

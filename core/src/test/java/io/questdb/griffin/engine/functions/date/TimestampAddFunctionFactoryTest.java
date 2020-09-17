@@ -35,7 +35,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testCenterEmptyChar() throws SqlException {
-        call(Character.MIN_VALUE, 5, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call(Character.MIN_VALUE, 5, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -66,6 +66,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('d', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -78,6 +79,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('d', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -90,6 +92,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('h', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -102,6 +105,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('h', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -114,6 +118,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('m', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -126,6 +131,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('m', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -138,6 +144,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('M', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -150,6 +157,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('M', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -162,6 +170,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('s', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -174,6 +183,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('s', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -186,6 +196,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('w', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -198,6 +209,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('w', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -210,6 +222,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('y', cast(x as int), Cast(NaN as Long)) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
@@ -222,48 +235,49 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
                         "\n",
                 "select dateadd('y', case when x = 1 then cast(x as int) else Cast(NaN as int) end, 1587275359886758L) from long_sequence(2)",
                 null,
+                true,
                 true
         );
     }
 
     @Test
     public void testLeftNaNDay() throws SqlException {
-        call('d', 5, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('d', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testLeftNaNHour() throws SqlException {
-        call('h', 5, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('h', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testLeftNaNMinute() throws SqlException {
-        call('m', 5, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('m', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testLeftNaNMonth() throws SqlException {
-        call('M', 5, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('M', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testLeftNaNSecond() throws SqlException {
-        call('s', 5, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('s', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testLeftNaNWeek() throws SqlException {
-        call('w', 5, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('w', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testLeftNaNYear() throws SqlException {
-        call('y', 5, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('y', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testLeftNan() throws SqlException {
-        call('d', 5, Numbers.LONG_NaN).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('d', 5, Numbers.LONG_NaN).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -288,37 +302,37 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testRightNaNDay() throws SqlException {
-        call('d', Numbers.INT_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('d', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testRightNaNHour() throws SqlException {
-        call('h', Numbers.INT_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('h', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testRightNaNMinute() throws SqlException {
-        call('m', Numbers.INT_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('m', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testRightNaNMonth() throws SqlException {
-        call('M', Numbers.INT_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('M', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testRightNaNSecond() throws SqlException {
-        call('s', Numbers.INT_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('s', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testRightNaNWeek() throws SqlException {
-        call('w', Numbers.INT_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('w', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
     public void testRightNaNYear() throws SqlException {
-        call('y', Numbers.INT_NaN, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('y', Numbers.INT_NaN, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
@@ -333,7 +347,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testUnknownPeriod() throws SqlException {
-        call('q', 5, 1587275359886758L).andAssert(Numbers.LONG_NaN, 0.0001);
+        call('q', 5, 1587275359886758L).andAssert(Double.NaN, 0.0001);
     }
 
     @Test

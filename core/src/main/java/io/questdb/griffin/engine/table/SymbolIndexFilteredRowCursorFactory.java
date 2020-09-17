@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.std.IntList;
 
 public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;
@@ -38,14 +39,16 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
             int symbolKey,
             Function filter,
             boolean cachedIndexReaderCursor,
-            int indexDirection
+            int indexDirection,
+            IntList columnIndexes
     ) {
         this.cursor = new SymbolIndexFilteredRowCursor(
                 columnIndex,
                 symbolKey,
                 filter,
                 cachedIndexReaderCursor,
-                indexDirection
+                indexDirection,
+                columnIndexes
         );
     }
 

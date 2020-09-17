@@ -24,12 +24,11 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 
-public class FloatColumn extends FloatFunction implements StatelessFunction, NoArgFunction {
+public class FloatColumn extends FloatFunction implements Function {
     private final int columnIndex;
 
     public FloatColumn(int position, int columnIndex) {

@@ -131,7 +131,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -161,7 +161,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, true);
             }
         });
     }
@@ -198,7 +198,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -222,7 +222,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y union all z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, false);
             }
         });
     }
@@ -257,7 +257,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -272,9 +272,56 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, false);
             }
         });
+    }
+
+    @Test
+    public void testExcept() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+
+            assertQuery(
+                    "groupid\tcontact\n" +
+                            "grp1\tamy\n" +
+                            "grp1\tbobby\n",
+                    "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
+                            "except\n" +
+                            "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'",
+                    null,
+                    true
+            );
+        });
+
+    }
+
+    @Test
+    public void testIntersect() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+
+            assertQuery(
+                    "groupid\tcontact\n" +
+                            "grp1\tstewy\n",
+                    "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
+                            "intersect\n" +
+                            "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'",
+                    null,
+                    true
+            );
+        });
+
     }
 
     @Test
@@ -366,7 +413,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -421,7 +468,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union y union z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, false);
             }
         });
     }
@@ -525,7 +572,7 @@ public class UnionTest extends AbstractGriffinTest {
 
 
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true);
+                assertCursor(expected, rcf, true, true, true);
             }
 
             SharedRandom.RANDOM.get().reset();
@@ -582,7 +629,7 @@ public class UnionTest extends AbstractGriffinTest {
             );
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true);
+                assertCursor(expected2, factory, false, true, false);
             }
         });
     }

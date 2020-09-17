@@ -10,10 +10,8 @@ deep diving into the code base.
 
 ### Requirements
 
-- Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX / **ARM
-  (AArch64/A64)**: Linux
-- Java 11 64-bit. We recommend Oracle Java 11, but OpenJDK 11 will also work
-  (although a little slower)
+- Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX
+- Java 11 64-bit
 - Maven 3 (from your package manager on Linux / OSX
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
@@ -45,13 +43,10 @@ git to make build of development process Java-centric and simplified.
 
 ## Setup Java and JAVA_HOME
 
-Java versions above 8 are not yet supported. It is possible to build QuestDB
-with Java 11, but this requires backward incompatible changes. If your java
-version is above 8 you can download & install JDK8 and use the absolute path to
-the java executable instead of "`java`".
+JAVA_HOME is required by Maven. It is possible to have multiple version of Java on the same platform. Please
+set up JAVA_HOME to point to Java 11. Other versions of Java may not work. If you are new to Java please
+check that JAVA_HOME is pointing to the root of Java directory: `C:\Users\me\dev\jdk-11.0.8` and *not* `C:\Users\me\dev\jdk-11.0.8\bin\java`.
 
-Unless your default Java is 11 you may want to set `JAVA_HOME` to the Java 11
-directory before running `maven`:
 
 Linux/OSX
 
@@ -67,36 +62,36 @@ set JAVA_HOME="c:\path\to\java directory"
 
 ## Compiling Java and frontend code
 
-Compiling the database + the web console is done with:
+Compiling the database + the web console can be done with:
 
 ```bash
-mvn clean package
+mvn clean package -DskipTests -P build-web-console
 ```
 
 You can then run QuestDB with:
 
 ```bash
-java -cp core/target/core-4.2.1-SNAPSHOT.jar io.questdb.ServerMain -d <root_dir>
+java -p core/target/questdb-5.0.4-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
 ```
 
 The web console will available at [localhost:9000](http://localhost:9000).
 
 ## Compiling C-libraries
 
-C-libraries will have to be compiled for each platform separately. The following
-commands will compile on Linux/OSX:
+C-libraries will have to be compiled for each platform separately. Cmake will also need JAVA_HOME to be set. The following
+commands will compile on Linux/OSX.
 
 ```text
 cmake
 make
 ```
 
-on Windows we use Intellij CLion, which can open cmake files.
+For C development we use Intellij CLion. This IDEA "understands" cmake files and will make compilation easier.
 
-The artifacts are distributed as follow:
+The build will copy artifacts as follows:
 
 ```
-core/src/main/c -> core/src/main/resources/binaries
+core/src/main/c -> core/src/main/resources/io/questdb/bin
 ```
 
 # Local setup for frontend development
@@ -114,18 +109,21 @@ rebuild the artifacts and restart QuestDB. Instead, we use `webpack-dev-server`:
 The web console should now be accessible at
 [localhost:9999](http://localhost:9999)
 
-## Building the artifacts
+Development server running on port 9999 will monitor for web console file changes and will rebuild/deploy on the fly. The 
+web console front end will be connecting to QuestDB REST API on port 9000. Keep QuestDB server running. 
+
+## Building web console bundle into questdb.jar
 
 Run the command:
 
 ```bash
-mvn clean package
+mvn clean package -DskipTests -P build-web-console
 ```
 
-The artifacts are distributed as follow:
+The build will copy artifacts as follows:
 
 ```
-ui -> core/src/main/resources/site/public
+ui -> core/src/main/resources/io/questdb/site/public.zip
 ```
 
 # Testing
@@ -133,14 +131,14 @@ ui -> core/src/main/resources/site/public
 We have a lot of unit tests, most of which are of "integration" type, e.g. test
 starts a server, interacts with it and asserts the outcome. We expect all
 contributors to submit PRs with tests. Please reach out to us via slack if you
-uncertain on how to test or you think existing test is inadequate and should be
+uncertain on how to test, or you think existing test is inadequate and should be
 removed.
 
 # Dependencies
 
 QuestDB does not have dependencies. This may sound unorthodox but in reality we
-try not to reinvent the wheel but rather than using libraries we implement best
-algorithms ourselves to ensure perfect fit with existing code. With that in mind
+try not to reinvent the wheel but rather than using libraries we implement algorithms on first principles
+to ensure perfect fit with existing code. With that in mind
 we expect contributions that do not add third-party dependencies.
 
 # Allocations, "new" operator and garbage collection
@@ -183,11 +181,14 @@ really helpful and keeps our repository concise and clean.
 
 # FAQ
 
-#### Everything works fine but I get a `404` on [localhost:9000](http://localhost:9000)
+#### Everything works fine, but I get a `404` on [localhost:9000](http://localhost:9000)
 
-This means that the frontend artifacts are not present in
-`core/src/main/resources/site/public`. To fix this, you can simply run `mvn
-clean package#.
+This means that the web console artifacts are not present in
+`core/src/main/resources/io/questdb/site/public.zip`. To fix this, you can simply run: 
+
+```bash
+mvn clean package -DskipTests -P build-web-console
+```
 
 #### I do not want to install `Node.js` and/or it is clashing with my system installation of `Node.js`
 
@@ -198,8 +199,8 @@ multiple active versions.
 Otherwise, you can use the dedicated `maven` profile to build the code:
 
 ```bash
-mvn clean package -Dprofile.install-local-nodejs
+mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
 ```
 
 That way, `maven` will install `node` on the fly in `ui/node` so you don't have
-to install it locall.
+to install it locally.

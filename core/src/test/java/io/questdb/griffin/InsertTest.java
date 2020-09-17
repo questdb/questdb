@@ -105,9 +105,8 @@ public class InsertTest extends AbstractGriffinTest {
             }
 
             BindVariableService bindVariableService = new BindVariableService();
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(messageBus,
-                    1,
-                    engine).with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, null, -1, null);
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, null, -1, null);
 
             bindVariableService.setDouble("bal", 56.4);
 
@@ -127,20 +126,6 @@ public class InsertTest extends AbstractGriffinTest {
                         "1\tGBP\t56.4\n",
                 sink
         );
-    }
-
-    @Test
-    public void testInsertInvalidColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            try {
-                compiler.compile("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(30, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
-            }
-        });
     }
 
     @Test
@@ -198,6 +183,127 @@ public class InsertTest extends AbstractGriffinTest {
 
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertInvalidColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(30, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNoSelfReference() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into trades_aapl (ts) values (ts)", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(37, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            CompiledQuery cq = compiler.compile("insert into balances values (1, 'USD', 356.12)", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            String expected = "cust_id\tccy\tbalance\n" +
+                    "1\tUSD\t356.12\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNotEnoughFields() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into balances values (1, 'USD')", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(37, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "not enough values");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSingleAndMultipleCharacterSymbols() throws Exception {
+        final String expected = "sym\tid\tts\n" +
+                "A\t315515118\t1970-01-03T00:00:00.000000Z\n" +
+                "BB\t-727724771\t1970-01-03T00:06:00.000000Z\n" +
+                "BB\t-948263339\t1970-01-03T00:12:00.000000Z\n" +
+                "CC\t592859671\t1970-01-03T00:18:00.000000Z\n" +
+                "CC\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
+                "A\t-2041844972\t1970-01-03T00:30:00.000000Z\n" +
+                "CC\t-1575378703\t1970-01-03T00:36:00.000000Z\n" +
+                "BB\t1545253512\t1970-01-03T00:42:00.000000Z\n" +
+                "A\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
+                "BB\t339631474\t1970-01-03T00:54:00.000000Z\n";
+
+        assertQuery(
+                "sym\tid\tts\n",
+                "x",
+                "create table x (\n" +
+                        "    sym symbol index,\n" +
+                        "    id int,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym, \n" +
+                        "        rnd_int() id, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(10)) timestamp (ts)",
+                expected,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertSingleCharacterSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ww (id int, sym symbol)", sqlExecutionContext);
+            CompiledQuery cq = compiler.compile("insert into ww VALUES ( 2, 'A')", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+            InsertStatement insert = cq.getInsertStatement();
+            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
+                method.execute();
+                method.commit();
+            }
+
+            String expected = "id\tsym\n" +
+                    "2\tA\n";
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
@@ -297,113 +403,6 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertNoSelfReference() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)", sqlExecutionContext);
-            try {
-                compiler.compile("insert into trades_aapl (ts) values (ts)", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(37, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
-            }
-        });
-    }
-
-    @Test
-    public void testInsertNoTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            CompiledQuery cq = compiler.compile("insert into balances values (1, 'USD', 356.12)", sqlExecutionContext);
-            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
-            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
-                method.execute();
-                method.commit();
-            }
-
-            String expected = "cust_id\tccy\tbalance\n" +
-                    "1\tUSD\t356.12\n";
-
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
-        });
-    }
-
-    @Test
-    public void testInsertSingleCharacterSymbol() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table ww (id int, sym symbol)", sqlExecutionContext);
-            CompiledQuery cq = compiler.compile("insert into ww VALUES ( 2, 'A')", sqlExecutionContext);
-            Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-            InsertStatement insert = cq.getInsertStatement();
-            try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
-                method.execute();
-                method.commit();
-            }
-
-            String expected = "id\tsym\n" +
-                    "2\tA\n";
-
-            sink.clear();
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                TestUtils.assertEquals(expected, sink);
-            }
-        });
-    }
-
-    @Test
-    public void testInsertSingleAndMultipleCharacterSymbols() throws Exception {
-        final String expected = "sym\tid\tts\n" +
-                "A\t315515118\t1970-01-03T00:00:00.000000Z\n" +
-                "BB\t-727724771\t1970-01-03T00:06:00.000000Z\n" +
-                "BB\t-948263339\t1970-01-03T00:12:00.000000Z\n" +
-                "CC\t592859671\t1970-01-03T00:18:00.000000Z\n" +
-                "CC\t-847531048\t1970-01-03T00:24:00.000000Z\n" +
-                "A\t-2041844972\t1970-01-03T00:30:00.000000Z\n" +
-                "CC\t-1575378703\t1970-01-03T00:36:00.000000Z\n" +
-                "BB\t1545253512\t1970-01-03T00:42:00.000000Z\n" +
-                "A\t1573662097\t1970-01-03T00:48:00.000000Z\n" +
-                "BB\t339631474\t1970-01-03T00:54:00.000000Z\n";
-
-        assertQuery(
-                "sym\tid\tts\n",
-                "x",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    id int,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('A', 'BB', 'CC', 'DDD') sym, \n" +
-                        "        rnd_int() id, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
-    }
-
-
-
-    @Test
-    public void testInsertNotEnoughFields() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            try {
-                compiler.compile("insert into balances values (1, 'USD')", sqlExecutionContext);
-            } catch (SqlException e) {
-                Assert.assertEquals(37, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "not enough values");
-            }
-        });
-    }
-
-    @Test
     public void testInsertValueCannotReferenceTableColumn() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
@@ -427,14 +426,27 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertWrongTypeConstant() throws Exception {
+    public void testInsertWithLessColumnsThanExistingTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table test (a timestamp)", sqlExecutionContext);
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
-                compiler.compile("insert into test values ('2013')", sqlExecutionContext);
+                compiler.compile("insert into tab select x ac  from long_sequence(10)", sqlExecutionContext);
             } catch (SqlException e) {
-                Assert.assertEquals(25, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: STRING -> TIMESTAMP");
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "select clause must provide timestamp column");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertWithWrongNominatedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
+            try {
+                compiler.compile("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "nominated column of existing table");
             }
         });
     }
@@ -458,25 +470,13 @@ public class InsertTest extends AbstractGriffinTest {
                 "tab",
                 "create table tab(seq long, ts timestamp) timestamp(ts);",
                 "ts",
-                    "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)",
+                "insert into tab select x ac, timestamp_sequence(0, x) ts from long_sequence(10)",
                 expected,
+                true,
+                true,
                 true
         );
     }
-
-    @Test
-    public void testInsertWithLessColumnsThanExistingTable() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
-            try {
-                compiler.compile("insert into tab select x ac  from long_sequence(10)", sqlExecutionContext);
-            } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "select clause must provide timestamp column");
-            }
-        });
-    }
-
 
     @Test
     public void testInsertWithoutNominatedTimestampAndTypeDoesNotMatch() throws Exception {
@@ -492,20 +492,16 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertWithWrongNominatedColumn() throws Exception {
+    public void testInsertWrongTypeConstant() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
+            compiler.compile("create table test (a timestamp)", sqlExecutionContext);
             try {
-                compiler.compile("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+                compiler.compile("insert into test values ('2013')", sqlExecutionContext);
             } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "nominated column of existing table");
+                Assert.assertEquals(25, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: STRING -> TIMESTAMP");
             }
         });
-    }
-
-    @Test
-    public void testSimpleCannedInsert() {
     }
 
     private void testBindVariableInsert(

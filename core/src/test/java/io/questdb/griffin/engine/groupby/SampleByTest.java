@@ -112,7 +112,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "LOPJ\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
                         "VDKF\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
                         "OXPK\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -283,7 +286,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "1970-01-04T07:00:00.000000Z\t76.6815\t5.158459929273784\t1920398380\t38\t16628\t3527911398466283309\n" +
                         "1970-01-04T08:00:00.000000Z\t4.3606\t35.68111021227658\t503883303\t38\t10895\t7202923278768687325\n" +
                         "1970-01-04T09:00:00.000000Z\t45.9207\t76.06252634124596\t2043541236\t21\t19278\t1832315370633201942\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -317,7 +323,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "UU\t4\n" +
                         "XY\t6\n" +
                         "ZP\t5\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -351,7 +360,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "\t1\n" +
                         "KK\t1\n" +
                         "PL\t1\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -379,7 +391,10 @@ public class SampleByTest extends AbstractGriffinTest {
                 "c\tsum_t\n" +
                         "PL\t1.088880189118224\n" +
                         "KK\t2.614956708935964\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -420,7 +435,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", sqlExecutionContext).getRecordCursorFactory()) {
@@ -428,7 +443,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot mmap");
+                        TestUtils.assertContains(e.getMessage(), "Could not mmap");
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -472,7 +487,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "ZP\t0.7836635625207334\n" +
                         "KK\t1.6435699091508287\n" +
                         "PL\t1.1627169669458202\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -490,6 +508,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(20)" +
                         ")",
                 null,
+                true,
+                true,
                 true
         );
     }
@@ -789,7 +809,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "PEHN\t10\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t-5\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t32\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -944,7 +967,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "HYRX\tNaN\t1970-01-04T06:00:00.000000Z\n" +
                         "VTJW\tNaN\t1970-01-04T06:00:00.000000Z\n" +
                         "RXGZ\tNaN\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1124,7 +1150,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "ZGHW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "LOPJ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "VDKF\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1170,7 +1199,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "DEYY\t29.313718795776367\t16.47436916993191\t66297136\t4\t3428\t9036423629723776443\t1970-01-04T09:00:00.000000Z\n" +
                         "\t49.25778913497925\t94.75038154677522\t-330667436\t47\t-26781\t8219504976477969408\t1970-01-04T09:00:00.000000Z\n" +
                         "SXUX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1316,7 +1348,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         "PEHN\t-163.67975914069712\t1970-01-04T09:00:00.000000Z\n" +
                         "HYRX\t-673.453149968598\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1381,7 +1416,10 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(10000)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -1418,7 +1456,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine engine = new CairoEngine(configuration, null)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext);
@@ -1476,7 +1514,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "Could not mmap"));
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -1895,6 +1933,62 @@ public class SampleByTest extends AbstractGriffinTest {
                         "0.35983672154330515\t1970-01-04T03:00:00.000000Z\n" +
                         "202.74607309827718\t1970-01-04T06:00:00.000000Z\n" +
                         "57.93466326862211\t1970-01-04T09:00:00.000000Z\n",
+                false);
+    }
+
+    @Test
+    public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by 100T fill(none)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 100) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 100000) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k)",
+                "sum\tk\n" +
+                        "0.35983672154330515\t1970-01-04T05:00:00.000000Z\n" +
+                        "76.75673070796104\t1970-01-04T05:00:00.100000Z\n" +
+                        "62.173267078530984\t1970-01-04T05:00:00.200000Z\n" +
+                        "63.81607531178513\t1970-01-04T05:00:00.300000Z\n" +
+                        "57.93466326862211\t1970-01-04T05:00:00.400000Z\n" +
+                        "12.026122412833129\t1970-01-04T05:00:00.500000Z\n" +
+                        "48.820511018586934\t1970-01-04T05:00:00.600000Z\n" +
+                        "26.922103479744898\t1970-01-04T05:00:00.700000Z\n" +
+                        "52.98405941762054\t1970-01-04T05:00:00.800000Z\n" +
+                        "84.45258177211063\t1970-01-04T05:00:00.900000Z\n" +
+                        "97.5019885372507\t1970-01-04T05:00:01.000000Z\n" +
+                        "49.00510449885239\t1970-01-04T05:00:01.100000Z\n" +
+                        "80.01121139739173\t1970-01-04T05:00:01.200000Z\n" +
+                        "92.050039469858\t1970-01-04T05:00:01.300000Z\n" +
+                        "45.6344569609078\t1970-01-04T05:00:01.400000Z\n" +
+                        "40.455469747939254\t1970-01-04T05:00:01.500000Z\n" +
+                        "56.594291398612405\t1970-01-04T05:00:01.600000Z\n" +
+                        "9.750574414434398\t1970-01-04T05:00:01.700000Z\n" +
+                        "12.105630273556178\t1970-01-04T05:00:01.800000Z\n" +
+                        "57.78947915182423\t1970-01-04T05:00:01.900000Z\n" +
+                        "86.85154305419587\t1970-01-04T05:00:02.000000Z\n" +
+                        "12.02416087573498\t1970-01-04T05:00:02.100000Z\n" +
+                        "49.42890511958454\t1970-01-04T05:00:02.200000Z\n" +
+                        "58.912164838797885\t1970-01-04T05:00:02.300000Z\n" +
+                        "67.52509547112409\t1970-01-04T05:00:02.400000Z\n" +
+                        "44.80468966861358\t1970-01-04T05:00:02.500000Z\n" +
+                        "89.40917126581896\t1970-01-04T05:00:02.600000Z\n" +
+                        "94.41658975532606\t1970-01-04T05:00:02.700000Z\n" +
+                        "62.5966045857722\t1970-01-04T05:00:02.800000Z\n" +
+                        "94.55893004802432\t1970-01-04T05:00:02.900000Z\n",
                 false);
     }
 
@@ -4057,9 +4151,9 @@ public class SampleByTest extends AbstractGriffinTest {
                         "RXGZ\t20.56\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
                         "HYRX\t20.56\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n";
 
-                assertCursor(expected, factory, false, true);
+                assertCursor(expected, factory, false, true, false, false);
                 // make sure we get the same outcome when we get factory to create new cursor
-                assertCursor(expected, factory, false, true);
+                assertCursor(expected, factory, false, true, false, false);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
                 assertVariableColumns(factory, true);
 

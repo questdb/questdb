@@ -44,6 +44,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected int keyCount;
     protected long unIndexedNullCount;
     private int keyCountIncludingNulls;
+    public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
 
     @Override
     public void close() {
@@ -108,8 +109,8 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 }
 
                 if (clock.getTicks() > deadline) {
-                    LOG.error().$("failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
-                    throw CairoException.instance(0).put("failed to read index header consistently [corrupt?]");
+                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                    throw CairoException.instance(0).put(INDEX_CORRUPT);
                 }
 
                 LockSupport.parkNanos(1);
@@ -150,8 +151,8 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             if (clock.getTicks() > deadline) {
                 this.keyCount = 0;
-                LOG.error().$("failed to consistently update key count [corrupt index?] [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
-                throw CairoException.instance(0).put("failed to consistently update key count [corrupt index?]");
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                throw CairoException.instance(0).put(INDEX_CORRUPT);
             }
         }
 

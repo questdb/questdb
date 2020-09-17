@@ -28,6 +28,8 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 public interface FilesFacade {
+    public static final long MAP_FAILED = -1;
+
     long append(long fd, long buf, int len);
 
     boolean close(long fd);
@@ -73,6 +75,8 @@ public interface FilesFacade {
     int mkdirs(LPSZ path, int mode);
 
     long mmap(long fd, long size, long offset, int mode);
+
+    long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode);
 
     void munmap(long address, long size);
 

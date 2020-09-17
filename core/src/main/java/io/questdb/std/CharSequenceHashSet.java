@@ -181,10 +181,10 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
 
     private void rehash() {
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
-        this.keys = new CharSequence[arrayCapacity];
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
+        this.keys = new CharSequence[len];
+        mask = len - 1;
         Arrays.fill(keys, null);
         int n = list.size();
         free -= n;

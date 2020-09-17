@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -110,7 +110,6 @@ public class HttpServer implements Closeable {
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
             CairoEngine cairoEngine,
-            MessageBus messageBus,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) {
         return WorkerPoolAwareConfiguration.create(
@@ -119,7 +118,6 @@ public class HttpServer implements Closeable {
                 workerPoolLog,
                 cairoEngine,
                 CREATE0,
-                messageBus,
                 functionFactoryCache
         );
     }
@@ -129,15 +127,13 @@ public class HttpServer implements Closeable {
             HttpServerConfiguration configuration,
             WorkerPool sharedWorkerPool,
             Log workerPoolLog,
-            CairoEngine cairoEngine,
-            MessageBus messageBus
+            CairoEngine cairoEngine
     ) {
         return create(
                 configuration,
                 sharedWorkerPool,
                 workerPoolLog,
                 cairoEngine,
-                messageBus,
                 null
         );
     }
@@ -216,7 +212,7 @@ public class HttpServer implements Closeable {
         s.bind(new HttpRequestProcessorFactory() {
             @Override
             public HttpRequestProcessor newInstance() {
-                return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
+                return new StaticContentProcessor(configuration);
             }
 
             @Override
@@ -227,7 +223,7 @@ public class HttpServer implements Closeable {
 
         // jobs that help parallel execution of queries
         workerPool.assign(new ColumnIndexerJob(messageBus));
-        workerPool.assign(new GroupByNotKeyedJob(messageBus));
+        workerPool.assign(new GroupByJob(messageBus));
         return s;
 
     }

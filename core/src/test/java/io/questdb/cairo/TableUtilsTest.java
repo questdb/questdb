@@ -132,11 +132,6 @@ public class TableUtilsTest {
     }
 
     @Test
-    public void testInstantiation() {
-        new TableUtils();
-    }
-
-    @Test
     public void testUnknownTodo() {
         TestUtils.assertEquals("unknown", TableUtils.getTodoText(7879797987L));
     }

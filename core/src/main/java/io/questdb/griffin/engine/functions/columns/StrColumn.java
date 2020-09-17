@@ -24,13 +24,12 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.str.CharSink;
 
-public class StrColumn extends StrFunction implements StatelessFunction, NoArgFunction {
+public class StrColumn extends StrFunction implements Function {
     private final int columnIndex;
 
     public StrColumn(int position, int columnIndex) {

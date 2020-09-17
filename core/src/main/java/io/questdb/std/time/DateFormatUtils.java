@@ -44,6 +44,7 @@ public class DateFormatUtils {
     static int thisCenturyLimit;
     static int thisCenturyLow;
     static int prevCenturyLow;
+    @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
 
     public static void append0(CharSink sink, int val) {

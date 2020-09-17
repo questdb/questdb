@@ -77,4 +77,8 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
     int getInterruptorNIterationsPerCheck();
 
     int getInterruptorBufferSize();
+
+    boolean getServerKeepAlive();
+
+    String getHttpVersion();
 }

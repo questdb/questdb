@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -102,6 +103,8 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
+            Misc.free(start);
+            Misc.free(longIncrement);
         }
 
         @Override
@@ -118,6 +121,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            start.init(symbolTableSource, executionContext);
             longIncrement.init(symbolTableSource, executionContext);
         }
     }

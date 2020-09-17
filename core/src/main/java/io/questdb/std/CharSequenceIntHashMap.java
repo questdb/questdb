@@ -45,7 +45,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         super(initialCapacity, loadFactor);
         this.noEntryValue = noEntryValue;
         this.list = new ObjList<>(capacity);
-        values = new int[capacity];
+        values = new int[keys.length];
         clear();
     }
 
@@ -55,39 +55,12 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         Arrays.fill(values, noEntryValue);
     }
 
-    public void increment(CharSequence key) {
-        int index = keyIndex(key);
-        if (index < 0) {
-            values[-index - 1] = values[-index - 1] + 1;
-        } else {
-            putAt0(index, Chars.toString(key), 0);
-        }
-    }
-
-    public ObjList<CharSequence> keys() {
-        return list;
-    }
-
     public boolean contains(CharSequence key) {
         return keyIndex(key) < 0;
     }
 
     public int get(CharSequence key) {
         return valueAt(keyIndex(key));
-    }
-
-    public boolean put(CharSequence key, int value) {
-        return putAt(keyIndex(key), key, value);
-    }
-
-    public void putAll(CharSequenceIntHashMap other) {
-        CharSequence[] otherKeys = other.keys;
-        int[] otherValues = other.values;
-        for (int i = 0, n = otherKeys.length; i < n; i++) {
-            if (otherKeys[i] != noEntryKey) {
-                put(otherKeys[i], otherValues[i]);
-            }
-        }
     }
 
     public void removeAt(int index) {
@@ -112,6 +85,33 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         erase(from);
     }
 
+    public void increment(CharSequence key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            values[-index - 1] = values[-index - 1] + 1;
+        } else {
+            putAt0(index, Chars.toString(key), 0);
+        }
+    }
+
+    public ObjList<CharSequence> keys() {
+        return list;
+    }
+
+    public boolean put(CharSequence key, int value) {
+        return putAt(keyIndex(key), key, value);
+    }
+
+    public void putAll(CharSequenceIntHashMap other) {
+        CharSequence[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
     public boolean putAt(int index, CharSequence key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
@@ -121,10 +121,6 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         putAt0(index, keyString, value);
         list.add(keyString);
         return true;
-    }
-
-    public int valueQuick(int index) {
-        return get(list.getQuick(index));
     }
 
     public void putIfAbsent(CharSequence key, int value) {
@@ -139,6 +135,10 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         return index < 0 ? values[index1] : noEntryValue;
     }
 
+    public int valueQuick(int index) {
+        return get(list.getQuick(index));
+    }
+
     private void putAt0(int index, CharSequence key, int value) {
         keys[index] = key;
         values[index] = value;
@@ -150,15 +150,15 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
         int[] oldValues = values;
         CharSequence[] oldKeys = keys;
-        this.keys = new CharSequence[arrayCapacity];
-        this.values = new int[arrayCapacity];
+        this.keys = new CharSequence[len];
+        this.values = new int[len];
         Arrays.fill(keys, null);
+        mask = len - 1;
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {

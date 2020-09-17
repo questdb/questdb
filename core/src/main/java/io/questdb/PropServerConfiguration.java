@@ -36,6 +36,7 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -137,6 +138,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlInsertModelPoolCapacity;
     private final int sqlGroupByPoolCapacity;
     private final int sqlGroupByMapCapacity;
+    private final int sqlMaxSymbolNotEqualsCount;
     private final DateLocale dateLocale;
     private final TimestampLocale timestampLocale;
     private final String backupRoot;
@@ -149,6 +151,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean pgEnabled;
     private final boolean telemetryEnabled;
     private final int telemetryQueueCapacity;
+    private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
+    private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
+    private final boolean lineTcpEnabled;
+    private final WorkerPoolAwareConfiguration lineTcpWorkerPoolConfiguration = new PropLineTcpWorkerPoolConfiguration();
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int connectionPoolInitialCapacity;
@@ -160,6 +166,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int responseHeaderBufferSize;
     private int httpWorkerCount;
     private boolean httpWorkerHaltOnError;
+    private boolean httpServerKeepAlive;
     private int sendBufferSize;
     private CharSequence indexFileName;
     private String publicDirectory;
@@ -231,9 +238,31 @@ public class PropServerConfiguration implements ServerConfiguration {
     private double rerunExponentialWaitMultiplier;
     private int rerunInitialWaitQueueSize;
     private int rerunMaxProcessingQueueSize;
+    private int lineTcpNetActiveConnectionLimit;
+    private int lineTcpNetBindIPv4Address;
+    private int lineTcpNetBindPort;
+    private int lineTcpNetEventCapacity;
+    private int lineTcpNetIOQueueCapacity;
+    private long lineTcpNetIdleConnectionTimeout;
+    private int lineTcpNetInterestQueueCapacity;
+    private int lineTcpNetListenBacklog;
+    private int lineTcpNetRcvBufSize;
+    private int lineTcpConnectionPoolInitialCapacity;
+    private LineProtoTimestampAdapter lineTcpTimestampAdapter;
+    private int lineTcpMsgBufferSize;
+    private int lineTcpMaxMeasurementSize;
+    private int lineTcpWriterQueueSize;
+    private int lineTcpWorkerCount;
+    private int[] lineTcpWorkerAffinity;
+    private boolean lineTcpWorkerPoolHaltOnError;
+    private int lineTcpNUpdatesPerLoadRebalance;
+    private double lineTcpMaxLoadRatio;
+    private int lineTcpMaxUncommittedRows;
+    private long lineTcpMaintenanceJobHysteresisInMs;
+    private String httpVersion;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
-        this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
+        this.sharedWorkerCount = getInt(properties, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
         this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, "shared.worker.haltOnError", false);
         this.httpServerEnabled = getBoolean(properties, "http.enabled", true);
@@ -252,6 +281,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
             this.httpFrozenClock = getBoolean(properties, "http.frozen.clock", false);
             this.httpAllowDeflateBeforeSend = getBoolean(properties, "http.allow.deflate.before.send", false);
+            this.httpServerKeepAlive = getBoolean(properties, "http.server.keep.alive", true);
+            this.httpVersion = getString(properties, "http.version", "HTTP/1.1");
+            if (!httpVersion.endsWith(" ")) {
+                httpVersion += ' ';
+            }
 
             int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 5);
             int keepAliveMax = getInt(properties, "http.keep-alive.max", 10_000);
@@ -424,6 +458,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.floatToStrCastScale = getInt(properties, "cairo.sql.float.cast.scale", 4);
         this.sqlGroupByMapCapacity = getInt(properties, "cairo.sql.groupby.map.capacity", 1024);
         this.sqlGroupByPoolCapacity = getInt(properties, "cairo.sql.groupby.pool.capacity", 1024);
+        this.sqlMaxSymbolNotEqualsCount = getInt(properties, "cairo.sql.max.symbol.not.equals.count", 100);
         final String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
         this.telemetryEnabled = getBoolean(properties, "telemetry.enabled", true);
         this.telemetryQueueCapacity = getInt(properties, "telemetry.queue.capacity", 512);
@@ -436,7 +471,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         final String timestampLocale = getString(properties, "cairo.timestamp.locale", "en");
         this.timestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
-        if (timestampLocale == null) {
+        if (this.timestampLocale == null) {
             throw new ServerConfigurationException("cairo.timestamp.locale", timestampLocale);
         }
 
@@ -446,8 +481,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 new TimestampFormatFactory(),
                 TimestampLocaleFactory.INSTANCE,
                 this.dateLocale,
-                this.timestampLocale
-        );
+                this.timestampLocale);
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
             inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
@@ -474,27 +508,38 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.lineUdpOwnThread = getBoolean(properties, "line.udp.own.thread", false);
         this.lineUdpUnicast = getBoolean(properties, "line.udp.unicast", false);
         this.lineUdpCommitMode = getCommitMode(properties, "line.udp.commit.mode");
+        this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, "line.udp.timestamp");
 
-        final String lineUdpTimestampSwitch = getString(properties, "line.udp.timestamp", "n");
-        switch (lineUdpTimestampSwitch) {
-            case "u":
-                lineUdpTimestampAdapter = LineProtoMicroTimestampAdapter.INSTANCE;
-                break;
-            case "ms":
-                lineUdpTimestampAdapter = LineProtoMilliTimestampAdapter.INSTANCE;
-                break;
-            case "s":
-                lineUdpTimestampAdapter = LineProtoSecondTimestampAdapter.INSTANCE;
-                break;
-            case "m":
-                lineUdpTimestampAdapter = LineProtoMinuteTimestampAdapter.INSTANCE;
-                break;
-            case "h":
-                lineUdpTimestampAdapter = LineProtoHourTimestampAdapter.INSTANCE;
-                break;
-            default:
-                lineUdpTimestampAdapter = LineProtoNanoTimestampAdapter.INSTANCE;
-                break;
+        this.lineTcpEnabled = getBoolean(properties, "line.tcp.enabled", true);
+        if (lineTcpEnabled) {
+            lineTcpNetActiveConnectionLimit = getInt(properties, "line.tcp.net.active.connection.limit", 10);
+            parseBindTo(properties, "line.tcp.net.bind.to", "0.0.0.0:9009", (a, p) -> {
+                lineTcpNetBindIPv4Address = a;
+                lineTcpNetBindPort = p;
+            });
+
+            this.lineTcpNetEventCapacity = getInt(properties, "line.tcp.net.event.capacity", 1024);
+            this.lineTcpNetIOQueueCapacity = getInt(properties, "line.tcp.net.io.queue.capacity", 1024);
+            this.lineTcpNetIdleConnectionTimeout = getLong(properties, "line.tcp.net.idle.timeout", 0);
+            this.lineTcpNetInterestQueueCapacity = getInt(properties, "line.tcp.net.interest.queue.capacity", 1024);
+            this.lineTcpNetListenBacklog = getInt(properties, "line.tcp.net.listen.backlog", 50_000);
+            this.lineTcpNetRcvBufSize = getIntSize(properties, "line.tcp.net.recv.buf.size", -1);
+            this.lineTcpConnectionPoolInitialCapacity = getInt(properties, "line.tcp.connection.pool.capacity", 64);
+            this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, "line.tcp.timestamp");
+            this.lineTcpMsgBufferSize = getIntSize(properties, "line.tcp.msg.buffer.size", 2048);
+            this.lineTcpMaxMeasurementSize = getIntSize(properties, "line.tcp.max.measurement.size", 2048);
+            if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
+                throw new IllegalArgumentException(
+                        "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
+            }
+            this.lineTcpWriterQueueSize = getIntSize(properties, "line.tcp.writer.queue.size", 128);
+            this.lineTcpWorkerCount = getInt(properties, "line.tcp.worker.count", 0);
+            this.lineTcpWorkerAffinity = getAffinity(properties, "line.tcp.worker.affinity", lineTcpWorkerCount);
+            this.lineTcpWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.halt.on.error", false);
+            this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, "line.tcp.n.updates.per.load.balance", 10_000);
+            this.lineTcpMaxLoadRatio = getDouble(properties, "line.tcp.max.load.ratio", 1.9);
+            this.lineTcpMaxUncommittedRows = getInt(properties, "line.tcp.max.uncommitted.rows", 1000);
+            this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
         }
     }
 
@@ -514,6 +559,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+        return lineTcpReceiverConfiguration;
+    }
+
+    @Override
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return workerPoolConfiguration;
     }
@@ -521,11 +571,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
-    }
-
-    @Override
-    public TelemetryConfiguration getTelemetryConfiguration() {
-        return telemetryConfiguration;
     }
 
     private int[] getAffinity(Properties properties, String key, int httpWorkerCount) throws ServerConfigurationException {
@@ -613,6 +658,24 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, String propNm) {
+        final String lineUdpTimestampSwitch = getString(properties, propNm, "n");
+        switch (lineUdpTimestampSwitch) {
+            case "u":
+                return LineProtoMicroTimestampAdapter.INSTANCE;
+            case "ms":
+                return LineProtoMilliTimestampAdapter.INSTANCE;
+            case "s":
+                return LineProtoSecondTimestampAdapter.INSTANCE;
+            case "m":
+                return LineProtoMinuteTimestampAdapter.INSTANCE;
+            case "h":
+                return LineProtoHourTimestampAdapter.INSTANCE;
+            default:
+                return LineProtoNanoTimestampAdapter.INSTANCE;
+        }
+    }
+
     private long getLong(Properties properties, String key, long defaultValue) throws ServerConfigurationException {
         final String value = properties.getProperty(key);
         try {
@@ -639,11 +702,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value;
     }
 
-    private TimestampFormat getTimestampFormat(Properties properties, String key, String defaultPattern) {
-        String pattern = properties.getProperty(key);
-        if (null == pattern) {
-            pattern = defaultPattern;
-        }
+    private TimestampFormat getTimestampFormat(Properties properties, String key, final String defaultPattern) {
+        final String pattern = properties.getProperty(key);
         DateFormatCompiler compiler = new DateFormatCompiler();
         if (null != pattern) {
             return compiler.compile(pattern);
@@ -671,7 +731,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NetworkError e) {
             throw new ServerConfigurationException(key, ipv4Str);
         }
-
 
         final String portStr = bindTo.substring(colonIndex + 1);
         final int port;
@@ -974,21 +1033,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int[] getWorkerAffinity() {
-            return httpWorkerAffinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return httpWorkerCount;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return httpWorkerHaltOnError;
-        }
-
-        @Override
         public boolean readOnlySecurityContext() {
             return readOnlySecurityContext;
         }
@@ -1006,6 +1050,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInterruptorBufferSize() {
             return interruptorBufferSize;
+        }
+
+        @Override
+        public boolean getServerKeepAlive() {
+            return httpServerKeepAlive;
+        }
+
+        @Override
+        public String getHttpVersion() {
+            return httpVersion;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return httpWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return httpWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return httpWorkerHaltOnError;
         }
     }
 
@@ -1069,11 +1138,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getIndexValueBlockSize() {
             return indexValueBlockSize;
-        }
-
-        @Override
-        public boolean enableTestFactories() {
-            return false;
         }
 
         @Override
@@ -1352,8 +1416,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMaxSymbolNotEqualsCount() {
+            return sqlMaxSymbolNotEqualsCount;
+        }
+
+        @Override
         public int getGroupByMapCapacity() {
             return sqlGroupByMapCapacity;
+        }
+
+        @Override
+        public boolean enableTestFactories() {
+            return false;
+        }
+
+        @Override
+        public TelemetryConfiguration getTelemetryConfiguration() {
+            return telemetryConfiguration;
         }
     }
 
@@ -1431,6 +1510,189 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public LineProtoTimestampAdapter getTimestampAdapter() {
             return lineUdpTimestampAdapter;
+        }
+    }
+
+    private class PropLineTcpReceiverIODispatcherConfiguration implements IODispatcherConfiguration {
+
+        @Override
+        public int getActiveConnectionLimit() {
+            return lineTcpNetActiveConnectionLimit;
+        }
+
+        @Override
+        public int getBindIPv4Address() {
+            return lineTcpNetBindIPv4Address;
+        }
+
+        @Override
+        public int getBindPort() {
+            return lineTcpNetBindPort;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+            return "line-server";
+        }
+
+        @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getEventCapacity() {
+            return lineTcpNetEventCapacity;
+        }
+
+        @Override
+        public int getIOQueueCapacity() {
+            return lineTcpNetIOQueueCapacity;
+        }
+
+        @Override
+        public long getIdleConnectionTimeout() {
+            return lineTcpNetIdleConnectionTimeout;
+        }
+
+        @Override
+        public int getInitialBias() {
+            return BIAS_READ;
+        }
+
+        @Override
+        public int getInterestQueueCapacity() {
+            return lineTcpNetInterestQueueCapacity;
+        }
+
+        @Override
+        public int getListenBacklog() {
+            return lineTcpNetListenBacklog;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getRcvBufSize() {
+            return lineTcpNetRcvBufSize;
+        }
+
+        @Override
+        public SelectFacade getSelectFacade() {
+            return SelectFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getSndBufSize() {
+            return -1;
+        }
+
+    }
+
+    private class PropLineTcpWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+        @Override
+        public int[] getWorkerAffinity() {
+            return lineTcpWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return lineTcpWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return lineTcpWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+    }
+
+    private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+        @Override
+        public boolean isEnabled() {
+            return lineTcpEnabled;
+        }
+
+        @Override
+        public CairoSecurityContext getCairoSecurityContext() {
+            return AllowAllCairoSecurityContext.INSTANCE;
+        }
+
+        @Override
+        public LineProtoTimestampAdapter getTimestampAdapter() {
+            return lineTcpTimestampAdapter;
+        }
+
+        @Override
+        public int getConnectionPoolInitialCapacity() {
+            return lineTcpConnectionPoolInitialCapacity;
+        }
+
+        @Override
+        public IODispatcherConfiguration getNetDispatcherConfiguration() {
+            return lineTcpReceiverDispatcherConfiguration;
+        }
+
+        @Override
+        public int getNetMsgBufferSize() {
+            return lineTcpMsgBufferSize;
+        }
+
+        @Override
+        public int getMaxMeasurementSize() {
+            return lineTcpMaxMeasurementSize;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getWriterQueueSize() {
+            return lineTcpWriterQueueSize;
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return MicrosecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
+            return lineTcpWorkerPoolConfiguration;
+        }
+
+        @Override
+        public int getnUpdatesPerLoadRebalance() {
+            return lineTcpNUpdatesPerLoadRebalance;
+        }
+
+        @Override
+        public double getMaxLoadRatio() {
+            return lineTcpMaxLoadRatio;
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return lineTcpMaxUncommittedRows;
+        }
+
+        @Override
+        public long getMaintenanceJobHysteresisInMs() {
+            return lineTcpMaintenanceJobHysteresisInMs;
         }
     }
 
@@ -1519,11 +1781,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropPGWireDispatcherConfiguration implements IODispatcherConfiguration {
 
         @Override
-        public String getDispatcherLogName() {
-            return "pg-server";
-        }
-
-        @Override
         public int getActiveConnectionLimit() {
             return pgNetActiveConnectionLimit;
         }
@@ -1541,6 +1798,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+            return "pg-server";
         }
 
         @Override
@@ -1692,11 +1954,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isEnabled() {
-            return pgEnabled;
-        }
-
-        @Override
         public int[] getWorkerAffinity() {
             return pgWorkerAffinity;
         }
@@ -1714,6 +1971,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isDaemonPool() {
             return pgDaemonPool;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return pgEnabled;
         }
     }
 

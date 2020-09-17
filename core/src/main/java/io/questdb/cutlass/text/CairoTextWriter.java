@@ -32,7 +32,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -42,7 +41,6 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
-    private final DirectCharSink utf8Sink;
     private final AppendMemory appendMemory = new AppendMemory();
     private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
@@ -65,13 +63,11 @@ public class CairoTextWriter implements Closeable, Mutable {
     public CairoTextWriter(
             CairoEngine engine,
             Path path,
-            TextConfiguration textConfiguration,
             TypeManager typeManager
     ) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.path = path;
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = typeManager;
     }
 
@@ -86,7 +82,6 @@ public class CairoTextWriter implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
-        utf8Sink.close();
         appendMemory.close();
     }
 
@@ -382,7 +377,8 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (timestampIndex == -1) {
                     throw TextException.$("invalid timestamp column '").put(timestampIndexCol).put('\'');
                 }
-                if (types.getQuick(timestampIndex).getType() != ColumnType.TIMESTAMP) {
+                final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
+                if (timestampAdapter.getType() != ColumnType.TIMESTAMP || timestampAdapter == BadTimestampAdapter.INSTANCE) {
                     throw TextException.$("not a timestamp '").put(timestampIndexCol).put('\'');
                 }
             }

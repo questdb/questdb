@@ -150,8 +150,8 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
                     }
 
                     if (clock.getTicks() > deadline) {
-                        LOG.error().$("cursor failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
-                        throw CairoException.instance(0).put("cursor failed to read index header consistently [corrupt?]");
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
+                        throw CairoException.instance(0).put(INDEX_CORRUPT);
                     }
                 }
 

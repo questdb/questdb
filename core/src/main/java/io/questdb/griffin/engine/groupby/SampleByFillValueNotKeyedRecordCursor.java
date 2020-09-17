@@ -24,18 +24,11 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
@@ -43,8 +36,8 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
     private final int timestampIndex;
     private final TimestampSampler timestampSampler;
     private final SplitVirtualRecord record;
-    private final IntList symbolTableSkewIndex;
     private final SimpleMapValue simpleMapValue;
+    private final ObjList<Function> recordFunctions;
     private RecordCursor base;
     private Record baseRecord;
     private long lastTimestamp;
@@ -57,7 +50,6 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
             ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
-            IntList symbolTableSkewIndex,
             SimpleMapValue simpleMapValue
     ) {
         this.simpleMapValue = simpleMapValue;
@@ -66,7 +58,6 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
         this.timestampSampler = timestampSampler;
         this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         this.record.of(simpleMapValue);
-        this.symbolTableSkewIndex = symbolTableSkewIndex;
         assert recordFunctions.size() == placeholderFunctions.size();
         final TimestampFunc timestampFunc = new TimestampFunc(0);
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
@@ -76,6 +67,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
                 placeholderFunctions.setQuick(i, timestampFunc);
             }
         }
+        this.recordFunctions = recordFunctions;
     }
 
     @Override
@@ -91,7 +83,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
+        return (SymbolTable) recordFunctions.getQuick(columnIndex);
     }
 
     @Override
@@ -140,6 +132,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
                 this.nextTimestamp = timestamp;
+                GroupByUtils.toTop(groupByFunctions);
                 return true;
             }
         }
@@ -148,11 +141,6 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
         // return what we aggregated so far and stop
         baseRecord = null;
         return true;
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     @Override
@@ -166,6 +154,11 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
         // factory guarantees that base cursor is not empty
         this.base = base;
@@ -175,7 +168,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
         interruptor = executionContext.getSqlExecutionInterruptor();
     }
 
-    private class TimestampFunc extends TimestampFunction implements NoArgFunction {
+    private class TimestampFunc extends TimestampFunction implements Function {
 
         public TimestampFunc(int position) {
             super(position);

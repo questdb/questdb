@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public abstract class IntFunction implements Function {
@@ -68,22 +69,22 @@ public abstract class IntFunction implements Function {
 
     @Override
     public long getDate(Record rec) {
-        return getInt(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override
     public double getDouble(Record rec) {
-        return getInt(rec);
+        return Numbers.intToDouble(getInt(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getInt(rec);
+        return Numbers.intToFloat(getInt(rec));
     }
 
     @Override
     public long getLong(Record rec) {
-        return getInt(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override

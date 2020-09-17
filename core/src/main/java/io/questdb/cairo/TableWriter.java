@@ -68,7 +68,7 @@ public class TableWriter implements Closeable {
     private final int rootLen;
     private final ReadWriteMemory txMem;
     private final ReadOnlyMemory metaMem;
-    private final VirtualMemory txPendingPartitionSizes;
+    private final ContiguousVirtualMemory txPendingPartitionSizes;
     private final int partitionBy;
     private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
     private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
@@ -196,7 +196,7 @@ public class TableWriter implements Closeable {
             }
             this.columnCount = metadata.getColumnCount();
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-            this.txPendingPartitionSizes = new VirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
+            this.txPendingPartitionSizes = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.symbolMapWriters = new ObjList<>(columnCount);
@@ -1075,7 +1075,7 @@ public class TableWriter implements Closeable {
             if (Chars.equalsIgnoreCase(col, name)) {
                 return i;
             }
-            nameOffset += VirtualMemory.getStorageLength(col);
+            nameOffset += ContiguousVirtualMemory.getStorageLength(col);
         }
         return -1;
     }
@@ -1150,7 +1150,7 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
                 ddlMem.putStr(columnName);
-                nameOffset += VirtualMemory.getStorageLength(columnName);
+                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
             }
             ddlMem.putStr(name);
         } finally {
@@ -1295,10 +1295,9 @@ public class TableWriter implements Closeable {
                     int len = 8;
                     long o = offset;
                     while (len > 0) {
-                        long l = Math.min(len, txPendingPartitionSizes.pageRemaining(o));
-                        if (ff.write(fd, txPendingPartitionSizes.addressOf(o), l, 0) == l) {
-                            len -= l;
-                            o += l;
+                        if (ff.write(fd, txPendingPartitionSizes.addressOf(o), len, 0) == len) {
+                            o += len;
+                            len = 0;
                         } else {
                             throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
                         }
@@ -1464,7 +1463,7 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
                 ddlMem.putStr(columnName);
-                nameOffset += VirtualMemory.getStorageLength(columnName);
+                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
             }
             return index;
         } finally {
@@ -1491,7 +1490,7 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
                 ddlMem.putStr(columnName);
-                nameOffset += VirtualMemory.getStorageLength(columnName);
+                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
             }
             return index;
         } finally {
@@ -2051,7 +2050,7 @@ public class TableWriter implements Closeable {
                 if (i != index) {
                     ddlMem.putStr(columnName);
                 }
-                nameOffset += VirtualMemory.getStorageLength(columnName);
+                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
             }
 
             return metaSwapIndex;
@@ -2077,7 +2076,7 @@ public class TableWriter implements Closeable {
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
-                nameOffset += VirtualMemory.getStorageLength(columnName);
+                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
 
                 if (i == index) {
                     columnName = newName;
@@ -2870,6 +2869,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putLong256(int index, @NotNull CharSequence hexString, int start, int end) {
+            getPrimaryColumn(index).putLong256(hexString, start, end);
+            notNull(index);
+        }
+
         public void putShort(int index, short value) {
             getPrimaryColumn(index).putShort(value);
             notNull(index);
@@ -2906,6 +2910,21 @@ public class TableWriter implements Closeable {
 
         private void notNull(int index) {
             refs.setQuick(index, masterRef);
+        }
+
+        public void putTimestamp(int index, CharSequence value) {
+            // try UTC timestamp first (micro)
+            long l;
+            try {
+                l = TimestampFormatUtils.parseTimestamp(value);
+            } catch (NumericException e) {
+                try {
+                    l = TimestampFormatUtils.parseDateTime(value);
+                } catch (NumericException numericException) {
+                    throw CairoException.instance(0).put("could not convert to timestamp [value=").put(value).put(']');
+                }
+            }
+            putTimestamp(index, l);
         }
     }
 

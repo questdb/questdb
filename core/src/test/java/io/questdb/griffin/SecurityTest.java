@@ -88,7 +88,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 return 11;
             }
         };
-        memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration, messageBus);
+        memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
         SqlExecutionInterruptor dummyInterruptor = () -> {
             int nCalls = nCheckInterruptedCalls.incrementAndGet();
             int max = maxNCheckInterruptedCalls;
@@ -97,17 +97,16 @@ public class SecurityTest extends AbstractGriffinTest {
             }
         };
         readOnlyExecutionContext = new SqlExecutionContextImpl(
-                messageBus,
-                1,
-                memoryRestrictedEngine)
+                memoryRestrictedEngine, 1
+        )
                 .with(
                         new CairoSecurityContextImpl(
                                 false),
                         bindVariableService,
-                                null,
-                                -1,
-                                dummyInterruptor);
-        memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine, messageBus);
+                        null,
+                        -1,
+                        dummyInterruptor);
+        memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine);
     }
 
     private static void setMaxInterruptorChecks(int max) {
@@ -155,32 +154,25 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertDeniedOnNoWriteAccess() throws Exception {
+    public void testAlterTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery("count\n0\n", "select count() from balances", null);
-
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
             InsertStatement insertStatement = cq.getInsertStatement();
             try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
             }
-            assertQuery("count\n1\n", "select count() from balances", null);
+            assertQuery("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances", null, true, true);
 
             try {
-                cq = compiler.compile("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
-                insertStatement = cq.getInsertStatement();
-                try (InsertMethod method = insertStatement.createMethod(readOnlyExecutionContext)) {
-                    method.execute();
-                    method.commit();
-                }
+                compiler.compile("alter table balances add column newcol int", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
 
-            assertQuery("count\n1\n", "select count() from balances", null);
+            assertQueryPlain("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances");
         });
     }
 
@@ -194,44 +186,75 @@ public class SecurityTest extends AbstractGriffinTest {
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
-            assertQuery("count\n0\n", "select count() from balances", null);
+            assertQuery("count\n0\n", "select count() from balances", null, false, true);
         });
     }
 
     @Test
-    public void testAlterTableDeniedOnNoWriteAccess() throws Exception {
+    public void testInsertDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            assertQuery("count\n0\n", "select count() from balances", null, false, true);
+
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
             InsertStatement insertStatement = cq.getInsertStatement();
             try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
             }
-            assertQuery("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances", null, true);
+            assertQuery("count\n1\n", "select count() from balances", null, false, true);
 
             try {
-                compiler.compile("alter table balances add column newcol int", readOnlyExecutionContext);
+                cq = compiler.compile("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
+                insertStatement = cq.getInsertStatement();
+                try (InsertMethod method = insertStatement.createMethod(readOnlyExecutionContext)) {
+                    method.execute();
+                    method.commit();
+                }
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
 
-            assertQuery("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances", null, true);
+            assertQuery("count\n1\n", "select count() from balances", null, false, true);
         });
     }
 
     @Test
-    public void testRenameTableDeniedOnNoWriteAccess() throws Exception {
+    public void testInterruptorWithNonKeyedAgg() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tb1 as (select" +
+                    " rnd_symbol(3,3,3,20000) sym1," +
+                    " rnd_double(2) d1," +
+                    " timestamp_sequence(0, 1000000000) ts1" +
+                    " from long_sequence(10000)) timestamp(ts1)", sqlExecutionContext);
+            assertQuery(
+                    memoryRestrictedCompiler,
+                    "sum\n" +
+                            "165.6121723103405\n",
+                    "select sum(d1) from tb1 where d1 < 0.2",
+                    null,
+                    false,
+                    readOnlyExecutionContext,
+                    true
+            );
+            Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
             try {
-                compiler.compile("rename table balances to newname", readOnlyExecutionContext);
+                setMaxInterruptorChecks(2);
+                assertQuery(
+                        memoryRestrictedCompiler,
+                        "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
+                        "select sum(d1) from tb1 where d1 < 0.2",
+                        null,
+                        true,
+                        readOnlyExecutionContext,
+                        true
+                );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
+                Assert.assertTrue(ex.toString().contains("Interrupting SQL processing, max calls is 2"));
             }
-            assertQuery("count\n0\n", "select count() from balances", null);
         });
     }
 
@@ -486,40 +509,8 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTreeResizesWithImplicitGroupBy() throws Exception {
-        SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine)
-                .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
-        assertMemoryLeak(() -> {
-            sqlExecutionContext.getRandom().reset();
-            compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
-                    " rnd_symbol(2,2,2,20000) sym2," +
-                    " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(2000)) timestamp(ts)", sqlExecutionContext);
-            assertQuery(
-                    memoryRestrictedCompiler,
-                    "sym2\tcount\nGZ\t1040\nRX\t960\n",
-                    "select sym2, count() from tb1 order by sym2",
-                    null,
-                    true, readOnlyExecutionContext);
-            try {
-                assertQuery(
-                        memoryRestrictedCompiler,
-                        "sym1\tcount\nPEHN\t265\nCPSW\t231\nHYRX\t262\nVTJW\t242\n",
-                        "select sym1, count() from tb1 order by sym1",
-                        null,
-                        true, readOnlyExecutionContext);
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
-            }
-        });
-    }
-
-    @Test
     public void testMemoryResizesWithImplicitGroupBy() throws Exception {
-        SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(messageBus, 1, engine)
+        SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
@@ -546,6 +537,20 @@ public class SecurityTest extends AbstractGriffinTest {
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Maximum number of pages (11) breached"));
             }
+        });
+    }
+
+    @Test
+    public void testRenameTableDeniedOnNoWriteAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            try {
+                compiler.compile("rename table balances to newname", readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("permission denied"));
+            }
+            assertQuery("count\n0\n", "select count() from balances", null, false, true);
         });
     }
 
@@ -620,37 +625,39 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInterruptorWithNonKeyedAgg() throws Exception {
+    public void testTreeResizesWithImplicitGroupBy() throws Exception {
+        SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
-                    " rnd_symbol(3,3,3,20000) sym1," +
-                    " rnd_double(2) d1," +
-                    " timestamp_sequence(0, 1000000000) ts1" +
-                    " from long_sequence(10000)) timestamp(ts1)", sqlExecutionContext);
+                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(2,2,2,20000) sym2," +
+                    " rnd_double(2) d," +
+                    " timestamp_sequence(0, 1000000000) ts" +
+                    " from long_sequence(2000)) timestamp(ts)", sqlExecutionContext);
             assertQuery(
                     memoryRestrictedCompiler,
-                    "sum\n" +
-                            "165.6121723103405\n",
-                    "select sum(d1) from tb1 where d1 < 0.2",
+                    "sym2\tcount\nGZ\t1040\nRX\t960\n",
+                    "select sym2, count() from tb1 order by sym2",
                     null,
-                    false,
-                    readOnlyExecutionContext
+                    true,
+                    readOnlyExecutionContext,
+                    true
             );
-            Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
             try {
-                setMaxInterruptorChecks(2);
                 assertQuery(
                         memoryRestrictedCompiler,
-                        "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
-                        "select sum(d1) from tb1 where d1 < 0.2",
+                        "sym1\tcount\nPEHN\t265\nCPSW\t231\nHYRX\t262\nVTJW\t242\n",
+                        "select sym1, count() from tb1 order by sym1",
                         null,
+                        readOnlyExecutionContext, true,
                         true,
-                        readOnlyExecutionContext
+                        true
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Interrupting SQL processing, max calls is 2"));
+                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
             }
         });
     }

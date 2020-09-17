@@ -39,11 +39,90 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByUtils {
+    public static void checkGroupBy(ObjList<ExpressionNode> groupBys, ObjList<QueryColumn> selectColumns, int groupByColumnCount, ExpressionNode alias) throws SqlException {
+        int matchingColumnCount = 0;
+        int groupBySize = groupBys.size();
+        if (groupBySize == 0) {
+            return;
+        }
+        int selectColumnCount = selectColumns.size();
+        for (int i = 0; i < selectColumnCount; i++) {
+            for (int j = 0; j < groupBySize; j++) {
+                ExpressionNode groupByNode = groupBys.getQuick(j);
+                QueryColumn selectColumn = selectColumns.get(i);
+                ExpressionNode selectNode = selectColumn.getAst();
+                if (groupByNode.type == ExpressionNode.LITERAL && selectNode.type == ExpressionNode.LITERAL) {
+                    if (Chars.equals(groupByNode.token, selectNode.token) || Chars.equals(groupByNode.token, selectColumn.getAlias())) {
+                        matchingColumnCount++;
+                        break;
+                    }
+
+                    int dotIndex = Chars.indexOf(groupByNode.token, '.');
+                    if (dotIndex > -1) {
+                        if (alias != null
+                                && Chars.equals(alias.token, groupByNode.token, 0, dotIndex)
+                                && (
+                                Chars.equals(selectNode.token, groupByNode.token, dotIndex + 1, groupByNode.token.length())
+                                        ||
+                                        Chars.equals(selectColumn.getAlias(), groupByNode.token, dotIndex + 1, groupByNode.token.length())
+                        )
+                        ) {
+                            matchingColumnCount++;
+                            break;
+                        }
+                    }
+                } else {
+                    if (compareNodes(groupByNode, selectNode)) {
+                        matchingColumnCount++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (matchingColumnCount != groupBySize || matchingColumnCount != groupByColumnCount) {
+            throw SqlException.$(0, "group by column does not match key column is select statement ");
+        }
+    }
+
+    public static boolean compareNodes(ExpressionNode groupBy, ExpressionNode selectNode) {
+        if (groupBy == null && selectNode == null) {
+            return true;
+        }
+
+        if (groupBy == null || selectNode == null || groupBy.type != selectNode.type) {
+            return false;
+        }
+
+        int dotIndex = groupBy.token != null ? Chars.indexOf(groupBy.token, '.') : -1;
+        if ((dotIndex < 0 && !Chars.equals(groupBy.token, selectNode.token))
+                || (dotIndex > -1 && !Chars.equals(selectNode.token, groupBy.token, dotIndex + 1, groupBy.token.length()))) {
+            return false;
+        }
+
+        int groupByArgsSize = groupBy.args.size();
+        int selectNodeArgsSize = selectNode.args.size();
+
+        if (groupByArgsSize != selectNodeArgsSize) {
+            return false;
+        }
+
+        if (groupByArgsSize < 3) {
+            return compareNodes(groupBy.lhs, selectNode.lhs) && compareNodes(groupBy.rhs, selectNode.rhs);
+        }
+
+        for (int i = 0; i < groupByArgsSize; i++) {
+            if (!compareNodes(groupBy.args.get(i), selectNode.args.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void prepareGroupByFunctions(
             QueryModel model,
             RecordMetadata metadata,
@@ -77,7 +156,7 @@ public class GroupByUtils {
         }
     }
 
-    public static IntList prepareGroupByRecordFunctions(
+    public static void prepareGroupByRecordFunctions(
             @NotNull QueryModel model,
             RecordMetadata metadata,
             @NotNull ListColumnFilter listColumnFilter,
@@ -95,9 +174,9 @@ public class GroupByUtils {
         // Map value count is needed to calculate offsets for
         // map key columns.
 
-        final ObjList<QueryColumn> columns = model.getColumns();
-        IntList symbolTableSkewIndex = null;
+        ObjList<QueryColumn> columns = model.getColumns();
         int valueColumnIndex = 0;
+        int groupByColumnCount = 0;
 
         // when we have same column several times in a row
         // we only add it once to map keys
@@ -113,6 +192,7 @@ public class GroupByUtils {
                 if (index == -1) {
                     throw SqlException.invalidColumn(node.position, node.token);
                 }
+
                 type = metadata.getColumnType(index);
                 if (index != timestampIndex || timestampUnimportant) {
                     if (lastIndex != index) {
@@ -152,11 +232,7 @@ public class GroupByUtils {
                             fun = new StrColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
-                            if (symbolTableSkewIndex == null) {
-                                symbolTableSkewIndex = new IntList();
-                            }
-                            symbolTableSkewIndex.extendAndSet(i, index);
-                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, i, metadata.isSymbolTableStatic(index));
+                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index));
                             break;
                         case ColumnType.DATE:
                             fun = new DateColumn(node.position, keyColumnIndex - 1);
@@ -195,6 +271,7 @@ public class GroupByUtils {
                                 metadata.isSymbolTableStatic(index)
                         )
                 );
+                groupByColumnCount++;
 
             } else {
                 // add group-by function as a record function as well
@@ -214,17 +291,13 @@ public class GroupByUtils {
                         )
                 );
             }
-
         }
-
-        return symbolTableSkewIndex;
+        validateGroupByColumns(model, columns, groupByColumnCount);
     }
 
-    static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        if (value.isNew()) {
-            updateNew(groupByFunctions, n, value, record);
-        } else {
-            updateExisting(groupByFunctions, n, value, record);
+    public static void toTop(ObjList<? extends Function> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.getQuick(i).toTop();
         }
     }
 
@@ -237,6 +310,29 @@ public class GroupByUtils {
     public static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeFirst(value, record);
+        }
+    }
+
+    public static void validateGroupByColumns(@NotNull QueryModel model, ObjList<QueryColumn> columns, int groupByColumnCount) throws SqlException {
+        final ObjList<ExpressionNode> groupBys = model.getGroupBy();
+        QueryModel next = model.getNestedModel();
+        while (next.getSelectModelType() != QueryModel.SELECT_MODEL_NONE) {
+            if (next.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL) {
+                columns = next.getColumns();
+                break;
+            }
+            next = next.getNestedModel();
+        }
+        //
+        ExpressionNode alias = next.getAlias();
+        GroupByUtils.checkGroupBy(groupBys, columns, groupByColumnCount, alias);
+    }
+
+    static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
+        if (value.isNew()) {
+            updateNew(groupByFunctions, n, value, record);
+        } else {
+            updateExisting(groupByFunctions, n, value, record);
         }
     }
 }

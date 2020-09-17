@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class OrFunctionFactory implements FunctionFactory {
@@ -44,17 +45,23 @@ public class OrFunctionFactory implements FunctionFactory {
         final Function leftFunc = args.getQuick(0);
         final Function rightFunc = args.getQuick(1);
         if (leftFunc.isConstant()) {
-            if (leftFunc.getBool(null)) {
-                return new BooleanConstant(position, true);
+            try (leftFunc) {
+                if (leftFunc.getBool(null)) {
+                    Misc.free(rightFunc);
+                    return new BooleanConstant(position, true);
+                }
+                return rightFunc;
             }
-            return rightFunc;
         }
 
         if (rightFunc.isConstant()) {
-            if (rightFunc.getBool(null)) {
-                return new BooleanConstant(position, true);
+            try (rightFunc) {
+                if (rightFunc.getBool(null)) {
+                    Misc.free(leftFunc);
+                    return new BooleanConstant(position, true);
+                }
+                return leftFunc;
             }
-            return leftFunc;
         }
         return new MyBooleanFunction(position, leftFunc, rightFunc);
     }

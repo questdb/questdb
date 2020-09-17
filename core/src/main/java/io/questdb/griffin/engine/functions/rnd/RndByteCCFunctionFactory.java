@@ -32,7 +32,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -56,7 +55,7 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         throw SqlException.position(position).put("invalid range");
     }
 
-    private static class RndFunction extends ByteFunction implements StatelessFunction {
+    private static class RndFunction extends ByteFunction implements Function {
         private final byte lo;
         private final byte range;
         private Rnd rnd;

@@ -22,37 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.MessageBus;
-import io.questdb.mp.Job;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.std.ObjList;
 
-public class GroupByNotKeyedJob implements Job {
-    private final RingQueue<VectorAggregateTask> queue;
-    private final Sequence subSeq;
-
-    public GroupByNotKeyedJob(MessageBus messageBus) {
-        this.queue = messageBus.getVectorAggregateQueue();
-        this.subSeq = messageBus.getVectorAggregateSubSequence();
+public class CountLong256GroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "count(H)";
     }
 
     @Override
-    public boolean run(int workerId) {
-        boolean useful = false;
-        while (true) {
-            long cursor = subSeq.next();
-            if (cursor == -1) {
-                return useful;
-            }
+    public boolean isGroupBy() {
+        return true;
+    }
 
-            if (cursor != -2) {
-                final VectorAggregateEntry entry = queue.get(cursor).entry;
-                subSeq.done(cursor);
-                useful |= entry.run(workerId);
-            }
-        }
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new CountLong256GroupByFunction(position, args.getQuick(0));
     }
 }

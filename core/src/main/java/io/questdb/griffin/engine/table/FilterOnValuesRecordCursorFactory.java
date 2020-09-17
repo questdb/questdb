@@ -39,6 +39,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     private final Function filter;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final boolean followedOrderByAdvice;
+    private final IntList columnIndexes;
 
     public FilterOnValuesRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -56,6 +57,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         final int nKeyValues = keyValues.size();
         this.columnIndex = columnIndex;
         this.filter = filter;
+        this.columnIndexes = columnIndexes;
         cursorFactories = new ObjList<>(nKeyValues);
         final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
         for (int i = 0; i < nKeyValues; i++) {
@@ -95,9 +97,23 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             }
         } else {
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                rowCursorFactory = new DeferredSymbolIndexFilteredRowCursorFactory(columnIndex, Chars.toString(symbolValue), filter, cursorFactories.size() == 0, indexDirection);
+                rowCursorFactory = new DeferredSymbolIndexFilteredRowCursorFactory(
+                        columnIndex,
+                        Chars.toString(symbolValue),
+                        filter,
+                        cursorFactories.size() == 0,
+                        indexDirection,
+                        columnIndexes
+                );
             } else {
-                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0, indexDirection);
+                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
+                        columnIndex,
+                        symbolKey,
+                        filter,
+                        cursorFactories.size() == 0,
+                        indexDirection,
+                        columnIndexes
+                );
             }
         }
         cursorFactories.add(rowCursorFactory);

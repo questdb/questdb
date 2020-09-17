@@ -38,6 +38,34 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddColumn() throws Exception {
+        assertQuery(
+                "avg\n" +
+                        "5261.376146789\n",
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b int",
+                "avg\n" +
+                        "5261.376146789\n",
+                false,
+                true,
+                true
+        );
+
+        assertQuery(
+                "avg\tmin\n" +
+                        "2633.684612\t93\n",
+                "select round(avg(f),6) avg, min(b) min from tab",
+                "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery(
                 "min\n" +
@@ -48,7 +76,9 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "insert into tab select 4567866 from long_sequence(1)",
                 "min\n" +
                         "4567866\n",
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -60,31 +90,9 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "select min(f) from tab",
                 "create table tab as (select rnd_int(-78783, 123239980, 2) f from long_sequence(181))",
                 null,
-                false
-        );
-    }
-
-    @Test
-    public void testAddColumn() throws Exception {
-        assertQuery(
-                "avg\n" +
-                        "5261.376146789\n",
-                "select round(avg(f),9) avg from tab",
-                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                "alter table tab add column b int",
-                "avg\n" +
-                        "5261.376146789\n",
-                false
-        );
-
-        assertQuery(
-                "avg\tmin\n" +
-                        "2633.684612\t93\n",
-                "select round(avg(f),6) avg, min(b) min from tab",
-                "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
-                null,
-                false
+                false,
+                true,
+                true
         );
     }
 }

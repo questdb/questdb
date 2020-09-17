@@ -55,7 +55,7 @@ public class EqIntStrCFunctionFactory extends AbstractBooleanFunctionFactory imp
         }
     }
 
-    private class Func extends BooleanFunction implements UnaryFunction {
+    private static class Func extends BooleanFunction implements UnaryFunction {
         private final boolean isNegated;
         private final Function left;
         private final int right;

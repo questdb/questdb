@@ -55,8 +55,89 @@
         "code",
         "ideas"
       ]
+    },
+    {
+      "login": "mick2004",
+      "name": "mick2004",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/2042132?v=4",
+      "profile": "https://github.com/mick2004",
+      "contributions": [
+        "code",
+        "platform"
+      ]
+    },
+    {
+      "login": "rawkode",
+      "name": "rawkode",
+      "avatar_url": "https://avatars3.githubusercontent.com/u/145816?v=4",
+      "profile": "https://rawkode.com",
+      "contributions": [
+        "code",
+        "infra"
+      ]
+    },
+    {
+      "login": "solidnerd",
+      "name": "Niclas Mietz",
+      "avatar_url": "https://avatars0.githubusercontent.com/u/886383?v=4",
+      "profile": "https://solidnerd.dev",
+      "contributions": [
+        "code",
+        "infra"
+      ]
+    },
+    {
+      "login": "solanav",
+      "name": "solanav",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/32469597?v=4",
+      "profile": "http://solanav.github.io",
+      "contributions": [
+        "code",
+        "doc"
+      ]
+    },
+    {
+      "login": "shantanoo-desai",
+      "name": "Shan Desai",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/12070966?v=4",
+      "profile": "https://shantanoo-desai.github.io",
+      "contributions": [
+        "blog",
+        "example"
+      ]
+    },
+    {
+      "login": "alexprut",
+      "name": "Alex Prut",
+      "avatar_url": "https://avatars2.githubusercontent.com/u/1648497?v=4",
+      "profile": "http://alexprut.com",
+      "contributions": [
+        "code",
+        "maintenance"
+      ]
+    },
+    {
+      "login": "lbowman",
+      "name": "Levi Bowman",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/1477427?v=4",
+      "profile": "https://github.com/lbowman",
+      "contributions": [
+        "code",
+        "test"
+      ]
+    },
+    {
+      "login": "chankeypathak",
+      "name": "Chankey Pathak",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/424822?v=4",
+      "profile": "https://tutswiki.com/",
+      "contributions": [
+        "blog"
+      ]
     }
   ],
+  "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
+  "contributorTemplate": "<a href=\"<%= contributor.profile %>\"><img src=\"<%= contributor.avatar_url %>\" width=\"<%= options.imageSize %>px;\" alt=\"\"/><br /><sub><b><%= contributor.login %></b></sub></a><br /><%= contributions %>",
   "contributorsPerLine": 7,
   "projectName": "questdb",
   "projectOwner": "questdb",

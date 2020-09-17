@@ -44,6 +44,7 @@ public class VectorAggregateEntry implements Mutable {
     private int srcSequence;
     // to "lock" the entry thread must successfully CAS targetSequence form "srcSequence" value
     // to "srcSequence+1". Executing thread must not be changing value of "srcSequence"
+    @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private int targetSequence;
     private CountDownLatchSPI doneLatch;
 

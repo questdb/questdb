@@ -24,14 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import org.jetbrains.annotations.NotNull;
-
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
@@ -39,13 +32,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory {
     protected final RecordCursorFactory base;
@@ -60,7 +53,6 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             RecordMetadata groupByMetadata,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
-            IntList symbolTableIndex,
             @NotNull TimestampSampler timestampSampler,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull BytecodeAssembler asm,
@@ -82,14 +74,20 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
                     groupByFunctions,
                     this.recordFunctions,
                     timestampIndex,
-                    timestampSampler,
-                    symbolTableIndex
+                    timestampSampler
             );
         } catch (CairoException e) {
             Misc.free(map);
             Misc.freeObjList(recordFunctions);
             throw e;
         }
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(recordFunctions);
+        Misc.free(map);
+        Misc.free(base);
     }
 
     @Override
@@ -101,18 +99,11 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
                 return initFunctionsAndCursor(executionContext, baseCursor);
             }
 
-            return EmptyTableRecordCursor.INSTANCE;
+            return EmptyTableNoSizeRecordCursor.INSTANCE;
         } catch (CairoException ex) {
             baseCursor.close();
             throw ex;
         }
-    }
-
-    @Override
-    public void close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(map);
-        Misc.free(base);
     }
 
     @Override
@@ -131,7 +122,7 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
             cursor.of(baseCursor, executionContext);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-                recordFunctions.getQuick(i).init(cursor, executionContext);
+                recordFunctions.getQuick(i).init(baseCursor, executionContext);
             }
             return cursor;
         } catch (CairoException ex) {

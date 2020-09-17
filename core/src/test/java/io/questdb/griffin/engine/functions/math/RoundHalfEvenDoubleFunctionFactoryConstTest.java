@@ -38,6 +38,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "NaN\n",
                 "select round_half_even(14.7778, -18) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -49,39 +50,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "NaN\n",
                 "select round_half_even(14.7778, 18) from long_sequence(1)",
                 null,
-                true
-        );
-    }
-
-    @Test
-    public void testOKNegScale() throws SqlException {
-        assertQuery(
-                "round_half_even\n" +
-                        "0.0\n",
-                "select round_half_even(14.7778, -13) from long_sequence(1)",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testOKPosScale() throws SqlException {
-        assertQuery(
-                "round_half_even\n" +
-                        "14.7778\n",
-                "select round_half_even(14.7778, 11) from long_sequence(1)",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testOKPosScale17() throws SqlException {
-        assertQuery(
-                "round_half_even\n" +
-                        "14.777800000000003\n",
-                "select round_half_even(14.7778, 15) from long_sequence(1)",
-                null,
+                true,
                 true
         );
     }
@@ -93,12 +62,10 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "0.0\n",
                 "select round_half_even(14.778, -5) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
-
-
-    /*Negative Scale*/
 
     @Test
     public void testNegScaleNegValueRoundsDown() throws SqlException {
@@ -107,6 +74,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "-140.0\n",
                 "select round_half_even(-135, -1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -118,6 +86,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "-140.0\n",
                 "select round_half_even(-145, -1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -129,9 +98,13 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "140.0\n",
                 "select round_half_even(135, -1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
+
+
+    /*Negative Scale*/
 
     @Test
     public void testNegScalePosValueRoundsUp() throws SqlException {
@@ -140,6 +113,43 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "140.0\n",
                 "select round_half_even(145, -1) from long_sequence(1)",
                 null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOKNegScale() throws SqlException {
+        assertQuery(
+                "round_half_even\n" +
+                        "0.0\n",
+                "select round_half_even(14.7778, -13) from long_sequence(1)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOKPosScale() throws SqlException {
+        assertQuery(
+                "round_half_even\n" +
+                        "14.7778\n",
+                "select round_half_even(14.7778, 11) from long_sequence(1)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOKPosScale17() throws SqlException {
+        assertQuery(
+                "round_half_even\n" +
+                        "14.777800000000003\n",
+                "select round_half_even(14.7778, 15) from long_sequence(1)",
+                null,
+                true,
                 true
         );
     }
@@ -154,6 +164,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "-23.400000000000002\n",
                 "select round_half_even(-23.35, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -165,6 +176,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "-23.400000000000002\n",
                 "select round_half_even(-23.45, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -176,6 +188,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "23.400000000000002\n",
                 "select round_half_even(23.35, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -187,6 +200,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "23.400000000000002\n",
                 "select round_half_even(23.45, 1) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -201,6 +215,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "\n",
                 "select round_half_even(24.5, 0) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -212,6 +227,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "24.0\n",
                 "select round_half_even(23.5, 0) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -223,6 +239,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "-24.0\n",
                 "select round_half_even(-24.5, 0) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }
@@ -234,6 +251,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
                         "-24.0\n",
                 "select round_half_even(-23.5, 0) from long_sequence(1)",
                 null,
+                true,
                 true
         );
     }

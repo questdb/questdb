@@ -48,7 +48,9 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "alter table tab add column b double",
                 "avg\n" +
                         "0.511848387\n",
-                false
+                false,
+                true,
+                true
         );
 
         assertQuery(
@@ -57,7 +59,9 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "select round(avg(f),6) avg, round(avg(b),6) avg2 from tab",
                 "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -72,7 +76,9 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "insert into tab select 123 from long_sequence(1)",
                 "avg\n" +
                         "123.0\n",
-                false
+                false,
+                true,
+                true
         );
     }
 
@@ -84,7 +90,9 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 "select round(avg(f),9) avg from tab",
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,
-                false
+                false,
+                true,
+                true
         );
     }
 }

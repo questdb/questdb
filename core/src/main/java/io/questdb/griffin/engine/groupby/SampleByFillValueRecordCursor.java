@@ -29,18 +29,11 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -52,9 +45,9 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
     private final TimestampSampler timestampSampler;
     private final SplitVirtualRecord record;
     private final Record mapRecord;
-    private final IntList symbolTableSkewIndex;
+    private final RecordCursor mapCursor;
+    private final ObjList<Function> recordFunctions;
     private RecordCursor base;
-    private RecordCursor mapCursor;
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
@@ -67,8 +60,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
-            TimestampSampler timestampSampler,
-            IntList symbolTableSkewIndex
+            TimestampSampler timestampSampler
     ) {
         this.map = map;
         this.groupByFunctions = groupByFunctions;
@@ -78,7 +70,6 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
         this.mapRecord = map.getRecord();
         this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         this.record.of(mapRecord);
-        this.symbolTableSkewIndex = symbolTableSkewIndex;
         assert recordFunctions.size() == placeholderFunctions.size();
         final TimestampFunc timestampFunc = new TimestampFunc(0);
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
@@ -89,6 +80,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
             }
         }
         this.mapCursor = map.getCursor();
+        this.recordFunctions = recordFunctions;
     }
 
     @Override
@@ -104,7 +96,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(symbolTableSkewIndex.get(columnIndex));
+        return (SymbolTable) recordFunctions.getQuick(columnIndex);
     }
 
     @Override
@@ -173,6 +165,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
+                GroupByUtils.toTop(groupByFunctions);
                 this.nextTimestamp = timestamp;
             }
 
@@ -182,12 +175,8 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
     }
 
     @Override
-    public long size() {
-        return -1;
-    }
-
-    @Override
     public void toTop() {
+        GroupByUtils.toTop(recordFunctions);
         this.base.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
@@ -208,6 +197,11 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
                 }
             }
         }
+    }
+
+    @Override
+    public long size() {
+        return -1;
     }
 
     @Override
@@ -234,7 +228,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
         return true;
     }
 
-    private class TimestampFunc extends TimestampFunction implements NoArgFunction {
+    private class TimestampFunc extends TimestampFunction implements Function {
 
         public TimestampFunc(int position) {
             super(position);

@@ -87,13 +87,11 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
      * prefixed with '\r\n--'.
      *
      * @param boundary boundary value
-     * @return parser instance ready to stream
      */
-    public HttpMultipartContentParser of(DirectByteCharSequence boundary) {
+    public void of(DirectByteCharSequence boundary) {
         this.boundary = boundary;
         this.boundaryLen = boundary.length();
         this.boundaryByte = (byte) boundary.charAt(0);
-        return this;
     }
 
     public boolean parse(long lo, long hi, HttpMultipartContentListener listener)

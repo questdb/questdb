@@ -43,7 +43,7 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
     public LowerCaseAsciiCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
         super(initialCapacity, loadFactor);
         this.noEntryValue = noEntryValue;
-        values = new int[capacity];
+        values = new int[keys.length];
         clear();
     }
 
@@ -108,15 +108,15 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
         int[] oldValues = values;
         CharSequence[] oldKeys = keys;
-        this.keys = new CharSequence[arrayCapacity];
-        this.values = new int[arrayCapacity];
+        this.keys = new CharSequence[len];
+        this.values = new int[len];
         Arrays.fill(keys, null);
+        mask = len - 1;
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {

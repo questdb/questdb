@@ -117,17 +117,13 @@ public class SqlCompiler implements Closeable {
             try {
                 backupTable(nativeLPSZ, currentExecutionContext);
             } catch (CairoException ex) {
-                LOG.error().$("Failed to backup ").$(nativeLPSZ).$(": ").$(ex.getFlyweightMessage()).$();
+                LOG.error().$("could not backup [path=").$(nativeLPSZ).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
             }
         }
     };
 
     public SqlCompiler(CairoEngine engine) {
-        this(engine, null);
-    }
-
-    public SqlCompiler(CairoEngine engine, MessageBus bus) {
-        this(engine, bus, null);
+        this(engine, engine.getMessageBus(), null);
     }
 
     public SqlCompiler(CairoEngine engine, @Nullable MessageBus messageBus, @Nullable FunctionFactoryCache functionFactoryCache) {
@@ -219,7 +215,8 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.STRING && to == ColumnType.SYMBOL)
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING)
                 || (from == ColumnType.CHAR && to == ColumnType.SYMBOL)
-                || (from == ColumnType.CHAR && to == ColumnType.STRING);
+                || (from == ColumnType.CHAR && to == ColumnType.STRING)
+                || (from == ColumnType.STRING && to == ColumnType.TIMESTAMP);
     }
 
     // Creates data type converter.
@@ -261,6 +258,7 @@ public class SqlCompiler implements Closeable {
         int wPutSym = asm.poolMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
         int wPutSymChar = asm.poolMethod(TableWriter.Row.class, "putSym", "(IC)V");
         int wPutStr = asm.poolMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutTimestampStr = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(ILjava/lang/CharSequence;)V");
         int wPutStrChar = asm.poolMethod(TableWriter.Row.class, "putStr", "(IC)V");
         int wPutChar = asm.poolMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
@@ -613,10 +611,16 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    if (to.getColumnType(toColumnIndex) == ColumnType.SYMBOL) {
-                        asm.invokeVirtual(wPutSym);
-                    } else {
-                        asm.invokeVirtual(wPutStr);
+                    switch (to.getColumnType(toColumnIndex)) {
+                        case ColumnType.SYMBOL:
+                            asm.invokeVirtual(wPutSym);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeVirtual(wPutTimestampStr);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutStr);
+                            break;
                     }
                     break;
                 case ColumnType.BINARY:
@@ -797,8 +801,8 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' or 'rename' expected");
                 }
             } catch (CairoException e) {
-                LOG.info().$("failed to alter table: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' cannot be altered: ").put(e);
+                LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' could not be altered: ").put(e);
             }
         } else if (SqlKeywords.isSystemKeyword(tok)) {
             tok = expectToken(lexer, "'lock' or 'unlock'");
@@ -1019,7 +1023,7 @@ public class SqlCompiler implements Closeable {
             CharSequence existingName = GenericLexer.immutableOf(tok);
 
             tok = expectToken(lexer, "'to' expected");
-            if (!SqlKeywords.isToKeyboard(tok)) {
+            if (!SqlKeywords.isToKeyword(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
             }
 
@@ -1123,17 +1127,17 @@ public class SqlCompiler implements Closeable {
             try {
                 renamePath.trimTo(renameRootLen).concat(tableName).$();
                 if (!ff.rename(path, renamePath)) {
-                    throw CairoException.instance(ff.errno()).put("Could not rename [from=").put(path).put(", to=").put(renamePath).put(']');
+                    throw CairoException.instance(ff.errno()).put("could not rename [from=").put(path).put(", to=").put(renamePath).put(']');
                 }
-                LOG.info().$("Completed backup of ").$(tableName).$(" to ").$(renamePath).$();
+                LOG.info().$("backup complete [table=").$(tableName).$(", to=").$(renamePath).$(']').$();
             } finally {
                 renamePath.trimTo(renameRootLen).$();
             }
         } catch (CairoException ex) {
-            LOG.info().$("Failed to backup ").$(tableName).$(" with ").$(ex.getFlyweightMessage()).$();
+            LOG.info().$("could not backup [table=").$(tableName).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
             path.of(cachedTmpBackupRoot).concat(tableName).put(Files.SEPARATOR).$();
             if (!ff.rmdir(path)) {
-                LOG.error().$("Failed to delete directory ").$(path).$(" with errno ").$(ff.errno()).$();
+                LOG.error().$("coult not delete directory [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
             }
             throw ex;
         }
@@ -1387,7 +1391,7 @@ public class SqlCompiler implements Closeable {
                 if (removeTableDirectory(model)) {
                     throw e;
                 }
-                throw SqlException.$(0, "Concurrent modification cannot be handled. Failed to clean up. See log for more details.");
+                throw SqlException.$(0, "Concurrent modification could not be handled. Failed to clean up. See log for more details.");
             }
         }
     }
@@ -1420,18 +1424,16 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok;
         expectKeyword(lexer, "table");
-
         final int tableNamePosition = lexer.getPosition();
 
-        tok = GenericLexer.unquote(expectToken(lexer, "table name"));
-
-        tableExistsOrFail(tableNamePosition, tok, executionContext);
-
-        CharSequence tableName = GenericLexer.immutableOf(tok);
+        CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+        }
+        tableExistsOrFail(tableNamePosition, tableName, executionContext);
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
-
         return compiledQuery.ofDrop();
     }
 
@@ -1690,7 +1692,7 @@ public class SqlCompiler implements Closeable {
             return true;
         }
         LOG.error()
-                .$("failed to clean up after create table failure [path=").$(path)
+                .$("could not clean up after create table failure [path=").$(path)
                 .$(", errno=").$(configuration.getFilesFacade().errno())
                 .$(']').$();
         return false;
@@ -1829,7 +1831,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    @SuppressWarnings("resource")
     private CompiledQuery sqlShow(SqlExecutionContext executionContext) throws SqlException {
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {

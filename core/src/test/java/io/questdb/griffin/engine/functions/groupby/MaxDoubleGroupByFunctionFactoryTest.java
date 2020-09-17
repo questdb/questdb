@@ -285,7 +285,10 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t-1.9805699408189095\t1970-01-04T06:00:00.000000Z\n" +
                         "HYRX\t-2.362042754952945\t1970-01-04T06:00:00.000000Z\n" +
                         "CPSW\t3.379954054510219\t1970-01-04T06:00:00.000000Z\n",
-                true);
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -313,6 +316,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 null,
+                true,
+                true,
                 true
         );
     }

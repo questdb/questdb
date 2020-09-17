@@ -52,20 +52,14 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
 
     @SuppressWarnings("unchecked")
     private ObjHashSet(int initialCapacity, double loadFactor, double hashFactor) {
-        if (loadFactor <= 0d || loadFactor >= 1d) {
-            throw new IllegalArgumentException("0 < loadFactor < 1");
-        }
-
-        if (hashFactor <= 0d || hashFactor >= 1d) {
-            throw new IllegalArgumentException("0 < hashFactor < 1");
-        }
+        assert loadFactor > 0 && loadFactor < 1d;
+        assert hashFactor > 0 && hashFactor < 1d;
 
         initialCapacity = (int) (initialCapacity * (1 + hashFactor));
-        int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
+        this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : initialCapacity;
         this.loadFactor = loadFactor;
-        keys = (T[]) new Object[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
+        keys = (T[]) new Object[Numbers.ceilPow2(capacity)];
         mask = keys.length - 1;
-        free = this.capacity = initialCapacity;
         this.list = new ObjList<>(free);
         clear();
     }
@@ -185,13 +179,11 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
 
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-        int newCapacity = keys.length << 1;
-        mask = newCapacity - 1;
-        free = capacity = (int) (newCapacity * loadFactor);
-
+        free = capacity = this.capacity * 2;
         T[] oldKeys = keys;
-        this.keys = (T[]) new Object[newCapacity];
+        this.keys = (T[]) new Object[Numbers.ceilPow2((int) (this.capacity / loadFactor))];
         Arrays.fill(keys, noEntryKey);
+        mask = keys.length - 1;
 
         for (int i = oldKeys.length; i-- > 0; ) {
             T key = oldKeys[i];

@@ -27,8 +27,6 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -75,7 +73,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testGenericSimpleReceive() throws Exception {
-        assertReceive(new TestLineUdpReceiverConfiguration(), GENERIC_FACTORY);
+        assertReceive(new DefaultLineUdpReceiverConfiguration(), GENERIC_FACTORY);
     }
 
     @Test
@@ -123,7 +121,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         if (Os.type != Os.LINUX_AMD64) {
             return;
         }
-        assertReceive(new TestLineUdpReceiverConfiguration(), LINUX_FACTORY);
+        assertReceive(new DefaultLineUdpReceiverConfiguration(), LINUX_FACTORY);
     }
 
     private void assertCannotBindSocket(ReceiverFactory factory) throws Exception {
@@ -134,7 +132,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     return false;
                 }
             };
-            LineUdpReceiverConfiguration receiverCfg = new TestLineUdpReceiverConfiguration() {
+            LineUdpReceiverConfiguration receiverCfg = new DefaultLineUdpReceiverConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -153,7 +151,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                 }
 
             };
-            LineUdpReceiverConfiguration receiverCfg = new TestLineUdpReceiverConfiguration() {
+            LineUdpReceiverConfiguration receiverCfg = new DefaultLineUdpReceiverConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -172,7 +170,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     return -1;
                 }
             };
-            LineUdpReceiverConfiguration receiverCfg = new TestLineUdpReceiverConfiguration() {
+            LineUdpReceiverConfiguration receiverCfg = new DefaultLineUdpReceiverConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -190,7 +188,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             }
         };
 
-        LineUdpReceiverConfiguration configuration = new TestLineUdpReceiverConfiguration() {
+        LineUdpReceiverConfiguration configuration = new DefaultLineUdpReceiverConfiguration() {
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
@@ -205,7 +203,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
-        try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
             try {
                 factory.create(receiverCfg, engine, null, true, null, null);
                 Assert.fail();
@@ -215,7 +213,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     }
 
     private void assertFrequentCommit(ReceiverFactory factory) throws Exception {
-        LineUdpReceiverConfiguration configuration = new TestLineUdpReceiverConfiguration() {
+        LineUdpReceiverConfiguration configuration = new DefaultLineUdpReceiverConfiguration() {
             @Override
             public int getCommitRate() {
                 return 0;
@@ -238,7 +236,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
                     "blue\tsquare\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n";
 
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
 
 
                 try (AbstractLineProtoReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null)) {
@@ -260,7 +258,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                     receiver.start();
 
-                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400, 1)) {
+                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), receiverCfg.getPort(), 1400, 1)) {
                         for (int i = 0; i < 10; i++) {
                             sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4).$(100000000000L);
                         }
@@ -292,83 +290,5 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     }
 
     private interface ReceiverFactory extends WorkerPoolAwareConfiguration.ServerFactory<AbstractLineProtoReceiver, LineUdpReceiverConfiguration> {
-    }
-
-    private static class TestLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
-
-        @Override
-        public int getBindIPv4Address() {
-            return Net.parseIPv4("127.0.0.1");
-        }
-
-        @Override
-        public int getCommitRate() {
-            return 1024 * 1024;
-        }
-
-        @Override
-        public int getGroupIPv4Address() {
-            return Net.parseIPv4("224.1.1.1");
-        }
-
-        @Override
-        public int getMsgBufferSize() {
-            return 2048;
-        }
-
-        @Override
-        public int getMsgCount() {
-            return 10000;
-        }
-
-        @Override
-        public NetworkFacade getNetworkFacade() {
-            return NetworkFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getPort() {
-            return 4567;
-        }
-
-        @Override
-        public LineProtoTimestampAdapter getTimestampAdapter() {
-            return LineProtoNanoTimestampAdapter.INSTANCE;
-        }
-
-        @Override
-        public int getReceiveBufferSize() {
-            return -1;
-        }
-
-        @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return AllowAllCairoSecurityContext.INSTANCE;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
-        }
-
-        @Override
-        public boolean isUnicast() {
-            return false;
-        }
-
-        @Override
-        public boolean ownThread() {
-            return true;
-        }
-
-        @Override
-        public int ownThreadAffinity() {
-            return -1;
-        }
-
-        @Override
-        public int getCommitMode() {
-            return CommitMode.NOSYNC;
-        }
     }
 }

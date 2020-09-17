@@ -32,7 +32,7 @@ public final class OperatorExpression {
     public static final int UNARY = 1;
     public static final int BINARY = 2;
     public static final int SET = 3;
-    static final ObjList<OperatorExpression> operators = new ObjList<OperatorExpression>() {{
+    static final ObjList<OperatorExpression> operators = new ObjList<>() {{
         add(new OperatorExpression(".", 1, false, BINARY));
         add(new OperatorExpression("^", 2, false, BINARY));
         add(new OperatorExpression("*", 3, true, BINARY));
@@ -49,14 +49,14 @@ public final class OperatorExpression {
         add(new OperatorExpression("!=", 7, true, BINARY));
         add(new OperatorExpression("<>", 7, true, BINARY));
         add(new OperatorExpression("!~", 7, true, BINARY));
-        add(new OperatorExpression("~=", 7, true, BINARY));
         add(new OperatorExpression("in", 7, true, SET, false));
         add(new OperatorExpression("and", 11, true, BINARY, false));
         add(new OperatorExpression("or", 11, true, BINARY, false));
         add(new OperatorExpression("not", 11, true, UNARY, false));
+        add(new OperatorExpression("like", 7, true, BINARY,false));
     }};
 
-    static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>() {{
+    static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
             OperatorExpression op = operators.getQuick(i);
             put(op.token, op);

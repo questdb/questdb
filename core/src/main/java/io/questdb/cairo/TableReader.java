@@ -30,6 +30,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
@@ -590,7 +591,7 @@ public class TableReader implements Closeable {
             int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
             columns.remove(2, getColumnBase(delta) + 1);
             prevMinTimestamp = minTimestamp;
-            partitionCount -= delta;
+            partitionCount = Math.max(0, partitionCount - delta);
         }
     }
 
@@ -603,7 +604,7 @@ public class TableReader implements Closeable {
             long partitionRowCount,
             boolean lastPartition) {
         ReadOnlyColumn mem1 = tempCopyStruct.mem1;
-        final boolean reload = (mem1 instanceof ReadOnlyMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
+        final boolean reload = (mem1 instanceof ExtendableOnePageMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         tempCopyStruct.mem1 = columns.getAndSetQuick(index, mem1);
         tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, tempCopyStruct.mem2);
@@ -1040,16 +1041,7 @@ public class TableReader implements Closeable {
 
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
 
-                if (mem1 != null && mem1 != NullColumn.INSTANCE) {
-                    mem1.of(ff, path, ff.getMapPageSize(), ff.length(path));
-                } else {
-                    if (lastPartition) {
-                        mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
-                    } else {
-                        mem1 = new OnePageMemory(ff, path, ff.length(path));
-                    }
-                    columns.setQuick(primaryIndex, mem1);
-                }
+                mem1 = openOrCreateMemory(path, columns, lastPartition, primaryIndex, mem1);
 
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
                 final int type = metadata.getColumnType(columnIndex);
@@ -1058,16 +1050,7 @@ public class TableReader implements Closeable {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
                         TableUtils.iFile(path.trimTo(plen), name);
-                        if (mem2 != null && mem2 != NullColumn.INSTANCE) {
-                            mem2.of(ff, path, ff.getMapPageSize(), ff.length(path));
-                        } else {
-                            if (lastPartition) {
-                                mem2 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
-                            } else {
-                                mem2 = new OnePageMemory(ff, path, ff.length(path));
-                            }
-                            columns.setQuick(secondaryIndex, mem2);
-                        }
+                        mem2 = openOrCreateMemory(path, columns, lastPartition, secondaryIndex, mem2);
                         growColumn(mem1, mem2, type, partitionRowCount - columnTop);
                         break;
                     default:
@@ -1104,6 +1087,21 @@ public class TableReader implements Closeable {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    @NotNull
+    private ReadOnlyColumn openOrCreateMemory(Path path, ObjList<ReadOnlyColumn> columns, boolean lastPartition, int primaryIndex, ReadOnlyColumn mem) {
+        if (mem != null && mem != NullColumn.INSTANCE) {
+            mem.of(ff, path, ff.getMapPageSize(), ff.length(path));
+        } else {
+            if (lastPartition) {
+                mem = new ExtendableOnePageMemory(ff, path, ff.getMapPageSize());
+            } else {
+                mem = new OnePageMemory(ff, path, ff.length(path));
+            }
+            columns.setQuick(primaryIndex, mem);
+        }
+        return mem;
     }
 
     private void reloadColumnChanges() {
@@ -1154,12 +1152,13 @@ public class TableReader implements Closeable {
     private boolean reloadInitialPartitioned() {
         if (readTxn()) {
             reloadStruct();
-            return reloadInitialPartitioned0();
+            reloadInitialPartitioned0();
+            return true;
         }
         return false;
     }
 
-    private boolean reloadInitialPartitioned0() {
+    private void reloadInitialPartitioned0() {
         reloadSymbolMapCounts();
         partitionCount = calculatePartitionCount();
         if (partitionCount > 0) {
@@ -1168,7 +1167,6 @@ public class TableReader implements Closeable {
                 reloadMethod = PARTITIONED_RELOAD_METHOD;
             }
         }
-        return true;
     }
 
     private boolean reloadNonPartitioned() {
@@ -1334,7 +1332,7 @@ public class TableReader implements Closeable {
                             //    instance and the column from disk
                             // 3. Column hasn't been altered and we can skip to next column.
                             ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if ((col instanceof ReadOnlyMemory && col.isDeleted()) || col instanceof NullColumn) {
+                            if ((col instanceof ExtendableOnePageMemory && col.isDeleted()) || col instanceof NullColumn) {
                                 reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount, lastPartition);
                             }
                             continue;

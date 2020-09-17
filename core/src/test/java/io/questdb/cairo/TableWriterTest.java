@@ -24,20 +24,32 @@
 
 package io.questdb.cairo;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.Assert;
+import org.junit.Test;
+
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.microtime.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableWriterTest extends AbstractCairoTest {
 
@@ -945,7 +957,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize(), Integer.MAX_VALUE)) {
+            try (ContiguousVirtualMemory vmem = new ContiguousVirtualMemory(FF.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                     long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
                     int i = 0;
@@ -1075,7 +1087,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (ContiguousVirtualMemory vmem = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -1144,7 +1156,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // this contraption will verify that all timestamps that are
             // supposed to be stored have matching partitions
-            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
+            try (ContiguousVirtualMemory vmem = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE)) {
                 try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -3844,7 +3856,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    void verifyTimestampPartitions(VirtualMemory vmem) {
+    void verifyTimestampPartitions(ContiguousVirtualMemory vmem) {
         int i;
         DateFormatCompiler compiler = new DateFormatCompiler();
         TimestampFormat fmt = compiler.compile("yyyy-MM-dd");

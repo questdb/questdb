@@ -24,22 +24,22 @@
 
 package io.questdb.cairo.map;
 
+import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.VirtualMemory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 
-class CompactMapRecord implements MapRecord {
+public class CompactMapRecord implements MapRecord {
 
-    private final VirtualMemory entries;
+    private final ContiguousVirtualMemory entries;
     private final long[] columnOffsets;
     private final CompactMapValue value;
     private long offset;
     private RecordCursor symbolTableResolver;
     private IntList symbolTableIndex;
 
-    public CompactMapRecord(VirtualMemory entries, long[] columnOffsets, CompactMapValue value) {
+    public CompactMapRecord(ContiguousVirtualMemory entries, long[] columnOffsets, CompactMapValue value) {
         this.entries = entries;
         this.columnOffsets = columnOffsets;
         this.value = value;

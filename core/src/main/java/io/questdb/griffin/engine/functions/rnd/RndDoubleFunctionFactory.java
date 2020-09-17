@@ -31,8 +31,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.NoArgFunction;
-import io.questdb.griffin.engine.functions.StatelessFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -48,7 +46,7 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
         return new RndFunction(position);
     }
 
-    private static class RndFunction extends DoubleFunction implements StatelessFunction, NoArgFunction {
+    private static class RndFunction extends DoubleFunction implements Function {
 
         private Rnd rnd;
 

@@ -86,12 +86,11 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
     private void rehash() {
         int newCapacity = capacity * 2;
         final int size = size();
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
-
-        CharSequence[] newKeys = new CharSequence[arrayCapacity];
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
+        CharSequence[] newKeys = new CharSequence[len];
         CharSequence[] oldKeys = keys;
+        mask = len - 1;
         this.keys = newKeys;
         free -= size;
         for (int i = 0, n = oldKeys.length; i < n; i++) {

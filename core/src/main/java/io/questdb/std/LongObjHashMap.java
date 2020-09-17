@@ -88,15 +88,15 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
         V[] oldValues = values;
         long[] oldKeys = keys;
-        this.keys = new long[arrayCapacity];
-        this.values = (V[]) new Object[arrayCapacity];
+        this.keys = new long[len];
+        this.values = (V[]) new Object[len];
         Arrays.fill(keys, noEntryKeyValue);
+        mask = len - 1;
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {

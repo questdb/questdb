@@ -24,11 +24,15 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
 public class DirectLongList implements Mutable, Closeable {
+
+    private static final Log LOG = LogFactory.getLog(DirectLongList.class);
 
     private final int pow2;
     private final int onePow2;
@@ -170,15 +174,17 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     private void extend(long capacity) {
+        final long oldCapacity = this.capacity;
         long address = Unsafe.malloc(this.capacity = ((capacity << pow2) + Misc.CACHE_LINE_SIZE));
         long start = address + (address & (Misc.CACHE_LINE_SIZE - 1));
         Unsafe.getUnsafe().copyMemory(this.start, start, limit + onePow2 - this.start);
         if (this.address != 0) {
-            Unsafe.free(this.address, this.capacity);
+            Unsafe.free(this.address, oldCapacity);
         }
         this.pos = this.pos - this.start + start;
         this.limit = start + ((capacity - 1) << pow2);
         this.address = address;
         this.start = start;
+        LOG.info().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
     }
 }

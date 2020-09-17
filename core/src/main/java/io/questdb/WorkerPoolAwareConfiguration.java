@@ -34,6 +34,28 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
+    WorkerPoolAwareConfiguration USE_SHARED_CONFIGURATION = new WorkerPoolAwareConfiguration() {
+        @Override
+        public int[] getWorkerAffinity() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+    };
 
     static WorkerPool configureWorkerPool(
             WorkerPoolAwareConfiguration configuration,
@@ -49,7 +71,6 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             Log log,
             CairoEngine cairoEngine,
             ServerFactory<T, C> factory,
-            MessageBus messageBus,
             FunctionFactoryCache functionFactoryCache
     ) {
         final T server;
@@ -57,7 +78,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
 
             final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool);
             final boolean local = localPool != sharedWorkerPool;
-            final MessageBus bus = local ? new MessageBusImpl(messageBus.getConfiguration()) : messageBus;
+            final MessageBus bus = local ? new MessageBusImpl(cairoEngine.getConfiguration()) : cairoEngine.getMessageBus();
 
             server = factory.create(configuration, cairoEngine, localPool, local, bus, functionFactoryCache);
 

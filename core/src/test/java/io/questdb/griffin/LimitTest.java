@@ -263,11 +263,11 @@ public class LimitTest extends AbstractGriffinTest {
                 bindVariableService.setLong("lo", 4);
                 bindVariableService.setInt("hi", 8);
 
-                assertQueryAndCache(expected1, query, "timestamp", true);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong("lo", 6);
                 bindVariableService.setInt("hi", 12);
 
-                assertQueryAndCache(expected2, query, "timestamp", true);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
@@ -449,9 +449,9 @@ public class LimitTest extends AbstractGriffinTest {
                 );
 
                 bindVariableService.setLong(0, 4);
-                assertQueryAndCache(expected1, query, "timestamp", true);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong(0, 6);
-                assertQueryAndCache(expected2, query, "timestamp", true);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
@@ -505,9 +505,9 @@ public class LimitTest extends AbstractGriffinTest {
                 );
 
                 bindVariableService.setLong("lim", 4);
-                assertQueryAndCache(expected1, query, "timestamp", true);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong("lim", 6);
-                assertQueryAndCache(expected2, query, "timestamp", true);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
@@ -550,7 +550,7 @@ public class LimitTest extends AbstractGriffinTest {
                             ") timestamp(timestamp)"
                     , sqlExecutionContext
             );
-            assertQueryAndCache(expected1, query, "timestamp", true);
+            assertQueryAndCache(expected1, query, "timestamp", true, true);
 
             compiler.compile(
                     "insert into y select * from " +
@@ -576,7 +576,7 @@ public class LimitTest extends AbstractGriffinTest {
                     , sqlExecutionContext
             );
 
-            assertQuery(expected2, query, "timestamp", true);
+            assertQuery(expected2, query, "timestamp", true, true);
         });
     }
 }

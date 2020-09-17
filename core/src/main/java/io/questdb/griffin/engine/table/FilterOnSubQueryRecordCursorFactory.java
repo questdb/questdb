@@ -45,6 +45,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final RecordCursorFactory recordCursorFactory;
     private IntObjHashMap<RowCursorFactory> factories;
     private final Record.CharSequenceFunction func;
+    private final IntList columnIndexes;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -63,6 +64,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         cursorFactories = new ObjList<>();
         this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
         this.func = func;
+        this.columnIndexes = columnIndexes;
     }
 
     @Override
@@ -114,7 +116,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
                             if (filter == null) {
                                 rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, false, BitmapIndexReader.DIR_FORWARD);
                             } else {
-                                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, false, BitmapIndexReader.DIR_FORWARD);
+                                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, false, BitmapIndexReader.DIR_FORWARD, columnIndexes);
                             }
                         }
 

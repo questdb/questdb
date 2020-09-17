@@ -45,10 +45,11 @@ public abstract class AbstractIntHashSet implements Mutable {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
         this.noEntryKeyValue = noKeyValue;
-        free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : initialCapacity;
         this.loadFactor = loadFactor;
-        keys = new int[(int) (this.capacity / loadFactor)];
-        mask = capacity - 1;
+        int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
+        keys = new int[len];
+        mask = len - 1;
     }
 
     @Override

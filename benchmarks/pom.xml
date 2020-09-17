@@ -30,8 +30,7 @@
     <artifactId>benchmarks</artifactId>
     <version>1.0</version>
     <packaging>jar</packaging>
-
-    <name>JMH benchmark sample: Java</name>
+    <name>JMH benchmarks for QuestDB</name>
 
     <!--
        This is the demo/sample template build script for building Java benchmarks with JMH.
@@ -52,8 +51,8 @@
         </dependency>
         <dependency>
             <groupId>org.questdb</groupId>
-            <artifactId>core</artifactId>
-            <version>5.0.2-SNAPSHOT</version>
+            <artifactId>questdb</artifactId>
+            <version>5.0.4-SNAPSHOT</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
@@ -95,6 +94,13 @@
                 <configuration>
                     <source>${javac.target}</source>
                     <target>${javac.target}</target>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.openjdk.jmh</groupId>
+                            <artifactId>jmh-generator-annprocess</artifactId>
+                            <version>${jmh.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
             <plugin>

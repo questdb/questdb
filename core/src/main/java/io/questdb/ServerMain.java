@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.line.tcp.LineTcpServer;
 import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
@@ -51,6 +52,8 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class ServerMain {
+    private static final String VERSION_TXT = "version.txt";
+
     public static void deleteOrException(File file) {
         if (!file.exists()) {
             return;
@@ -90,7 +93,7 @@ public class ServerMain {
         // -n = disables handling of HUP signal
 
         final String rootDirectory = optHash.get("-d");
-        extractSite(rootDirectory, optHash.get("-f") != null, log);
+        extractSite(rootDirectory, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
         final File configurationFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), configurationFileName);
@@ -139,17 +142,16 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final MessageBus messageBus = new MessageBusImpl(configuration);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
 
         LogFactory.configureFromSystemProperties(workerPool);
-        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), messageBus);
+        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
         // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
         // updating the telemetry_config table.
-        final TelemetryJob telemetryJob = new TelemetryJob(configuration, cairoEngine, messageBus);
+        final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
 
-        if (configuration.getTelemetryConfiguration().getEnabled()) {
+        if (configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled()) {
             workerPool.assign(telemetryJob);
         }
 
@@ -159,7 +161,6 @@ public class ServerMain {
                     workerPool,
                     log,
                     cairoEngine,
-                    messageBus,
                     functionFactoryCache
             );
 
@@ -171,7 +172,6 @@ public class ServerMain {
                         workerPool,
                         log,
                         cairoEngine,
-                        messageBus,
                         functionFactoryCache
                 );
             } else {
@@ -194,6 +194,12 @@ public class ServerMain {
                 );
             }
 
+            LineTcpServer lineTcpServer = LineTcpServer.create(
+                    configuration.getLineTcpReceiverConfiguration(),
+                    workerPool,
+                    log,
+                    cairoEngine
+            );
             startQuestDb(workerPool, lineProtocolReceiver, log);
             logWebConsoleUrls(log, configuration);
 
@@ -213,7 +219,8 @@ public class ServerMain {
                         httpServer,
                         pgWireServer,
                         lineProtocolReceiver,
-                        telemetryJob
+                        telemetryJob,
+                        lineTcpServer
                 );
                 System.err.println(new Date() + " QuestDB is down");
             }));
@@ -240,7 +247,7 @@ public class ServerMain {
             }
             record.$('\n').$();
         } else {
-            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n');
+            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n').$();
         }
     }
 
@@ -271,29 +278,56 @@ public class ServerMain {
         return optHash;
     }
 
-    private static void extractSite(String dir, boolean force, Log log) throws IOException {
-        final String publicZip = "/io/questdb/site/public.zip";
-        final String publicDest = dir + "/public";
-        final byte[] buffer = new byte[1024 * 1024];
-        try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
-            if (is != null) {
-                try (ZipInputStream zip = new ZipInputStream(is)) {
-                    ZipEntry ze;
-                    while ((ze = zip.getNextEntry()) != null) {
-                        final File dest = new File(publicDest, ze.getName());
-                        if (!ze.isDirectory()) {
-                            copyInputStream(force, buffer, dest, zip, log);
-                        }
-                        zip.closeEntry();
-                    }
-                }
-            } else {
-                log.error().$("could not find site [resource=").$(publicZip).$(']').$();
+    private static long getPublicVersion(String publicDir) throws IOException {
+        File f = new File(publicDir, VERSION_TXT);
+        if (f.exists()) {
+            try (FileInputStream fis = new FileInputStream(f)) {
+                byte[] buf = new byte[128];
+                int len = fis.read(buf);
+                return Long.parseLong(new String(buf, 0, len));
             }
         }
-        copyConfResource(dir, false, buffer, "conf/date.formats", log);
-        copyConfResource(dir, force, buffer, "conf/mime.types", log);
-        copyConfResource(dir, false, buffer, "conf/server.conf", log);
+        return Long.MIN_VALUE;
+    }
+
+    private static void setPublicVersion(String publicDir, long version) throws IOException {
+        File f = new File(publicDir, VERSION_TXT);
+        try (FileOutputStream fos = new FileOutputStream(f)) {
+            byte[] buf = Long.toString(version).getBytes();
+            fos.write(buf, 0, buf.length);
+        }
+    }
+
+    private static void extractSite(String dir, Log log) throws IOException {
+        final String publicZip = "/io/questdb/site/public.zip";
+        final String publicDir = dir + "/public";
+        final byte[] buffer = new byte[1024 * 1024];
+        final long thisVersion = ServerMain.class.getResource(publicZip).openConnection().getLastModified();
+        final long oldVersion = getPublicVersion(publicDir);
+        if (thisVersion > oldVersion) {
+            try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
+                if (is != null) {
+                    try (ZipInputStream zip = new ZipInputStream(is)) {
+                        ZipEntry ze;
+                        while ((ze = zip.getNextEntry()) != null) {
+                            final File dest = new File(publicDir, ze.getName());
+                            if (!ze.isDirectory()) {
+                                copyInputStream(true, buffer, dest, zip, log);
+                            }
+                            zip.closeEntry();
+                        }
+                    }
+                } else {
+                    log.error().$("could not find site [resource=").$(publicZip).$(']').$();
+                }
+            }
+            setPublicVersion(publicDir, thisVersion);
+            copyConfResource(dir, false, buffer, "conf/date.formats", log);
+            copyConfResource(dir, true, buffer, "conf/mime.types", log);
+            copyConfResource(dir, false, buffer, "conf/server.conf", log);
+        } else {
+            log.info().$("web console is up to date").$();
+        }
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
@@ -377,12 +411,14 @@ public class ServerMain {
         return "[DEVELOPMENT]";
     }
 
-    protected static void shutdownQuestDb(final WorkerPool workerPool,
-                                          final CairoEngine cairoEngine,
-                                          final HttpServer httpServer,
-                                          final PGWireServer pgWireServer,
-                                          final AbstractLineProtoReceiver lineProtocolReceiver,
-                                          final TelemetryJob telemetryJob
+    protected static void shutdownQuestDb(
+            final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
+            final HttpServer httpServer,
+            final PGWireServer pgWireServer,
+            final AbstractLineProtoReceiver lineProtocolReceiver,
+            final TelemetryJob telemetryJob,
+            final LineTcpServer lineTcpServer
     ) {
         lineProtocolReceiver.halt();
         Misc.free(telemetryJob);
@@ -391,6 +427,7 @@ public class ServerMain {
         Misc.free(httpServer);
         Misc.free(cairoEngine);
         Misc.free(lineProtocolReceiver);
+        Misc.free(lineTcpServer);
     }
 
     protected static void startQuestDb(

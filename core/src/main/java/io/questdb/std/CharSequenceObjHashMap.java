@@ -44,8 +44,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
     private CharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         this.list = new ObjList<>(capacity);
-        keys = new CharSequence[capacity];
-        values = (V[]) new Object[capacity];
+        values = (V[]) new Object[keys.length];
         clear();
     }
 
@@ -76,6 +75,10 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
             super.removeAt(index);
             list.remove(key);
         }
+    }
+
+    public void cleaValues() {
+        Arrays.fill(values, 0, capacity, null);
     }
 
     public V get(CharSequence key) {
@@ -121,6 +124,10 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         return get(list.getQuick(index));
     }
 
+    public void setValueQuick(int keyIndex, V value) {
+        values[-keyIndex - 1] = value;
+    }
+
     private boolean putAt0(int index, CharSequence key, V value) {
         if (index < 0) {
             values[-index - 1] = value;
@@ -139,15 +146,15 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
-        mask = newCapacity - 1;
         free = capacity = newCapacity;
-        int arrayCapacity = (int) (newCapacity / loadFactor);
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
         V[] oldValues = values;
         CharSequence[] oldKeys = keys;
-        this.keys = new CharSequence[arrayCapacity];
-        this.values = (V[]) new Object[arrayCapacity];
+        this.keys = new CharSequence[len];
+        this.values = (V[]) new Object[len];
         Arrays.fill(keys, null);
+        mask = len - 1;
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
