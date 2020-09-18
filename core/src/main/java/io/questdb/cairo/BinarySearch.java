@@ -51,17 +51,21 @@ public class BinarySearch {
 
     public static long find(ReadOnlyColumn column, long value, long low, long high) {
         while (low < high) {
-            long mid = (low + high - 1) >>> 1;
-            long midVal = column.getLong(mid * 8);
+            long mid = (low + high) / 2;
+            long midVal = column.getLong(mid * Long.BYTES);
 
             if (midVal < value)
-                low = mid + 1;
+                if (low < mid) {
+                    low = mid;
+                } else {
+                    return column.getLong(high * Long.BYTES) < value ? high : low;
+                }
             else if (midVal > value)
                 high = mid;
             else {
                 // In case of multiple equal values, find the first
                 mid += 1;
-                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
+                while (mid > 0 && mid < high && midVal == column.getLong(mid * Long.BYTES)) {
                     mid += 1;
                 }
                 return mid - 1;

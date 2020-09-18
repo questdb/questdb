@@ -235,7 +235,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         if (len == 0) {
             return "";
         }
-        throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(']');
+        throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size).put(", fd=").put(fd).put(']');
     }
 
     public void of(FilesFacade ff, long fd, LPSZ name, long size) {
