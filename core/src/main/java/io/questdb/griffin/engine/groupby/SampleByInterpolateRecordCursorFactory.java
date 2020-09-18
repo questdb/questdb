@@ -49,9 +49,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final VirtualFunctionSkewedSymbolRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final ObjList<GroupByFunction> groupByDistanceFunctions;
     private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorScalarFunction> interpolatorScalarFunctions;
+    private final ObjList<InterpolationUtil.InterpolatorGapDistanceFunction> interpolatorGapDistanceFunctions;
+    private final ObjList<InterpolationUtil.InterpolatorBoundaryDistanceFunction> interpolatorBoundaryDistanceFunctions;
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
@@ -79,6 +81,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         final int columnCount = model.getBottomUpColumns().size();
         final RecordMetadata metadata = base.getMetadata();
         this.groupByFunctions = new ObjList<>(columnCount);
+        this.groupByDistanceFunctions = new ObjList<>(columnCount);
         valueTypes.add(ColumnType.BYTE); // gap flag
 
         GroupByUtils.prepareGroupByFunctions(
@@ -107,7 +110,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
         this.storeYFunctions = new ObjList<>(columnCount);
         this.interpolatorFunctions = new ObjList<>(columnCount);
-        this.interpolatorScalarFunctions = new ObjList<>(columnCount);
+        this.interpolatorGapDistanceFunctions = new ObjList<>(columnCount);
+        this.interpolatorBoundaryDistanceFunctions = new ObjList<>(columnCount);
         this.tempValue = new SimpleMapValue(columnCount);
 
         // create timestamp column
@@ -120,6 +124,9 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             GroupByFunction function = groupByFunctions.getQuick(i);
+            if (!function.isScalar()) {
+                groupByDistanceFunctions.add(function);
+            }
             switch (function.getType()) {
                 case ColumnType.BYTE:
                     storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
@@ -140,9 +147,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 case ColumnType.DOUBLE:
                     storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
                     interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
-                    if (function.isScalar()) {
-                        interpolatorScalarFunctions.add(InterpolationUtil.INTERPOLATE_SCALAR_DOUBLE);
-                    }
                     break;
                 case ColumnType.FLOAT:
                     storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
@@ -150,6 +154,19 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     break;
                 default:
                     Misc.freeObjList(groupByFunctions);
+                    throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
+            }
+        }
+
+        for (int i = 0, n = groupByDistanceFunctions.size(); i < n; i++) {
+            GroupByFunction function = groupByDistanceFunctions.getQuick(i);
+            switch (function.getType()) {
+                case ColumnType.DOUBLE:
+                    interpolatorGapDistanceFunctions.add(InterpolationUtil.INTERPOLATE_GAP_DOUBLE);
+                    interpolatorBoundaryDistanceFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_DOUBLE);
+                    break;
+                default:
+                    Misc.freeObjList(groupByDistanceFunctions);
                     throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
             }
         }
@@ -275,6 +292,32 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // fill gaps if any at end of base cursor
             fillGaps(prevSample, hiSample);
 
+            int distanceFunctionCount = groupByDistanceFunctions.size();
+            if (distanceFunctionCount > 0) {
+                final RecordCursor mapCursor = recordKeyMap.getCursor();
+                final Record mapRecord = mapCursor.getRecord();
+                while (mapCursor.hasNext()) {
+                    MapValue value = findDataMapValue(mapRecord, loSample);
+                    if (value.getByte(0) == 0) { //we have at least 1 data point
+                        long x1 = loSample;
+                        long x2 = x1;
+                        while (true) {
+                            // to timestamp after 'sample' to begin with
+                            x2 = sampler.nextTimestamp(x2);
+                            if (x2 < hiSample) {
+                                value = findDataMapValue(mapRecord, x2);
+                                if (value.getByte(0) == 0) {
+                                    interpolateBoundaryRange(x1, x2, mapRecord);
+                                    x1 = x2;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             // find gaps by checking each of the unique keys against every sample
             long sample;
             for (sample = prevSample = loSample; sample < hiSample; prevSample = sample, sample = sampler.nextTimestamp(sample)) {
@@ -289,7 +332,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                         long current = sample;
 
                         while (true) {
-                            interruptor.checkInterrupted();
                             // to timestamp after 'sample' to begin with
                             long x2 = sampler.nextTimestamp(current);
                             // is this timestamp within range?
@@ -331,7 +373,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                                 nullifyRange(sampler.nextTimestamp(x1), hiSample, mapRecord);
                                                 break;
                                             }
-                                            interruptor.checkInterrupted();
                                         }
                                     } else {
 
@@ -339,6 +380,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                         // yep, that's right, and go all the way back down
                                         // to 'sample' calculating interpolated values
                                         computeYPoints(mapRecord, prevSample, value);
+                                        interpolateDistanceRange(prevSample, x2, sampler.nextTimestamp(prevSample), x2, mapRecord);
                                         interpolateRange(prevSample, x2, sampler.nextTimestamp(prevSample), x2, mapRecord);
                                     }
                                     break;
@@ -421,6 +463,20 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         return key.findValue();
     }
 
+    private MapValue findDataMapValue2(Record record, long timestamp) {
+        final MapKey key = dataMap.withKey();
+        mapSink2.copy(record, key);
+        key.putLong(timestamp);
+        return key.findValue2();
+    }
+
+    private MapValue findDataMapValue3(Record record, long timestamp) {
+        final MapKey key = dataMap.withKey();
+        mapSink2.copy(record, key);
+        key.putLong(timestamp);
+        return key.findValue3();
+    }
+
     private void freeYData() {
         if (yData != 0) {
             Unsafe.free(yData, yDataSize);
@@ -442,24 +498,48 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         return cursor;
     }
 
+    private void interpolateBoundaryRange(long x1, long x2, Record record) {
+        //interpolating boundary
+        for (int i = 0, m = groupByDistanceFunctions.size(); i < m; i++) {
+            GroupByFunction function = groupByDistanceFunctions.getQuick(i);
+            MapValue value1 = findDataMapValue2(record, x1);
+            MapValue value2 = findDataMapValue3(record, x2);
+            interpolatorBoundaryDistanceFunctions.getQuick(i).interpolateBoundaryAndStore(function, sampler.nextTimestamp(x1), value1, value2, true);
+            interpolatorBoundaryDistanceFunctions.getQuick(i).interpolateBoundaryAndStore(function, x2, value1, value2, false);
+        }
+    }
+
+    private void interpolateDistanceRange(long x1, long x2, long lo, long hi, Record record) {
+        for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
+            final MapValue xValue = findDataMapValue(record, x);
+            assert xValue != null && xValue.getByte(0) == 1;
+            for (int i = 0, m = groupByDistanceFunctions.size(); i < m; i++) {
+                GroupByFunction function = groupByDistanceFunctions.getQuick(i);
+                MapValue value1 = findDataMapValue2(record, x1);
+                MapValue value2 = findDataMapValue3(record, x2);
+                interpolatorGapDistanceFunctions.getQuick(i).interpolateGapAndStore(function, xValue, sampler.getBucketSize(), value1, value2);
+            }
+        }
+    }
+
     private void interpolateRange(long x1, long x2, long lo, long hi, Record record) {
         for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
-            final MapKey key = dataMap.withKey();
-            mapSink2.copy(record, key);
-            key.putLong(x);
-            final MapValue value = key.findValue();
+            final MapValue value = findDataMapValue(record, x);
             assert value != null && value.getByte(0) == 1;
             value.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
             for (int i = 0, m = groupByFunctions.size(); i < m; i++) {
                 GroupByFunction function = groupByFunctions.getQuick(i);
-                if (!function.isScalar()) {
+                if (function.isScalar()) {
                     interpolatorFunctions.getQuick(i).interpolateAndStore(function, value, x, x1, x2, yData + i * 16, yData + i * 16 + 8);
-                } else {
-                    MapValue x1Value = findDataMapValue(record, x1);
-                    MapValue x2Value = findDataMapValue(tempValue, x2);
-                    interpolatorScalarFunctions.getQuick(i).interpolateAndStore(function, value, x, x1Value, x2Value);
                 }
             }
+        }
+    }
+
+    private void setAsNonGaps(long lo, long hi, Record record) {
+        for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
+            final MapValue value = findDataMapValue(record, x);
+            value.putByte(0, (byte) 0);
         }
     }
 

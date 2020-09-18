@@ -24,25 +24,13 @@
 
 package io.questdb.cairo.map;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.Hash;
-import io.questdb.std.Long256;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class FastMap implements Map {
 
@@ -51,6 +39,8 @@ public class FastMap implements Map {
     private final double loadFactor;
     private final Key key = new Key();
     private final FastMapValue value;
+    private final FastMapValue value2;
+    private final FastMapValue value3;
     private final FastMapCursor cursor;
     private final FastMapRecord record;
     private final int valueColumnCount;
@@ -72,8 +62,8 @@ public class FastMap implements Map {
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
                    int keyCapacity,
-            double loadFactor,
-            int maxResizes
+                   double loadFactor,
+                   int maxResizes
     ) {
         this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
@@ -82,8 +72,8 @@ public class FastMap implements Map {
                    @Transient @NotNull ColumnTypes keyTypes,
                    @Transient @Nullable ColumnTypes valueTypes,
                    int keyCapacity,
-            double loadFactor,
-            int maxResizes
+                   double loadFactor,
+                   int maxResizes
     ) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
@@ -153,12 +143,16 @@ public class FastMap implements Map {
                 }
             }
             this.value = new FastMapValue(valueOffsets);
+            this.value2 = new FastMapValue(valueOffsets);
+            this.value3 = new FastMapValue(valueOffsets);
             this.keyBlockOffset = offset;
             this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
             this.record = new FastMapRecord(valueOffsets, columnSplit, keyDataOffset, keyBlockOffset, value, keyTypes);
         } else {
             this.valueColumnCount = 0;
             this.value = new FastMapValue(null);
+            this.value2 = new FastMapValue(null);
+            this.value3 = new FastMapValue(null);
             this.keyBlockOffset = offset;
             this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
             this.record = new FastMapRecord(null, 0, keyDataOffset, keyBlockOffset, value, keyTypes);
@@ -240,8 +234,17 @@ public class FastMap implements Map {
 
     @Override
     public MapValue valueAt(long address) {
-        value.of(address, false);
-        return value;
+        return valueOf(address, false, 1);
+    }
+
+    private FastMapValue asNew(Key keyWriter, int index, int valueIdx) {
+        kPos = keyWriter.appendAddress;
+        offsets.set(index, keyWriter.startAddress - kStart);
+        if (--free == 0) {
+            rehash();
+        }
+        size++;
+        return valueOf(keyWriter.startAddress, true, valueIdx);
     }
 
     @Override
@@ -249,14 +252,14 @@ public class FastMap implements Map {
         return key.init();
     }
 
-    private FastMapValue asNew(Key keyWriter, int index) {
-        kPos = keyWriter.appendAddress;
-        offsets.set(index, keyWriter.startAddress - kStart);
-        if (--free == 0) {
-            rehash();
+    private FastMapValue probe0(Key keyWriter, int index, int valueIdx) {
+        long offset;
+        while ((offset = offsets.get(index = (++index & mask))) != -1) {
+            if (eq(keyWriter, offset)) {
+                return valueOf(kStart + offset, false, valueIdx);
+            }
         }
-        size++;
-        return value.of(keyWriter.startAddress, true);
+        return asNew(keyWriter, index, valueIdx);
     }
 
     private boolean eq(Key keyWriter, long offset) {
@@ -298,24 +301,44 @@ public class FastMap implements Map {
         return hashFunction.hash(key.startAddress + keyDataOffset, key.len - keyDataOffset) & mask;
     }
 
-    private FastMapValue probe0(Key keyWriter, int index) {
+    private FastMapValue probeReadOnly(Key keyWriter, int index, int valueIdx) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
-                return value.of(kStart + offset, false);
-            }
-        }
-        return asNew(keyWriter, index);
-    }
-
-    private FastMapValue probeReadOnly(Key keyWriter, int index) {
-        long offset;
-        while ((offset = offsets.get(index = (++index & mask))) != -1) {
-            if (eq(keyWriter, offset)) {
-                return value.of(kStart + offset, false);
+                return valueOf(kStart + offset, false, valueIdx);
             }
         }
         return null;
+    }
+
+    private void resize(int size) {
+        if (nResizes < maxResizes) {
+            nResizes++;
+            long kCapacity = (kLimit - kStart) << 1;
+            long target = key.appendAddress + size - kStart;
+            if (kCapacity < target) {
+                kCapacity = Numbers.ceilPow2(target);
+            }
+            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity);
+
+            this.capacity = kCapacity;
+            long d = kAddress - this.kStart;
+            kPos += d;
+            long colOffsetDelta = key.nextColOffset - key.startAddress;
+            key.startAddress += d;
+            key.appendAddress += d;
+            key.nextColOffset = key.startAddress + colOffsetDelta;
+
+            assert kPos > 0;
+            assert key.startAddress > 0;
+            assert key.appendAddress > 0;
+            assert key.nextColOffset > 0;
+
+            this.kStart = kAddress;
+            this.kLimit = kAddress + kCapacity;
+        } else {
+            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
+        }
     }
 
     private void rehash() {
@@ -342,34 +365,14 @@ public class FastMap implements Map {
         this.keyCapacity = capacity;
     }
 
-    private void resize(int size) {
-        if (nResizes < maxResizes) {
-            nResizes++;
-            long kCapacity = (kLimit - kStart) << 1;
-            long target = key.appendAddress + size - kStart;
-            if (kCapacity < target) {
-                kCapacity = Numbers.ceilPow2(target);
-            }
-            long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity);
-    
-            this.capacity = kCapacity;
-            long d = kAddress - this.kStart;
-            kPos += d;
-            long colOffsetDelta = key.nextColOffset - key.startAddress;
-            key.startAddress += d;
-            key.appendAddress += d;
-            key.nextColOffset = key.startAddress + colOffsetDelta;
-    
-            assert kPos > 0;
-            assert key.startAddress > 0;
-            assert key.appendAddress > 0;
-            assert key.nextColOffset > 0;
-    
-            this.kStart = kAddress;
-            this.kLimit = kAddress + kCapacity;
-        } else {
-            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
+    private FastMapValue valueOf(long address, boolean _new, int valueIdx) {
+        FastMapValue value = this.value;
+        if (valueIdx == 2) {
+            value = this.value2;
+        } else if (valueIdx == 3) {
+            value = this.value3;
         }
+        return value.of(address, _new);
     }
 
     @FunctionalInterface
@@ -385,6 +388,35 @@ public class FastMap implements Map {
 
         @Override
         public MapValue createValue() {
+            return createValue(1);
+        }
+
+        @Override
+        public MapValue createValue2() {
+            return createValue(2);
+        }
+
+        @Override
+        public MapValue createValue3() {
+            return createValue(3);
+        }
+
+        @Override
+        public MapValue findValue() {
+            return findValue(1);
+        }
+
+        @Override
+        public MapValue findValue2() {
+            return findValue(2);
+        }
+
+        @Override
+        public MapValue findValue3() {
+            return findValue(3);
+        }
+
+        private MapValue createValue(int valueIdx) {
             commit();
             // calculate hash remembering "key" structure
             // [ len | value block | key offset block | key data block ]
@@ -392,16 +424,15 @@ public class FastMap implements Map {
             long offset = offsets.get(index);
 
             if (offset == -1) {
-                return asNew(this, index);
+                return asNew(this, index, valueIdx);
             } else if (eq(this, offset)) {
-                return value.of(kStart + offset, false);
+                return valueOf(kStart + offset, false, valueIdx);
             } else {
-                return probe0(this, index);
+                return probe0(this, index, valueIdx);
             }
         }
 
-        @Override
-        public MapValue findValue() {
+        private MapValue findValue(int valueIdx) {
             commit();
             int index = keyIndex();
             long offset = offsets.get(index);
@@ -409,9 +440,9 @@ public class FastMap implements Map {
             if (offset == -1) {
                 return null;
             } else if (eq(this, offset)) {
-                return value.of(kStart + offset, false);
+                return valueOf(kStart + offset, false, valueIdx);
             } else {
-                return probeReadOnly(this, index);
+                return probeReadOnly(this, index, valueIdx);
             }
         }
 

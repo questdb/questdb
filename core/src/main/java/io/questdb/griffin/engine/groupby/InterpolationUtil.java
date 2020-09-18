@@ -43,7 +43,8 @@ public class InterpolationUtil {
     static final InterpolatorFunction INTERPOLATE_INT = InterpolationUtil::interpolateInt;
     static final InterpolatorFunction INTERPOLATE_LONG = InterpolationUtil::interpolateLong;
 
-    static final InterpolatorScalarFunction INTERPOLATE_SCALAR_DOUBLE = InterpolationUtil::interpolateDouble;
+    static final InterpolatorGapDistanceFunction INTERPOLATE_GAP_DOUBLE = InterpolationUtil::interpolateGap;
+    static final InterpolatorBoundaryDistanceFunction INTERPOLATE_BOUNDARY_DOUBLE = InterpolationUtil::interpolateBoundary;
 
     public static void interpolateByte(
             GroupByFunction function,
@@ -175,18 +176,31 @@ public class InterpolationUtil {
         );
     }
 
-    static void interpolateDouble(
+    static void interpolateGap(
             GroupByFunction function,
             MapValue mapValue,
             long x,
-            MapValue x1Value,
-            MapValue x2Value
+            MapValue mapValue1,
+            MapValue mapValue2
     ) {
-        function.interpolateAndSetDouble(
+        function.interpolateGap(
                 mapValue,
-                x1Value,
-                x2Value,
+                mapValue1, mapValue2,
                 x);
+    }
+
+    static void interpolateBoundary(
+            GroupByFunction function,
+            long boundaryTimestamp,
+            MapValue mapValue1,
+            MapValue mapValue2,
+            boolean isEndOfBoundary
+    ) {
+        function.interpolateBoundary(
+                mapValue1,
+                mapValue2,
+                boundaryTimestamp,
+                isEndOfBoundary);
     }
 
     static void storeYDouble(GroupByFunction function, MapValue mapValue, long targetAddress) {
@@ -222,7 +236,11 @@ public class InterpolationUtil {
         void interpolateAndStore(GroupByFunction function, MapValue mapValue, long x, long x1, long x2, long y1Address, long y2Address);
     }
 
-    interface InterpolatorScalarFunction {
-        void interpolateAndStore(GroupByFunction function, MapValue mapValue, long x, MapValue x1, MapValue x2);
+    interface InterpolatorGapDistanceFunction {
+        void interpolateGapAndStore(GroupByFunction function, MapValue value, long x, MapValue value1, MapValue value2);
+    }
+
+    interface InterpolatorBoundaryDistanceFunction {
+        void interpolateBoundaryAndStore(GroupByFunction function, long boundaryTimestamp, MapValue value1, MapValue value2, boolean isEndOfBoundary);
     }
 }
