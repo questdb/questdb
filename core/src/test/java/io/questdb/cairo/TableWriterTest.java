@@ -3321,7 +3321,8 @@ public class TableWriterTest extends AbstractCairoTest {
                                 // out transaction size is random after all
                                 // if this happens return count to non-failing state
                                 ff.count = Long.MAX_VALUE;
-                            } catch (CairoException ignore) {
+                            } catch (CairoException e) {
+                                e.printStackTrace();
                                 failureCount++;
                                 ff.count = Long.MAX_VALUE;
                                 writer.commit();

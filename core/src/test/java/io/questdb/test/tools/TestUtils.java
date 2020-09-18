@@ -31,11 +31,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.IOException;
+import java.io.*;
 
 public final class TestUtils {
 
@@ -97,6 +93,46 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(File a, CharSequence actual) {
+        try (Path path = new Path()) {
+            path.of(a.getAbsolutePath()).$();
+            long fda = Files.openRO(path);
+            Assert.assertNotEquals(-1, fda);
+
+            try {
+                long bufa = Unsafe.malloc(4096);
+                final long str = toMemory(actual);
+                long offset = 0;
+                long strp = str;
+                try {
+
+                    while (true) {
+                        long reada = Files.read(fda, bufa, 4096, offset);
+
+                        if (reada == 0) {
+                            break;
+                        }
+
+                        for (int i = 0; i < reada; i++) {
+                            byte b = Unsafe.getUnsafe().getByte(bufa + i);
+                            if (b == 13) {
+                                continue;
+                            }
+                            Assert.assertEquals(b, Unsafe.getUnsafe().getByte(strp++));
+                        }
+
+                        offset += reada;
+                    }
+                } finally {
+                    Unsafe.free(bufa, 4096);
+                    Unsafe.free(str, actual.length());
+                }
+            } finally {
+                Files.close(fda);
+            }
+        }
+    }
+
     public static void assertEquals(CharSequence expected, CharSequence actual) {
         if (expected == null && actual == null) {
             return;
@@ -147,10 +183,19 @@ public final class TestUtils {
         Assert.assertEquals(fileCount, Files.getOpenFileCount());
     }
 
-    public static long toMemory(CharSequence sequence) {
-        long ptr = Unsafe.malloc(sequence.length());
-        Chars.asciiStrCpy(sequence, sequence.length(), ptr);
-        return ptr;
+    public static void copyMimeTypes(String targetDir) throws IOException {
+        try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
+            Assert.assertNotNull(stream);
+            final File target = new File(targetDir, "conf/mime.types");
+            target.getParentFile().mkdirs();
+            try (FileOutputStream fos = new FileOutputStream(target)) {
+                byte[] buffer = new byte[1024 * 1204];
+                int len;
+                while ((len = stream.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
+            }
+        }
     }
 
     public static String readStringFromFile(File file) {
@@ -171,25 +216,16 @@ public final class TestUtils {
         }
     }
 
+    public static long toMemory(CharSequence sequence) {
+        long ptr = Unsafe.malloc(sequence.length());
+        Chars.asciiStrCpy(sequence, sequence.length(), ptr);
+        return ptr;
+    }
+
     // used in tests
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
-        }
-    }
-
-    public static void copyMimeTypes(String targetDir) throws IOException {
-        try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
-            Assert.assertNotNull(stream);
-            final File target = new File(targetDir, "conf/mime.types");
-            target.getParentFile().mkdirs();
-            try (FileOutputStream fos = new FileOutputStream(target)) {
-                byte[] buffer = new byte[1024 * 1204];
-                int len;
-                while ((len = stream.read(buffer)) > 0) {
-                    fos.write(buffer, 0, len);
-                }
-            }
         }
     }
 

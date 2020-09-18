@@ -107,6 +107,10 @@ public final class MergeStruct {
         mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 5] = value;
     }
 
+    static long getDestVarAddressSize(long[] mergeStruct, int columnIndex) {
+        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 5];
+    }
+
     static void setDestVarAppendOffset(long[] mergeStruct, int columnIndex, long value) {
         mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 6] = value;
     }
