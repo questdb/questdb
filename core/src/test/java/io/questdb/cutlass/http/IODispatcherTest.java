@@ -503,11 +503,19 @@ public class IODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
-        new JsonQueryTestBuilder()
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder().withNetwork(nf)
+                        new HttpServerConfigurationBuilder()
+                        .withNetwork(nf)
+                        .withDumpingTraffic(false)
+                        .withAllowDeflateBeforeSend(false)
+                        .withHttpProtocolVersion("HTTP/1.1 ")
+                        .withServerKeepAlive(true)
                 )
-                .runJson(engine -> {
+                .run(engine -> {
                     sendAndReceive(
                             nf,
                             request,
@@ -5211,19 +5219,21 @@ public class IODispatcherTest {
         testJsonQuery(recordCount, request, expectedResponse, 100, false);
     }
 
-    private void testJsonQuery0(int workerCount, JsonQueryTestBuilder.HttpClientCode code, boolean telemetry) throws Exception {
+    private void testJsonQuery0(int workerCount, HttpQueryTestBuilder.HttpClientCode code, boolean telemetry) throws Exception {
         testJsonQuery0(workerCount, code, telemetry, false);
     }
 
-    private void testJsonQuery0(int workerCount, JsonQueryTestBuilder.HttpClientCode code, boolean telemetry, boolean http1) throws Exception {
-        new JsonQueryTestBuilder()
+    private void testJsonQuery0(int workerCount, HttpQueryTestBuilder.HttpClientCode code, boolean telemetry, boolean http1) throws Exception {
+        new HttpQueryTestBuilder()
                 .withWorkerCount(workerCount)
                 .withTelemetry(telemetry)
                 .withTempFolder(temp)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
-                        // .withServerKeepAlive(!http1)
+                        .withServerKeepAlive(!http1)
+                        .withSendBufferSize(16 * 1024)
+                        .withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)
                         .withHttpProtocolVersion(http1 ? "HTTP/1.0 " : "HTTP/1.1 "))
-                .runJson(code);
+                .run(code);
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {

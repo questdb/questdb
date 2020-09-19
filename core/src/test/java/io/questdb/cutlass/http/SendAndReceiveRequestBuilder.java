@@ -6,6 +6,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 
 import java.nio.charset.StandardCharsets;
@@ -81,10 +82,6 @@ public class SendAndReceiveRequestBuilder {
 
     public void executeExplicit(String request, long fd, byte[] expectedResponse, final int len, long ptr,  HttpClientStateListener listener) throws InterruptedException {
         long timestamp = System.currentTimeMillis();
-
-        if (null != listener) {
-            listener.onStartingRequest();
-        }
         int sent = 0;
         int reqLen = request.length();
         Chars.asciiStrCpy(request, reqLen, ptr);
@@ -104,16 +101,22 @@ public class SendAndReceiveRequestBuilder {
             System.out.println("expected");
             System.out.println(new String(expectedResponse, StandardCharsets.UTF_8));
         }
+
         boolean disconnected = false;
         boolean timeoutExpired = false;
         IntList receivedByteList = new IntList(expectedToReceive);
         while (received < expectedToReceive) {
             int n = nf.recv(fd, ptr + received, len - received);
             if (n > 0) {
+                // dump(ptr + received, n);
+                // compare bytes
                 for (int i = 0; i < n; i++) {
                     receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
                 }
                 received += n;
+                if (null != listener) {
+                    listener.onReceived(received);
+                }
             } else if (n < 0) {
                 disconnected = true;
                 break;
@@ -131,15 +134,22 @@ public class SendAndReceiveRequestBuilder {
 
         String actual = new String(receivedBytes, StandardCharsets.UTF_8);
         if (!printOnly) {
-            Assert.assertEquals(new String(expectedResponse, StandardCharsets.UTF_8), actual);
+            String expected = (new String(expectedResponse, StandardCharsets.UTF_8));
+//            if (disconnected && expectDisconnect) {
+//                actual = actual.substring(0, Math.min(actual.length(), expected.length()));
+//                expected = expected.substring(0, Math.min(actual.length(), expected.length()));
+//            }
+            Assert.assertEquals(expected, actual);
         } else {
             System.out.println("actual");
             System.out.println(actual);
         }
+
         if (disconnected && !expectDisconnect) {
             LOG.error().$("disconnected?").$();
             Assert.fail();
         }
+
         if (timeoutExpired) {
             LOG.error().$("timeout expired").$();
             Assert.fail();

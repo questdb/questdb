@@ -8,9 +8,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.ComparisonFailure;
@@ -18,7 +15,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -200,11 +196,12 @@ public class RetryIODispatcherTest {
     @Test
     public void testInsertWaitsWhenWriterLocked() throws Exception {
         final int parallelCount = 2;
-        new JsonQueryTestBuilder()
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .runJson(engine -> {
+                .run(engine -> {
                     // create table
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
@@ -287,11 +284,12 @@ public class RetryIODispatcherTest {
         try {
             rerunProcessingQueueSize = 1;
             final int parallelCount = 4;
-            new JsonQueryTestBuilder()
+            new HttpQueryTestBuilder()
+                    .withTempFolder(temp)
                     .withWorkerCount(parallelCount)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
-                    .runJson(engine -> {
+                    .run(engine -> {
                         // create table
                         sendAndReceive(
                                 NetworkFacadeImpl.INSTANCE,
@@ -379,11 +377,12 @@ public class RetryIODispatcherTest {
     public void queryAndDisconnect() throws Exception {
         final int parallelCount = 4;
         final int requestMult = 4;
-        new JsonQueryTestBuilder()
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .runJson(engine -> {
+                .run(engine -> {
                     // create table
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
@@ -448,11 +447,12 @@ public class RetryIODispatcherTest {
     @Test
     public void testInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
         final int parallelCount = 4;
-        new JsonQueryTestBuilder()
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .runJson(engine -> {
+                .run(engine -> {
                     // create table
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
@@ -538,11 +538,12 @@ public class RetryIODispatcherTest {
     @Test
     public void testImportWaitsWhenWriterLocked() throws Exception {
         final int parallelCount = 2;
-        new JsonQueryTestBuilder()
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .runJson((engine) -> {
+                .run((engine) -> {
             // create table and do 1 import
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
@@ -619,11 +620,12 @@ public class RetryIODispatcherTest {
     @Test
     public void testImportProcessedWhenClientDisconnected() throws Exception {
         final int parallelCount = 2;
-        new JsonQueryTestBuilder()
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .runJson((engine) -> {
+                .run((engine) -> {
             // create table and do 1 import
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
@@ -714,12 +716,13 @@ public class RetryIODispatcherTest {
             rerunProcessingQueueSize = 1;
             final int parallelCount = 4;
 
-            new JsonQueryTestBuilder()
+            new HttpQueryTestBuilder()
+                    .withTempFolder(temp)
                     .withWorkerCount(2)
                     .withHttpServerConfigBuilder(
                             new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(startDelay))
                     )
-                    .runJson(engine -> {
+                    .run(engine -> {
                 // create table and do 1 import
                 sendAndReceive(
                         NetworkFacadeImpl.INSTANCE,
@@ -847,11 +850,14 @@ public class RetryIODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
-        new JsonQueryTestBuilder()
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
                 .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder().withNetwork(nf)
+                        new HttpServerConfigurationBuilder()
+                                .withServerKeepAlive(true)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
                 )
-                .runJson(engine -> {
+                .run(engine -> {
                     sendAndReceive(
                             nf,
                             request,

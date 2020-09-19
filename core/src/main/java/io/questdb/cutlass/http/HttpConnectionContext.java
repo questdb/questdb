@@ -235,7 +235,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             boolean newRequest,
             RescheduleContext rescheduleContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        boolean keepGoing = false;
         if (newRequest) {
             processor.onHeadersReady(this);
             multipartContentParser.of(headerParser.getBoundary());
@@ -270,7 +269,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         // do we have anything in the buffer?
         if (buf > start) {
             if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
-                return keepGoing;
+                return true;
             }
 
             buf = start = recvBuffer;

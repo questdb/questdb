@@ -17,9 +17,9 @@ public class HttpServerConfigurationBuilder {
     private int sendBufferSize = 1024 * 1024;
     private boolean dumpTraffic;
     private boolean allowDeflateBeforeSend;
-    private boolean serverKeepAlive;
+    private boolean serverKeepAlive = true;
     private String httpProtocolVersion = "HTTP/1.1 ";
-    private int configuredMaxQueryResponseRowLimit;
+    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
@@ -56,7 +56,7 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withConfiguredMaxQueryResponseRowLimit(int configuredMaxQueryResponseRowLimit) {
+    public HttpServerConfigurationBuilder withConfiguredMaxQueryResponseRowLimit(long configuredMaxQueryResponseRowLimit) {
         this.configuredMaxQueryResponseRowLimit = configuredMaxQueryResponseRowLimit;
         return this;
     }

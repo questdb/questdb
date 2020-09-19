@@ -10,8 +10,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
 import org.junit.rules.TemporaryFolder;
 
@@ -19,8 +17,8 @@ import java.util.Arrays;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class JsonQueryTestBuilder {
-    private static final Log LOG = LogFactory.getLog(JsonQueryTestBuilder.class);
+public class HttpQueryTestBuilder {
+    private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
     private boolean telemetry;
     private TemporaryFolder temp;
     private HttpServerConfigurationBuilder serverConfigBuilder;
@@ -32,27 +30,27 @@ public class JsonQueryTestBuilder {
 
     private int workerCount ;
 
-    public JsonQueryTestBuilder withWorkerCount(int workerCount) {
+    public HttpQueryTestBuilder withWorkerCount(int workerCount) {
         this.workerCount = workerCount;
         return this;
     }
 
-    public JsonQueryTestBuilder withTelemetry(boolean telemetry) {
+    public HttpQueryTestBuilder withTelemetry(boolean telemetry) {
         this.telemetry = telemetry;
         return this;
     }
 
-    public JsonQueryTestBuilder withTempFolder(TemporaryFolder temp) {
+    public HttpQueryTestBuilder withTempFolder(TemporaryFolder temp) {
         this.temp = temp;
         return this;
     }
 
-    public JsonQueryTestBuilder withHttpServerConfigBuilder(HttpServerConfigurationBuilder serverConfigBuilder) {
+    public HttpQueryTestBuilder withHttpServerConfigBuilder(HttpServerConfigurationBuilder serverConfigBuilder) {
         this.serverConfigBuilder = serverConfigBuilder;
         return this;
     }
 
-    public void runJson(HttpClientCode code) throws Exception {
+    public void run(HttpClientCode code) throws Exception {
         final int[] workerAffinity = new int[workerCount];
         Arrays.fill(workerAffinity, -1);
 
@@ -105,6 +103,18 @@ public class JsonQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
+                        return new TextImportProcessor(engine);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
@@ -146,6 +156,18 @@ public class JsonQueryTestBuilder {
                     @Override
                     public String getUrl() {
                         return "/chk";
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, engine.getMessageBus(), 1);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/exec";
                     }
                 });
 
