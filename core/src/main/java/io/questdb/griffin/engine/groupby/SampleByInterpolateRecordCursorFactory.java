@@ -453,8 +453,10 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     private void computeYPoints(MapValue x1Value, MapValue x2value) {
         for (int i = 0; i < groupByFunctionCount; i++) {
-            storeYFunctions.getQuick(i).store(groupByFunctions.getQuick(i), x1Value, yData + i * 16);
-            storeYFunctions.getQuick(i).store(groupByFunctions.getQuick(i), x2value, yData + i * 16 + 8);
+            InterpolationUtil.StoreYFunction storeYFunction = storeYFunctions.getQuick(i);
+            GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
+            storeYFunction.store(groupByFunction, x1Value, yData + i * 16);
+            storeYFunction.store(groupByFunction, x2value, yData + i * 16 + 8);
         }
     }
 
