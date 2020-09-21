@@ -191,67 +191,71 @@ public class LineTcpServerTest extends AbstractCairoTest {
             });
             sharedWorkerPool.start(LOG);
 
-            final LineProtoSender[] senders = new LineProtoSender[tables.length];
-            for (int n = 0; n < senders.length; n++) {
-                if (null != authKeyId) {
-                    AuthenticatedLineTCPProtoSender sender = new AuthenticatedLineTCPProtoSender(authKeyId, authPrivateKey, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
-                    sender.authenticate();
-                    senders[n] = sender;
-                } else {
-                    senders[n] = new LineTCPProtoSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+            try {
+                final LineProtoSender[] senders = new LineProtoSender[tables.length];
+                for (int n = 0; n < senders.length; n++) {
+                    if (null != authKeyId) {
+                        AuthenticatedLineTCPProtoSender sender = new AuthenticatedLineTCPProtoSender(authKeyId, authPrivateKey, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                        sender.authenticate();
+                        senders[n] = sender;
+                    } else {
+                        senders[n] = new LineTCPProtoSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                    }
+                    StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
+                    sb.append("location\ttemp\ttimestamp\n");
+                    expectedSbs[n] = sb;
                 }
-                StringBuilder sb = new StringBuilder((nRows + 1) * lineConfiguration.getMaxMeasurementSize());
-                sb.append("location\ttemp\ttimestamp\n");
-                expectedSbs[n] = sb;
-            }
 
-            long ts = Os.currentTimeMicros();
-            StringSink tsSink = new StringSink();
-            for (int nRow = 0; nRow < nRows; nRow++) {
-                int nTable = nRow < tables.length ? nRow : rand.nextInt(tables.length);
-                LineProtoSender sender = senders[nTable];
-                StringBuilder sb = expectedSbs[nTable];
-                String tableName = tables[nTable];
-                sender.metric(tableName);
-                String location = locations[rand.nextInt(locations.length)];
-                sb.append(location);
-                sb.append('\t');
-                sender.tag("location", location);
-                int temp = rand.nextInt(100);
-                sb.append(temp);
-                sb.append('\t');
-                sender.field("temp", temp);
-                tsSink.clear();
-                TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
-                sb.append(tsSink.toString());
-                sb.append('\n');
-                sender.$(ts * 1000);
-                sender.flush();
-                ts += rand.nextInt(1000);
-            }
+                long ts = Os.currentTimeMicros();
+                StringSink tsSink = new StringSink();
+                for (int nRow = 0; nRow < nRows; nRow++) {
+                    int nTable = nRow < tables.length ? nRow : rand.nextInt(tables.length);
+                    LineProtoSender sender = senders[nTable];
+                    StringBuilder sb = expectedSbs[nTable];
+                    String tableName = tables[nTable];
+                    sender.metric(tableName);
+                    String location = locations[rand.nextInt(locations.length)];
+                    sb.append(location);
+                    sb.append('\t');
+                    sender.tag("location", location);
+                    int temp = rand.nextInt(100);
+                    sb.append(temp);
+                    sb.append('\t');
+                    sender.field("temp", temp);
+                    tsSink.clear();
+                    TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
+                    sb.append(tsSink.toString());
+                    sb.append('\n');
+                    sender.$(ts * 1000);
+                    sender.flush();
+                    ts += rand.nextInt(1000);
+                }
 
-            for (int n = 0; n < senders.length; n++) {
-                LineProtoSender sender = senders[n];
-                sender.close();
-            }
+                for (int n = 0; n < senders.length; n++) {
+                    LineProtoSender sender = senders[n];
+                    sender.close();
+                }
 
-            tablesCreated.await();
-            int nRowsWritten;
-            do {
-                nRowsWritten = 0;
-                for (int n = 0; n < tables.length; n++) {
-                    String tableName = tables[n];
-                    try (TableReader reader = new TableReader(configuration, tableName)) {
-                        TableReaderRecordCursor cursor = reader.getCursor();
-                        while (cursor.hasNext()) {
-                            nRowsWritten++;
+                tablesCreated.await();
+                int nRowsWritten;
+                do {
+                    Thread.yield();
+                    nRowsWritten = 0;
+                    for (int n = 0; n < tables.length; n++) {
+                        String tableName = tables[n];
+                        try (TableReader reader = new TableReader(configuration, tableName)) {
+                            TableReaderRecordCursor cursor = reader.getCursor();
+                            while (cursor.hasNext()) {
+                                nRowsWritten++;
+                            }
                         }
                     }
-                }
-            } while (nRowsWritten < nRows);
-            LOG.info().$(nRowsWritten).$(" rows written").$();
-            sharedWorkerPool.halt();
-            Misc.free(tcpServer);
+                } while (nRowsWritten < nRows);
+                LOG.info().$(nRowsWritten).$(" rows written").$();
+            } finally {
+                Misc.free(tcpServer);
+                sharedWorkerPool.halt();
+            }
         }
 
         for (int n = 0; n < tables.length; n++) {
