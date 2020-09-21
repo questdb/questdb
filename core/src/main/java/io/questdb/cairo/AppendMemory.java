@@ -46,25 +46,29 @@ public class AppendMemory extends VirtualMemory {
     static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, long mapPageSize) {
         try {
             if (truncate) {
-                if (ff.truncate(fd, size)) {
-                    log.info().$("truncated and closed [fd=").$(fd).$(']').$();
-                } else {
-                    if (ff.isRestrictedFileSystem()) {
-                        // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
-                        // To make it work size needs to be rounded up to nearest page.
-                        long n = size / mapPageSize;
-                        if (ff.truncate(fd, (n + 1) * mapPageSize)) {
-                            log.info().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
-                            return;
-                        }
-                    }
-                    log.info().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                }
+                bestEffortTruncate(ff, log, fd, size, mapPageSize);
             } else {
                 log.info().$("closed [fd=").$(fd).$(']').$();
             }
         } finally {
             ff.close(fd);
+        }
+    }
+
+    static void bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, long mapPageSize) {
+        if (ff.truncate(fd, size)) {
+            log.info().$("truncated and closed [fd=").$(fd).$(']').$();
+        } else {
+            if (ff.isRestrictedFileSystem()) {
+                // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
+                // To make it work size needs to be rounded up to nearest page.
+                long n = size / mapPageSize;
+                if (ff.truncate(fd, (n + 1) * mapPageSize)) {
+                    log.info().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
+                    return;
+                }
+            }
+            log.info().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         }
     }
 
@@ -143,7 +147,7 @@ public class AppendMemory extends VirtualMemory {
         }
     }
 
-    private void releaseCurrentPage() {
+    void releaseCurrentPage() {
         if (pageAddress != 0) {
             release(0, pageAddress);
             pageAddress = 0;

@@ -1097,7 +1097,7 @@ public class TableWriter implements Closeable {
     }
 
     private static void readOffsetBytes(FilesFacade ff, AppendMemory mem, long position, long buf) {
-        readBytes(ff, mem, buf, 8, (position - 1) * 8, "Cannot read offset, fd=");
+        readBytes(ff, mem, buf, 8, (position - 1) * 8, "could not read offset, fd=");
     }
 
     private static void readBytes(FilesFacade ff, AppendMemory mem, long buf, int byteCount, long offset, CharSequence errorMsg) {
@@ -1121,9 +1121,12 @@ public class TableWriter implements Closeable {
                 high = mid;
             else {
                 // In case of multiple equal values, find the last
-                mid += 1;
-                while (mid > 0 && mid < high && midVal == getTimestampIndexValue(indexAddress, mid)) {
-                    mid++;
+                while (mid > 0 && mid < high) {
+                    if (midVal == getTimestampIndexValue(indexAddress, mid + 1)) {
+                        mid++;
+                    } else {
+                        break;
+                    }
                 }
                 return mid;
             }
@@ -1148,7 +1151,6 @@ public class TableWriter implements Closeable {
     }
 
     private static long mapReadWriteOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
-        truncateToSizeOrFail(ff, path, fd, size);
         long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
         if (addr != -1) {
             return addr;
@@ -1156,9 +1158,9 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(", fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    private static void truncateToSizeOrFail(FilesFacade ff, @Nullable Path path, long fd, long mergeSize) {
-        if (!ff.truncate(fd, mergeSize)) {
-            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(mergeSize).put(']');
+    private static void truncateToSizeOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
+        if (!ff.truncate(fd, size)) {
+            throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
 
@@ -1183,7 +1185,8 @@ public class TableWriter implements Closeable {
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
-            boolean sequentialFlag) {
+            boolean sequentialFlag
+    ) {
         int index;
         try {
             index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -1742,7 +1745,7 @@ public class TableWriter implements Closeable {
     }
 
     private void copyTempPartitionColumnBack(long[] mergeStruct, int offset) {
-        long dstFd = mergeStruct[offset];
+        long dstFd = Math.abs(mergeStruct[offset]);
         if (dstFd != 0) {
             long dstMem = mergeStruct[offset + 1];
             long dstLen = mergeStruct[offset + 2];
@@ -1750,8 +1753,15 @@ public class TableWriter implements Closeable {
             long srcMem = mergeStruct[offset + 4];
             long srcLen = mergeStruct[offset + 5];
 
-            ff.munmap(dstMem, dstLen);
-            dstMem = mapReadWriteOrFail(ff, null, Math.abs(dstFd), srcLen);
+
+            dstMem = ff.mremap(dstFd, dstMem, dstLen, srcLen, 0, Files.MAP_RW);
+            if (dstMem == -1) {
+                throw CairoException.instance(ff.errno())
+                        .put("could not remap rw [fd=").put(dstFd)
+                        .put(", oldSize=").put(dstLen)
+                        .put(", newSize=").put(srcLen);
+
+            }
             mergeStruct[offset + 1] = dstMem;
             mergeStruct[offset + 2] = srcLen;
             Unsafe.getUnsafe().copyMemory(srcMem, dstMem, srcLen);
@@ -1873,6 +1883,9 @@ public class TableWriter implements Closeable {
 
                             long indexSize = dataIndexMax << shl;
                             long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
+                            if (indexFd < 0) {
+                                columns.getQuick(getSecondaryColumnIndex(i)).releaseCurrentPage();
+                            }
 
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, indexAddr);
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, indexSize);
@@ -1895,6 +1908,9 @@ public class TableWriter implements Closeable {
                             }
                             MergeStruct.setSrcVarFd(mergeStruct, i, dataFd);
                             long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
+                            if (dataFd < 0) {
+                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
+                            }
                             MergeStruct.setSrcVarAddress(mergeStruct, i, dataAddr);
                             MergeStruct.setSrcVarAddressSize(mergeStruct, i, dataSize);
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`, addr=").$(dataAddr).$(", size=").$(dataSize).$(']').$();
@@ -1975,6 +1991,9 @@ public class TableWriter implements Closeable {
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`]").$();
                             MergeStruct.mergeStructSetSrcFixedFd(mergeStruct, i, dataFd);
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize));
+                            if (dataFd < 0) {
+                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
+                            }
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, dataSize);
                         }
 
@@ -2055,20 +2074,23 @@ public class TableWriter implements Closeable {
 
     private void freeMergeStruct(long[] mergeStruct) {
         for (int i = 0; i < columnCount; i++) {
-            freeMergeStructArtefact(mergeStruct, i * 16);
-            freeMergeStructArtefact(mergeStruct, i * 16 + 3);
-            freeMergeStructArtefact(mergeStruct, i * 16 + 8);
-            freeMergeStructArtefact(mergeStruct, i * 16 + 8 + 3);
+            freeMergeStructArtefact(mergeStruct, i * 16, true);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 3, false);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 8, true);
+            freeMergeStructArtefact(mergeStruct, i * 16 + 8 + 3, false);
         }
     }
 
-    private void freeMergeStructArtefact(long[] mergeStruct, int offset) {
+    private void freeMergeStructArtefact(long[] mergeStruct, int offset, boolean truncate) {
         long fd = mergeStruct[offset];
         long mem = mergeStruct[offset + 1];
         long memSize = mergeStruct[offset + 2];
 
         if (mem != 0 && memSize != 0) {
             ff.munmap(mem, memSize);
+            if (truncate) {
+                AppendMemory.bestEffortTruncate(ff, LOG, Math.abs(fd), memSize, Files.PAGE_SIZE);
+            }
         }
 
         if (fd > 0) {
@@ -2841,7 +2863,10 @@ public class TableWriter implements Closeable {
                 final long partitionSize = dataIndexMax + indexHi - indexLo + 1;
                 if (indexHi + 1 < indexMax) {
 
-                    fixedRowCount += partitionSize - dataIndexMax;
+                    fixedRowCount += partitionSize;
+                    if (partitionTimestampHi < ceilOfMaxTimestamp) {
+                        fixedRowCount -= dataIndexMax;
+                    }
 
                     // We just updated non-last partition. It is possible that this partition
                     // has already been updated by transaction or out of order logic was the only

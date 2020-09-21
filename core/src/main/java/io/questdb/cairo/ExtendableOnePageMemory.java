@@ -38,12 +38,6 @@ public class ExtendableOnePageMemory extends OnePageMemory {
     }
 
     @Override
-    protected void map(FilesFacade ff, LPSZ name, long size) {
-        size = Math.min(ff.length(fd), size);
-        super.map(ff, name, size);
-    }
-
-    @Override
     public void grow(long newSize) {
         final long fileSize = ff.length(fd);
         newSize = Math.max(newSize, fileSize);
@@ -60,11 +54,17 @@ public class ExtendableOnePageMemory extends OnePageMemory {
             page = ff.mmap(fd, newSize, 0, Files.MAP_RO);
         }
         if (page == FilesFacade.MAP_FAILED) {
-             long fd = this.fd;
+            long fd = this.fd;
             close();
             throw CairoException.instance(ff.errno()).put("Could not remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
         }
         size = newSize;
         absolutePointer = page + offset;
+    }
+
+    @Override
+    protected void map(FilesFacade ff, LPSZ name, long size) {
+        size = Math.min(ff.length(fd), size);
+        super.map(ff, name, size);
     }
 }
