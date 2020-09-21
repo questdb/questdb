@@ -11,7 +11,6 @@ import java.util.Base64;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IOOperation;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -63,19 +62,19 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
 
     @SuppressWarnings("incomplete-switch")
     private IOContextResult handleAuth() {
-            switch (authState) {
-                case WAITING_FOR_KEY_ID:
-                    readKeyId();
-                    break;
-                case SENDING_CHALLENGE:
-                    sendChallenge();
-                    break;
-                case WAITING_FOR_RESPONSE:
-                    waitForResponse();
-                    break;
-            }
+        switch (authState) {
+            case WAITING_FOR_KEY_ID:
+                readKeyId();
+                break;
+            case SENDING_CHALLENGE:
+                sendChallenge();
+                break;
+            case WAITING_FOR_RESPONSE:
+                waitForResponse();
+                break;
+        }
 
-            return authState.ioContextResult;
+        return authState.ioContextResult;
     }
 
     private void readKeyId() {
@@ -106,11 +105,12 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         assert n > 0;
         int nWritten = nf.send(fd, recvBufPos, n);
         if (nWritten >= 0) {
-            n -= nWritten;
-            if (n == 0) {
+            if (n == nWritten) {
+                recvBufPos = recvBufStart;
                 authState = AuthState.WAITING_FOR_RESPONSE;
                 return;
             }
+            recvBufPos += nWritten;
             return;
         }
         LOG.info().$('[').$(fd).$("] authentication peer disconnected when challenge was being sent").$();
