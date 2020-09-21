@@ -52,8 +52,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final ObjList<GroupByFunction> groupByTwoPointFunctions;
     private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorGapDistanceFunction> interpolatorGapTwoPointFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorBoundaryDistanceFunction> interpolatorBoundaryTwoPointFunctions;
+    private final ObjList<InterpolationUtil.InterpolatorGapTwoPointFunction> interpolatorGapTwoPointFunctions;
+    private final ObjList<InterpolationUtil.InterpolatorBoundaryTwoPointFunction> interpolatorBoundaryTwoPointFunctions;
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
@@ -382,8 +382,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                                     // this has to be a loop that would store y1 and y2 values for each
                                                     // group-by function
                                                     // use current 'value' for record
+                                                    interpolateTwoPointRange(x1, x2, loSample, x1, mapRecord, x2value);
                                                     computeYPoints(mapRecord, x1, x2value);
-                                                    interpolateDistanceRange(x1, x2, loSample, x1, mapRecord);
                                                     interpolateRange(x1, x2, loSample, x1, mapRecord);
                                                     break;
                                                 }
@@ -400,8 +400,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                         // calculate slope between 'preSample' and 'x2'
                                         // yep, that's right, and go all the way back down
                                         // to 'sample' calculating interpolated values
+                                        interpolateTwoPointRange(prevSample, x2, sampler.nextTimestamp(prevSample), x2, mapRecord, value);
                                         computeYPoints(mapRecord, prevSample, value);
-                                        interpolateDistanceRange(prevSample, x2, sampler.nextTimestamp(prevSample), x2, mapRecord);
                                         interpolateRange(prevSample, x2, sampler.nextTimestamp(prevSample), x2, mapRecord);
                                     }
                                     break;
@@ -419,8 +419,9 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                     // fill all data points from 'sample' down with null
                                     nullifyRange(sample, hiSample, mapRecord);
                                 } else {
-                                    computeYPoints(mapRecord, x1, findDataMapValue(mapRecord, prevSample));
-                                    interpolateDistanceRange(x1, prevSample, sampler.nextTimestamp(prevSample), hiSample, mapRecord);
+                                    MapValue x2value = findDataMapValue(mapRecord, prevSample);
+                                    interpolateTwoPointRange(x1, prevSample, sampler.nextTimestamp(prevSample), hiSample, mapRecord, x2value);
+                                    computeYPoints(mapRecord, x1, x2value);
                                     interpolateRange(x1, prevSample, sampler.nextTimestamp(prevSample), hiSample, mapRecord);
                                 }
                                 break;
@@ -531,14 +532,13 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         }
     }
 
-    private void interpolateDistanceRange(long x1, long x2, long lo, long hi, Record record) {
+    private void interpolateTwoPointRange(long x1, long x2, long lo, long hi, Record record, MapValue endValue) {
         for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
-            final MapValue result = findDataMapValue(record, x);
+            final MapValue result = findDataMapValue3(record, x);
             assert result != null && result.getByte(0) == 1;
             for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
                 GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
                 MapValue startValue = findDataMapValue2(record, x1);
-                MapValue endValue = findDataMapValue3(record, x2);
                 interpolatorGapTwoPointFunctions.getQuick(i).interpolateGapAndStore(function, result, sampler.getBucketSize(), startValue, endValue);
             }
         }
