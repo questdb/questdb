@@ -234,17 +234,17 @@ public class FastMap implements Map {
 
     @Override
     public MapValue valueAt(long address) {
-        return valueOf(address, false, 1);
+        return valueOf(address, false, this.value);
     }
 
-    private FastMapValue asNew(Key keyWriter, int index, int valueIdx) {
+    private FastMapValue asNew(Key keyWriter, int index, FastMapValue value) {
         kPos = keyWriter.appendAddress;
         offsets.set(index, keyWriter.startAddress - kStart);
         if (--free == 0) {
             rehash();
         }
         size++;
-        return valueOf(keyWriter.startAddress, true, valueIdx);
+        return valueOf(keyWriter.startAddress, true, value);
     }
 
     @Override
@@ -252,14 +252,14 @@ public class FastMap implements Map {
         return key.init();
     }
 
-    private FastMapValue probe0(Key keyWriter, int index, int valueIdx) {
+    private FastMapValue probe0(Key keyWriter, int index, FastMapValue value) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
-                return valueOf(kStart + offset, false, valueIdx);
+                return valueOf(kStart + offset, false, value);
             }
         }
-        return asNew(keyWriter, index, valueIdx);
+        return asNew(keyWriter, index, value);
     }
 
     private boolean eq(Key keyWriter, long offset) {
@@ -301,11 +301,11 @@ public class FastMap implements Map {
         return hashFunction.hash(key.startAddress + keyDataOffset, key.len - keyDataOffset) & mask;
     }
 
-    private FastMapValue probeReadOnly(Key keyWriter, int index, int valueIdx) {
+    private FastMapValue probeReadOnly(Key keyWriter, int index, FastMapValue value) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
-                return valueOf(kStart + offset, false, valueIdx);
+                return valueOf(kStart + offset, false, value);
             }
         }
         return null;
@@ -365,13 +365,7 @@ public class FastMap implements Map {
         this.keyCapacity = capacity;
     }
 
-    private FastMapValue valueOf(long address, boolean _new, int valueIdx) {
-        FastMapValue value = this.value;
-        if (valueIdx == 2) {
-            value = this.value2;
-        } else if (valueIdx == 3) {
-            value = this.value3;
-        }
+    private FastMapValue valueOf(long address, boolean _new, FastMapValue value) {
         return value.of(address, _new);
     }
 
@@ -388,35 +382,35 @@ public class FastMap implements Map {
 
         @Override
         public MapValue createValue() {
-            return createValue(1);
+            return createValue(value);
         }
 
         @Override
         public MapValue createValue2() {
-            return createValue(2);
+            return createValue(value2);
         }
 
         @Override
         public MapValue createValue3() {
-            return createValue(3);
+            return createValue(value3);
         }
 
         @Override
         public MapValue findValue() {
-            return findValue(1);
+            return findValue(value);
         }
 
         @Override
         public MapValue findValue2() {
-            return findValue(2);
+            return findValue(value2);
         }
 
         @Override
         public MapValue findValue3() {
-            return findValue(3);
+            return findValue(value3);
         }
 
-        private MapValue createValue(int valueIdx) {
+        private MapValue createValue(FastMapValue value) {
             commit();
             // calculate hash remembering "key" structure
             // [ len | value block | key offset block | key data block ]
@@ -424,15 +418,15 @@ public class FastMap implements Map {
             long offset = offsets.get(index);
 
             if (offset == -1) {
-                return asNew(this, index, valueIdx);
+                return asNew(this, index, value);
             } else if (eq(this, offset)) {
-                return valueOf(kStart + offset, false, valueIdx);
+                return valueOf(kStart + offset, false, value);
             } else {
-                return probe0(this, index, valueIdx);
+                return probe0(this, index, value);
             }
         }
 
-        private MapValue findValue(int valueIdx) {
+        private MapValue findValue(FastMapValue value) {
             commit();
             int index = keyIndex();
             long offset = offsets.get(index);
@@ -440,9 +434,9 @@ public class FastMap implements Map {
             if (offset == -1) {
                 return null;
             } else if (eq(this, offset)) {
-                return valueOf(kStart + offset, false, valueIdx);
+                return valueOf(kStart + offset, false, value);
             } else {
-                return probeReadOnly(this, index, valueIdx);
+                return probeReadOnly(this, index, value);
             }
         }
 

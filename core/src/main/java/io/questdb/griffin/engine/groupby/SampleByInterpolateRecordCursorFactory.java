@@ -49,11 +49,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final VirtualFunctionSkewedSymbolRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
-    private final ObjList<GroupByFunction> groupByDistanceFunctions;
+    private final ObjList<GroupByFunction> groupByTwoPointFunctions;
     private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorGapDistanceFunction> interpolatorGapDistanceFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorBoundaryDistanceFunction> interpolatorBoundaryDistanceFunctions;
+    private final ObjList<InterpolationUtil.InterpolatorGapDistanceFunction> interpolatorGapTwoPointFunctions;
+    private final ObjList<InterpolationUtil.InterpolatorBoundaryDistanceFunction> interpolatorBoundaryTwoPointFunctions;
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
@@ -62,7 +62,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final TimestampSampler sampler;
     private final int yDataSize;
     private long yData;
-    private final MapValue tempValue;
+    private final int groupByFunctionCount;
+    private final int groupByTwoPointFunctionCount;
 
     public SampleByInterpolateRecordCursorFactory(
             CairoConfiguration configuration,
@@ -81,7 +82,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         final int columnCount = model.getBottomUpColumns().size();
         final RecordMetadata metadata = base.getMetadata();
         this.groupByFunctions = new ObjList<>(columnCount);
-        this.groupByDistanceFunctions = new ObjList<>(columnCount);
+        this.groupByTwoPointFunctions = new ObjList<>(columnCount);
         valueTypes.add(ColumnType.BYTE); // gap flag
 
         GroupByUtils.prepareGroupByFunctions(
@@ -110,9 +111,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
         this.storeYFunctions = new ObjList<>(columnCount);
         this.interpolatorFunctions = new ObjList<>(columnCount);
-        this.interpolatorGapDistanceFunctions = new ObjList<>(columnCount);
-        this.interpolatorBoundaryDistanceFunctions = new ObjList<>(columnCount);
-        this.tempValue = new SimpleMapValue(columnCount);
+        this.interpolatorGapTwoPointFunctions = new ObjList<>(columnCount);
+        this.interpolatorBoundaryTwoPointFunctions = new ObjList<>(columnCount);
 
         // create timestamp column
         TimestampColumn timestampColumn = new TimestampColumn(0, valueTypes.getColumnCount() + keyTypes.getColumnCount());
@@ -122,10 +122,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
         }
 
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+        this.groupByFunctionCount = groupByFunctions.size();
+        for (int i = 0; i < groupByFunctionCount; i++) {
             GroupByFunction function = groupByFunctions.getQuick(i);
             if (!function.isScalar()) {
-                groupByDistanceFunctions.add(function);
+                groupByTwoPointFunctions.add(function);
             }
             switch (function.getType()) {
                 case ColumnType.BYTE:
@@ -158,21 +159,42 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
         }
 
-        for (int i = 0, n = groupByDistanceFunctions.size(); i < n; i++) {
-            GroupByFunction function = groupByDistanceFunctions.getQuick(i);
+        this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
+        for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
+            GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
             switch (function.getType()) {
+                case ColumnType.BYTE:
+                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_BYTE);
+                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_BYTE);
+                    break;
+                case ColumnType.SHORT:
+                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_SHORT);
+                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_SHORT);
+                    break;
+                case ColumnType.INT:
+                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_INT);
+                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_INT);
+                    break;
+                case ColumnType.LONG:
+                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_LONG);
+                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_LONG);
+                    break;
                 case ColumnType.DOUBLE:
-                    interpolatorGapDistanceFunctions.add(InterpolationUtil.INTERPOLATE_GAP_DOUBLE);
-                    interpolatorBoundaryDistanceFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_DOUBLE);
+                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_DOUBLE);
+                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_DOUBLE);
+                    break;
+                case ColumnType.FLOAT:
+                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_FLOAT);
+                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_FLOAT);
                     break;
                 default:
-                    Misc.freeObjList(groupByDistanceFunctions);
+                    Misc.freeObjList(groupByTwoPointFunctions);
                     throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
             }
         }
 
         this.timestampIndex = timestampIndex;
-        this.yDataSize = groupByFunctions.size() * 16;
+        this.yDataSize = groupByFunctionCount * 16;
         this.yData = Unsafe.malloc(yDataSize);
 
         // sink will be storing record columns to map key
@@ -249,7 +271,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             long loSample = prevSample; // the lowest timestamp value
             long hiSample;
 
-            final int n = groupByFunctions.size();
             do {
                 // this seems inefficient, but we only double-sample
                 // very first record and nothing else
@@ -273,11 +294,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 MapValue value = key.createValue();
                 if (value.isNew()) {
                     value.putByte(0, (byte) 0); // not a gap
-                    for (int i = 0; i < n; i++) {
+                    for (int i = 0; i < groupByFunctionCount; i++) {
                         groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
                     }
                 } else {
-                    for (int i = 0; i < n; i++) {
+                    for (int i = 0; i < groupByFunctionCount; i++) {
                         groupByFunctions.getQuick(i).computeNext(value, baseRecord);
                     }
                 }
@@ -292,8 +313,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // fill gaps if any at end of base cursor
             fillGaps(prevSample, hiSample);
 
-            int distanceFunctionCount = groupByDistanceFunctions.size();
-            if (distanceFunctionCount > 0) {
+            if (groupByTwoPointFunctionCount > 0) {
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
@@ -363,6 +383,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                                     // group-by function
                                                     // use current 'value' for record
                                                     computeYPoints(mapRecord, x1, x2value);
+                                                    interpolateDistanceRange(x1, x2, loSample, x1, mapRecord);
                                                     interpolateRange(x1, x2, loSample, x1, mapRecord);
                                                     break;
                                                 }
@@ -399,6 +420,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                                     nullifyRange(sample, hiSample, mapRecord);
                                 } else {
                                     computeYPoints(mapRecord, x1, findDataMapValue(mapRecord, prevSample));
+                                    interpolateDistanceRange(x1, prevSample, sampler.nextTimestamp(prevSample), hiSample, mapRecord);
                                     interpolateRange(x1, prevSample, sampler.nextTimestamp(prevSample), hiSample, mapRecord);
                                 }
                                 break;
@@ -426,13 +448,13 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     private void computeYPoints(Record record, long x1, MapValue x2value) {
-        for (int i = 0, m = groupByFunctions.size(); i < m; i++) {
+        for (int i = 0; i < groupByFunctionCount; i++) {
             storeYFunctions.getQuick(i).store(groupByFunctions.getQuick(i), x2value, yData + i * 16 + 8);
         }
 
         final MapValue x1value = findDataMapValue(record, x1);
 
-        for (int i = 0, m = groupByFunctions.size(); i < m; i++) {
+        for (int i = 0; i < groupByFunctionCount; i++) {
             storeYFunctions.getQuick(i).store(groupByFunctions.getQuick(i), x1value, yData + i * 16);
         }
     }
@@ -500,24 +522,24 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     private void interpolateBoundaryRange(long x1, long x2, Record record) {
         //interpolating boundary
-        for (int i = 0, m = groupByDistanceFunctions.size(); i < m; i++) {
-            GroupByFunction function = groupByDistanceFunctions.getQuick(i);
-            MapValue value1 = findDataMapValue2(record, x1);
-            MapValue value2 = findDataMapValue3(record, x2);
-            interpolatorBoundaryDistanceFunctions.getQuick(i).interpolateBoundaryAndStore(function, sampler.nextTimestamp(x1), value1, value2, true);
-            interpolatorBoundaryDistanceFunctions.getQuick(i).interpolateBoundaryAndStore(function, x2, value1, value2, false);
+        for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
+            GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
+            MapValue startValue = findDataMapValue2(record, x1);
+            MapValue endValue = findDataMapValue3(record, x2);
+            interpolatorBoundaryTwoPointFunctions.getQuick(i).interpolateBoundaryAndStore(function, sampler.nextTimestamp(x1), startValue, endValue, true);
+            interpolatorBoundaryTwoPointFunctions.getQuick(i).interpolateBoundaryAndStore(function, x2, startValue, endValue, false);
         }
     }
 
     private void interpolateDistanceRange(long x1, long x2, long lo, long hi, Record record) {
         for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
-            final MapValue xValue = findDataMapValue(record, x);
-            assert xValue != null && xValue.getByte(0) == 1;
-            for (int i = 0, m = groupByDistanceFunctions.size(); i < m; i++) {
-                GroupByFunction function = groupByDistanceFunctions.getQuick(i);
-                MapValue value1 = findDataMapValue2(record, x1);
-                MapValue value2 = findDataMapValue3(record, x2);
-                interpolatorGapDistanceFunctions.getQuick(i).interpolateGapAndStore(function, xValue, sampler.getBucketSize(), value1, value2);
+            final MapValue result = findDataMapValue(record, x);
+            assert result != null && result.getByte(0) == 1;
+            for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
+                GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
+                MapValue startValue = findDataMapValue2(record, x1);
+                MapValue endValue = findDataMapValue3(record, x2);
+                interpolatorGapTwoPointFunctions.getQuick(i).interpolateGapAndStore(function, result, sampler.getBucketSize(), startValue, endValue);
             }
         }
     }
@@ -527,19 +549,12 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             final MapValue value = findDataMapValue(record, x);
             assert value != null && value.getByte(0) == 1;
             value.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
-            for (int i = 0, m = groupByFunctions.size(); i < m; i++) {
+            for (int i = 0; i < groupByFunctionCount; i++) {
                 GroupByFunction function = groupByFunctions.getQuick(i);
                 if (function.isScalar()) {
                     interpolatorFunctions.getQuick(i).interpolateAndStore(function, value, x, x1, x2, yData + i * 16, yData + i * 16 + 8);
                 }
             }
-        }
-    }
-
-    private void setAsNonGaps(long lo, long hi, Record record) {
-        for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
-            final MapValue value = findDataMapValue(record, x);
-            value.putByte(0, (byte) 0);
         }
     }
 
@@ -551,7 +566,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             MapValue value = key.findValue();
             assert value != null && value.getByte(0) == 1; // expect  'gap' flag
             value.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
-            for (int i = 0, m = groupByFunctions.size(); i < m; i++) {
+            for (int i = 0; i < groupByFunctionCount; i++) {
                 groupByFunctions.getQuick(i).setNull(value);
             }
         }

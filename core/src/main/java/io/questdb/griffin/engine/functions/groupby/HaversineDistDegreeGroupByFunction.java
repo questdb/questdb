@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 import static java.lang.Math.*;
@@ -52,6 +53,16 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public double getDouble(Record rec) {
+        return getDistance(rec);
+    }
+
+    @Override
+    public Function getLeft() {
+        return this.latDegree;
+    }
+
+    @Override
     public Function getCenter() {
         return this.lonDegree;
     }
@@ -62,104 +73,40 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(this.valueIndex + 6);
-    }
-
-    @Override
-    public void interpolateGap(MapValue result,
-                               MapValue value1,
-                               MapValue value2,
-                               long gapSize) {
-
-        //value1
-        double lat1Degrees = value1.getDouble(valueIndex + 3);
-        double lon1Degrees = value1.getDouble(valueIndex + 4);
-        long ts1 = value1.getTimestamp(valueIndex + 5);
-
-        //value2
-        double lat2Degrees = value2.getDouble(valueIndex);
-        double lon2Degrees = value2.getDouble(valueIndex + 1);
-        long ts2 = value2.getTimestamp(valueIndex + 2);
-
-        double distance = getHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, 0);
-        double interpolatedGapDistance = (gapSize * distance) / (ts2 - ts1);
-
-        result.putDouble(this.valueIndex + 6, interpolatedGapDistance);
-    }
-
-    @Override
     public void interpolateBoundary(
             MapValue value1,
             MapValue value2,
             long boundaryTimestamp,
-            boolean isEndOfBoundary) {
+            boolean isEndOfBoundary
+    ) {
 
-        //value1
-        double lat1Degrees = value1.getDouble(valueIndex + 3);
-        double lon1Degrees = value1.getDouble(valueIndex + 4);
-        long ts1 = value1.getTimestamp(valueIndex + 5);
-
-        //value2 - the first item in this sampling interval
-        double lat2Degrees = value2.getDouble(valueIndex);
-        double lon2Degrees = value2.getDouble(valueIndex + 1);
-        long ts2 = value2.getTimestamp(valueIndex + 2);
-
-        double distance = getHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, 0);
-        long boundaryLength;
-        if (isEndOfBoundary) {
-            boundaryLength = boundaryTimestamp - ts1;
-        } else {
-            boundaryLength = ts2 - boundaryTimestamp;
-        }
+        double distance = calculateHaversineDistance(value1, value2);
+        //interpolate
+        long ts1 = getLastTimestamp(value1);
+        long ts2 = getFirstTimestamp(value2);
+        long boundaryLength = isEndOfBoundary ? boundaryTimestamp - ts1 : ts2 - boundaryTimestamp;
         double interpolatedBoundaryDistance = (boundaryLength * distance) / (ts2 - ts1);
-
-        MapValue result;
-        if (isEndOfBoundary) {
-            result = value1;
-        } else {
-            result = value2;
-        }
-
-        double currentDistance = result.getDouble(valueIndex + 6);
-        result.putDouble(this.valueIndex + 6, currentDistance + interpolatedBoundaryDistance);
+        //save
+        MapValue result = isEndOfBoundary ? value1 : value2;
+        saveDistance(interpolatedBoundaryDistance, result, getDistance(result));
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        //first item
-        mapValue.putDouble(this.valueIndex, this.latDegree.getDouble(record));
-        mapValue.putDouble(this.valueIndex + 1, this.lonDegree.getDouble(record));
-        mapValue.putTimestamp(this.valueIndex + 2, this.timestamp.getTimestamp(record));
-        //last item
-        mapValue.putDouble(this.valueIndex + 3, this.latDegree.getDouble(record));
-        mapValue.putDouble(this.valueIndex + 4, this.lonDegree.getDouble(record));
-        mapValue.putTimestamp(this.valueIndex + 5, this.timestamp.getTimestamp(record));
-        //result
-        mapValue.putDouble(this.valueIndex + 6, 0);
-    }
+    public void interpolateGap(
+            MapValue result,
+            MapValue value1,
+            MapValue value2,
+            long gapSize
+    ) {
 
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        double lat1Degrees = mapValue.getDouble(valueIndex + 3);
-        double lon1Degrees = mapValue.getDouble(valueIndex + 4);
-        double lat2Degrees = this.latDegree.getDouble(record);
-        double lon2Degrees = this.lonDegree.getDouble(record);
-        long timestamp = this.timestamp.getTimestamp(record);
-        if (!Double.isNaN(lat1Degrees) && !Double.isNaN(lon1Degrees)) {
-            if (!Double.isNaN(lat2Degrees) && !Double.isNaN(lon2Degrees)) {
-                double currentTotalDistance = mapValue.getDouble(this.valueIndex + 6);
-                double distance = getHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, currentTotalDistance);
-                mapValue.putDouble(this.valueIndex + 3, lat2Degrees);
-                mapValue.putDouble(this.valueIndex + 4, lon2Degrees);
-                mapValue.putTimestamp(this.valueIndex + 5, timestamp);
-                mapValue.putDouble(this.valueIndex + 6, distance);
-            }
-        } else {
-            mapValue.putDouble(this.valueIndex + 3, lat2Degrees);
-            mapValue.putDouble(this.valueIndex + 4, lon2Degrees);
-            mapValue.putTimestamp(this.valueIndex + 5, timestamp);
-        }
+        double distance = calculateHaversineDistance(value1, value2);
+
+        //interpolate
+        long ts1 = getLastTimestamp(value1);
+        long ts2 = getFirstTimestamp(value2);
+        double interpolatedGapDistance = (gapSize * distance) / (ts2 - ts1);
+
+        saveDistance(result, interpolatedGapDistance);
     }
 
     @Override
@@ -168,11 +115,43 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        //first item
+        saveFirstItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
+        //last item
+        saveLastItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
+        //result
+        saveDistance(mapValue, 0);
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        double lat1Degrees = getLastLatitute(mapValue);
+        double lon1Degrees = getLastLongitude(mapValue);
+        long timestamp1 = getLastTimestamp(mapValue);
+        double lat2Degrees = this.latDegree.getDouble(record);
+        double lon2Degrees = this.lonDegree.getDouble(record);
+        long timestamp2 = this.timestamp.getTimestamp(record);
+        if (!Double.isNaN(lat1Degrees) && !Double.isNaN(lon1Degrees) && timestamp1 != Numbers.LONG_NaN) {
+            if (!Double.isNaN(lat2Degrees) && !Double.isNaN(lon2Degrees) && timestamp2 != Numbers.LONG_NaN) {
+                double currentTotalDistance = getDistance(mapValue);
+                double distance = calculateHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, currentTotalDistance);
+                saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
+                saveDistance(mapValue, distance);
+            }
+        } else {
+            saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
+        }
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
+        //first item
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.LONG);
+        //last item
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.LONG);
@@ -181,35 +160,41 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
-    public Function getLeft() {
-        return this.latDegree;
-    }
-
-    @Override
     public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(this.valueIndex + 6, value);
+        saveDistance(mapValue, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDouble(this.valueIndex, Double.NaN);
-        mapValue.putDouble(this.valueIndex + 1, Double.NaN);
-        mapValue.putTimestamp(this.valueIndex + 2, 0L);
-        mapValue.putDouble(this.valueIndex + 3, Double.NaN);
-        mapValue.putDouble(this.valueIndex + 4, Double.NaN);
-        mapValue.putTimestamp(this.valueIndex + 5, 0L);
-        mapValue.putDouble(this.valueIndex + 6, 0.0);
+        //set null to first item
+        saveFirstItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NaN);
+        //set null to last item
+        saveLastItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NaN);
+        //
+        saveDistance(mapValue, 0.0);
     }
 
-    private double getHaversineDistanceFromDegrees(double lat1Degrees, double lon1Degrees, double lat2Degrees, double lon2Degrees, double currentTotalDistance) {
+    private double calculateHaversineDistance(MapValue value1, MapValue value2) {
+        //value1
+        double lat1Degrees = getLastLatitute(value1);
+        double lon1Degrees = getLastLongitude(value1);
+
+        //value2
+        double lat2Degrees = getFirstLatitude(value2);
+        double lon2Degrees = getFirstLongitude(value2);
+
+        return calculateHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, 0);
+    }
+
+    private double calculateHaversineDistanceFromDegrees(double lat1Degrees, double lon1Degrees, double lat2Degrees, double lon2Degrees, double currentTotalDistance) {
         double lat1 = toRad(lat1Degrees);
         double lon1 = toRad(lon1Degrees);
         double lat2 = toRad(lat2Degrees);
         double lon2 = toRad(lon2Degrees);
-        return getHaversineDistanceFromRadians(currentTotalDistance, lat1, lon1, lat2, lon2);
+        return calculateHaversineDistanceFromRadians(currentTotalDistance, lat1, lon1, lat2, lon2);
     }
 
-    private double getHaversineDistanceFromRadians(double currentTotal, double lat1, double lon1, double lat2, double lon2) {
+    private double calculateHaversineDistanceFromRadians(double currentTotal, double lat1, double lon1, double lat2, double lon2) {
         double halfLatDist = (lat2 - lat1) / 2;
         double halfLonDist = (lon2 - lon1) / 2;
         double a = sin(halfLatDist) * sin(halfLatDist) + cos(lat1) * cos(lat2) * sin(halfLonDist) * sin(halfLonDist);
@@ -218,7 +203,55 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         return currentTotal;
     }
 
+    private double getDistance(Record result) {
+        return result.getDouble(valueIndex + 6);
+    }
+
     private double toRad(double deg) {
         return deg * PI / 180;
+    }
+
+    private double getFirstLatitude(MapValue value) {
+        return value.getDouble(valueIndex);
+    }
+
+    private double getFirstLongitude(MapValue value) {
+        return value.getDouble(valueIndex + 1);
+    }
+
+    private long getFirstTimestamp(MapValue value) {
+        return value.getTimestamp(valueIndex + 2);
+    }
+
+    private double getLastLatitute(MapValue value1) {
+        return value1.getDouble(valueIndex + 3);
+    }
+
+    private double getLastLongitude(MapValue mapValue) {
+        return mapValue.getDouble(valueIndex + 4);
+    }
+
+    private long getLastTimestamp(MapValue value) {
+        return value.getTimestamp(valueIndex + 5);
+    }
+
+    private void saveDistance(double interpolatedBoundaryDistance, MapValue result, double currentDistance) {
+        saveDistance(result, currentDistance + interpolatedBoundaryDistance);
+    }
+
+    private void saveDistance(MapValue result, double distance) {
+        result.putDouble(this.valueIndex + 6, distance);
+    }
+
+    private void saveFirstItem(MapValue mapValue, double lat, double lon, long timestamp) {
+        mapValue.putDouble(this.valueIndex, lat);
+        mapValue.putDouble(this.valueIndex + 1, lon);
+        mapValue.putTimestamp(this.valueIndex + 2, timestamp);
+    }
+
+    private void saveLastItem(MapValue mapValue, double lat, double lon, long timestamp) {
+        mapValue.putDouble(this.valueIndex + 3, lat);
+        mapValue.putDouble(this.valueIndex + 4, lon);
+        mapValue.putTimestamp(this.valueIndex + 5, timestamp);
     }
 }

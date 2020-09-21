@@ -44,7 +44,18 @@ public class InterpolationUtil {
     static final InterpolatorFunction INTERPOLATE_LONG = InterpolationUtil::interpolateLong;
 
     static final InterpolatorGapDistanceFunction INTERPOLATE_GAP_DOUBLE = InterpolationUtil::interpolateGap;
+    static final InterpolatorGapDistanceFunction INTERPOLATE_GAP_FLOAT = InterpolationUtil::interpolateGap;
+    static final InterpolatorGapDistanceFunction INTERPOLATE_GAP_BYTE = InterpolationUtil::interpolateGap;
+    static final InterpolatorGapDistanceFunction INTERPOLATE_GAP_SHORT = InterpolationUtil::interpolateGap;
+    static final InterpolatorGapDistanceFunction INTERPOLATE_GAP_INT = InterpolationUtil::interpolateGap;
+    static final InterpolatorGapDistanceFunction INTERPOLATE_GAP_LONG = InterpolationUtil::interpolateGap;
+
     static final InterpolatorBoundaryDistanceFunction INTERPOLATE_BOUNDARY_DOUBLE = InterpolationUtil::interpolateBoundary;
+    static final InterpolatorBoundaryDistanceFunction INTERPOLATE_BOUNDARY_FLOAT = InterpolationUtil::interpolateBoundary;
+    static final InterpolatorBoundaryDistanceFunction INTERPOLATE_BOUNDARY_BYTE = InterpolationUtil::interpolateBoundary;
+    static final InterpolatorBoundaryDistanceFunction INTERPOLATE_BOUNDARY_SHORT = InterpolationUtil::interpolateBoundary;
+    static final InterpolatorBoundaryDistanceFunction INTERPOLATE_BOUNDARY_INT = InterpolationUtil::interpolateBoundary;
+    static final InterpolatorBoundaryDistanceFunction INTERPOLATE_BOUNDARY_LONG = InterpolationUtil::interpolateBoundary;
 
     public static void interpolateByte(
             GroupByFunction function,
