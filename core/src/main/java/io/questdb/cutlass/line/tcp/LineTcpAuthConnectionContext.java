@@ -28,7 +28,14 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private boolean authenticated;
 
     private enum AuthState {
-        WAITING_FOR_KEY_ID, SENDING_CHALLENGE, WAITING_FOR_RESPONSE, COMPLETE
+        WAITING_FOR_KEY_ID(IOContextResult.NEEDS_READ), SENDING_CHALLENGE(IOContextResult.NEEDS_WRITE), WAITING_FOR_RESPONSE(IOContextResult.NEEDS_READ),
+        COMPLETE(IOContextResult.NEEDS_READ), FAILED(IOContextResult.NEEDS_DISCONNECT);
+
+        private final IOContextResult ioContextResult;
+
+        private AuthState(IOContextResult ioContextResult) {
+            this.ioContextResult = ioContextResult;
+        }
     };
 
     private AuthState authState;
@@ -56,8 +63,6 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
 
     @SuppressWarnings("incomplete-switch")
     private IOContextResult handleAuth() {
-
-        if (null != authState) {
             switch (authState) {
                 case WAITING_FOR_KEY_ID:
                     readKeyId();
@@ -69,20 +74,8 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                     waitForResponse();
                     break;
             }
-        }
 
-        if (null != authState) {
-            switch (authState) {
-                case WAITING_FOR_KEY_ID:
-                case WAITING_FOR_RESPONSE:
-                case COMPLETE:
-                    return IOContextResult.NEEDS_READ;
-                case SENDING_CHALLENGE:
-                    return IOContextResult.NEEDS_WRITE;
-            }
-        }
-
-        return IOContextResult.NEEDS_DISCONNECT;
+            return authState.ioContextResult;
     }
 
     private void readKeyId() {
@@ -121,7 +114,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             return;
         }
         LOG.info().$('[').$(fd).$("] authentication peer disconnected when challenge was being sent").$();
-        authState = null;
+        authState = AuthState.FAILED;
         return;
     }
 
@@ -131,7 +124,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             // Verify signature
             if (null == pubKey) {
                 LOG.info().$('[').$(fd).$("] authentication failed, unknown key id").$();
-                authState = null;
+                authState = AuthState.FAILED;
                 return;
             }
 
@@ -140,7 +133,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             for (int n = 0; n < sz; n++) {
                 signature[n] = Unsafe.getUnsafe().getByte(recvBufStart + n);
             }
-            authState = null;
+            authState = AuthState.FAILED;
 
             byte[] signatureRaw = Base64.getDecoder().decode(signature);
             boolean verified;
@@ -155,7 +148,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
 
             if (!verified) {
                 LOG.info().$('[').$(fd).$("] authentication failed, signature was not verified").$();
-                authState = null;
+                authState = AuthState.FAILED;
                 return;
             }
 
@@ -185,12 +178,12 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
 
         if (recvBufPos == recvBufEnd) {
             LOG.info().$('[').$(fd).$("] authentication token is too long").$();
-            authState = null;
+            authState = AuthState.FAILED;
             return -1;
         }
         if (peerDisconnected) {
             LOG.info().$('[').$(fd).$("] authentication disconnected by peer when reading token").$();
-            authState = null;
+            authState = AuthState.FAILED;
             return -1;
         }
         return -1;
