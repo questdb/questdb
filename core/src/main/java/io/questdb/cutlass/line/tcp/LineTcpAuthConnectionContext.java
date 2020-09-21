@@ -47,7 +47,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @Override
-    boolean handleIO() {
+    IOContextResult handleIO() {
         if (authenticated) {
             return super.handleIO();
         }
@@ -55,7 +55,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @SuppressWarnings("incomplete-switch")
-    private boolean handleAuth() {
+    private IOContextResult handleAuth() {
 
         if (null != authState) {
             switch (authState) {
@@ -76,21 +76,13 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                 case WAITING_FOR_KEY_ID:
                 case WAITING_FOR_RESPONSE:
                 case COMPLETE:
-                    dispatcher.registerChannel(this, IOOperation.READ);
-                    break;
+                    return IOContextResult.NEEDS_READ;
                 case SENDING_CHALLENGE:
-                    dispatcher.registerChannel(this, IOOperation.WRITE);
-                    break;
+                    return IOContextResult.NEEDS_WRITE;
             }
-            return true;
         }
 
-        if (!peerDisconnected) {
-            dispatcher.disconnect(this);
-            peerDisconnected = true;
-        }
-
-        return false;
+        return IOContextResult.NEEDS_DISCONNECT;
     }
 
     private void readKeyId() {

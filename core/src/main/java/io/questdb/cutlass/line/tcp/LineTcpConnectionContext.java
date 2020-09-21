@@ -29,7 +29,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
-import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
@@ -38,6 +37,9 @@ import io.questdb.std.time.MillisecondClock;
 
 class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
+    enum IOContextResult {
+        NEEDS_READ, NEEDS_WRITE, NEEDS_CPU, NEEDS_DISCONNECT
+    };
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;
@@ -59,8 +61,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
     }
 
-    // returns true if busy
-    boolean handleIO() {
+    IOContextResult handleIO() {
         try {
             // Read as much data as possible
             read();
@@ -102,28 +103,24 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             }
 
             if (queueFull) {
-                return true;
+                return IOContextResult.NEEDS_CPU;
             }
 
             // Check for buffer overflow
             if (recvBufPos == recvBufEnd) {
                 LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
-                dispatcher.disconnect(this);
-                return false;
+                return IOContextResult.NEEDS_DISCONNECT;
             }
 
             if (peerDisconnected) {
                 // Peer disconnected, we have now finished disconnect our end
-                dispatcher.disconnect(this);
-                return false;
+                return IOContextResult.NEEDS_DISCONNECT;
             }
 
-            dispatcher.registerChannel(this, IOOperation.READ);
-            return false;
+            return IOContextResult.NEEDS_READ;
         } catch (RuntimeException ex) {
             LOG.error().$('[').$(fd).$("] could not process line data").$(ex).$();
-            dispatcher.disconnect(this);
-            return false;
+            return IOContextResult.NEEDS_DISCONNECT;
         }
     }
 

@@ -40,6 +40,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -68,7 +69,7 @@ public class LineTcpServer implements Closeable {
         workerPool.assign(dispatcher);
         scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, workerPool);
         final IORequestProcessor<LineTcpConnectionContext> processor = (operation, context) -> {
-            if (context.handleIO()) {
+            if (handleIO(context)) {
                 busyContexts.add(context);
             }
         };
@@ -78,19 +79,13 @@ public class LineTcpServer implements Closeable {
                 int n = busyContexts.size();
                 while (n > 0) {
                     n--;
-                    if (!busyContexts.getQuick(n).handleIO()) {
-                        busyContexts.remove(n);
-                    } else {
-                        n++;
-                        break;
+                    if (!handleIO(busyContexts.getQuick(n))) {
+                         busyContexts.remove(n);
                     }
                 }
 
-                if (n == 0) {
-                    return dispatcher.processIOQueue(processor);
-                }
-
-                return true;
+                boolean busy = dispatcher.processIOQueue(processor);
+                return busy || busyContexts.size() > 0;
             }
         });
 
@@ -100,6 +95,23 @@ public class LineTcpServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             workerPool.assign(i, cleaner);
         }
+    }
+
+    private boolean handleIO(LineTcpConnectionContext context) {
+        switch (context.handleIO()) {
+            case NEEDS_READ:
+                context.getDispatcher().registerChannel(context, IOOperation.READ);
+                return false;
+            case NEEDS_WRITE:
+                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                return false;
+            case NEEDS_CPU:
+                return true;
+            case NEEDS_DISCONNECT:
+                context.getDispatcher().disconnect(context);
+                return false;
+        }
+        return false;
     }
 
     @Nullable
