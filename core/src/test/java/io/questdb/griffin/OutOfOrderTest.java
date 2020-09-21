@@ -137,7 +137,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         }
                     }
 
-                    String expected = Chars.toString(sink);
+//                    String expected = Chars.toString(sink);
+
+                    // The query above generates expected result, but there is a problem using it
+                    // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
+                    // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
+                    // look different. If this test ever breaks, uncomment the reference query and compare results visually.
 
                     // insert 1AM data into X
                     compiler.compile("insert into x select * from (1am union all top2)", sqlExecutionContext);
@@ -158,6 +163,196 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     URL url = OutOfOrderTest.class.getResource("/oo/testPartitionedDataOODataPbOOData.txt");
                     Assert.assertNotNull(url);
                     TestUtils.assertEquals(new File(url.toURI()), sink);
+                }
+        );
+    }
+
+    @Test
+    public void testPartitionedDataOOIntoLastIndexSearchBug() throws Exception {
+        assertMemoryLeak(() -> {
+
+                    // create table with roughly 2AM data
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " round(rnd_double(0)*100, 3) amt," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                    " rnd_boolean() b," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) ik," +
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(10000000000,1000000L) ts," +
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
+                                    " from long_sequence(1000)" +
+                                    ") timestamp (ts) partition by DAY",
+                            sqlExecutionContext
+                    );
+
+                    // create table with 1AM data
+
+                    compiler.compile(
+                            "create table 1am as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " round(rnd_double(0)*100, 3) amt," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                    " rnd_boolean() b," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) ik," +
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(3000000000l,10000000L) ts," + // mid partition for "x"
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
+                                    " from long_sequence(1000)" +
+                                    ")",
+                            sqlExecutionContext
+                    );
+
+                    // create third table, which will contain both X and 1AM
+                    compiler.compile("create table y as (select * from x union all select * from 1am )", sqlExecutionContext);
+
+                    // expected outcome
+                    sink.clear();
+                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            printer.print(cursor, factory.getMetadata(), true);
+                        }
+                    }
+
+                    String expected = Chars.toString(sink);
+
+                    // The query above generates expected result, but there is a problem using it
+                    // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
+                    // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
+                    // look different. If this test ever breaks, uncomment the reference query and compare results visually.
+
+                    // insert 1AM data into X
+                    compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+
+                    // It is necessary to release cached "x" reader because as of yet
+                    // reader cannot reload any partition other than "current".
+                    // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
+                    engine.releaseAllReaders();
+
+                    sink.clear();
+                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            printer.print(cursor, factory.getMetadata(), true);
+                        }
+                    }
+
+                    TestUtils.assertEquals(expected, sink);
+                }
+        );
+    }
+
+    @Test
+    public void testPartitionedDataOOIntoLastOverflowIntoNewPartition() throws Exception {
+        assertMemoryLeak(() -> {
+
+                    // create table with roughly 2AM data
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " round(rnd_double(0)*100, 3) amt," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                    " rnd_boolean() b," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) ik," +
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(10000000000,1000000L) ts," +
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
+                                    " from long_sequence(1000)" +
+                                    ") timestamp (ts) partition by DAY",
+                            sqlExecutionContext
+                    );
+
+                    // create table with 1AM data
+
+                    compiler.compile(
+                            "create table 1am as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " round(rnd_double(0)*100, 3) amt," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                    " rnd_boolean() b," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) ik," +
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(3000000000l,100000000L) ts," + // mid partition for "x"
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
+                                    " from long_sequence(1000)" +
+                                    ")",
+                            sqlExecutionContext
+                    );
+
+                    // create third table, which will contain both X and 1AM
+                    compiler.compile("create table y as (select * from x union all select * from 1am )", sqlExecutionContext);
+
+                    // expected outcome
+                    sink.clear();
+                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            printer.print(cursor, factory.getMetadata(), true);
+                        }
+                    }
+
+                    String expected = Chars.toString(sink);
+
+                    // The query above generates expected result, but there is a problem using it
+                    // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
+                    // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
+                    // look different. If this test ever breaks, uncomment the reference query and compare results visually.
+
+                    // insert 1AM data into X
+                    compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+
+                    // It is necessary to release cached "x" reader because as of yet
+                    // reader cannot reload any partition other than "current".
+                    // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
+                    engine.releaseAllReaders();
+
+                    sink.clear();
+                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            printer.print(cursor, factory.getMetadata(), true);
+                        }
+                    }
+
+                    TestUtils.assertEquals(expected, sink);
                 }
         );
     }
@@ -306,4 +501,5 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 }
         );
     }
+
 }
