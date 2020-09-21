@@ -1702,7 +1702,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getnUpdatesPerLoadRebalance() {
+        public int getNUpdatesPerLoadRebalance() {
             return lineTcpNUpdatesPerLoadRebalance;
         }
 

@@ -28,7 +28,6 @@ import java.io.Closeable;
 
 import org.jetbrains.annotations.Nullable;
 
-import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.WorkerPoolAwareConfiguration.ServerFactory;
 import io.questdb.cairo.CairoEngine;
@@ -58,10 +57,9 @@ public class LineTcpServer implements Closeable {
     public LineTcpServer(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool workerPool,
-            MessageBus messageBus
+            WorkerPool workerPool
     ) {
-        this.contextFactory = new LineTcpConnectionContextFactory(engine, lineConfiguration, messageBus);
+        this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
                 lineConfiguration
                         .getNetDispatcherConfiguration(),
@@ -129,13 +127,26 @@ public class LineTcpServer implements Closeable {
             return null;
         }
 
-        ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (netWorkerPoolConfiguration, engine, workerPool, local, bus,
-                functionfactory) -> new LineTcpServer(
+        ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (
+                netWorkerPoolConfiguration,
+                engine,
+                workerPool,
+                local,
+                bus,
+                functionFactory
+        ) -> new LineTcpServer(
                         lineConfiguration,
                         cairoEngine,
-                        workerPool,
-                        bus);
-        return WorkerPoolAwareConfiguration.create(lineConfiguration.getWorkerPoolConfiguration(), sharedWorkerPool, log, cairoEngine, factory, null);
+                        workerPool
+        );
+        return WorkerPoolAwareConfiguration.create(
+                lineConfiguration.getWorkerPoolConfiguration(),
+                sharedWorkerPool,
+                log,
+                cairoEngine,
+                factory,
+                null
+        );
     }
 
     @Override
@@ -149,7 +160,7 @@ public class LineTcpServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<LineTcpConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public LineTcpConnectionContextFactory(CairoEngine engine, LineTcpReceiverConfiguration configuration, @Nullable MessageBus messageBus) {
+        public LineTcpConnectionContextFactory(LineTcpReceiverConfiguration configuration) {
             ObjectFactory<LineTcpConnectionContext> factory;
             if (null == configuration.getAuthDbPath()) {
                 factory = () -> new LineTcpConnectionContext(configuration, scheduler);
@@ -191,6 +202,5 @@ public class LineTcpServer implements Closeable {
             Misc.free(this.contextPool.get());
             LOG.info().$("closed").$();
         }
-
     }
 }

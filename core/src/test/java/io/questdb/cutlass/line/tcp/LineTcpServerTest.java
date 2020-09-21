@@ -138,7 +138,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getnUpdatesPerLoadRebalance() {
+            public int getNUpdatesPerLoadRebalance() {
                 return 100;
             }
 

@@ -102,7 +102,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getnUpdatesPerLoadRebalance() {
+    public int getNUpdatesPerLoadRebalance() {
         return 1000;
     }
 

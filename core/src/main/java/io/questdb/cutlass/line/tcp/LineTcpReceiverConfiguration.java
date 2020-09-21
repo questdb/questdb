@@ -57,7 +57,7 @@ public interface LineTcpReceiverConfiguration {
 
     WorkerPoolAwareConfiguration getWorkerPoolConfiguration();
 
-    int getnUpdatesPerLoadRebalance();
+    int getNUpdatesPerLoadRebalance();
 
     double getMaxLoadRatio();
 

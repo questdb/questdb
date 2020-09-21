@@ -43,8 +43,7 @@ public class AuthDb {
             keyPairGenerator.initialize(prime256v1ParamSpec);
             ECParameterSpec parameterSpec = ((ECKey) keyPairGenerator.generateKeyPair().getPrivate()).getParams();
             ECPrivateKeySpec privateKeySpec = new ECPrivateKeySpec(privateKeyInt, parameterSpec);
-            PrivateKey privateKey = KeyFactory.getInstance(EC_ALGORITHM).generatePrivate(privateKeySpec);
-            return privateKey;
+            return KeyFactory.getInstance(EC_ALGORITHM).generatePrivate(privateKeySpec);
         } catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException | InvalidKeySpecException ex) {
             throw new IllegalArgumentException("Failed to decode " + encodedPrivateKey, ex);
         }

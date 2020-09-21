@@ -1,18 +1,13 @@
 package io.questdb.cutlass.line.tcp;
 
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.security.PublicKey;
-import java.security.SecureRandom;
-import java.security.Signature;
-import java.security.SignatureException;
-import java.util.Base64;
-
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
+
+import java.security.*;
+import java.util.Base64;
 
 class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private static final Log LOG = LogFactory.getLog(LineTcpAuthConnectionContext.class);
@@ -32,10 +27,10 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
 
         private final IOContextResult ioContextResult;
 
-        private AuthState(IOContextResult ioContextResult) {
+        AuthState(IOContextResult ioContextResult) {
             this.ioContextResult = ioContextResult;
         }
-    };
+    }
 
     private AuthState authState;
 
@@ -60,20 +55,20 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         return handleAuth();
     }
 
-    @SuppressWarnings("incomplete-switch")
     private IOContextResult handleAuth() {
-        switch (authState) {
-            case WAITING_FOR_KEY_ID:
-                readKeyId();
-                break;
-            case SENDING_CHALLENGE:
-                sendChallenge();
-                break;
-            case WAITING_FOR_RESPONSE:
-                waitForResponse();
-                break;
-        }
-
+            switch (authState) {
+                case WAITING_FOR_KEY_ID:
+                    readKeyId();
+                    break;
+                case SENDING_CHALLENGE:
+                    sendChallenge();
+                    break;
+                case WAITING_FOR_RESPONSE:
+                    waitForResponse();
+                    break;
+                default:
+                    break;
+            }
         return authState.ioContextResult;
     }
 
@@ -95,7 +90,6 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                 n++;
             }
             Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) '\n');
-            n++;
             authState = AuthState.SENDING_CHALLENGE;
         }
     }
@@ -115,7 +109,6 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         }
         LOG.info().$('[').$(fd).$("] authentication peer disconnected when challenge was being sent").$();
         authState = AuthState.FAILED;
-        return;
     }
 
     private void waitForResponse() {
@@ -128,9 +121,8 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                 return;
             }
 
-            int sz = lineEnd;
-            byte[] signature = new byte[sz];
-            for (int n = 0; n < sz; n++) {
+            byte[] signature = new byte[lineEnd];
+            for (int n = 0; n < lineEnd; n++) {
                 signature[n] = Unsafe.getUnsafe().getByte(recvBufStart + n);
             }
             authState = AuthState.FAILED;

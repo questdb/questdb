@@ -985,8 +985,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 } while (recvBuffer.length() > 0);
             }
             waitForIOCompletion();
-            rebalanceNLoadCheckCycles = scheduler.getnLoadCheckCycles();
-            rebalanceNRebalances = scheduler.getnRebalances();
+            rebalanceNLoadCheckCycles = scheduler.getNLoadCheckCycles();
+            rebalanceNRebalances = scheduler.getNRebalances();
             rebalanceLoadByThread = scheduler.getLoadByThread();
             closeContext();
             LOG.info().$("Completed ").$(nTotalUpdates).$(" measurements with ").$(nTables).$(" measurement types processed by ").$(nWriterThreads).$(" threads. ")
