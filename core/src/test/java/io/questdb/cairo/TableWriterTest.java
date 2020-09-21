@@ -39,6 +39,8 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableUtils.ARCHIVE_FILE_NAME;
+
 public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
@@ -1649,11 +1651,11 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testFailureToOpenArchiveFile() throws Exception {
         testCommitRetryAfterFailure(new CountingFilesFacade() {
             @Override
-            public long openAppend(LPSZ name) {
-                if (--count < 1L) {
+            public long openRW(LPSZ name) {
+                if (Chars.contains(name, ARCHIVE_FILE_NAME) && --count < 1L) {
                     return -1;
                 }
-                return super.openAppend(name);
+                return super.openRW(name);
             }
         });
     }
@@ -1664,11 +1666,11 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long openAppend(LPSZ name) {
-                if (--count < 1L) {
-                    return fd = super.openAppend(name);
+            public long openRW(LPSZ name) {
+                if (Chars.contains(name, ARCHIVE_FILE_NAME) && --count < 1L) {
+                    return fd = super.openRW(name);
                 }
-                return super.openAppend(name);
+                return super.openRW(name);
             }
 
             @Override
