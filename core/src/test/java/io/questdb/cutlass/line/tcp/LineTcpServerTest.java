@@ -57,7 +57,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 public class LineTcpServerTest extends AbstractCairoTest {
-    private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
+    private final static Log LOG = LogFactory.getLog(LineTcpServerTest.class);
     private final static String AUTH_KEY_ID1 = "testUser1";
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
     private final static String AUTH_KEY_ID2 = "testUser2";

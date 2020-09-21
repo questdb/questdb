@@ -11,7 +11,6 @@ import java.util.Base64;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -55,6 +54,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         return handleAuth();
     }
 
+    @SuppressWarnings("incomplete-switch")
     private boolean handleAuth() {
 
         if (null != authState) {
@@ -85,7 +85,11 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             return true;
         }
 
-        dispatcher.disconnect(this);
+        if (!peerDisconnected) {
+            dispatcher.disconnect(this);
+            peerDisconnected = true;
+        }
+
         return false;
     }
 
@@ -201,15 +205,10 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @Override
-    LineTcpConnectionContext of(long clientFd, IODispatcher<LineTcpConnectionContext> dispatcher) {
+    public void clear() {
         authenticated = false;
         authState = AuthState.WAITING_FOR_KEY_ID;
         pubKey = null;
-        return super.of(clientFd, dispatcher);
-    }
-
-    @Override
-    public void clear() {
         super.clear();
     }
 }
