@@ -42,8 +42,8 @@ import io.questdb.cutlass.line.udp.LineProtoSender;
 import io.questdb.cutlass.line.udp.LineTCPProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
@@ -171,11 +171,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
             SOCountDownLatch tablesCreated = new SOCountDownLatch();
             tablesCreated.setCount(tables.length);
             Supplier<Path> pathSupplier = Path::new;
-            sharedWorkerPool.assign(new Job() {
+            sharedWorkerPool.assign(new SynchronizedJob() {
                 private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(pathSupplier);
 
                 @Override
-                public boolean run(int workerId) {
+                public boolean runSerially() {
                     int nTable = tables.length - tablesCreated.getCount();
                     if (nTable < tables.length) {
                         String tableName = tables[nTable];

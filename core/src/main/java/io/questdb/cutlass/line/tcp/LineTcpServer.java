@@ -77,15 +77,19 @@ public class LineTcpServer implements Closeable {
             @Override
             protected boolean runSerially() {
                 int n = busyContexts.size();
-                while (n > 0) {
-                    n--;
-                    if (!handleIO(busyContexts.getQuick(n))) {
-                         busyContexts.remove(n);
+                if (n > 0) {
+                    do {
+                        n--;
+                        if (!handleIO(busyContexts.getQuick(n))) {
+                            busyContexts.remove(n);
+                        }
+                    } while (n > 0);
+                    if (busyContexts.size() > 0) {
+                        return true;
                     }
                 }
 
-                boolean busy = dispatcher.processIOQueue(processor);
-                return busy || busyContexts.size() > 0;
+                return dispatcher.processIOQueue(processor);
             }
         });
 
