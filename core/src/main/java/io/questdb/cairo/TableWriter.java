@@ -1147,7 +1147,8 @@ public class TableWriter implements Closeable {
         return dataAddr;
     }
 
-    private static long mapReadWriteOrFail(FilesFacade ff, Path path, long fd, long size) {
+    private static long mapReadWriteOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
+        truncateToSizeOrFail(ff, path, fd, size);
         long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
         if (addr != -1) {
             return addr;
@@ -1155,7 +1156,7 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(", fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    private static void truncateToSizeOrFail(FilesFacade ff, Path path, long fd, long mergeSize) {
+    private static void truncateToSizeOrFail(FilesFacade ff, @Nullable Path path, long fd, long mergeSize) {
         if (!ff.truncate(fd, mergeSize)) {
             throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(mergeSize).put(']');
         }
