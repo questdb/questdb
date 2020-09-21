@@ -2290,17 +2290,14 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
-    private RecordMetadata calculateSetMetadata(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
-        if (masterMetadata.getTimestampIndex() == slaveMetadata.getTimestampIndex()) {
-            return masterMetadata;
-        }
+    private RecordMetadata calculateSetMetadata(RecordMetadata masterMetadata) {
         return GenericRecordMetadata.removeTimestamp(masterMetadata);
     }
 
     private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
         validateJoinColumnTypes(model, masterFactory, slaveFactory);
         final RecordCursorFactory unionAllFactory = new UnionAllRecordCursorFactory(
-                calculateSetMetadata(masterFactory.getMetadata(), slaveFactory.getMetadata()),
+                calculateSetMetadata(masterFactory.getMetadata()),
                 masterFactory,
                 slaveFactory
         );
@@ -2331,7 +2328,7 @@ public class SqlCodeGenerator implements Mutable {
 
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
-                calculateSetMetadata(masterFactory.getMetadata(), slaveFactory.getMetadata()),
+                calculateSetMetadata(masterFactory.getMetadata()),
                 masterFactory,
                 slaveFactory,
                 recordSink,
