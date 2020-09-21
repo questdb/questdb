@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import static org.junit.Assert.assertEquals;
+
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
@@ -217,6 +219,48 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDisconnectedOnChallenge1() throws Exception {
+        runInContext(() -> {
+            maxSendBytes = 0;
+            recvBuffer = AUTH_KEY_ID1 + "\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            Assert.assertNull(sentBytes);
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            Assert.assertNull(sentBytes);
+            maxSendBytes = -1;
+            handleContextIO();
+            Assert.assertNull(sentBytes);
+            Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testDisconnectedOnChallenge2() throws Exception {
+        runInContext(() -> {
+            maxSendBytes = 5;
+            recvBuffer = AUTH_KEY_ID1 + "\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            handleContextIO();
+            Assert.assertEquals(maxSendBytes, sentBytes.length);
+            sentBytes = null;
+            Assert.assertFalse(disconnected);
+            handleContextIO();
+            Assert.assertEquals(maxSendBytes, sentBytes.length);
+            sentBytes = null;
+            Assert.assertFalse(disconnected);
+            maxSendBytes = -1;
+            handleContextIO();
+            Assert.assertNull(sentBytes);
+            Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
     public void testIncorrectConfig() throws Exception {
         netMsgBufferSize.set(200);
         try {
@@ -235,12 +279,32 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
 
     private boolean authenticate(String authKeyId, PrivateKey authPrivateKey) {
         recvBuffer = authKeyId + "\n";
+        byte[] challengeBytes = readChallenge();
+        if (null == challengeBytes) {
+            return false;
+        }
+        try {
+            Signature sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE);
+            sig.initSign(authPrivateKey);
+            sig.update(challengeBytes, 0, challengeBytes.length - 1);
+            byte[] rawSignature = sig.sign();
+            byte[] signature = Base64.getEncoder().encode(rawSignature);
+            recvBuffer = new String(signature, StandardCharsets.UTF_8) + "\n";
+            handleContextIO();
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
+
+        return true;
+    }
+
+    private byte[] readChallenge() {
         int nChallengeBytes = 0;
         boolean receivedChallenge = false;
         byte[] challengeBytes = null;
         do {
             if (disconnected) {
-                return false;
+                return null;
             }
             handleContextIO();
             if (null != sentBytes) {
@@ -262,19 +326,8 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                 }
             }
         } while (!receivedChallenge);
-        try {
-            Signature sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE);
-            sig.initSign(authPrivateKey);
-            sig.update(challengeBytes, 0, nChallengeBytes);
-            byte[] rawSignature = sig.sign();
-            byte[] signature = Base64.getEncoder().encode(rawSignature);
-            recvBuffer = new String(signature, StandardCharsets.UTF_8) + "\n";
-            handleContextIO();
-        } catch (Exception ex) {
-            throw new RuntimeException(ex);
-        }
-
-        return true;
+        assertEquals(challengeBytes.length, nChallengeBytes + 1);
+        return challengeBytes;
     }
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
