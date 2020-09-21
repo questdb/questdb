@@ -177,7 +177,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented1() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, false);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -194,7 +194,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented2() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, false);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -211,7 +211,58 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented3() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, false);
+            Assert.assertTrue(authSequenceCompleted);
+            Assert.assertFalse(disconnected);
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testGoodAuthenticationFragmented4() throws Exception {
+        runInContext(() -> {
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, true);
+            Assert.assertTrue(authSequenceCompleted);
+            Assert.assertFalse(disconnected);
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testGoodAuthenticationFragmented5() throws Exception {
+        runInContext(() -> {
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, true);
+            Assert.assertTrue(authSequenceCompleted);
+            Assert.assertFalse(disconnected);
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testGoodAuthenticationFragmented6() throws Exception {
+        runInContext(() -> {
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -331,27 +382,11 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     }
 
     private boolean authenticate(String authKeyId, PrivateKey authPrivateKey) {
-        return authenticate(authKeyId, authPrivateKey, false, false);
+        return authenticate(authKeyId, authPrivateKey, false, false, false);
     }
 
-    private boolean authenticate(String authKeyId, PrivateKey authPrivateKey, boolean fragmentKeyId, boolean fragmentChallenge) {
-        authKeyId += "\n";
-        if (fragmentKeyId) {
-            int nSent = 0;
-            do {
-                int n = 1 + rand.nextInt(3);
-                if (n + nSent > authKeyId.length()) {
-                    recvBuffer = authKeyId.substring(nSent);
-                } else {
-                    recvBuffer = authKeyId.substring(nSent, nSent + n);
-                }
-                nSent += n;
-                handleContextIO();
-            } while (nSent < authKeyId.length());
-        } else {
-            recvBuffer = authKeyId;
-            handleContextIO();
-        }
+    private boolean authenticate(String authKeyId, PrivateKey authPrivateKey, boolean fragmentKeyId, boolean fragmentChallenge, boolean fragmentSignature) {
+        send(authKeyId + "\n", fragmentKeyId);
         byte[] challengeBytes = readChallenge(fragmentChallenge);
         if (null == challengeBytes) {
             return false;
@@ -362,13 +397,32 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             sig.update(challengeBytes, 0, challengeBytes.length - 1);
             byte[] rawSignature = sig.sign();
             byte[] signature = Base64.getEncoder().encode(rawSignature);
-            recvBuffer = new String(signature, StandardCharsets.UTF_8) + "\n";
+            send(new String(signature, StandardCharsets.UTF_8) + "\n", fragmentSignature);
             handleContextIO();
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
 
         return true;
+    }
+
+    private void send(String sendStr, boolean fragmented) {
+        if (fragmented) {
+            int nSent = 0;
+            do {
+                int n = 1 + rand.nextInt(3);
+                if (n + nSent > sendStr.length()) {
+                    recvBuffer = sendStr.substring(nSent);
+                } else {
+                    recvBuffer = sendStr.substring(nSent, nSent + n);
+                }
+                nSent += n;
+                handleContextIO();
+            } while (nSent < sendStr.length());
+        } else {
+            recvBuffer = sendStr;
+            handleContextIO();
+        }
     }
 
     private byte[] readChallenge(boolean fragment) {
