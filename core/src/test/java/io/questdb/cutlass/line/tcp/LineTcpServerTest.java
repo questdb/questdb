@@ -65,25 +65,25 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test(timeout = 120000)
     public void testUnauthenticated() {
-        test(null, null, 200);
+        test(null, null, 200, 1_000_000);
     }
 
     @Test(timeout = 120000)
     public void testGoodAuthenticated() {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768);
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 10_000);
     }
 
     @Test(timeout = 120000, expected = NetworkError.class)
     public void testInvalidUser() {
-        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768);
+        test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 100);
     }
 
     @Test(timeout = 120000, expected = NetworkError.class)
     public void testInvalidSignature() {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768);
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 100);
     }
 
-    private void test(String authKeyId, PrivateKey authPrivateKey, int msgBufferSize) {
+    private void test(String authKeyId, PrivateKey authPrivateKey, int msgBufferSize, final int nRows) {
         WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
             private final int[] affinity = { -1, -1 };
 
@@ -158,7 +158,6 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
         };
 
-        final int nRows = 1000;
         final String[] tables = { "weather1", "weather2", "weather3" };
         final String[] locations = { "london", "paris", "rome" };
 

@@ -42,7 +42,6 @@ import io.questdb.network.IODispatchers;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
@@ -52,7 +51,6 @@ public class LineTcpServer implements Closeable {
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
-    private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
 
     public LineTcpServer(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -66,31 +64,33 @@ public class LineTcpServer implements Closeable {
                 contextFactory);
         workerPool.assign(dispatcher);
         scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, workerPool);
-        final IORequestProcessor<LineTcpConnectionContext> processor = (operation, context) -> {
-            if (handleIO(context)) {
-                busyContexts.add(context);
-            }
-        };
         workerPool.assign(new SynchronizedJob() {
+            // Context blocked on LineTcpMeasurementScheduler queue
+            private LineTcpConnectionContext busyContext;
+
             @Override
             protected boolean runSerially() {
-                int n = busyContexts.size();
-                if (n > 0) {
-                    do {
-                        n--;
-                        if (!handleIO(busyContexts.getQuick(n))) {
-                            busyContexts.remove(n);
-                        }
-                    } while (n > 0);
-                    if (busyContexts.size() > 0) {
-                        return true;
-                    }
+                if (null == busyContext) {
+                    return dispatcher.processIOQueue(onRequest);
                 }
 
-                return dispatcher.processIOQueue(processor);
+                if (! handleIO(busyContext)) {
+                    busyContext = null;
+                    return true;
+                }
+                
+                return false;
+            }
+
+            private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
+            private void onRequest(int operation, LineTcpConnectionContext context) {
+                assert busyContext == null;
+                if (handleIO(context)) {
+                    busyContext = context;
+                }
             }
         });
-
+ 
         final Closeable cleaner = contextFactory::closeContextPool;
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
