@@ -105,6 +105,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         }
         this.pendingRetry = false;
         this.multipartParserState.multipartRetry = false;
+        this.retryAttemptAttributes.waitStartTimestamp = 0;
+        this.retryAttemptAttributes.lastRunTimestamp = 0;
+        this.retryAttemptAttributes.attempt = 0;
     }
 
     @Override
@@ -520,10 +523,12 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             pendingRetry = false;
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
             try {
+                LOG.info().$("retrying query [fd=").$(fd).$(']').$();
                 processor.onRequestRetry(this);
                 if (multipartParserState.multipartRetry) {
                     continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retryRescheduleContext);
                 }
+                next(selector, rescheduleContext);
             } catch (RetryOperationException e2) {
                 pendingRetry = true;
                 return false;
@@ -539,6 +544,18 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return true;
     }
 
+    private void next(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        clear();
+        boolean keepGoing;
+        if (serverKeepAlive) {
+            do {
+                keepGoing = handleClientRecv(selector, rescheduleContext);
+            } while (keepGoing);
+        } else {
+            dispatcher.disconnect(this);
+        }
+    }
+
     @Override
     public RetryAttemptAttributes getAttemptDetails() {
         return retryAttemptAttributes;
@@ -546,6 +563,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     @Override
     public void fail(HttpRequestProcessorSelector selector, RetryFailedOperationException e) {
+        LOG.info().$("Failed to retry query [fd=").$(fd).$(']').$();
         pendingRetry = false;
         HttpRequestProcessor processor = getHttpRequestProcessor(selector);
         fail(e, processor);
@@ -555,6 +573,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         pendingRetry = false;
         try {
             processor.failRequest(this, e);
+            clear();
+            dispatcher.disconnect(this);
         } catch (PeerDisconnectedException peerDisconnectedException) {
             dispatcher.disconnect(this);
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {

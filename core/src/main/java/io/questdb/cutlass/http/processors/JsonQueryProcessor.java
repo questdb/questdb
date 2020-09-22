@@ -232,7 +232,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             syntaxError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
-            LOG.info().$("Resource busy, will retry").$();
+            LOG.info().$("[fd=").$(context.getFd()).$("] Resource busy, will retry").$();
             throw RetryOperationException.INSTANCE;
         } catch (CairoError | CairoException e) {
             internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
