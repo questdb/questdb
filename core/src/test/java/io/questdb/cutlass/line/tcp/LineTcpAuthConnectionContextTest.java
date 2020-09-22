@@ -103,7 +103,10 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             @Override
             public int send(long fd, long buffer, int bufferLen) {
                 Assert.assertEquals(FD, fd);
-                Assert.assertNull(sentBytes);
+                if (null != sentBytes) {
+                    return 0;
+                }
+
                 if (maxSendBytes <= 0) {
                     return maxSendBytes;
                 }

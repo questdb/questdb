@@ -37,7 +37,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler) {
         super(configuration, scheduler);
         if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
-            throw CairoException.instance(0).put("Minimum buffer length is " + MIN_BUF_SIZE);
+            throw CairoException.instance(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }
         this.authDb = authDb;
         try {
@@ -56,19 +56,19 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     private IOContextResult handleAuth() {
-            switch (authState) {
-                case WAITING_FOR_KEY_ID:
-                    readKeyId();
-                    break;
-                case SENDING_CHALLENGE:
-                    sendChallenge();
-                    break;
-                case WAITING_FOR_RESPONSE:
-                    waitForResponse();
-                    break;
-                default:
-                    break;
-            }
+        switch (authState) {
+            case WAITING_FOR_KEY_ID:
+                readKeyId();
+                break;
+            case SENDING_CHALLENGE:
+                sendChallenge();
+                break;
+            case WAITING_FOR_RESPONSE:
+                waitForResponse();
+                break;
+            default:
+                break;
+        }
         return authState.ioContextResult;
     }
 
@@ -97,15 +97,23 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private void sendChallenge() {
         int n = CHALLENGE_LEN + 1 - (int) (recvBufPos - recvBufStart);
         assert n > 0;
-        int nWritten = nf.send(fd, recvBufPos, n);
-        if (nWritten >= 0) {
-            if (n == nWritten) {
-                recvBufPos = recvBufStart;
-                authState = AuthState.WAITING_FOR_RESPONSE;
+        while(true) {
+            int nWritten = nf.send(fd, recvBufPos, n);
+            if (nWritten > 0) {
+                if (n == nWritten) {
+                    recvBufPos = recvBufStart;
+                    authState = AuthState.WAITING_FOR_RESPONSE;
+                    return;
+                }
+                recvBufPos += nWritten;
+                continue;
+            } 
+            
+            if (nWritten == 0) {
                 return;
             }
-            recvBufPos += nWritten;
-            return;
+            
+            break;
         }
         LOG.info().$('[').$(fd).$("] authentication peer disconnected when challenge was being sent").$();
         authState = AuthState.FAILED;
