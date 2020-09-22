@@ -537,36 +537,19 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {
-        if (groupByTwoPointFunctionCount > 0) {
-            interpolateTwoPointRange(lo, hi, mapRecord, x1Value, x2value);
-        }
-
-        if (groupByScalarFunctionCount > 0) {
-            computeYPoints(x1Value, x2value);
-            interpolateRange(x1, x2, lo, hi, mapRecord);
-        }
-    }
-
-    private void interpolateRange(long x1, long x2, long lo, long hi, Record record) {
+        computeYPoints(x1Value, x2value);
         for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
-            final MapValue value = findDataMapValue(record, x);
-            assert value != null && value.getByte(0) == 1;
-            value.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
-            for (int i = 0; i < groupByScalarFunctionCount; i++) {
-                GroupByFunction function = groupByScalarFunctions.getQuick(i);
-                interpolatorFunctions.getQuick(i).interpolateAndStore(function, value, x, x1, x2, yData + i * 16, yData + i * 16 + 8);
-            }
-        }
-    }
-
-    private void interpolateTwoPointRange(long lo, long hi, Record record, MapValue startValue, MapValue endValue) {
-        for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
-            final MapValue result = findDataMapValue3(record, x);
+            final MapValue result = findDataMapValue3(mapRecord, x);
             assert result != null && result.getByte(0) == 1;
             for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
                 GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
-                interpolatorGapTwoPointFunctions.getQuick(i).interpolateGapAndStore(function, result, sampler.getBucketSize(), startValue, endValue);
+                interpolatorGapTwoPointFunctions.getQuick(i).interpolateGapAndStore(function, result, sampler.getBucketSize(), x1Value, x2value);
             }
+            for (int i = 0; i < groupByScalarFunctionCount; i++) {
+                GroupByFunction function = groupByScalarFunctions.getQuick(i);
+                interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16, yData + i * 16 + 8);
+            }
+            result.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
         }
     }
 
