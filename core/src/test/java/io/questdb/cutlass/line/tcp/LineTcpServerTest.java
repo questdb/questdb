@@ -65,12 +65,12 @@ public class LineTcpServerTest extends AbstractCairoTest {
 
     @Test(timeout = 120000)
     public void testUnauthenticated() {
-        test(null, null, 200, 1_000_000);
+        test(null, null, 200, 1_000);
     }
 
     @Test(timeout = 120000)
     public void testGoodAuthenticated() {
-        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 10_000);
+        test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000);
     }
 
     @Test(timeout = 120000, expected = NetworkError.class)
