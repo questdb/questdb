@@ -225,7 +225,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerCount());
         Assert.assertArrayEquals(new int[]{}, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().haltOnError());
-        Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getnUpdatesPerLoadRebalance());
+        Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
         Assert.assertEquals(1.9, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(250, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
@@ -491,7 +491,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{1, 2}, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().haltOnError());
-            Assert.assertEquals(100_000, configuration.getLineTcpReceiverConfiguration().getnUpdatesPerLoadRebalance());
+            Assert.assertEquals(100_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
             Assert.assertEquals(1.5, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
             Assert.assertEquals(100000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());

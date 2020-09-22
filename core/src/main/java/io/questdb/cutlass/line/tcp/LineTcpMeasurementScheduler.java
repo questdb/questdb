@@ -94,7 +94,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             writerWorkerPool.assign(0, writerJob::close);
         }
 
-        nUpdatesPerLoadRebalance = lineConfiguration.getnUpdatesPerLoadRebalance();
+        nUpdatesPerLoadRebalance = lineConfiguration.getNUpdatesPerLoadRebalance();
         maxLoadRatio = lineConfiguration.getMaxLoadRatio();
         maxUncommittedRows = lineConfiguration.getMaxUncommittedRows();
         maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
@@ -122,12 +122,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
-        assert isOpen();
-        if (nextEventCursor == -1) {
-            throw new IllegalStateException("Cannot commit without prior call to getNewEvent()");
-        }
-
-        assert queue.get(nextEventCursor) == event;
+        assert isOpen() && nextEventCursor != -1 && queue.get(nextEventCursor) == event;
 
         TableUpdateDetails tableUpdateDetails;
         if (complete) {
@@ -164,12 +159,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     void commitRebalanceEvent(LineTcpMeasurementEvent event, int fromThreadId, int toThreadId, String tableName) {
-        assert isOpen();
-        if (nextEventCursor == -1) {
-            throw new IllegalStateException("Cannot commit without prior call to getNewEvent()");
-        }
-
-        assert queue.get(nextEventCursor) == event;
+        assert isOpen() && nextEventCursor != -1 && queue.get(nextEventCursor) == event;
         event.createRebalanceEvent(fromThreadId, toThreadId, tableName);
         pubSeq.done(nextEventCursor);
         nextEventCursor = -1;
@@ -197,11 +187,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         return queue.get(nextEventCursor);
     }
 
-    int getnLoadCheckCycles() {
+    int getNLoadCheckCycles() {
         return nLoadCheckCycles;
     }
 
-    int getnRebalances() {
+    int getNRebalances() {
         return nRebalances;
     }
 
@@ -350,7 +340,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             break;
                         default:
                             throw new RuntimeException("Unrecognised type " + type);
-
                     }
                 }
 
@@ -711,7 +700,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                         securityContext,
                         appendMemory,
                         path,
-                        tableStructureAdapter.of(event, this));
+                        tableStructureAdapter.of(event, this)
+                );
                 int nValues = event.getNValues();
                 for (int n = 0; n < nValues; n++) {
                     colIndexMappings.add(n, n);

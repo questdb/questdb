@@ -24,29 +24,37 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
+
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Unsafe;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
-import io.questdb.std.time.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
@@ -128,7 +136,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             do {
-                context.handleIO();
+                handleContextIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             waitForIOCompletion();
@@ -156,7 +164,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             do {
-                context.handleIO();
+                handleContextIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             waitForIOCompletion();
@@ -185,7 +193,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             do {
-                context.handleIO();
+                handleContextIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             waitForIOCompletion();
@@ -214,7 +222,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             do {
-                context.handleIO();
+                handleContextIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             waitForIOCompletion();
@@ -240,7 +248,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-eastcoast temperature=80 a=146583983102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -265,7 +273,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-eastcoast,broken temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -290,7 +298,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-eastcoast broken=23 temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -315,7 +323,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-eastcoast temperature=80 146583983x102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -341,7 +349,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             microSecondTicks = 1465839830102800L;
             recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i\n" +
                     "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -364,7 +372,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             do {
-                context.handleIO();
+                handleContextIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             waitForIOCompletion();
@@ -384,7 +392,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     public void testEmptyLine() throws Exception {
         runInContext(() -> {
             recvBuffer = "\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
         });
     }
@@ -403,7 +411,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             while (n < allMsgs.length()) {
                 recvBuffer = allMsgs.substring(n, n + 1);
                 n++;
-                context.handleIO();
+                handleContextIO();
                 Assert.assertFalse(disconnected);
             }
             waitForIOCompletion();
@@ -436,7 +444,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertTrue(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -547,7 +555,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             Assert.assertFalse(recvBuffer.length() < lineTcpConfiguration.getNetMsgBufferSize());
             do {
-                context.handleIO();
+                handleContextIO();
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             waitForIOCompletion();
@@ -591,7 +599,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -613,13 +621,13 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -645,7 +653,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather temperature=89,pressure=101i 1465839830102400200\n" +
                     "weather temperature=80,pressure=100i 1465839830102400200\n" +
                     "weather temperature=82,pressure=100i 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -671,7 +679,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather temperature=89,pressure=101i 1465839830102400200\n" +
                     "weather temperature=80,pressure=100i 1465839830102400200\n" +
                     "weather temperature=82,pressure=100i 1465839830102500200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -696,7 +704,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 recvBuffer += recvBuffer;
             }
             int nUnread = recvBuffer.length() - msgBufferSize;
-            context.handleIO();
+            handleContextIO();
             Assert.assertTrue(disconnected);
             Assert.assertEquals(nUnread, recvBuffer.length());
         });
@@ -706,7 +714,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     public void testSingleMeasurement() throws Exception {
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -750,7 +758,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=89\n" +
                     "weather,location=us-eastcoast temperature=80\n" +
                     "weather,location=us-westcost temperature=82\n";
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -860,7 +868,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 super.commitNewEvent(event, complete);
             }
         };
-        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, MillisecondClockImpl.INSTANCE);
+        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
         disconnected = false;
         recvBuffer = null;
         IODispatcher<LineTcpConnectionContext> dispatcher = new IODispatcher<>() {
@@ -910,10 +918,10 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             recvBuffer = allMsgs.substring(0, breakPos);
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             recvBuffer = allMsgs.substring(breakPos);
-            context.handleIO();
+            handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
@@ -972,13 +980,13 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     nTotalUpdates++;
                 }
                 do {
-                    context.handleIO();
+                    handleContextIO();
                     Assert.assertFalse(disconnected);
                 } while (recvBuffer.length() > 0);
             }
             waitForIOCompletion();
-            rebalanceNLoadCheckCycles = scheduler.getnLoadCheckCycles();
-            rebalanceNRebalances = scheduler.getnRebalances();
+            rebalanceNLoadCheckCycles = scheduler.getNLoadCheckCycles();
+            rebalanceNRebalances = scheduler.getNRebalances();
             rebalanceLoadByThread = scheduler.getLoadByThread();
             closeContext();
             LOG.info().$("Completed ").$(nTotalUpdates).$(" measurements with ").$(nTables).$(" measurement types processed by ").$(nWriterThreads).$(" threads. ")
@@ -989,13 +997,29 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    private boolean handleContextIO() {
+        switch (context.handleIO()) {
+            case NEEDS_READ:
+                context.getDispatcher().registerChannel(context, IOOperation.READ);
+                return false;
+            case NEEDS_WRITE:
+                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                return false;
+            case NEEDS_CPU:
+                return true;
+            case NEEDS_DISCONNECT:
+                context.getDispatcher().disconnect(context);
+                return false;
+        }
+        return false;
+    }
+
     private void waitForIOCompletion() {
         int maxIterations = 256;
         recvBuffer = null;
         // Guard against slow writers on disconnect
         while (maxIterations-- > 0) {
-            boolean busy = context.handleIO();
-            if (!busy) {
+            if (!handleContextIO()) {
                 break;
             }
             LockSupport.parkNanos(1_000_000);

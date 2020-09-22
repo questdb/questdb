@@ -44,7 +44,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     private final long bufA;
     private final long bufB;
     private final long sockaddr;
-    private final long fd;
+    protected final long fd;
     protected final NetworkFacade nf;
 
     private long lo;
