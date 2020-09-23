@@ -53,8 +53,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final ObjList<GroupByFunction> groupByTwoPointFunctions;
     private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorGapTwoPointFunction> interpolatorGapTwoPointFunctions;
-    private final ObjList<InterpolationUtil.InterpolatorBoundaryTwoPointFunction> interpolatorBoundaryTwoPointFunctions;
+
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
@@ -114,8 +113,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
         this.storeYFunctions = new ObjList<>(columnCount);
         this.interpolatorFunctions = new ObjList<>(columnCount);
-        this.interpolatorGapTwoPointFunctions = new ObjList<>(columnCount);
-        this.interpolatorBoundaryTwoPointFunctions = new ObjList<>(columnCount);
 
         // create timestamp column
         TimestampColumn timestampColumn = new TimestampColumn(0, valueTypes.getColumnCount() + keyTypes.getColumnCount());
@@ -136,6 +133,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         }
 
         this.groupByScalarFunctionCount = groupByScalarFunctions.size();
+        this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
+
         for (int i = 0; i < groupByScalarFunctionCount; i++) {
             GroupByFunction function = groupByScalarFunctions.getQuick(i);
             switch (function.getType()) {
@@ -165,40 +164,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     break;
                 default:
                     Misc.freeObjList(groupByScalarFunctions);
-                    throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
-            }
-        }
-
-        this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
-        for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
-            GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
-            switch (function.getType()) {
-                case ColumnType.BYTE:
-                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_BYTE);
-                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_BYTE);
-                    break;
-                case ColumnType.SHORT:
-                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_SHORT);
-                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_SHORT);
-                    break;
-                case ColumnType.INT:
-                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_INT);
-                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_INT);
-                    break;
-                case ColumnType.LONG:
-                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_LONG);
-                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_LONG);
-                    break;
-                case ColumnType.DOUBLE:
-                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_DOUBLE);
-                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_DOUBLE);
-                    break;
-                case ColumnType.FLOAT:
-                    interpolatorGapTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_GAP_FLOAT);
-                    interpolatorBoundaryTwoPointFunctions.add(InterpolationUtil.INTERPOLATE_BOUNDARY_FLOAT);
-                    break;
-                default:
-                    Misc.freeObjList(groupByTwoPointFunctions);
                     throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
             }
         }
@@ -525,17 +490,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         return cursor;
     }
 
-    private void interpolateBoundaryRange(long x1, long x2, Record record) {
-        //interpolating boundary
-        for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
-            GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
-            MapValue startValue = findDataMapValue2(record, x1);
-            MapValue endValue = findDataMapValue3(record, x2);
-            interpolatorBoundaryTwoPointFunctions.getQuick(i).interpolateBoundaryAndStore(function, sampler.nextTimestamp(x1), startValue, endValue, true);
-            interpolatorBoundaryTwoPointFunctions.getQuick(i).interpolateBoundaryAndStore(function, x2, startValue, endValue, false);
-        }
-    }
-
     private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {
         computeYPoints(x1Value, x2value);
         for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
@@ -543,13 +497,24 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             assert result != null && result.getByte(0) == 1;
             for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
                 GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
-                interpolatorGapTwoPointFunctions.getQuick(i).interpolateGapAndStore(function, result, sampler.getBucketSize(), x1Value, x2value);
+                InterpolationUtil.INTERPOLATE_GAP.interpolateGapAndStore(function, result, sampler.getBucketSize(), x1Value, x2value);
             }
             for (int i = 0; i < groupByScalarFunctionCount; i++) {
                 GroupByFunction function = groupByScalarFunctions.getQuick(i);
                 interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16, yData + i * 16 + 8);
             }
             result.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
+        }
+    }
+
+    private void interpolateBoundaryRange(long x1, long x2, Record record) {
+        //interpolating boundary
+        for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
+            GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
+            MapValue startValue = findDataMapValue2(record, x1);
+            MapValue endValue = findDataMapValue3(record, x2);
+            InterpolationUtil.INTERPOLATE_BOUNDARY.interpolateBoundaryAndStore(function, sampler.nextTimestamp(x1), startValue, endValue, true);
+            InterpolationUtil.INTERPOLATE_BOUNDARY.interpolateBoundaryAndStore(function, x2, startValue, endValue, false);
         }
     }
 
