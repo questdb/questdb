@@ -43,10 +43,6 @@ public class InterpolationUtil {
     static final InterpolatorFunction INTERPOLATE_INT = InterpolationUtil::interpolateInt;
     static final InterpolatorFunction INTERPOLATE_LONG = InterpolationUtil::interpolateLong;
 
-    static final InterpolatorGapTwoPointFunction INTERPOLATE_GAP = InterpolationUtil::interpolateGap;
-
-    static final InterpolatorBoundaryTwoPointFunction INTERPOLATE_BOUNDARY = InterpolationUtil::interpolateBoundary;
-
     public static void interpolateByte(
             GroupByFunction function,
             MapValue mapValue,

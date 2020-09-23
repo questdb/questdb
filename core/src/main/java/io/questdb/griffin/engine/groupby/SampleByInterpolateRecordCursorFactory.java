@@ -497,7 +497,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             assert result != null && result.getByte(0) == 1;
             for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
                 GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
-                InterpolationUtil.INTERPOLATE_GAP.interpolateGapAndStore(function, result, sampler.getBucketSize(), x1Value, x2value);
+                InterpolationUtil.interpolateGap(function, result, sampler.getBucketSize(), x1Value, x2value);
             }
             for (int i = 0; i < groupByScalarFunctionCount; i++) {
                 GroupByFunction function = groupByScalarFunctions.getQuick(i);
@@ -513,8 +513,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
             MapValue startValue = findDataMapValue2(record, x1);
             MapValue endValue = findDataMapValue3(record, x2);
-            InterpolationUtil.INTERPOLATE_BOUNDARY.interpolateBoundaryAndStore(function, sampler.nextTimestamp(x1), startValue, endValue, true);
-            InterpolationUtil.INTERPOLATE_BOUNDARY.interpolateBoundaryAndStore(function, x2, startValue, endValue, false);
+            InterpolationUtil.interpolateBoundary(function, sampler.nextTimestamp(x1), startValue, endValue, true);
+            InterpolationUtil.interpolateBoundary(function, x2, startValue, endValue, false);
         }
     }
 
