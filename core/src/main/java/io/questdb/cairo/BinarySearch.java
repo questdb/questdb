@@ -49,7 +49,7 @@ public class BinarySearch {
         return -(low + 1);
     }
 
-    public static long find(ReadOnlyColumn column, long value, long low, long high) {
+    public static long find(ReadOnlyColumn column, long value, long low, long high, int scanDirection) {
         while (low < high) {
             long mid = (low + high) / 2;
             long midVal = column.getLong(mid * Long.BYTES);
@@ -64,11 +64,11 @@ public class BinarySearch {
                 high = mid;
             else {
                 // In case of multiple equal values, find the first
-                mid += 1;
+                mid += scanDirection;
                 while (mid > 0 && mid < high && midVal == column.getLong(mid * Long.BYTES)) {
-                    mid += 1;
+                    mid += scanDirection;
                 }
-                return mid - 1;
+                return mid - scanDirection;
             }
         }
         return low;
