@@ -232,12 +232,4 @@ public class InterpolationUtil {
     interface InterpolatorFunction {
         void interpolateAndStore(GroupByFunction function, MapValue mapValue, long x, long x1, long x2, long y1Address, long y2Address);
     }
-
-    interface InterpolatorGapTwoPointFunction {
-        void interpolateGapAndStore(GroupByFunction function, MapValue value, long x, MapValue value1, MapValue value2);
-    }
-
-    interface InterpolatorBoundaryTwoPointFunction {
-        void interpolateBoundaryAndStore(GroupByFunction function, long boundaryTimestamp, MapValue value1, MapValue value2, boolean isEndOfBoundary);
-    }
 }
