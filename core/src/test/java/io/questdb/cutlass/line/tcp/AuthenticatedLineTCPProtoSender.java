@@ -1,4 +1,4 @@
-package io.questdb.cutlass.line.udp;
+package io.questdb.cutlass.line.tcp;
 
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
@@ -9,6 +9,8 @@ import java.security.SignatureException;
 import java.util.Base64;
 
 import io.questdb.cutlass.line.tcp.AuthDb;
+import io.questdb.cutlass.line.tcp.LineTCPProtoSender;
+import io.questdb.cutlass.line.udp.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
@@ -33,7 +35,7 @@ public class AuthenticatedLineTCPProtoSender extends LineTCPProtoSender {
         try {
             sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
         } catch (NoSuchAlgorithmException ex) {
-            throw new RuntimeException(ex);
+            throw new Error(ex);
         }
     }
 
