@@ -1,21 +1,40 @@
 package io.questdb.cutlass.line.tcp;
 
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.Signature;
+import java.security.SignatureException;
+import java.util.Base64;
+
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
-
-import java.security.*;
-import java.util.Base64;
 
 class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private static final Log LOG = LogFactory.getLog(LineTcpAuthConnectionContext.class);
     private static final int CHALLENGE_LEN = 512;
     private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
-    private final SecureRandom srand = new SecureRandom();
+    private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
     private final AuthDb authDb;
-    private final Signature sig;
+    private static final ThreadLocal<Signature> tlSigDER = new ThreadLocal<>(() -> {
+        try {
+            return Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new Error(ex);
+        }
+    });
+    private static final ThreadLocal<Signature> tlSigP1363 = new ThreadLocal<>(() -> {
+        try {
+            return Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new Error(ex);
+        }
+    });
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
     private PublicKey pubKey;
@@ -40,11 +59,6 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             throw CairoException.instance(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }
         this.authDb = authDb;
-        try {
-            sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE);
-        } catch (NoSuchAlgorithmException ex) {
-            throw new RuntimeException(ex);
-        }
     }
 
     @Override
@@ -82,6 +96,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             recvBufPos = recvBufStart;
             // Generate a challenge with printable ASCII characters 0x20 to 0x7e
             int n = 0;
+            SecureRandom srand = tlSrand.get();
             while (n < CHALLENGE_LEN) {
                 assert recvBufStart + n < recvBufEnd;
                 int r = (int) (srand.nextDouble() * 0x5f) + 0x20;
@@ -97,7 +112,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private void sendChallenge() {
         int n = CHALLENGE_LEN + 1 - (int) (recvBufPos - recvBufStart);
         assert n > 0;
-        while(true) {
+        while (true) {
             int nWritten = nf.send(fd, recvBufPos, n);
             if (nWritten > 0) {
                 if (n == nWritten) {
@@ -107,12 +122,12 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                 }
                 recvBufPos += nWritten;
                 continue;
-            } 
-            
+            }
+
             if (nWritten == 0) {
                 return;
             }
-            
+
             break;
         }
         LOG.info().$('[').$(fd).$("] authentication peer disconnected when challenge was being sent").$();
@@ -136,13 +151,14 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             authState = AuthState.FAILED;
 
             byte[] signatureRaw = Base64.getDecoder().decode(signature);
+            Signature sig = signatureRaw.length == 64 ? tlSigP1363.get() : tlSigDER.get();
             boolean verified;
             try {
                 sig.initVerify(pubKey);
                 sig.update(challengeBytes);
                 verified = sig.verify(signatureRaw);
             } catch (InvalidKeyException | SignatureException ex) {
-                LOG.info().$('[').$(fd).$("] authentication exception ").$(ex);
+                LOG.info().$('[').$(fd).$("] authentication exception ").$(ex).$();
                 verified = false;
             }
 

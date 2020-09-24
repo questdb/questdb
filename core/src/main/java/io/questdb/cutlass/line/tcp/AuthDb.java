@@ -31,7 +31,8 @@ public class AuthDb {
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
     public static final String EC_ALGORITHM = "EC";
     public static final String EC_CURVE = "secp256r1";
-    public static final String SIGNATURE_TYPE = "SHA256withECDSA";
+    public static final String SIGNATURE_TYPE_DER = "SHA256withECDSA";
+    public static final String SIGNATURE_TYPE_P1363 = "SHA256withECDSAinP1363Format";
 
     public static PrivateKey importPrivateKey(String encodedPrivateKey) {
         byte[] dBytes = Base64.getUrlDecoder().decode(encodedPrivateKey);
