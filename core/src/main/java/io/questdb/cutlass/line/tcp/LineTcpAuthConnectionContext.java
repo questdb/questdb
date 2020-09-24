@@ -154,8 +154,6 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                 sig.update(challengeBytes);
                 verified = sig.verify(signatureRaw);
             } catch (InvalidKeyException | SignatureException ex) {
-                // Note that signatures need to be encoded to the standard used by java, for SHA256withECDSA this is the DER encoding, not
-                // p1363 (simple concatenation of r and s)
                 LOG.info().$('[').$(fd).$("] authentication exception ").$(ex).$();
                 verified = false;
             }
