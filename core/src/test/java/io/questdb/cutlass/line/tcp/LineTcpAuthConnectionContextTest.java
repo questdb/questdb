@@ -180,7 +180,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented1() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, false);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -197,7 +197,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented2() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, false);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -214,7 +214,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented3() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, false);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -231,7 +231,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented4() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, true);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, true, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -248,7 +248,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented5() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, true);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, true, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -265,7 +265,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented6() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -292,6 +292,22 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     public void testBadSignature() throws Exception {
         runInContext(() -> {
             boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2);
+            Assert.assertTrue(authSequenceCompleted);
+            Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testJunkSignature() throws Exception {
+        runInContext(() -> {
+            int[] p1363RawSignatureInt = { 186, 55, 135, 152, 129, 156, 1, 143, 221, 100, 197, 198, 98, 49, 222, 50, 83, 106, 199, 57, 202, 41, 47, 17, 14, 71, 80, 85, 44, 33, 56, 167, 30,
+                    70, 13,
+                    227, 59, 178, 39, 212, 84, 79, 243, 230, 112, 48, 226, 187, 190, 59, 79, 152, 31, 188, 239, 80, 158, 202, 219, 235, 44, 196, 214, 209 };
+            byte[] p1363RawSignature = new byte[p1363RawSignatureInt.length];
+            for (int n = 0; n < p1363RawSignatureInt.length; n++) {
+                p1363RawSignature[n] = (byte) p1363RawSignatureInt[n];
+            }
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, p1363RawSignature);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
         });
@@ -385,20 +401,25 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     }
 
     private boolean authenticate(String authKeyId, PrivateKey authPrivateKey) {
-        return authenticate(authKeyId, authPrivateKey, false, false, false);
+        return authenticate(authKeyId, authPrivateKey, false, false, false, null);
     }
 
-    private boolean authenticate(String authKeyId, PrivateKey authPrivateKey, boolean fragmentKeyId, boolean fragmentChallenge, boolean fragmentSignature) {
+    private boolean authenticate(String authKeyId, PrivateKey authPrivateKey, boolean fragmentKeyId, boolean fragmentChallenge, boolean fragmentSignature, byte[] junkSignature) {
         send(authKeyId + "\n", fragmentKeyId);
         byte[] challengeBytes = readChallenge(fragmentChallenge);
         if (null == challengeBytes) {
             return false;
         }
         try {
-            Signature sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE);
-            sig.initSign(authPrivateKey);
-            sig.update(challengeBytes, 0, challengeBytes.length - 1);
-            byte[] rawSignature = sig.sign();
+            byte[] rawSignature;
+            if (null == junkSignature) {
+                Signature sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE);
+                sig.initSign(authPrivateKey);
+                sig.update(challengeBytes, 0, challengeBytes.length - 1);
+                rawSignature = sig.sign();
+            } else {
+                rawSignature = junkSignature;
+            }
             byte[] signature = Base64.getEncoder().encode(rawSignature);
             send(new String(signature, StandardCharsets.UTF_8) + "\n", fragmentSignature);
             handleContextIO();
