@@ -24,8 +24,8 @@
 
 package org.questdb;
 
+import io.questdb.cutlass.line.tcp.LineTCPProtoSender;
 import io.questdb.cutlass.line.udp.LineProtoSender;
-import io.questdb.cutlass.line.udp.LineTCPProtoSender;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
