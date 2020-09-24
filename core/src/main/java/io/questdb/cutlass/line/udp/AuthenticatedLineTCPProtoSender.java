@@ -31,7 +31,7 @@ public class AuthenticatedLineTCPProtoSender extends LineTCPProtoSender {
         this.privateKey = privateKey;
         buffer = -1;
         try {
-            sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE);
+            sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
         } catch (NoSuchAlgorithmException ex) {
             throw new RuntimeException(ex);
         }
