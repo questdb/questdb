@@ -28,49 +28,55 @@ public class BinarySearch {
     public static final int SCAN_UP = -1;
     public static final int SCAN_DOWN = 1;
 
-    public static long findOrEmplace(ReadOnlyColumn column, long value, long low, long high, int scanDirection) {
-        while (low < high) {
-            long mid = (low + high - 1) >>> 1;
-            long midVal = column.getLong(mid * 8);
-
-            if (midVal < value)
-                low = mid + 1;
-            else if (midVal > value)
-                high = mid;
-            else {
-                // In case of multiple equal values, find the first
-                mid += scanDirection;
-                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
-                    mid += scanDirection;
-                }
-                return mid - scanDirection;
-            }
-        }
-        return -(low + 1);
-    }
-
+    /**
+     * Performs binary search on column of Long values.
+     *
+     * @param column        the column
+     * @param value         the search value
+     * @param low           the low boundary of the search, inclusive of value
+     * @param high          the high boundary of the search inclusive of value
+     * @param scanDirection logical direction in which column is searched. UP means we are looking for
+     *                      the bottom boundary of the values that are lower or equal the search value. DOWN means
+     *                      we are looking for upper boundary of the values that are greater or equal the search
+     *                      value.
+     * @return index in column where value is less or equal to the search value. If column contains
+     * multiple exact matches the scanDirection determines whether top or bottom of these matches is returned.
+     * When scan direction is DOWN - the last index of exact matches is returns, when UP - the first index
+     */
     public static long find(ReadOnlyColumn column, long value, long low, long high, int scanDirection) {
         while (low < high) {
             long mid = (low + high) / 2;
             long midVal = column.getLong(mid * Long.BYTES);
 
-            if (midVal < value)
+            if (midVal < value) {
                 if (low < mid) {
                     low = mid;
                 } else {
-                    return column.getLong(high * Long.BYTES) < value ? high : low;
+                    final long hv = column.getLong(low * Long.BYTES);
+                    if (hv <= value) {
+                        return low;
+                    }
+
+                    if (column.getLong(high * Long.BYTES) <= value) {
+                        return high;
+                    }
+                    return low;
                 }
-            else if (midVal > value)
+            } else if (midVal > value)
                 high = mid;
             else {
                 // In case of multiple equal values, find the first
                 mid += scanDirection;
-                while (mid > 0 && mid < high && midVal == column.getLong(mid * Long.BYTES)) {
+                while (mid > 0 && mid <= high && midVal == column.getLong(mid * Long.BYTES)) {
                     mid += scanDirection;
                 }
                 return mid - scanDirection;
             }
         }
-        return low;
+
+        if (column.getLong(low * Long.BYTES) <= value) {
+            return low;
+        }
+        return -1;
     }
 }

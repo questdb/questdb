@@ -63,7 +63,7 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                     continue;
                 }
 
-                final long partitionTimestampHi = column.getLong((rowCount - 1) * 8);
+                final long partitionTimestampHi = column.getLong((rowCount - 1) * Long.BYTES);
                 // interval is wholly below partition, skip partition
                 if (partitionTimestampHi < intervalLo) {
                     partitionLimit = 0;
@@ -74,23 +74,21 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 // calculate intersection
 
                 long lo;
-                if (partitionTimestampLo == intervalLo) {
+                if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = BinarySearch.findOrEmplace(column, intervalLo, partitionLimit, rowCount, BinarySearch.SCAN_UP);
-                    if (lo < 0) {
-                        lo = -lo - 1;
-                    }
+                    // IntervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
+                    // and then do index + 1 to skip to top of where we need to be.
+                    // We are not scanning up on the exact value of intervalLo because it may not exist. In which case
+                    // the search function will scan up to top of the lower value.
+                    lo = BinarySearch.find(column, intervalLo - 1, partitionLimit, rowCount - 1, BinarySearch.SCAN_DOWN) + 1;
                 }
 
-                long hi = BinarySearch.findOrEmplace(column, intervalHi, lo, rowCount, BinarySearch.SCAN_DOWN);
-
-                if (hi < 0) {
-                    hi = -hi - 1;
+                final long hi;
+                if (partitionTimestampHi <= intervalHi) {
+                    hi = rowCount;
                 } else {
-                    // We have direct hit. Interval is inclusive of edges and we have to
-                    // bump to high bound because it is non-inclusive
-                    hi++;
+                    hi = BinarySearch.find(column, intervalHi, lo, rowCount - 1, BinarySearch.SCAN_DOWN) + 1;
                 }
 
                 if (lo < hi) {

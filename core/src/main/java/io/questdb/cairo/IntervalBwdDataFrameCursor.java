@@ -59,36 +59,36 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 final long intervalLo = intervals.getQuick(currentInterval * 2);
                 final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);
 
-
                 // interval is wholly above partition, skip interval
-                if (column.getLong(0) > intervalHi) {
+                final long partitionTimestampLo = column.getLong(0);
+                if (partitionTimestampLo > intervalHi) {
                     partitionHi = currentPartition;
                     partitionLimit = -1;
                     continue;
                 }
 
                 // interval is wholly below partition, skip partition
-                if (column.getLong((rowCount - 1) * 8) < intervalLo) {
+                final long partitionTimestampHi = column.getLong((rowCount - 1) * Long.BYTES);
+                if (partitionTimestampHi < intervalLo) {
                     partitionLimit = -1;
                     intervalsHi = currentInterval;
                     continue;
                 }
 
-                // calculate intersection
+                // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
 
-                long lo = BinarySearch.findOrEmplace(column, intervalLo, 0, partitionLimit == -1 ? rowCount : partitionLimit, BinarySearch.SCAN_UP);
-                if (lo < 0) {
-                    lo = -lo - 1;
+                final long lo;
+                if (partitionTimestampLo >= intervalLo) {
+                    lo = 0;
+                } else {
+                    lo = BinarySearch.find(column, intervalLo - 1, 0, partitionLimit == -1 ? rowCount - 1 : partitionLimit - 1, BinarySearch.SCAN_DOWN) + 1;
                 }
 
-                long hi = BinarySearch.findOrEmplace(column, intervalHi, lo, rowCount, BinarySearch.SCAN_DOWN);
-
-                if (hi < 0) {
-                    hi = -hi - 1;
+                final long hi;
+                if (partitionTimestampHi <= intervalHi) {
+                    hi = rowCount;
                 } else {
-                    // We have direct hit. Interval is inclusive of edges and we have to
-                    // bump to high bound because it is non-inclusive
-                    hi++;
+                    hi = BinarySearch.find(column, intervalHi, lo, rowCount - 1, BinarySearch.SCAN_DOWN) + 1;
                 }
 
                 if (lo < hi) {
@@ -111,9 +111,9 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
 
                     return dataFrame;
                 }
-                // interval yielded empty data frame
-                partitionLimit = lo;
-                intervalsHi = currentInterval;
+                // interval yielded empty data frame, skip partition
+                partitionHi = currentPartition;
+                partitionLimit = -1;
             } else {
                 // partition was empty, just skip to next
                 partitionHi = currentPartition;

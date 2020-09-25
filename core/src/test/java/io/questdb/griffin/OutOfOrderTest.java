@@ -32,6 +32,7 @@ import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -719,6 +720,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testPartitionedDataOOData() throws Exception {
         assertMemoryLeak(() -> {
                     // create table with roughly 2AM data
