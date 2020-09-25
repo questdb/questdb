@@ -60,6 +60,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final int TAIL_ERROR = 2;
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
     public static final String TAG_SET = "SET";
+    public static final String TAG_BEGIN = "BEGIN";
     private static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
@@ -538,6 +539,12 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putLenEx(a);
     }
 
+    private void appendCharColumn(Record record, int columnIndex) {
+        long a = responseAsciiSink.skip();
+        responseAsciiSink.put((int) record.getChar(columnIndex));
+        responseAsciiSink.putLenEx(a);
+    }
+
     private void appendDateColumn(Record record, int columnIndex) {
         final long longValue = record.getDate(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
@@ -591,6 +598,13 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.put(longValue);
             responseAsciiSink.putLenEx(a);
         }
+    }
+
+    private void appendLong256Column(Record record, int columnIndex) {
+        final Long256 long256Value = record.getLong256A(columnIndex);
+        final long a = responseAsciiSink.skip();
+        Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseAsciiSink);
+        responseAsciiSink.putLenEx(a);
     }
 
     private void appendRecord(
@@ -733,7 +747,11 @@ public class PGConnectionContext implements IOContext, Mutable {
                 sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
                 break;
             case CompiledQuery.SET:
-                queryTag = TAG_SET;
+                if (SqlKeywords.isBegin(queryText)) {
+                    queryTag = TAG_BEGIN;
+                } else {
+                    queryTag = TAG_SET;
+                }
                 break;
             default:
                 // DDL SQL
@@ -943,7 +961,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
         switch (type) {
             case 'P':
-                processParse(address, lo, msgLimit, factoryCache, namedStatementMap, bindVariableSetters);
+                processParse(compiler, address, lo, msgLimit, factoryCache, namedStatementMap, bindVariableSetters);
                 break;
             case 'X':
                 // 'Terminate'
@@ -1093,6 +1111,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         columnAppenders.extendAndSet(ColumnType.BOOLEAN, this::appendBooleanColumn);
         columnAppenders.extendAndSet(ColumnType.BYTE, this::appendByteColumn);
         columnAppenders.extendAndSet(ColumnType.BINARY, this::appendBinColumn);
+        columnAppenders.extendAndSet(ColumnType.CHAR, this::appendCharColumn);
+        columnAppenders.extendAndSet(ColumnType.LONG256, this::appendLong256Column);
     }
 
     private void processClose(long lo, long msgLimit, CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap) throws BadProtocolException {
@@ -1143,12 +1163,14 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void processBind(@Transient ObjList<BindVariableSetter> bindVariableSetters,
-                             @Transient SqlCompiler compiler,
-                             @Transient AssociativeCache<Object> factoryCache,
-                             long msgLimit,
-                             long lo,
-                             @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void processBind(
+            @Transient ObjList<BindVariableSetter> bindVariableSetters,
+            @Transient SqlCompiler compiler,
+            @Transient AssociativeCache<Object> factoryCache,
+            long msgLimit,
+            long lo,
+            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap
+    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         long hi;
         short parameterFormatCount;
         short parameterValueCount;
@@ -1190,13 +1212,14 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void processParse(
+            @Transient SqlCompiler compiler,
             long address,
             long lo,
             long msgLimit,
             @Transient AssociativeCache<Object> factoryCache,
             @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
             @Transient ObjList<BindVariableSetter> bindVariableSetters
-    ) throws BadProtocolException, SqlException {
+    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         // 'Parse'
         // this appears to be the execution side - we must at least return 'RowDescription'
         // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
@@ -1267,6 +1290,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
         //cache named statement
         if (statementName != null) {
+            if (queryText.length() > 0) {
+                compileQuery(compiler, factoryCache);
+            }
             NamedStatementWrapper wrapper = namedStatementWrapperPool.pop();
             if (currentFactory != null) {
                 wrapper.selectFactory = currentFactory;
@@ -1854,6 +1880,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         typeOids.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
         typeOids.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
         typeOids.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
+        typeOids.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
     }
 
     public static class NamedStatementWrapper implements Mutable {
