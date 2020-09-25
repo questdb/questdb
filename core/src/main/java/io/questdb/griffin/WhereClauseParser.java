@@ -169,28 +169,6 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
-
-        if (node.paramCount < 2) {
-            throw SqlException.$(node.position, "Too few arguments for 'in'");
-        }
-
-        ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
-
-        if (col.type != ExpressionNode.LITERAL) {
-            return false;
-        }
-
-        CharSequence column = translator.translateAlias(col.token);
-
-        if (metadata.getColumnIndexQuiet(column) == -1) {
-            throw SqlException.invalidColumn(col.position, col.token);
-        }
-        return analyzeInInterval(model, col, node, false)
-                || analyzeListOfValues(model, column, metadata, node)
-                || analyzeInLambda(model, column, metadata, node);
-    }
-
     private boolean analyzeGreater(IntrinsicModel model, ExpressionNode node, boolean equalsTo) throws SqlException {
         checkNodeValid(node);
 
@@ -237,19 +215,26 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private long parseFullOrPartialDate(boolean equalsTo, ExpressionNode node, boolean isLo) throws NumericException {
-        long ts;
-        if (node.token.length() - 2 < 20) {
-            if (equalsTo ^ isLo) {
-                ts = IntrinsicModel.parseCeilingPartialDate(node.token, 1, node.token.length() - 1);
-            } else {
-                ts = IntrinsicModel.parseFloorPartialDate(node.token, 1, node.token.length() - 1);
-            }
-        } else {
-            long inc = equalsTo ? 0 : isLo ? 1 : -1;
-            ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
+    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
+
+        if (node.paramCount < 2) {
+            throw SqlException.$(node.position, "Too few arguments for 'in'");
         }
-        return ts;
+
+        ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+
+        if (col.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+
+        CharSequence column = translator.translateAlias(col.token);
+
+        if (metadata.getColumnIndexQuiet(column) == -1) {
+            throw SqlException.invalidColumn(col.position, col.token);
+        }
+        return analyzeInInterval(model, col, node, false)
+                || analyzeListOfValues(model, column, metadata, node)
+                || analyzeInLambda(model, column, metadata, node);
     }
 
     private boolean analyzeInInterval(IntrinsicModel model, ExpressionNode col, ExpressionNode in, boolean isNegated) throws SqlException {
@@ -291,91 +276,6 @@ final class WhereClauseParser implements Mutable {
             }
             in.intrinsicValue = IntrinsicModel.TRUE;
             return true;
-        }
-        return false;
-    }
-
-    private boolean analyzeNotEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m) throws SqlException {
-        if (Chars.equals(a.token, b.token)) {
-            model.intrinsicValue = IntrinsicModel.FALSE;
-            return true;
-        }
-
-        if (a.type == ExpressionNode.LITERAL && b.type == ExpressionNode.CONSTANT) {
-            if (isTimestamp(a)) {
-                model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
-            } else {
-                CharSequence column = translator.translateAlias(a.token);
-                int index = m.getColumnIndexQuiet(column);
-                if (index == -1) {
-                    throw SqlException.invalidColumn(a.position, a.token);
-                }
-
-                switch (m.getColumnType(index)) {
-                    case ColumnType.SYMBOL:
-                    case ColumnType.STRING:
-                    case ColumnType.LONG:
-                    case ColumnType.INT:
-                        if (m.isColumnIndexed(index)) {
-                            final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
-                            final boolean indexed = m.isColumnIndexed(index);
-                            if (indexed && preferredKeyColumn == null) {
-                                CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
-                                if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
-                                    if (model.keyExcludedValues.contains(value)) {
-                                        // when we have "x not in ('a,'b') and x != 'a')" the x='b' can never happen
-                                        // so we have to clear all other key values
-                                        if (model.keyExcludedValues.size() > 1) {
-                                            model.keyExcludedValues.clear();
-                                            model.keyExcludedValuePositions.clear();
-                                            model.keyExcludedValues.add(value);
-                                            model.keyExcludedValuePositions.add(b.position);
-                                            node.intrinsicValue = IntrinsicModel.TRUE;
-                                            return true;
-                                        }
-                                    } else {
-                                        if (model.keyValues.contains(value)) {
-                                            if (model.keyValues.size() > 1) {
-                                                int removedIndex = model.keyValues.remove(value);
-                                                if (removedIndex > -1) {
-                                                    model.keyValuePositions.removeIndex(index);
-                                                }
-                                                model.keyValuePositions.remove(b.position);
-                                            } else {
-                                                model.keyValues.clear();
-                                                model.keyValuePositions.clear();
-                                            }
-                                            removeNodes(b, keyNodes);
-                                        }
-                                        node.intrinsicValue = IntrinsicModel.TRUE;
-                                        model.intrinsicValue = IntrinsicModel.FALSE;
-                                        return false;
-                                    }
-                                } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
-                                    model.keyColumn = column;
-                                    model.keyValues.clear();
-                                    model.keyValuePositions.clear();
-                                    model.keyExcludedValues.clear();
-                                    model.keyExcludedValuePositions.clear();
-                                    model.keyExcludedValues.add(value);
-                                    model.keyExcludedValuePositions.add(b.position);
-                                    resetNodes();
-                                    node.intrinsicValue = IntrinsicModel.TRUE;
-                                }
-                                keyExclNodes.add(node);
-                                return true;
-                            } else if (preferred) {
-                                keyExclNodes.add(node);
-                                return false;
-                            }
-                        }
-                        return false;
-                    default:
-                        break;
-                }
-            }
         }
         return false;
     }
@@ -541,6 +441,91 @@ final class WhereClauseParser implements Mutable {
                 || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m);
     }
 
+    private boolean analyzeNotEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m) throws SqlException {
+        if (Chars.equals(a.token, b.token)) {
+            model.intrinsicValue = IntrinsicModel.FALSE;
+            return true;
+        }
+
+        if (a.type == ExpressionNode.LITERAL && b.type == ExpressionNode.CONSTANT) {
+            if (isTimestamp(a)) {
+                model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
+                node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
+            } else {
+                CharSequence column = translator.translateAlias(a.token);
+                int index = m.getColumnIndexQuiet(column);
+                if (index == -1) {
+                    throw SqlException.invalidColumn(a.position, a.token);
+                }
+
+                switch (m.getColumnType(index)) {
+                    case ColumnType.SYMBOL:
+                    case ColumnType.STRING:
+                    case ColumnType.LONG:
+                    case ColumnType.INT:
+                        if (m.isColumnIndexed(index)) {
+                            final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
+                            final boolean indexed = m.isColumnIndexed(index);
+                            if (indexed && preferredKeyColumn == null) {
+                                CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
+                                if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
+                                    if (model.keyExcludedValues.contains(value)) {
+                                        // when we have "x not in ('a,'b') and x != 'a')" the x='b' can never happen
+                                        // so we have to clear all other key values
+                                        if (model.keyExcludedValues.size() > 1) {
+                                            model.keyExcludedValues.clear();
+                                            model.keyExcludedValuePositions.clear();
+                                            model.keyExcludedValues.add(value);
+                                            model.keyExcludedValuePositions.add(b.position);
+                                            node.intrinsicValue = IntrinsicModel.TRUE;
+                                            return true;
+                                        }
+                                    } else {
+                                        if (model.keyValues.contains(value)) {
+                                            if (model.keyValues.size() > 1) {
+                                                int removedIndex = model.keyValues.remove(value);
+                                                if (removedIndex > -1) {
+                                                    model.keyValuePositions.removeIndex(index);
+                                                }
+                                                model.keyValuePositions.remove(b.position);
+                                            } else {
+                                                model.keyValues.clear();
+                                                model.keyValuePositions.clear();
+                                            }
+                                            removeNodes(b, keyNodes);
+                                        }
+                                        node.intrinsicValue = IntrinsicModel.TRUE;
+                                        model.intrinsicValue = IntrinsicModel.FALSE;
+                                        return false;
+                                    }
+                                } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
+                                    model.keyColumn = column;
+                                    model.keyValues.clear();
+                                    model.keyValuePositions.clear();
+                                    model.keyExcludedValues.clear();
+                                    model.keyExcludedValuePositions.clear();
+                                    model.keyExcludedValues.add(value);
+                                    model.keyExcludedValuePositions.add(b.position);
+                                    resetNodes();
+                                    node.intrinsicValue = IntrinsicModel.TRUE;
+                                }
+                                keyExclNodes.add(node);
+                                return true;
+                            } else if (preferred) {
+                                keyExclNodes.add(node);
+                                return false;
+                            }
+                        }
+                        return false;
+                    default:
+                        break;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean analyzeNotIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode notNode, RecordMetadata m) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
@@ -641,43 +626,6 @@ final class WhereClauseParser implements Mutable {
                 keyExclNodes.add(notNode);
                 notNode.intrinsicValue = IntrinsicModel.TRUE;
             }
-        }
-    }
-
-    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
-        switch (intrinsicOps.get(node.token)) {
-            case INTRINSIC_OP_IN:
-                return analyzeIn(translator, model, node, m);
-            case INTRINSIC_OP_GREATER:
-                return analyzeGreater(model, node, false);
-            case INTRINSIC_OP_GREATER_EQ:
-                return analyzeGreater(model, node, true);
-            case INTRINSIC_OP_LESS:
-                return analyzeLess(model, node, false);
-            case INTRINSIC_OP_LESS_EQ:
-                return analyzeLess(model, node, true);
-            case INTRINSIC_OP_EQUAL:
-                return analyzeEquals(translator, model, node, m);
-            case INTRINSIC_OP_NOT_EQ:
-                return analyzeNotEquals(translator, model, node, m);
-            case INTRINSIC_OP_NOT:
-                return isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m);
-            default:
-                return false;
-        }
-    }
-
-    private void removeNodes(ExpressionNode b, ObjList<ExpressionNode> nodes) {
-        tempNodes.clear();
-        for (int i = 0, size = nodes.size(); i < size; i++) {
-            ExpressionNode expressionNode = nodes.get(i);
-            if ((expressionNode.lhs != null && Chars.equals(expressionNode.lhs.token, b.token)) || (expressionNode.rhs != null && Chars.equals(expressionNode.rhs.token, b.token))) {
-                expressionNode.intrinsicValue = IntrinsicModel.TRUE;
-                tempNodes.add(expressionNode);
-            }
-        }
-        for (int i = 0, size = tempNodes.size(); i < size; i++) {
-            nodes.remove(tempNodes.get(i));
         }
     }
 
@@ -798,15 +746,65 @@ final class WhereClauseParser implements Mutable {
         return timestamp != null && Chars.equals(timestamp, n.token);
     }
 
-    private void resetNodes() {
-        for (int n = 0, k = keyNodes.size(); n < k; n++) {
-            keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+    private long parseFullOrPartialDate(boolean equalsTo, ExpressionNode node, boolean isLo) throws NumericException {
+        long ts;
+        final int len = node.token.length();
+        if (len - 2 < 20) {
+            if (isLo) {
+                if (equalsTo) {
+                    ts = IntrinsicModel.parseFloorPartialDate(node.token, 1, len - 1);
+                } else {
+                    ts = IntrinsicModel.parseCCPartialDate(node.token, 1, len - 1);
+                }
+            } else {
+                if (equalsTo) {
+                    ts = IntrinsicModel.parseCCPartialDate(node.token, 1, len - 1) - 1;
+                } else {
+                    ts = IntrinsicModel.parseFloorPartialDate(node.token, 1, len - 1) - 1;
+                }
+            }
+        } else {
+            long inc = equalsTo ? 0 : isLo ? 1 : -1;
+            ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
         }
-        keyNodes.clear();
-        for (int n = 0, k = keyExclNodes.size(); n < k; n++) {
-            keyExclNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+        return ts;
+    }
+
+    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
+        switch (intrinsicOps.get(node.token)) {
+            case INTRINSIC_OP_IN:
+                return analyzeIn(translator, model, node, m);
+            case INTRINSIC_OP_GREATER:
+                return analyzeGreater(model, node, false);
+            case INTRINSIC_OP_GREATER_EQ:
+                return analyzeGreater(model, node, true);
+            case INTRINSIC_OP_LESS:
+                return analyzeLess(model, node, false);
+            case INTRINSIC_OP_LESS_EQ:
+                return analyzeLess(model, node, true);
+            case INTRINSIC_OP_EQUAL:
+                return analyzeEquals(translator, model, node, m);
+            case INTRINSIC_OP_NOT_EQ:
+                return analyzeNotEquals(translator, model, node, m);
+            case INTRINSIC_OP_NOT:
+                return isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m);
+            default:
+                return false;
         }
-        keyExclNodes.clear();
+    }
+
+    private void removeNodes(ExpressionNode b, ObjList<ExpressionNode> nodes) {
+        tempNodes.clear();
+        for (int i = 0, size = nodes.size(); i < size; i++) {
+            ExpressionNode expressionNode = nodes.get(i);
+            if ((expressionNode.lhs != null && Chars.equals(expressionNode.lhs.token, b.token)) || (expressionNode.rhs != null && Chars.equals(expressionNode.rhs.token, b.token))) {
+                expressionNode.intrinsicValue = IntrinsicModel.TRUE;
+                tempNodes.add(expressionNode);
+            }
+        }
+        for (int i = 0, size = tempNodes.size(); i < size; i++) {
+            nodes.remove(tempNodes.get(i));
+        }
     }
 
     private void replaceAllWithOverlap(IntrinsicModel model, boolean includedValues) {
@@ -835,6 +833,17 @@ final class WhereClauseParser implements Mutable {
         } else {
             model.intrinsicValue = IntrinsicModel.FALSE;
         }
+    }
+
+    private void resetNodes() {
+        for (int n = 0, k = keyNodes.size(); n < k; n++) {
+            keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+        }
+        keyNodes.clear();
+        for (int n = 0, k = keyExclNodes.size(); n < k; n++) {
+            keyExclNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
+        }
+        keyExclNodes.clear();
     }
 
     private boolean revertProcessedNodes(ObjList<ExpressionNode> nodes, IntrinsicModel model, CharSequence columnName, ExpressionNode node) {

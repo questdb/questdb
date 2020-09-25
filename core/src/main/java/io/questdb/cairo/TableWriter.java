@@ -1226,7 +1226,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static long searchIndex(long indexAddress, long value, long low, long high) {
+    static long searchIndex(long indexAddress, long value, long low, long high, int scanDirection) {
         long mid;
         while (low < high) {
             mid = (low + high) / 2;
@@ -1235,23 +1235,19 @@ public class TableWriter implements Closeable {
                 if (low < mid) {
                     low = mid;
                 } else {
-                    return getTimestampIndexValue(indexAddress, high) < value ? high : low;
+                    return getTimestampIndexValue(indexAddress, high) > value ? low : high;
                 }
             else if (midVal > value)
                 high = mid;
             else {
-                // In case of multiple equal values, find the last
-                while (mid > 0 && mid < high) {
-                    if (midVal == getTimestampIndexValue(indexAddress, mid + 1)) {
-                        mid++;
-                    } else {
-                        break;
-                    }
+                mid += scanDirection;
+                while (mid > 0 && mid <= high && midVal == getTimestampIndexValue(indexAddress, mid)) {
+                    mid += scanDirection;
                 }
-                return mid;
+                return mid - scanDirection;
             }
         }
-        return low;
+        return -high;
     }
 
     private static int msGetOffsetDataFd(int columnIndex) {
@@ -2663,7 +2659,7 @@ public class TableWriter implements Closeable {
                 // find "current" partition boundary in the out of order data
                 // once we know the boundary we can move on to calculating another one
                 if (ooTimestampHi > partitionTimestampHi) {
-                    indexHi = searchIndex(mergedTimestamps, partitionTimestampHi, indexLo, indexMax - 1);
+                    indexHi = searchIndex(mergedTimestamps, partitionTimestampHi, indexLo, indexMax - 1, BinarySearch.SCAN_DOWN);
                 } else {
                     indexHi = indexMax - 1;
                 }
@@ -2777,7 +2773,7 @@ public class TableWriter implements Closeable {
                                     //  | data |
 
                                     mergeDataLo = 0;
-                                    prefixHi = searchIndex(mergedTimestamps, dataTimestampLo, indexLo, indexHi);
+                                    prefixHi = searchIndex(mergedTimestamps, dataTimestampLo, indexLo, indexHi, BinarySearch.SCAN_DOWN);
                                     mergeOOOLo = prefixHi + 1;
                                 } else {
                                     //            +-----+
@@ -2823,7 +2819,7 @@ public class TableWriter implements Closeable {
                                             suffixLo = Math.min(prefixHi + 1, indexHi);
                                         } else {
                                             mergeType = OO_BLOCK_MERGE;
-                                            mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, mergeOOOLo, indexHi);
+                                            mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, mergeOOOLo, indexHi, BinarySearch.SCAN_UP);
                                             suffixLo = mergeOOOHi + 1;
                                         }
 
@@ -2914,7 +2910,7 @@ public class TableWriter implements Closeable {
                                             //          |     |
                                             //          +-----+
 
-                                            mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, indexLo, indexHi);
+                                            mergeOOOHi = searchIndex(mergedTimestamps, dataTimestampHi, indexLo, indexHi, BinarySearch.SCAN_UP);
                                             mergeDataHi = dataIndexMax - 1;
 
                                             mergeType = OO_BLOCK_MERGE;
