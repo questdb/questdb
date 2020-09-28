@@ -74,21 +74,21 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 // calculate intersection
 
                 long lo;
-                if (partitionTimestampLo >= intervalLo) {
-                    lo = 0;
-                } else {
+                if (partitionTimestampLo < intervalLo) {
                     // IntervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
                     // and then do index + 1 to skip to top of where we need to be.
                     // We are not scanning up on the exact value of intervalLo because it may not exist. In which case
                     // the search function will scan up to top of the lower value.
                     lo = BinarySearch.find(column, intervalLo - 1, partitionLimit, rowCount - 1, BinarySearch.SCAN_DOWN) + 1;
+                } else {
+                    lo = 0;
                 }
 
                 final long hi;
-                if (partitionTimestampHi <= intervalHi) {
-                    hi = rowCount;
-                } else {
+                if (partitionTimestampHi > intervalHi) {
                     hi = BinarySearch.find(column, intervalHi, lo, rowCount - 1, BinarySearch.SCAN_DOWN) + 1;
+                } else {
+                    hi = rowCount;
                 }
 
                 if (lo < hi) {

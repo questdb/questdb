@@ -25,10 +25,14 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Transient;
 
 public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
+
+    private static final Log LOG = LogFactory.getLog(IntervalBwdDataFrameCursor.class);
 
     /**
      * Cursor for data frames that chronologically intersect collection of intervals.
@@ -59,63 +63,71 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 final long intervalLo = intervals.getQuick(currentInterval * 2);
                 final long intervalHi = intervals.getQuick(currentInterval * 2 + 1);
 
-                // interval is wholly above partition, skip interval
+                final long limitHi;
+                if (partitionLimit == -1) {
+                    limitHi = rowCount - 1;
+                } else {
+                    limitHi = partitionLimit - 1;
+                }
+
                 final long partitionTimestampLo = column.getLong(0);
+
+                LOG.debug()
+                        .$("next [partition=").$(currentPartition)
+                        .$(", intervalLo=").microTime(intervalLo)
+                        .$(", intervalHi=").microTime(intervalHi)
+                        .$(", partitionLo=").microTime(partitionTimestampLo)
+                        .$(", limitHi=").$(limitHi)
+                        .$(", rowCount=").$(rowCount)
+                        .$(", currentInterval=").$(currentInterval)
+                        .$(']').$();
+
+                // interval is wholly above partition, skip partition
                 if (partitionTimestampLo > intervalHi) {
-                    partitionHi = currentPartition;
-                    partitionLimit = -1;
+                    skipPartition(currentPartition);
                     continue;
                 }
 
-                // interval is wholly below partition, skip partition
-                final long partitionTimestampHi = column.getLong((rowCount - 1) * Long.BYTES);
+                // interval is wholly below partition, skip interval
+                final long partitionTimestampHi = column.getLong(limitHi * Long.BYTES);
                 if (partitionTimestampHi < intervalLo) {
-                    partitionLimit = -1;
-                    intervalsHi = currentInterval;
+                    skipInterval(currentInterval, limitHi + 1);
                     continue;
                 }
 
                 // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
-
                 final long lo;
-                if (partitionTimestampLo >= intervalLo) {
-                    lo = 0;
+                if (partitionTimestampLo < intervalLo) {
+                    lo = BinarySearch.find(column, intervalLo - 1, 0, limitHi, BinarySearch.SCAN_DOWN) + 1;
                 } else {
-                    lo = BinarySearch.find(column, intervalLo - 1, 0, partitionLimit == -1 ? rowCount - 1 : partitionLimit - 1, BinarySearch.SCAN_DOWN) + 1;
+                    lo = 0;
                 }
 
                 final long hi;
-                if (partitionTimestampHi <= intervalHi) {
-                    hi = rowCount;
+                if (partitionTimestampHi > intervalHi) {
+                    hi = BinarySearch.find(column, intervalHi, lo, limitHi, BinarySearch.SCAN_DOWN) + 1;
                 } else {
-                    hi = BinarySearch.find(column, intervalHi, lo, rowCount - 1, BinarySearch.SCAN_DOWN) + 1;
+                    hi = limitHi + 1;
+                }
+
+                if (lo == 0) {
+                    // interval yielded empty data frame, skip partition
+                    skipPartition(currentPartition);
+                } else {
+                    // only fragment, need to skip to next interval
+                    skipInterval(currentInterval, lo);
                 }
 
                 if (lo < hi) {
                     dataFrame.partitionIndex = currentPartition;
                     dataFrame.rowLo = lo;
                     dataFrame.rowHi = hi;
-
                     sizeSoFar += hi - lo;
-
-                    // we do have whole partition of fragment?
-                    if (lo == 0) {
-                        // whole partition, will need to skip to next one
-                        partitionLimit = -1; // use row count next time
-                        partitionHi = currentPartition;
-                    } else {
-                        // only fragment, need to skip to next interval
-                        partitionLimit = lo; // use "lo" for max
-                        intervalsHi = currentInterval;
-                    }
-
                     return dataFrame;
                 }
-                // interval yielded empty data frame, skip partition
-                partitionHi = currentPartition;
-                partitionLimit = -1;
             } else {
                 // partition was empty, just skip to next
+                partitionLimit = -1;
                 partitionHi = currentPartition;
             }
         }
@@ -125,6 +137,18 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
     @Override
     public void toTop() {
         super.toTop();
+        partitionLimit = -1;
+    }
+
+    private void skipInterval(int intervalIndex, long limit) {
+        LOG.debug().$("next skips interval [partitionLimit=").$(limit).$(", intervalsHi=").$(intervalIndex).$(']').$();
+        partitionLimit = limit; // use "limit" for max
+        intervalsHi = intervalIndex;
+    }
+
+    private void skipPartition(int currentPartition) {
+        LOG.debug().$("next skips partition").$();
+        partitionHi = currentPartition;
         partitionLimit = -1;
     }
 }

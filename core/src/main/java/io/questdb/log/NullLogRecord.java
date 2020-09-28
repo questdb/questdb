@@ -45,6 +45,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $(CharSequence sequence, int lo, int hi) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(int x) {
         return this;
     }
@@ -105,12 +110,12 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $(CharSequence sequence, int lo, int hi) {
+    public LogRecord ts() {
         return this;
     }
 
     @Override
-    public LogRecord ts() {
+    public LogRecord microTime(long x) {
         return this;
     }
 
