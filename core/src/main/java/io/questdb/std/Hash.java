@@ -24,9 +24,6 @@
 
 package io.questdb.std;
 
-import java.math.RoundingMode;
-import java.text.DecimalFormat;
-
 public final class Hash {
     static final int HASH_BITS = 0x7fffffff;
 
@@ -88,20 +85,5 @@ public final class Hash {
      */
     public static int spread(int h) {
         return (h ^ (h >>> 16)) & HASH_BITS;
-    }
-
-    public static void main(String[] args) {
-//        double d = -73.992588;
-        double d = -73.99258800000001;
-//        double d = 40.777057000000006;
-//        double d = 40.728809000000005;
-//        double d = -73.93972000000001+1e-15;
-//        double d1 = -73.93972;
-
-        DecimalFormat format = new DecimalFormat("#.########");
-        format.setRoundingMode(RoundingMode.CEILING);
-        System.out.println(format.format(d));
-
-        System.out.println((Math.round(d * 1e8)) * 1e-8);
     }
 }
