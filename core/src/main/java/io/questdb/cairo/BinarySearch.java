@@ -52,11 +52,10 @@ public class BinarySearch {
                 if (low < mid) {
                     low = mid;
                 } else {
-                    if (column.getLong(high * Long.BYTES) <= value) {
-                        return high;
+                    if (column.getLong(high * Long.BYTES) > value) {
+                        return low;
                     }
-
-                    return low;
+                    return high;
                 }
             } else if (midVal > value)
                 high = mid;
@@ -70,9 +69,9 @@ public class BinarySearch {
             }
         }
 
-        if (column.getLong(low * Long.BYTES) <= value) {
-            return low;
+        if (column.getLong(low * Long.BYTES) > value) {
+            return low - 1;
         }
-        return low - 1;
+        return low;
     }
 }
