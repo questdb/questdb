@@ -137,11 +137,13 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        runSerially();
-        newRow(TelemetryEvent.DOWN);
-        writer.commit();
-        Misc.free(writer);
-        Misc.free(writerConfig);
+        if (enabled) {
+            runSerially();
+            newRow(TelemetryEvent.DOWN);
+            writer.commit();
+            Misc.free(writer);
+            Misc.free(writerConfig);
+        }
     }
 
     public int getTableStatus(Path path, CharSequence tableName) {
