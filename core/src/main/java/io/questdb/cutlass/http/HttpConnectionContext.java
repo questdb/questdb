@@ -63,6 +63,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private boolean pendingRetry = false;
+    private boolean failedQuery = false;
     private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
@@ -127,6 +128,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             LOG.error().$("Closed context with retry pending.").$();
         }
         this.pendingRetry = false;
+        this.failedQuery = false;
         LOG.debug().$("closed").$();
     }
 
@@ -488,7 +490,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             responseSink.resumeSend();
             resumeProcessor.resumeSend(this);
             clear();
-            return true;
+            if (failedQuery) {
+                dispatcher.disconnect(this);
+            }
+            return !failedQuery;
         } catch (PeerIsSlowToReadException ignore) {
             resumeProcessor.parkRequest(this);
             LOG.debug().$("peer is slow reader").$();
@@ -528,6 +533,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                 if (multipartParserState.multipartRetry) {
                     continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retryRescheduleContext);
                 }
+                LOG.info().$("success retrying query [fd=").$(fd).$(']').$();
                 next(selector, rescheduleContext);
             } catch (RetryOperationException e2) {
                 pendingRetry = true;
@@ -535,6 +541,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             } catch (PeerDisconnectedException ignore) {
                 dispatcher.disconnect(this);
             } catch (PeerIsSlowToReadException e2) {
+                LOG.info().$("Peer is slow on running the rerun [fd=").$(fd).$(']').$();
+                resumeProcessor = processor;
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
@@ -564,13 +572,13 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     @Override
     public void fail(HttpRequestProcessorSelector selector, RetryFailedOperationException e) {
         LOG.info().$("Failed to retry query [fd=").$(fd).$(']').$();
-        pendingRetry = false;
         HttpRequestProcessor processor = getHttpRequestProcessor(selector);
         fail(e, processor);
     }
 
     private void fail(RetryFailedOperationException e, HttpRequestProcessor processor) {
         pendingRetry = false;
+        failedQuery = true;
         try {
             processor.failRequest(this, e);
             clear();
@@ -578,9 +586,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         } catch (PeerDisconnectedException peerDisconnectedException) {
             dispatcher.disconnect(this);
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
+            LOG.info().$("Peer is slow to receive failed to retry response [fd=").$(fd).$(']').$();
+            resumeProcessor = processor;
             dispatcher.registerChannel(this, IOOperation.WRITE);
         } catch (ServerDisconnectException serverDisconnectException) {
-            LOG.info().$("kicked out [fd=").$(fd).$(']').$();
+            LOG.info().$("Failed query result cannot be delivered. Kicked out [fd=").$(fd).$(']').$();
             dispatcher.disconnect(this);
         }
     }

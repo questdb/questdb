@@ -10,6 +10,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.time.MillisecondClockImpl;
 
 public class HttpServerConfigurationBuilder {
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
@@ -20,6 +21,7 @@ public class HttpServerConfigurationBuilder {
     private boolean serverKeepAlive = true;
     private String httpProtocolVersion = "HTTP/1.1 ";
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private int rerunProcessingQueueSize = 4096;
 
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
@@ -61,6 +63,10 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
+    public HttpServerConfigurationBuilder withRerunProcessingQueueSize(int rerunProcessingQueueSize) {
+        this.rerunProcessingQueueSize = rerunProcessingQueueSize;
+        return this;
+    }
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -134,6 +140,36 @@ public class HttpServerConfigurationBuilder {
                     return configuredMaxQueryResponseRowLimit;
                 }
             };
+
+            @Override
+            public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+                return new WaitProcessorConfiguration() {
+                    @Override
+                    public MillisecondClock getClock() {
+                        return MillisecondClockImpl.INSTANCE;
+                    }
+
+                    @Override
+                    public long getMaxWaitCapMs() {
+                        return 1000;
+                    }
+
+                    @Override
+                    public double getExponentialWaitMultiplier() {
+                        return 2.0;
+                    }
+
+                    @Override
+                    public int getInitialWaitQueueSize() {
+                        return 64;
+                    }
+
+                    @Override
+                    public int getMaxProcessingQueueSize() {
+                        return rerunProcessingQueueSize;
+                    }
+                };
+            }
 
             @Override
             public MillisecondClock getClock() {

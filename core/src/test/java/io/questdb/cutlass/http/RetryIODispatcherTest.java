@@ -18,8 +18,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class RetryIODispatcherTest {
     private static final Log LOG = LogFactory.getLog(RetryIODispatcherTest.class);
-    private static final int DEFAULT_RERUN_QUEUE_SIZE = 4096;
-    private int rerunProcessingQueueSize = DEFAULT_RERUN_QUEUE_SIZE;
 
     private final String RequestHeaders = "Host: localhost:9000\r\n" +
             "Connection: keep-alive\r\n" +
@@ -148,7 +146,7 @@ public class RetryIODispatcherTest {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testImportWaitsWhenWriterLocked();
+            testImportWaitsWhenWriterLocked(0);
             temp.delete();
             temp.create();
         }
@@ -179,7 +177,18 @@ public class RetryIODispatcherTest {
     }
 
     @Test
-    @Ignore
+    public void testImportWaitsWhenWriterLockedWithSlowPeerLoop() throws Exception {
+        for (int i = 0; i < 10; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportWaitsWhenWriterLocked(500);
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
     public void testImportRerunsExceedsRerunProcessingQueueSizeLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
@@ -279,95 +288,92 @@ public class RetryIODispatcherTest {
 
     @Test
     public void testInsertWaitsExceedsRerunProcessingQueueSize() throws Exception {
-        try {
-            rerunProcessingQueueSize = 1;
-            final int parallelCount = 4;
-            new HttpQueryTestBuilder()
-                    .withTempFolder(temp)
-                    .withWorkerCount(parallelCount)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run(engine -> {
-                        // create table
-                        sendAndReceive(
-                                NetworkFacadeImpl.INSTANCE,
-                                "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                        RequestHeaders,
-                                ResponseHeaders +
-                                        "0c\r\n" +
-                                        "{\"ddl\":\"OK\"}\r\n" +
-                                        "00\r\n" +
-                                        "\r\n",
-                                1,
-                                0,
-                                true,
-                                false
-                        );
+        final int rerunProcessingQueueSize = 1;
+        final int parallelCount = 4;
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(parallelCount)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withRerunProcessingQueueSize(rerunProcessingQueueSize))
+                .withTelemetry(false)
+                .run(engine -> {
+                    // create table
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    RequestHeaders,
+                            ResponseHeaders +
+                                    "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            true,
+                            false
+                    );
 
-                        TableWriter writer = lockWriter(engine, "balances_x");
+                    TableWriter writer = lockWriter(engine, "balances_x");
 
-                        final int insertCount = rerunProcessingQueueSize * 10;
-                        CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                        AtomicInteger fails = new AtomicInteger();
-                        for (int i = 0; i < parallelCount; i++) {
-                            new Thread(() -> {
-                                try {
-                                    for (int r = 0; r < insertCount; r++) {
-                                        // insert one record
-                                        try {
-                                            sendAndReceive(
-                                                    NetworkFacadeImpl.INSTANCE,
-                                                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                                            RequestHeaders,
-                                                    ResponseHeaders +
-                                                            "0c\r\n" +
-                                                            "{\"ddl\":\"OK\"}\r\n" +
-                                                            "00\r\n" +
-                                                            "\r\n",
-                                                    1,
-                                                    0,
-                                                    false,
-                                                    true
-                                            );
-                                        } catch (AssertionError ase) {
-                                            fails.incrementAndGet();
-                                        } catch (Exception e) {
-                                            LOG.error().$("Failed execute insert http request. Server error ").$(e);
-                                        }
+                    final int insertCount = rerunProcessingQueueSize * 10;
+                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    AtomicInteger fails = new AtomicInteger();
+                    for (int i = 0; i < parallelCount; i++) {
+                        new Thread(() -> {
+                            try {
+                                for (int r = 0; r < insertCount; r++) {
+                                    // insert one record
+                                    try {
+                                        sendAndReceive(
+                                                NetworkFacadeImpl.INSTANCE,
+                                                "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                                        RequestHeaders,
+                                                ResponseHeaders +
+                                                        "0c\r\n" +
+                                                        "{\"ddl\":\"OK\"}\r\n" +
+                                                        "00\r\n" +
+                                                        "\r\n",
+                                                1,
+                                                0,
+                                                false,
+                                                true
+                                        );
+                                    } catch (AssertionError ase) {
+                                        fails.incrementAndGet();
+                                    } catch (Exception e) {
+                                        LOG.error().$("Failed execute insert http request. Server error ").$(e);
                                     }
-                                } finally {
-                                    countDownLatch.countDown();
                                 }
-                            }).start();
-                        }
+                            } finally {
+                                countDownLatch.countDown();
+                            }
+                        }).start();
+                    }
 
-                        boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
-                        Assert.assertFalse(finished);
+                    boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
+                    Assert.assertFalse(finished);
 
-                        writer.close();
-                        if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
-                            Assert.fail("Wait to process retries exceeded timeout");
-                        }
+                    writer.close();
+                    if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
+                        Assert.fail("Wait to process retries exceeded timeout");
+                    }
 
-                        // check if we have parallelCount x insertCount  records
-                        sendAndReceive(
-                                NetworkFacadeImpl.INSTANCE,
-                                "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
-                                        RequestHeaders,
-                                ResponseHeaders +
-                                        "71\r\n" +
-                                        "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount - fails.get()) + "]],\"count\":1}\r\n" +
-                                        "00\r\n" +
-                                        "\r\n",
-                                1,
-                                0,
-                                false,
-                                false
-                        );
-                    });
-        } finally {
-            rerunProcessingQueueSize = DEFAULT_RERUN_QUEUE_SIZE;
-        }
+                    // check if we have parallelCount x insertCount  records
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
+                                    RequestHeaders,
+                            ResponseHeaders +
+                                    "71\r\n" +
+                                    "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount - fails.get()) + "]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false,
+                            false
+                    );
+                });
+
     }
 
     // TODO: investigate failure
@@ -477,7 +483,7 @@ public class RetryIODispatcherTest {
                             try {
                                 // insert one record
                                 try {
-                                    Thread.sleep(finalI*5);
+                                    Thread.sleep(finalI * 5);
                                     sendAndReceive(
                                             NetworkFacadeImpl.INSTANCE,
                                             "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
@@ -538,146 +544,72 @@ public class RetryIODispatcherTest {
 
     @Test
     public void testImportWaitsWhenWriterLocked() throws Exception {
-        final int parallelCount = 2;
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .run((engine) -> {
-            // create table and do 1 import
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    ValidImportRequest,
-                    ValidImportResponse,
-                    1,
-                    0,
-                    false,
-                    false
-            );
-
-            TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
-            final int validRequestRecordCount = 24;
-            final int insertCount = 1;
-            CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-            for (int i = 0; i < parallelCount; i++) {
-                int finalI = i;
-                new Thread(() -> {
-                    try {
-                        for (int r = 0; r < insertCount; r++) {
-                            // insert one record
-                            try {
-                                sendAndReceive(
-                                        NetworkFacadeImpl.INSTANCE,
-                                        ValidImportRequest,
-                                        ValidImportResponse,
-                                        1,
-                                        0,
-                                        false,
-                                        false
-                                );
-                            } catch (Exception e) {
-                                LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
-                            }
-                        }
-                    } finally {
-                        countDownLatch.countDown();
-                    }
-                    LOG.info().$("Stopped thread ").$(finalI).$();
-                }).start();
-            }
-
-            boolean finished = countDownLatch.await(100, TimeUnit.MILLISECONDS);
-
-            // Cairo engine should not allow second writer to be opened on the same table
-            // Cairo is expected to have finished == false
-            Assert.assertFalse(finished);
-
-            writer.close();
-            if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
-                Assert.fail("Imports did not finish within reasonable time");
-            }
-
-            // check if we have parallelCount x insertCount  records
-            LOG.info().$("Requesting row count").$();
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
-                            RequestHeaders,
-                    ResponseHeaders +
-                            "83\r\n" +
-                            "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false,
-                    false
-            );
-
-        });
+        testImportWaitsWhenWriterLocked(0);
     }
 
-    @Test
-    public void testImportProcessedWhenClientDisconnected() throws Exception {
+    public void testImportWaitsWhenWriterLocked(int slowNetAfterSending) throws Exception {
         final int parallelCount = 2;
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withNetwork(getSendDelayNetworkFacade(slowNetAfterSending)))
                 .run((engine) -> {
-            // create table and do 1 import
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    ValidImportRequest,
-                    ValidImportResponse,
-                    1,
-                    0,
-                    false,
-                    false
-            );
+                    // create table and do 1 import
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            ValidImportRequest,
+                            ValidImportResponse,
+                            1,
+                            0,
+                            false,
+                            false
+                    );
 
-            TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
-
-            final int validRequestRecordCount = 24;
-            final int insertCount = 1;
-            CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-            for (int i = 0; i < parallelCount; i++) {
-                int finalI = i;
-                new Thread(() -> {
-                    try {
-                        for (int r = 0; r < insertCount; r++) {
-                            // insert one record
+                    TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
+                    final int validRequestRecordCount = 24;
+                    final int insertCount = 1;
+                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    for (int i = 0; i < parallelCount; i++) {
+                        int finalI = i;
+                        new Thread(() -> {
                             try {
-                                sendAndReceive(
-                                        NetworkFacadeImpl.INSTANCE,
-                                        ValidImportRequest,
-                                        "",
-                                        1,
-                                        0,
-                                        false,
-                                        false
-                                );
-                            } catch (Exception e) {
-                                LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                for (int r = 0; r < insertCount; r++) {
+                                    // insert one record
+                                    try {
+                                        sendAndReceive(
+                                                NetworkFacadeImpl.INSTANCE,
+                                                ValidImportRequest,
+                                                ValidImportResponse,
+                                                1,
+                                                0,
+                                                false,
+                                                false
+                                        );
+                                    } catch (Exception e) {
+                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                    }
+                                }
+                            } finally {
+                                countDownLatch.countDown();
                             }
-                        }
-                    } finally {
-                        countDownLatch.countDown();
+                            LOG.info().$("Stopped thread ").$(finalI).$();
+                        }).start();
                     }
-                    LOG.info().$("Stopped thread ").$(finalI).$();
-                }).start();
-            }
 
-            countDownLatch.await();
+                    boolean finished = countDownLatch.await(100, TimeUnit.MILLISECONDS);
 
-            // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
-            writer.close();
+                    // Cairo engine should not allow second writer to be opened on the same table
+                    // Cairo is expected to have finished == false
+                    Assert.assertFalse(finished);
 
-            for (int i = 0; i < 20; i++) {
+                    writer.close();
+                    if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
+                        Assert.fail("Imports did not finish within reasonable time");
+                    }
 
-                try {
                     // check if we have parallelCount x insertCount  records
+                    LOG.info().$("Requesting row count").$();
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
                             "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
@@ -692,18 +624,97 @@ public class RetryIODispatcherTest {
                             false,
                             false
                     );
-                    return;
-                } catch (ComparisonFailure e) {
-                    if (i < 9) {
-                        Thread.sleep(50);
-                    } else {
-                        throw e;
+
+                });
+    }
+
+    @Test
+    public void testImportProcessedWhenClientDisconnected() throws Exception {
+        final int parallelCount = 2;
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    // create table and do 1 import
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            ValidImportRequest,
+                            ValidImportResponse,
+                            1,
+                            0,
+                            false,
+                            false
+                    );
+
+                    TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
+
+                    final int validRequestRecordCount = 24;
+                    final int insertCount = 1;
+                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    for (int i = 0; i < parallelCount; i++) {
+                        int finalI = i;
+                        new Thread(() -> {
+                            try {
+                                for (int r = 0; r < insertCount; r++) {
+                                    // insert one record
+                                    try {
+                                        sendAndReceive(
+                                                NetworkFacadeImpl.INSTANCE,
+                                                ValidImportRequest,
+                                                "",
+                                                1,
+                                                0,
+                                                false,
+                                                false
+                                        );
+                                    } catch (Exception e) {
+                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                    }
+                                }
+                            } finally {
+                                countDownLatch.countDown();
+                            }
+                            LOG.info().$("Stopped thread ").$(finalI).$();
+                        }).start();
                     }
 
-                }
-            }
+                    countDownLatch.await();
 
-        });
+                    // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
+                    writer.close();
+
+                    for (int i = 0; i < 20; i++) {
+
+                        try {
+                            // check if we have parallelCount x insertCount  records
+                            sendAndReceive(
+                                    NetworkFacadeImpl.INSTANCE,
+                                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
+                                            RequestHeaders,
+                                    ResponseHeaders +
+                                            "83\r\n" +
+                                            "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n",
+                                    1,
+                                    0,
+                                    false,
+                                    false
+                            );
+                            return;
+                        } catch (ComparisonFailure e) {
+                            if (i < 9) {
+                                Thread.sleep(50);
+                            } else {
+                                throw e;
+                            }
+
+                        }
+                    }
+
+                });
     }
 
     @Test
@@ -712,92 +723,90 @@ public class RetryIODispatcherTest {
     }
 
     public void testImportRerunsExceedsRerunProcessingQueueSize(int startDelay) throws Exception {
-        try {
-            rerunProcessingQueueSize = 1;
-            final int parallelCount = 4;
+        final int rerunProcessingQueueSize = 1;
+        final int parallelCount = 4;
 
-            new HttpQueryTestBuilder()
-                    .withTempFolder(temp)
-                    .withWorkerCount(2)
-                    .withHttpServerConfigBuilder(
-                            new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(startDelay))
-                    )
-                    .run(engine -> {
-                // create table and do 1 import
-                sendAndReceive(
-                        NetworkFacadeImpl.INSTANCE,
-                        ValidImportRequest,
-                        ValidImportResponse,
-                        1,
-                        0,
-                        false,
-                        false
-                );
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(getSendDelayNetworkFacade(startDelay))
+                                .withRerunProcessingQueueSize(rerunProcessingQueueSize)
+                )
+                .run(engine -> {
+                    // create table and do 1 import
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            ValidImportRequest,
+                            ValidImportResponse,
+                            1,
+                            0,
+                            false,
+                            false
+                    );
 
-                TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
-                final int validRequestRecordCount = 24;
-                final int insertCount = 4;
-                AtomicInteger failedImports = new AtomicInteger();
-                CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                for (int i = 0; i < parallelCount; i++) {
-                    int finalI = i;
-                    new Thread(() -> {
-                        try {
-                            for (int r = 0; r < insertCount; r++) {
-                                // insert one record
-                                try {
-                                    sendAndReceive(
-                                            NetworkFacadeImpl.INSTANCE,
-                                            ValidImportRequest,
-                                            ValidImportResponse,
-                                            1,
-                                            0,
-                                            false,
-                                            false
-                                    );
-                                } catch (AssertionError e) {
-                                    failedImports.incrementAndGet();
-                                } catch (Exception e) {
-                                    LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                    TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
+                    final int validRequestRecordCount = 24;
+                    final int insertCount = 4;
+                    AtomicInteger failedImports = new AtomicInteger();
+                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    for (int i = 0; i < parallelCount; i++) {
+                        int finalI = i;
+                        new Thread(() -> {
+                            try {
+                                for (int r = 0; r < insertCount; r++) {
+                                    // insert one record
+                                    try {
+                                        sendAndReceive(
+                                                NetworkFacadeImpl.INSTANCE,
+                                                ValidImportRequest,
+                                                ValidImportResponse,
+                                                1,
+                                                0,
+                                                false,
+                                                false
+                                        );
+                                    } catch (AssertionError e) {
+                                        failedImports.incrementAndGet();
+                                    } catch (Exception e) {
+                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                    }
                                 }
+                            } finally {
+                                countDownLatch.countDown();
                             }
-                        } finally {
-                            countDownLatch.countDown();
-                        }
-                        LOG.info().$("Stopped thread ").$(finalI).$();
-                    }).start();
-                }
+                            LOG.info().$("Stopped thread ").$(finalI).$();
+                        }).start();
+                    }
 
-                boolean finished = countDownLatch.await(100, TimeUnit.MILLISECONDS);
-                Assert.assertFalse(finished);
+                    boolean finished = countDownLatch.await(100, TimeUnit.MILLISECONDS);
+                    Assert.assertFalse(finished);
 
-                writer.close();
+                    writer.close();
 
-                if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
-                    Assert.fail("Imports did not finish within reasonable time");
-                }
+                    if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
+                        Assert.fail("Imports did not finish within reasonable time");
+                    }
 
-                // check if we have parallelCount x insertCount  records
-                LOG.info().$("Requesting row count").$();
-                sendAndReceive(
-                        NetworkFacadeImpl.INSTANCE,
-                        "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
-                                RequestHeaders,
-                        ResponseHeaders +
-                                "84\r\n" +
-                                "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "]],\"count\":1}\r\n" +
-                                "00\r\n" +
-                                "\r\n",
-                        1,
-                        0,
-                        false,
-                        false
-                );
+                    // check if we have parallelCount x insertCount  records
+                    LOG.info().$("Requesting row count").$();
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
+                                    RequestHeaders,
+                            ResponseHeaders +
+                                    "84\r\n" +
+                                    "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false,
+                            false
+                    );
 
-            });
-        } finally {
-            rerunProcessingQueueSize = DEFAULT_RERUN_QUEUE_SIZE;
-        }
+                });
     }
 
     @NotNull

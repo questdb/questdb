@@ -135,10 +135,6 @@ public class SendAndReceiveRequestBuilder {
         String actual = new String(receivedBytes, StandardCharsets.UTF_8);
         if (!printOnly) {
             String expected = (new String(expectedResponse, StandardCharsets.UTF_8));
-//            if (disconnected && expectDisconnect) {
-//                actual = actual.substring(0, Math.min(actual.length(), expected.length()));
-//                expected = expected.substring(0, Math.min(actual.length(), expected.length()));
-//            }
             Assert.assertEquals(expected, actual);
         } else {
             System.out.println("actual");

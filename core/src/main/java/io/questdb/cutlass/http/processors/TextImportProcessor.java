@@ -50,6 +50,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private final static Log LOG = LogFactory.getLog(TextImportProcessor.class);
     private static final int RESPONSE_COLUMN = 2;
     private static final int RESPONSE_SUFFIX = 3;
+    private static final int RESPONSE_DONE = 4;
     private static final int MESSAGE_SCHEMA = 1;
     private static final int MESSAGE_DATA = 2;
     private static final int TO_STRING_COL1_PAD = 15;
@@ -118,7 +119,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             case RESPONSE_SUFFIX:
                 socket.bookmark();
                 socket.put(']').put('}');
+                state.responseState = RESPONSE_DONE;
                 socket.sendChunk();
+                // fall through
+            case RESPONSE_DONE:
                 socket.done();
                 break;
             default:
@@ -176,7 +180,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         final RecordMetadata metadata = textLoader.getMetadata();
         LongList errors = textLoader.getColumnErrorCounts();
 
-
         switch (state.responseState) {
             case RESPONSE_PREFIX:
                 sep(socket);
@@ -233,7 +236,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             case RESPONSE_SUFFIX:
                 socket.bookmark();
                 sep(socket);
+                state.responseState = RESPONSE_DONE;
                 socket.sendChunk();
+                // fall through
+            case RESPONSE_DONE:
                 socket.done();
                 break;
             default:
