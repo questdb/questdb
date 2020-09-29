@@ -1310,7 +1310,9 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("create table test(id long,val int)");
+                    statement.executeUpdate("create table test2(id long,val int)");
                 }
+
                 connection.setAutoCommit(false);
                 try (PreparedStatement batchInsert = connection.prepareStatement("insert into test(id,val) values(?,?)")) {
                     batchInsert.setLong(1, 0L);
@@ -1324,8 +1326,23 @@ public class PGJobContextTest extends AbstractGriffinTest {
                     batchInsert.addBatch();
                     batchInsert.clearParameters();
                     batchInsert.executeLargeBatch();
-                    connection.commit();
                 }
+
+                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test2(id,val) values(?,?)")) {
+                    batchInsert.setLong(1, 0L);
+                    batchInsert.setInt(2, 1);
+                    batchInsert.addBatch();
+                    batchInsert.setLong(1, 1L);
+                    batchInsert.setInt(2, 2);
+                    batchInsert.addBatch();
+                    batchInsert.setLong(1, 2L);
+                    batchInsert.setInt(2, 3);
+                    batchInsert.addBatch();
+                    batchInsert.clearParameters();
+                    batchInsert.executeLargeBatch();
+                }
+
+                connection.commit();
 
                 StringSink sink = new StringSink();
                 String expected = "id[BIGINT],val[INTEGER]\n" +
@@ -1335,6 +1352,40 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery("select * from test");
                 assertResultSet(expected, sink, rs);
+
+                sink.clear();
+                Statement statement2 = connection.createStatement();
+                ResultSet rs2 = statement2.executeQuery("select * from test2");
+                assertResultSet(expected, sink, rs2);
+
+                //now switch on autocommit and check that data is inserted without explicitly calling commit()
+                connection.setAutoCommit(true);
+                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test(id,val) values(?,?)")) {
+                    batchInsert.setLong(1, 3L);
+                    batchInsert.setInt(2, 4);
+                    batchInsert.addBatch();
+                    batchInsert.setLong(1, 4L);
+                    batchInsert.setInt(2, 5);
+                    batchInsert.addBatch();
+                    batchInsert.setLong(1, 5L);
+                    batchInsert.setInt(2, 6);
+                    batchInsert.addBatch();
+                    batchInsert.clearParameters();
+                    batchInsert.executeLargeBatch();
+                }
+
+                sink.clear();
+                expected = "id[BIGINT],val[INTEGER]\n" +
+                        "0,1\n" +
+                        "1,2\n" +
+                        "2,3\n" +
+                        "3,4\n" +
+                        "4,5\n" +
+                        "5,6\n";
+                Statement statement3 = connection.createStatement();
+                ResultSet rs3 = statement3.executeQuery("select * from test");
+                assertResultSet(expected, sink, rs3);
+
                 connection.close();
             } finally {
                 running.set(false);
@@ -2538,7 +2589,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                         }
                         break;
                     case CHAR:
-                        char charValue = (char) rs.getByte(i);
+                        char charValue = rs.getString(i).charAt(0);
                         if (rs.wasNull()) {
                             sink.put("null");
                         } else {

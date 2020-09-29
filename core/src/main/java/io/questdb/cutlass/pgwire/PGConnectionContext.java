@@ -61,6 +61,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
+    public static final String TAG_COMMIT = "COMMIT";
     private static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
@@ -79,6 +80,9 @@ public class PGConnectionContext implements IOContext, Mutable {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
+    public static final char STATUS_IN_TRANSACTION = 'T';
+    public static final char STATUS_IN_ERROR = 'E';
+    public static final char STATUS_IDLE = 'I';
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -139,11 +143,17 @@ public class PGConnectionContext implements IOContext, Mutable {
     private Rnd rnd;
     private int rowCount;
     private boolean isEmptyQuery;
+    private static final int NO_TRANSACTION = 0;
+    private static final int IN_TRANSACTION = 1;
+    private static final int COMMIT_TRANSACTION = 2;
+    private static final int ERROR_TRANSACTION = 3;
+    private final ObjHashSet<TableWriter> cachedTransactionInsertWriters = new ObjHashSet<>();
     //    private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
     private final IntList parameterFormats = new IntList();
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
+    private int transactionState = NO_TRANSACTION;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -503,10 +513,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         sink.putLen(addr);
     }
 
-    static void prepareReadyForQuery(ResponseAsciiSink responseAsciiSink) {
-        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
-        responseAsciiSink.put('I');
+    private void appendCharColumn(Record record, int columnIndex) {
+        long a = responseAsciiSink.skip();
+        responseAsciiSink.putUtf8(record.getChar(columnIndex));
+        responseAsciiSink.putLenEx(a);
     }
 
     private void appendBinColumn(Record record, int i) throws SqlException {
@@ -539,10 +549,41 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putLenEx(a);
     }
 
-    private void appendCharColumn(Record record, int columnIndex) {
-        long a = responseAsciiSink.skip();
-        responseAsciiSink.put((int) record.getChar(columnIndex));
-        responseAsciiSink.putLenEx(a);
+    private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+        sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
+
+        switch (cc.getType()) {
+            case CompiledQuery.SELECT:
+                currentFactory = cc.getRecordCursorFactory();
+                queryTag = TAG_SELECT;
+                factoryCache.put(queryText, currentFactory);
+                break;
+            case CompiledQuery.INSERT:
+                currentInsertStatement = cc.getInsertStatement();
+                queryTag = TAG_INSERT;
+                factoryCache.put(queryText, currentInsertStatement);
+                break;
+            case CompiledQuery.COPY_LOCAL:
+                queryTag = TAG_COPY;
+                sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                break;
+            case CompiledQuery.SET:
+                if (SqlKeywords.isBegin(queryText)) {
+                    queryTag = TAG_BEGIN;
+                    transactionState = IN_TRANSACTION;
+                } else if (SqlKeywords.isCommit(queryText)) {
+                    queryTag = TAG_COMMIT;
+                    transactionState = COMMIT_TRANSACTION;
+                } else {
+                    queryTag = TAG_SET;
+                }
+                break;
+            default:
+                // DDL SQL
+                queryTag = TAG_OK;
+                break;
+        }
     }
 
     private void appendDateColumn(Record record, int columnIndex) {
@@ -727,36 +768,31 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-        sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
-
-        switch (cc.getType()) {
-            case CompiledQuery.SELECT:
-                currentFactory = cc.getRecordCursorFactory();
-                queryTag = TAG_SELECT;
-                factoryCache.put(queryText, currentFactory);
-                break;
-            case CompiledQuery.INSERT:
-                currentInsertStatement = cc.getInsertStatement();
-                queryTag = TAG_INSERT;
-                factoryCache.put(queryText, currentInsertStatement);
-                break;
-            case CompiledQuery.COPY_LOCAL:
-                queryTag = TAG_COPY;
-                sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                break;
-            case CompiledQuery.SET:
-                if (SqlKeywords.isBegin(queryText)) {
-                    queryTag = TAG_BEGIN;
-                } else {
-                    queryTag = TAG_SET;
-                }
-                break;
-            default:
-                // DDL SQL
-                queryTag = TAG_OK;
-                break;
+    private void executeInsert() {
+        try {
+            final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext);
+            m.execute();
+            if (transactionState == IN_TRANSACTION) {
+                m.commit();
+                m.close();
+            } else {
+                cachedTransactionInsertWriters.add(m.getWriter());
+            }
+            sendCurrentCursorTail = TAIL_SUCCESS;
+            prepareExecuteTail(false);
+        } catch (CairoException e) {
+            responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+            final long addr = responseAsciiSink.skip();
+            responseAsciiSink.put('M');
+            responseAsciiSink.encodeUtf8Z((e).getFlyweightMessage());
+            responseAsciiSink.put('S');
+            responseAsciiSink.encodeUtf8Z("ERROR");
+            responseAsciiSink.put((char) 0);
+            responseAsciiSink.putLen(addr);
+            sendCurrentCursorTail = TAIL_ERROR;
+            prepareExecuteTail(false);
+        } finally {
+            currentInsertStatement = null;
         }
     }
 
@@ -834,25 +870,21 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void executeInsert() {
-        try (final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext)) {
-            m.execute();
-            m.commit();
-            sendCurrentCursorTail = TAIL_SUCCESS;
-            prepareExecuteTail(false);
-        } catch (CairoException e) {
-            responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-            final long addr = responseAsciiSink.skip();
-            responseAsciiSink.put('M');
-            responseAsciiSink.encodeUtf8Z((e).getFlyweightMessage());
-            responseAsciiSink.put('S');
-            responseAsciiSink.encodeUtf8Z("ERROR");
-            responseAsciiSink.put((char) 0);
-            responseAsciiSink.putLen(addr);
-            sendCurrentCursorTail = TAIL_ERROR;
-            prepareExecuteTail(false);
-        } finally {
-            currentInsertStatement = null;
+    void prepareReadyForQuery(ResponseAsciiSink responseAsciiSink) {
+        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
+        switch (transactionState) {
+            case NO_TRANSACTION:
+            case COMMIT_TRANSACTION:
+            default:
+                responseAsciiSink.put(STATUS_IDLE);
+                break;
+            case IN_TRANSACTION:
+                responseAsciiSink.put(STATUS_IN_TRANSACTION);
+                break;
+            case ERROR_TRANSACTION:
+                responseAsciiSink.put(STATUS_IN_ERROR);
+                break;
         }
     }
 
@@ -1211,6 +1243,34 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareBindComplete();
     }
 
+    private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (currentFactory != null) {
+            LOG.info().$("executing query").$();
+            currentCursor = currentFactory.getCursor(sqlExecutionContext);
+            // cache random if it was replaced
+            this.rnd = sqlExecutionContext.getRandom();
+            sendCursor();
+        } else if (currentInsertStatement != null) {
+            executeInsert();
+        } else { //this must be a SET operation or empty query
+            if (transactionState == COMMIT_TRANSACTION) {
+                for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
+                    TableWriter m = cachedTransactionInsertWriters.get(i);
+                    m.commit();
+                    Misc.free(m);
+                }
+                cachedTransactionInsertWriters.clear();
+                transactionState = NO_TRANSACTION;
+            }
+            if (isEmptyQuery) {
+                responseAsciiSink.put(MESSAGE_TYPE_NO_DATA);
+                responseAsciiSink.putNetworkInt(Integer.BYTES);
+            }
+            sendCurrentCursorTail = TAIL_SUCCESS;
+            prepareExecuteTail(false);
+        }
+    }
+
     private void processParse(
             @Transient SqlCompiler compiler,
             long address,
@@ -1290,9 +1350,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
         //cache named statement
         if (statementName != null) {
-            if (queryText.length() > 0) {
-                compileQuery(compiler, factoryCache);
-            }
+            compileQuery(compiler, factoryCache);
             NamedStatementWrapper wrapper = namedStatementWrapperPool.pop();
             if (currentFactory != null) {
                 wrapper.selectFactory = currentFactory;
@@ -1303,25 +1361,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             namedStatementMap.put(statementName, wrapper);
         }
         prepareParseComplete();
-    }
-
-    private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (currentFactory != null) {
-            LOG.info().$("executing query").$();
-            currentCursor = currentFactory.getCursor(sqlExecutionContext);
-            // cache random if it was replaced
-            this.rnd = sqlExecutionContext.getRandom();
-            sendCursor();
-        } else if (currentInsertStatement != null) {
-            executeInsert();
-        } else { //this must be a SET operation or empty query
-            if (isEmptyQuery) {
-                responseAsciiSink.put(MESSAGE_TYPE_NO_DATA);
-                responseAsciiSink.putNetworkInt(Integer.BYTES);
-            }
-            sendCurrentCursorTail = TAIL_SUCCESS;
-            prepareExecuteTail(false);
-        }
     }
 
     private void processInitialMessage(long address, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {

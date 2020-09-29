@@ -24,12 +24,16 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableWriter;
+
 import java.io.Closeable;
 
 public interface InsertMethod extends Closeable {
     void execute();
 
     void commit();
+
+    TableWriter getWriter();
 
     @Override
     void close();
