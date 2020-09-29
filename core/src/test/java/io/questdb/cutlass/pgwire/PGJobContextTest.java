@@ -1306,10 +1306,10 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
-
+                properties.setProperty("sslmode", "disable");
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table test(id long,val int)");
+                    statement.executeUpdate("create table test (id long,val int)");
                     statement.executeUpdate("create table test2(id long,val int)");
                 }
 
@@ -1344,6 +1344,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
                 connection.commit();
 
+                connection.setAutoCommit(true);
                 StringSink sink = new StringSink();
                 String expected = "id[BIGINT],val[INTEGER]\n" +
                         "0,1\n" +
@@ -1386,6 +1387,41 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ResultSet rs3 = statement3.executeQuery("select * from test");
                 assertResultSet(expected, sink, rs3);
 
+                //now fail insertion during transaction
+                try (Statement statement4 = connection.createStatement()) {
+                    statement4.executeUpdate("create table anothertab(id long, val int, k timestamp) timestamp(k) ");
+                }
+                connection.setAutoCommit(false);
+                try (PreparedStatement batchInsert = connection.prepareStatement("insert into anothertab(id, val, k) values(?,?,?)")) {
+                    batchInsert.setLong(1, 3L);
+                    batchInsert.setInt(2, 4);
+                    batchInsert.setLong(3, 1_000L);
+                    batchInsert.addBatch();
+                    batchInsert.setLong(1, 4L);
+                    batchInsert.setInt(2, 5);
+                    batchInsert.setLong(3, 0L);
+                    batchInsert.addBatch();
+                    batchInsert.setLong(1, 5L);
+                    batchInsert.setInt(2, 6);
+                    batchInsert.setLong(3, 2_000L);
+                    batchInsert.addBatch();
+                    batchInsert.clearParameters();
+                    batchInsert.executeLargeBatch();
+                } catch (Exception e) {
+                    LOG.error().$(e).$();
+                }
+                connection.commit();
+
+                //now transaction fail, we should rollback transaction
+                connection.rollback();
+                connection.setAutoCommit(true);
+                sink.clear();
+                expected = "id[BIGINT],val[INTEGER],k[TIMESTAMP]\n";
+                Statement statement4 = connection.createStatement();
+                ResultSet rs4 = statement4.executeQuery("select * from anothertab");
+                assertResultSet(expected, sink, rs4);
+
+                //
                 connection.close();
             } finally {
                 running.set(false);

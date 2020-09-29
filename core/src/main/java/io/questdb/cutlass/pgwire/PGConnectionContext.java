@@ -62,6 +62,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
+    public static final String TAG_ROLLBACK = "ROLLBACK";
     private static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
@@ -147,6 +148,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final int IN_TRANSACTION = 1;
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
+    private static final int ROLLING_BACK_TRANSACTION = 4;
     private final ObjHashSet<TableWriter> cachedTransactionInsertWriters = new ObjHashSet<>();
     //    private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
@@ -575,6 +577,9 @@ public class PGConnectionContext implements IOContext, Mutable {
                 } else if (SqlKeywords.isCommit(queryText)) {
                     queryTag = TAG_COMMIT;
                     transactionState = COMMIT_TRANSACTION;
+                } else if (SqlKeywords.isRollback(queryText)) {
+                    queryTag = TAG_ROLLBACK;
+                    transactionState = ROLLING_BACK_TRANSACTION;
                 } else {
                     queryTag = TAG_SET;
                 }
@@ -770,17 +775,22 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void executeInsert() {
         try {
-            final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext);
-            m.execute();
-            if (transactionState == IN_TRANSACTION) {
-                m.commit();
-                m.close();
-            } else {
-                cachedTransactionInsertWriters.add(m.getWriter());
+            if (transactionState != ERROR_TRANSACTION) {
+                final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext);
+                m.execute();
+                if (transactionState != IN_TRANSACTION) {
+                    m.commit();
+                    m.close();
+                } else {
+                    cachedTransactionInsertWriters.add(m.getWriter());
+                }
+                sendCurrentCursorTail = TAIL_SUCCESS;
+                prepareExecuteTail(false);
             }
-            sendCurrentCursorTail = TAIL_SUCCESS;
-            prepareExecuteTail(false);
         } catch (CairoException e) {
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
             responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
             final long addr = responseAsciiSink.skip();
             responseAsciiSink.put('M');
@@ -876,6 +886,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         switch (transactionState) {
             case NO_TRANSACTION:
             case COMMIT_TRANSACTION:
+            case ROLLING_BACK_TRANSACTION:
             default:
                 responseAsciiSink.put(STATUS_IDLE);
                 break;
@@ -1252,11 +1263,19 @@ public class PGConnectionContext implements IOContext, Mutable {
             sendCursor();
         } else if (currentInsertStatement != null) {
             executeInsert();
-        } else { //this must be a SET operation or empty query
+        } else { //this must be a SET/COMMIT/ROLLBACK or empty query
             if (transactionState == COMMIT_TRANSACTION) {
                 for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
                     TableWriter m = cachedTransactionInsertWriters.get(i);
                     m.commit();
+                    Misc.free(m);
+                }
+                cachedTransactionInsertWriters.clear();
+                transactionState = NO_TRANSACTION;
+            } else if (transactionState == ROLLING_BACK_TRANSACTION) {
+                for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
+                    TableWriter m = cachedTransactionInsertWriters.get(i);
+                    m.rollback();
                     Misc.free(m);
                 }
                 cachedTransactionInsertWriters.clear();
