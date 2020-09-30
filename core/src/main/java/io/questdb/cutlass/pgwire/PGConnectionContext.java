@@ -1194,6 +1194,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareCloseComplete();
     }
 
+    private void prepareNoDataMessage() {
+        responseAsciiSink.put(MESSAGE_TYPE_NO_DATA);
+        responseAsciiSink.putNetworkInt(Integer.BYTES);
+    }
+
     private void processDescribe(@Transient ObjList<BindVariableSetter> bindVariableSetters,
                                  long lo,
                                  long msgLimit,
@@ -1210,6 +1215,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         if (currentFactory != null) {
             prepareRowDescription();
             LOG.info().$("described").$();
+        } else {
+            prepareNoDataMessage();
         }
     }
 
@@ -1257,8 +1264,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 transactionState = NO_TRANSACTION;
             }
             if (isEmptyQuery) {
-                responseAsciiSink.put(MESSAGE_TYPE_NO_DATA);
-                responseAsciiSink.putNetworkInt(Integer.BYTES);
+                prepareNoDataMessage();
             }
             sendCurrentCursorTail = TAIL_SUCCESS;
             prepareExecuteTail(false);
