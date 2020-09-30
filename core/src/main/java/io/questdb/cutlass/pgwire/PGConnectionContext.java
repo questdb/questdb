@@ -727,10 +727,17 @@ public class PGConnectionContext implements IOContext, Mutable {
             short parameterValueCount,
             @Transient ObjList<BindVariableSetter> bindVariableSetters
     ) throws BadProtocolException, SqlException {
-
+        //format count can be:
+        //   0: default format is text for all parameters
+        //   1: client can specify one format for all parameters
+        //   2 or greater: format has been define for each parameter, so parameterFormatCount must equal parameterValueCount
         boolean inferTypes = parameterValueCount != bindVariableService.getIndexedVariableCount();
         boolean allTextFormat = parameterFormats.size() == 0 || (parameterFormats.size() == 1 && parameterFormats.get(0) == 0);
         boolean allBinaryFormat = parameterFormats.size() == 1 && parameterFormats.get(0) == 1;
+        if (parameterFormats.size() > 1 && parameterFormats.size() != parameterValueCount) {
+            LOG.error().$("parameter format count and parameter value count must match").$();
+            throw BadProtocolException.INSTANCE;
+        }
 
         for (int j = 0; j < parameterValueCount; j++) {
             if (lo + Integer.BYTES > msgLimit) {
