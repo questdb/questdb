@@ -1695,7 +1695,7 @@ public class TableWriter implements Closeable {
 
     long getPrimaryAppendOffset(long timestamp, int columnIndex) {
         if (txPartitionCount == 0) {
-            openFirstPartition(maxTimestamp);
+            openFirstPartition(timestamp);
         }
 
         if (timestamp > partitionHi) {
@@ -1707,7 +1707,7 @@ public class TableWriter implements Closeable {
 
     long getSecondaryAppendOffset(long timestamp, int columnIndex) {
         if (txPartitionCount == 0) {
-            openFirstPartition(maxTimestamp);
+            openFirstPartition(timestamp);
         }
 
         if (timestamp > partitionHi) {
@@ -2778,14 +2778,36 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void startAppendedBlock(long firstTimestamp, long nRowsAdded, LongList blockColumnTops) {
-        if (txPartitionCount == 0) {
-            openFirstPartition(firstTimestamp);
+    public TableBlockWriter newBlock() {
+        bumpMasterRef();
+        blockWriter.open(this);
+        return blockWriter;
+    }
+
+    void startAppendedBlock(long timestampLo, long timestampHi, long nRowsAdded, LongList blockColumnTops) {
+        if (timestampLo < maxTimestamp) {
+            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
         }
 
-        if (partitionBy != PartitionBy.NONE && firstTimestamp > partitionHi) {
-            switchPartition(firstTimestamp);
+        if (txPartitionCount == 0) {
+            openFirstPartition(timestampLo);
         }
+
+        if (partitionBy != PartitionBy.NONE && timestampLo > partitionHi) {
+            // TODO parse the truncate flag to switchPartition all the way down to the mem.close
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                AppendMemory mem1 = getPrimaryColumn(columnIndex);
+                mem1.close(false);
+                AppendMemory mem2 = getSecondaryColumn(columnIndex);
+                if (null != mem2) {
+                    mem2.close(false);
+                }
+            }
+            switchPartition(timestampLo);
+        }
+        transientRowCount += nRowsAdded;
+        this.prevMaxTimestamp = maxTimestamp;
+        this.maxTimestamp = timestampHi;
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             // Handle column tops
@@ -2796,7 +2818,7 @@ public class TableWriter implements Closeable {
                     try {
                         assert columnTop == 0;
                         assert blockColumnTop > 0;
-                        TableUtils.setPathForPartition(path, partitionBy, firstTimestamp);
+                        TableUtils.setPathForPartition(path, partitionBy, timestampLo);
                         columnTops.setQuick(columnIndex, blockColumnTop);
                         writeColumnTop(getMetadata().getColumnName(columnIndex), blockColumnTop);
                     } finally {
@@ -2804,32 +2826,19 @@ public class TableWriter implements Closeable {
                     }
                 }
             }
-
-            long colNRowsAdded;
-            if (blockColumnTop <= transientRowCount) {
-                colNRowsAdded = nRowsAdded;
-            } else {
-                colNRowsAdded = nRowsAdded - (blockColumnTop - transientRowCount);
-            }
         }
     }
 
     void commitBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
-        if (lastTimestamp < maxTimestamp) {
-            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
-        }
 
         if (minTimestamp == Long.MAX_VALUE) {
             minTimestamp = firstTimestamp;
         }
-        TableWriter.this.prevMaxTimestamp = TableWriter.this.maxTimestamp;
-        TableWriter.this.maxTimestamp = lastTimestamp;
 
         for (int i = 0; i < columnCount; i++) {
             refs.setQuick(i, masterRef);
         }
 
-        transientRowCount += nRowsAdded;
         masterRef++;
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
@@ -2837,12 +2846,6 @@ public class TableWriter implements Closeable {
 
         TableWriter.this.commit();
         setAppendPosition(transientRowCount);
-    }
-
-    public TableBlockWriter newBlock() {
-        bumpMasterRef();
-        blockWriter.open(this);
-        return blockWriter;
     }
 
     @FunctionalInterface

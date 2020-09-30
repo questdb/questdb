@@ -714,6 +714,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void replicateTable(String sourceTableName, String destTableName, long nFirstRow, boolean commit, long maxRowsPerFrame, boolean cancel) {
+        boolean commitAllAtOnce = true;
         LOG.info().$("Replicating table from row ").$(nFirstRow).$();
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
@@ -724,8 +725,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             int timestampColumnIndex = reader.getMetadata().getTimestampIndex();
             TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, timestampColumnIndex, nFirstRow);
             PageFrame frame;
+            TableBlockWriter blockWriter = null;
+            if (commitAllAtOnce) {
+                blockWriter = writer.newBlock();
+            }
             while ((frame = cursor.next()) != null) {
-                TableBlockWriter blockWriter = writer.newBlock();
+                if (!commitAllAtOnce) {
+                    blockWriter = writer.newBlock();
+                }
                 long firstTimestamp = frame.getFirstTimestamp();
                 LOG.info().$("Replicating frame from ").$ts(firstTimestamp).$();
                 blockWriter.startPageFrame(firstTimestamp);
@@ -752,6 +759,22 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     blockWriter.appendPageFrameColumn(columnIndex, pageFrameLength, pageAddress, pageFrameNRows);
                 }
                 nFrames++;
+                if (!commitAllAtOnce) {
+                    if (commit) {
+                        while (busyCount.get() == 0) {
+                            LockSupport.parkNanos(0);
+                        }
+                        assert !cancel;
+                        blockWriter.commit();
+                    } else {
+                        if (cancel) {
+                            blockWriter.cancel();
+                        }
+                        break;
+                    }
+                }
+            }
+            if (commitAllAtOnce) {
                 if (commit) {
                     while (busyCount.get() == 0) {
                         LockSupport.parkNanos(0);
@@ -762,7 +785,6 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     if (cancel) {
                         blockWriter.cancel();
                     }
-                    break;
                 }
             }
             LOG.info().$("Replication finished in ").$(nFrames).$(" frames per row").$();
