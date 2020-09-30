@@ -2002,7 +2002,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertTableDoesNotExistPrepared() throws Exception {
-        testInsertTableDoesNotExist(false, "table 'x' does not exist");
+        testInsertTableDoesNotExist(false, "Cannot append. File does not exist");
     }
 
     @Test

@@ -1213,52 +1213,20 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void processBind(
-            @Transient ObjList<BindVariableSetter> bindVariableSetters,
-            @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<Object> factoryCache,
-            long msgLimit,
-            long lo,
-            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap
-    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        long hi;
-        short parameterFormatCount;
-        short parameterValueCount;
-
-        hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad portal name length [msgType='B']");
-
-        lo = hi + 1;
-        hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad prepared statement name length [msgType='B']");
-
-        CharSequence statementName = getStatementName(lo, hi);
-        if (statementName != null) {
-            setupNamedStatement(bindVariableSetters, namedStatementMap, statementName);
+    private boolean isCachedQuery(AssociativeCache<Object> factoryCache) {
+        final Object cachedFactory = factoryCache.peek(queryText);
+        if (cachedFactory instanceof RecordCursorFactory) {
+            queryTag = TAG_SELECT;
+            currentFactory = (RecordCursorFactory) cachedFactory;
+        } else if (cachedFactory instanceof InsertStatement) {
+            queryTag = TAG_INSERT;
+            currentInsertStatement = (InsertStatement) cachedFactory;
+        } else {
+            if (queryText.length() == 0) {
+                isEmptyQuery = true;
+            }
         }
-
-        lo = hi + 1;
-        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter format code count");
-
-        parameterFormats.clear();
-        parameterFormatCount = getShort(lo);
-        lo += Short.BYTES;
-        if (parameterFormatCount > 0) {
-            bindParameterFormats(lo, msgLimit, parameterFormatCount);
-        }
-
-        lo += parameterFormatCount * Short.BYTES;
-        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter value count");
-        parameterValueCount = getShort(lo);
-
-        if (parameterValueCount > 0) {
-            lo += Short.BYTES;
-            bindParameterValues(lo, msgLimit, parameterValueCount, bindVariableSetters);
-        }
-        if (statementName == null && queryText.length() > 0) {
-            compileQuery(compiler, factoryCache);
-        }
-        prepareBindComplete();
+        return cachedFactory != null;
     }
 
     private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1389,6 +1357,55 @@ public class PGConnectionContext implements IOContext, Mutable {
             bindVarTypesPool.push(bindVariableTypes);
         }
         prepareParseComplete();
+    }
+
+    private void processBind(
+            @Transient ObjList<BindVariableSetter> bindVariableSetters,
+            @Transient SqlCompiler compiler,
+            @Transient AssociativeCache<Object> factoryCache,
+            long msgLimit,
+            long lo,
+            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap
+    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        long hi;
+        short parameterFormatCount;
+        short parameterValueCount;
+
+        hi = getStringLength(lo, msgLimit);
+        checkNotTrue(hi == -1, "bad portal name length [msgType='B']");
+
+        lo = hi + 1;
+        hi = getStringLength(lo, msgLimit);
+        checkNotTrue(hi == -1, "bad prepared statement name length [msgType='B']");
+
+        CharSequence statementName = getStatementName(lo, hi);
+        if (statementName != null) {
+            setupNamedStatement(bindVariableSetters, namedStatementMap, statementName);
+        }
+
+        lo = hi + 1;
+        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter format code count");
+
+        parameterFormats.clear();
+        parameterFormatCount = getShort(lo);
+        lo += Short.BYTES;
+        if (parameterFormatCount > 0) {
+            bindParameterFormats(lo, msgLimit, parameterFormatCount);
+        }
+
+        lo += parameterFormatCount * Short.BYTES;
+        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter value count");
+        parameterValueCount = getShort(lo);
+
+        if (parameterValueCount > 0) {
+            lo += Short.BYTES;
+            bindParameterValues(lo, msgLimit, parameterValueCount, bindVariableSetters);
+        }
+
+        if (statementName == null && queryText.length() > 0 && !isCachedQuery(factoryCache)) {
+            compileQuery(compiler, factoryCache);
+        }
+        prepareBindComplete();
     }
 
     private void processInitialMessage(long address, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
