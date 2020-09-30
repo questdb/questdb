@@ -1494,6 +1494,15 @@ public class TableWriter implements Closeable {
         throw new CairoError("Table '" + name.toString() + "' is distressed");
     }
 
+    private void closeAppendMemoryNoTruncate(boolean truncate) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            AppendMemory m = columns.getQuick(i);
+            if (m != null) {
+                m.close(truncate);
+            }
+        }
+    }
+
     private void commitPendingPartitions() {
         long offset = 0;
         for (int i = 0; i < txPartitionCount - 1; i++) {
@@ -2015,9 +2024,9 @@ public class TableWriter implements Closeable {
 
                             long indexSize = dataIndexMax << shl;
                             long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
-                            if (indexFd < 0) {
-                                columns.getQuick(getSecondaryColumnIndex(i)).releaseCurrentPage();
-                            }
+//                            if (indexFd < 0) {
+//                                columns.getQuick(getSecondaryColumnIndex(i)).releaseCurrentPage();
+//                            }
 
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, indexAddr);
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, indexSize);
@@ -2040,9 +2049,9 @@ public class TableWriter implements Closeable {
                             }
                             MergeStruct.setSrcVarFd(mergeStruct, i, dataFd);
                             long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
-                            if (dataFd < 0) {
-                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
-                            }
+//                            if (dataFd < 0) {
+//                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
+//                            }
                             MergeStruct.setSrcVarAddress(mergeStruct, i, dataAddr);
                             MergeStruct.setSrcVarAddressSize(mergeStruct, i, dataSize);
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`, addr=").$(dataAddr).$(", size=").$(dataSize).$(']').$();
@@ -2123,9 +2132,9 @@ public class TableWriter implements Closeable {
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`]").$();
                             MergeStruct.mergeStructSetSrcFixedFd(mergeStruct, i, dataFd);
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize));
-                            if (dataFd < 0) {
-                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
-                            }
+//                            if (dataFd < 0) {
+//                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
+//                            }
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, dataSize);
                         }
 
@@ -2187,12 +2196,7 @@ public class TableWriter implements Closeable {
     private void freeColumns(boolean truncate) {
         // null check is because this method could be called from the constructor
         if (columns != null) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                AppendMemory m = columns.getQuick(i);
-                if (m != null) {
-                    m.close(truncate);
-                }
-            }
+            closeAppendMemoryNoTruncate(truncate);
         }
         Misc.freeObjListAndKeepObjects(mergeColumns);
     }
@@ -2593,6 +2597,7 @@ public class TableWriter implements Closeable {
 
     private void mergeOutOfOrderRecords() {
         final int timestampIndex = metadata.getTimestampIndex();
+        final long ceilOfMaxTimestamp = ceilMaxTimestamp();
         try {
 
             // we may need to re-use file descriptors when this partition is the "current" one
@@ -2601,7 +2606,6 @@ public class TableWriter implements Closeable {
             // to determine that 'ooTimestampLo' goes into current partition
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
-            final long ceilOfMaxTimestamp = ceilMaxTimestamp();
             LOG.info().$("sorting [name=").$(name).$(']').$();
             final long mergedTimestamps = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(mergedTimestamps, mergeRowCount);
@@ -3003,6 +3007,8 @@ public class TableWriter implements Closeable {
                         path.trimTo(plen);
                         final long[] mergeStruct;
                         if (prefixType == OO_BLOCK_NONE && mergeType == OO_BLOCK_NONE) {
+                            // We do not need to create a copy of partition when we simply need to append
+                            // existing the one.
                             mergeStruct = prepareAppendMemory(
                                     indexLo,
                                     indexHi,
@@ -3022,7 +3028,6 @@ public class TableWriter implements Closeable {
                             );
                         }
                         try {
-
                             switch (prefixType) {
                                 case OO_BLOCK_OO:
                                     LOG.info().$("copy ooo prefix set [from=").$(prefixLo).$(", to=").$(prefixHi).$(']').$();
@@ -3149,6 +3154,18 @@ public class TableWriter implements Closeable {
             path.trimTo(rootLen);
             this.mergeRowCount = 0;
         }
+
+        // Alright, we finished updating partitions. Now we need to get this writer instance into
+        // a consistent state.
+        //
+        // We start with ensuring append memory is in ready-to-use state
+        if (ceilOfMaxTimestamp != ceilMaxTimestamp()) {
+            // close all columns without truncating the underlying file
+            closeAppendMemoryNoTruncate(false);
+            openPartition(maxTimestamp);
+            setAppendPosition(this.transientRowCount);
+        }
+        setAppendPosition(this.transientRowCount);
     }
 
     private void mergeShuffle(
