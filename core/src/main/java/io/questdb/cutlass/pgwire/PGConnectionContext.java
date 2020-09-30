@@ -1351,25 +1351,25 @@ public class PGConnectionContext implements IOContext, Mutable {
         // at this point we may have a current query that is not null
         // this is ok to lose reference to this query because we have cache
         // of all of them, which is looked up by query text
-        final Object statement = factoryCache.peek(queryText);
-        if (statement == null) {
-            if (queryText.length() <= 0) {
+        final Object cachedFactory = factoryCache.peek(queryText);
+
+        if (cachedFactory instanceof RecordCursorFactory) {
+            queryTag = TAG_SELECT;
+            currentFactory = (RecordCursorFactory) cachedFactory;
+        } else if (cachedFactory instanceof InsertStatement) {
+            queryTag = TAG_INSERT;
+            currentInsertStatement = (InsertStatement) cachedFactory;
+        } else {
+            if (queryText.length() == 0) {
                 isEmptyQuery = true;
             }
-        } else {
-            if (statement instanceof RecordCursorFactory) {
-                queryTag = TAG_SELECT;
-                currentFactory = (RecordCursorFactory) statement;
-            } else if (statement instanceof InsertStatement) {
-                queryTag = TAG_INSERT;
-                currentInsertStatement = (InsertStatement) statement;
-            } else {
-                assert false;
-            }
         }
-        //cache named statement
+
+        //need to cache named statement
         if (statementName != null) {
-            compileQuery(compiler, factoryCache);
+            if (cachedFactory == null) {
+                compileQuery(compiler, factoryCache);
+            }
             NamedStatementWrapper wrapper = namedStatementWrapperPool.pop();
             if (currentFactory != null) {
                 wrapper.selectFactory = currentFactory;
@@ -1378,6 +1378,8 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
             wrapper.bindVariableTypes = bindVariableTypes;
             namedStatementMap.put(statementName, wrapper);
+        } else if (bindVariableTypes != null) {
+            bindVarTypesPool.push(bindVariableTypes);
         }
         prepareParseComplete();
     }
