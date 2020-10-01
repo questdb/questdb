@@ -68,6 +68,8 @@ public class TableBlockWriter implements Closeable {
     }
 
     public void appendPageFrameColumn(int columnIndex, long pageFrameLength, long sourceAddress, long pageFrameNRows) {
+        LOG.info().$("appending data").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", pageFrameLength=").$(pageFrameLength).$(", pageFrameNRows=")
+                .$(pageFrameNRows).$(']').$();
         if (columnIndex == timestampColumnIndex) {
             long firstBlockTimetamp = Unsafe.getUnsafe().getLong(sourceAddress);
             if (firstBlockTimetamp < firstTimestamp) {
@@ -127,11 +129,12 @@ public class TableBlockWriter implements Closeable {
     }
 
     public void appendSymbolCharsBlock(int columnIndex, long blockLength, long sourceAddress) {
+        LOG.info().$("appending symbols").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", blockLength=").$(blockLength).$(']').$();
         writer.getSymbolMapWriter(columnIndex).appendSymbolCharsBlock(blockLength, sourceAddress);
     }
 
     public void commit() {
-        LOG.info().$("committing block write for ").$(writer.getName()).$(" [firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
+        LOG.info().$("committing block write").$(" [tableName=").$(writer.getName()).$(", firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         // Need to complete all data tasks before we can start index tasks
         completePendingConcurrentTasks(false);
         long nTotalRowsAdded = 0;
@@ -412,7 +415,9 @@ public class TableBlockWriter implements Closeable {
         private TableBlockWriterTask task;
     }
 
-    private enum TaskType {        AppendBlock, GenerateStringIndex, GenerateBinaryIndex    };
+    private enum TaskType {
+        AppendBlock, GenerateStringIndex, GenerateBinaryIndex
+    };
 
     private class TableBlockWriterTask {
         private TaskType taskType;

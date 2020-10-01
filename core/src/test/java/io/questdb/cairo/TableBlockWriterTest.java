@@ -1,5 +1,6 @@
 package io.questdb.cairo;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -26,56 +27,86 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() throws Exception {
-        runTest(false, () -> {
+        runTest("testSimple", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG) TIMESTAMP(ts);", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 2);
             engine.releaseInactive();
         });
     }
 
+    private void runReplicationTests(String expected, String tableCreateFields, int nMaxThreads) throws SqlException {
+        int nTest = 1;
+        for (int nThreads = 0; nThreads <= nMaxThreads; nThreads++) {
+            String destTableName = "dest" + nTest;
+            compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
+            replicateTable("source", destTableName, 0, true, Long.MAX_VALUE, false, false, nThreads);
+            String actual = select("SELECT * FROM " + destTableName);
+            Assert.assertEquals(expected, actual);
+            nTest++;
+
+            destTableName = "dest" + nTest;
+            compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
+            replicateTable("source", destTableName, 0, true, Long.MAX_VALUE, false, true, nThreads);
+            actual = select("SELECT * FROM " + destTableName);
+            Assert.assertEquals(expected, actual);
+            nTest++;
+        }
+    }
+
     @Test
     public void testSimpleResumeBlock() throws Exception {
-        runTest(false, () -> {
-            int nConsecutiveRows = 50;
+        int nTest = 1;
+        long[] maxRowsPerFrameList = { Long.MAX_VALUE, 1, 2 };
+        int[] nConsecutiveRowList = { 50, 10, 71 };
+        for (int nThreads = 0; nThreads < 2; nThreads++) {
+            for (long maxRowsPerFrame : maxRowsPerFrameList) {
+                for (int nConsecutiveRows : nConsecutiveRowList) {
+                    testSimpleResumeBlock(nTest, maxRowsPerFrame, true, nThreads, nConsecutiveRows);
+                    nTest++;
+                    testSimpleResumeBlock(nTest, maxRowsPerFrame, false, nThreads, nConsecutiveRows);
+                    nTest++;
+                }
+            }
+        }
+    }
+
+    private void testSimpleResumeBlock(int nTest, long maxRowsPerFrame, boolean commitAllAtOnce, int nThreads, int nConsecutiveRows) throws Exception {
+        runTest("testSimpleResumeBlock", () -> {
+            String destTableName = "dest" + nTest;
+            String sourceTableName = "source" + nTest;
             long tsStart = 0;
             long tsInc = 1000000000;
-            compiler.compile("CREATE TABLE source AS (" +
+            compiler.compile("CREATE TABLE " + sourceTableName + " AS (" +
                     "SELECT" +
                     " rnd_long(100,200,2) j," +
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts" +
                     " from long_sequence(" + nConsecutiveRows + ")" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM " + sourceTableName);
 
             compiler.compile(
-                    "CREATE TABLE dest (j LONG, ts TIMESTAMP) TIMESTAMP(ts);",
+                    "CREATE TABLE " + destTableName + " (j LONG, ts TIMESTAMP) TIMESTAMP(ts);",
                     sqlExecutionContext);
-            replicateTable("source", "dest");
-            String actual = select("SELECT * FROM dest");
+            replicateTable(sourceTableName, destTableName, 0, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
+            String actual = select("SELECT * FROM " + destTableName);
             Assert.assertEquals(expected, actual);
 
             tsStart += nConsecutiveRows * tsInc;
-            compiler.compile("INSERT INTO source(j, ts) " +
+            compiler.compile("INSERT INTO " + sourceTableName + "(j, ts) " +
                     "SELECT" +
                     " rnd_long(100,200,2) j," +
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts" +
                     " from long_sequence(" + nConsecutiveRows + ")" +
                     ";",
                     sqlExecutionContext);
-            expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", nConsecutiveRows);
-            actual = select("SELECT * FROM dest");
+            expected = select("SELECT * FROM " + sourceTableName);
+            replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
+            actual = select("SELECT * FROM " + destTableName);
             Assert.assertEquals(expected, actual);
 
             engine.releaseInactive();
@@ -84,50 +115,55 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleResumeBlockWithRetry() throws Exception {
-        testSimpleResumeBlockWithRetry(true);
+        int nTest = 0;
+        boolean[] bools = { true, false };
+        for (int nThreads = 0; nThreads <= 2; nThreads++) {
+            for (boolean commitAllAtOnce : bools) {
+                for (boolean cancel : bools) {
+                    testSimpleResumeBlockWithRetry(nTest++, cancel, commitAllAtOnce, nThreads);
+                }
+            }
+        }
     }
 
-    @Test
-    public void testSimpleResumeBlockWithRetryAndNoCancel() throws Exception {
-        testSimpleResumeBlockWithRetry(false);
-    }
-
-    private void testSimpleResumeBlockWithRetry(boolean cancel) throws Exception {
-        runTest(false, () -> {
+    private void testSimpleResumeBlockWithRetry(int nTest, boolean cancel, boolean commitAllAtOnce, int nThreads) throws Exception {
+        runTest("testSimpleResumeBlockWithRetry(" + cancel + ")", () -> {
+            String sourceTableName = "source" + nTest;
+            String destTableName = "dest" + nTest;
             int nConsecutiveRows = 10;
             long tsStart = 0;
             long tsInc = 1000000000;
-            compiler.compile("CREATE TABLE source AS (" +
+            compiler.compile("CREATE TABLE " + sourceTableName + " AS (" +
                     "SELECT" +
                     " rnd_long(100,200,2) j," +
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts" +
                     " from long_sequence(" + nConsecutiveRows + ")" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM " + sourceTableName);
 
             compiler.compile(
-                    "CREATE TABLE dest (j LONG, ts TIMESTAMP) TIMESTAMP(ts);",
+                    "CREATE TABLE " + destTableName + " (j LONG, ts TIMESTAMP) TIMESTAMP(ts);",
                     sqlExecutionContext);
-            replicateTable("source", "dest");
-            String actual = select("SELECT * FROM dest");
+            replicateTable(sourceTableName, destTableName, 0, true, Long.MAX_VALUE, false, commitAllAtOnce, nThreads);
+            String actual = select("SELECT * FROM " + destTableName);
             Assert.assertEquals(expected, actual);
 
             tsStart += nConsecutiveRows * tsInc;
-            compiler.compile("INSERT INTO source(j, ts) " +
+            compiler.compile("INSERT INTO " + sourceTableName + "(j, ts) " +
                     "SELECT" +
                     " rnd_long(100,200,2) j," +
                     " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts" +
                     " from long_sequence(" + nConsecutiveRows + ")" +
                     ";",
                     sqlExecutionContext);
-            replicateTable("source", "dest", nConsecutiveRows, false, Long.MAX_VALUE, cancel);
-            actual = select("SELECT * FROM dest");
+            replicateTable(sourceTableName, destTableName, nConsecutiveRows, false, Long.MAX_VALUE, cancel, commitAllAtOnce, nThreads);
+            actual = select("SELECT * FROM " + destTableName);
             Assert.assertEquals(expected, actual);
 
-            replicateTable("source", "dest", nConsecutiveRows, true, Long.MAX_VALUE, false);
-            actual = select("SELECT * FROM dest");
-            expected = select("SELECT * FROM source");
+            replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, Long.MAX_VALUE, false, commitAllAtOnce, nThreads);
+            actual = select("SELECT * FROM " + destTableName);
+            expected = select("SELECT * FROM " + sourceTableName);
             Assert.assertEquals(expected, actual);
 
             engine.releaseInactive();
@@ -136,38 +172,26 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitioned() throws Exception {
-        runTest(false, () -> {
+        runTest("testPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                     ") TIMESTAMP (ts) PARTITION BY DAY;",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY;", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 2);
             engine.releaseInactive();
         });
     }
 
     @Test
     public void testNoTimestamp() throws Exception {
-        runTest(false, () -> {
+        runTest("testNoTimestamp", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                     ");",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (l LONG);", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(l LONG)", 1);
             engine.releaseInactive();
         });
     }
@@ -183,7 +207,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void testString(boolean endsWithNull) throws Exception {
-        runTest(false, () -> {
+        runTest("testString", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(5,10,2) s FROM long_sequence(300)" +
                     ") TIMESTAMP (ts);",
@@ -200,13 +224,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                         sqlExecutionContext);
             }
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, s STRING) TIMESTAMP(ts);", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 2);
             engine.releaseInactive();
         });
     }
@@ -222,7 +240,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void testBinary(boolean endsWithNull) throws Exception {
-        runTest(false, () -> {
+        runTest("testBinary", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_bin(10, 20, 2) bin FROM long_sequence(500)" +
                     ") TIMESTAMP (ts);",
@@ -239,39 +257,27 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                         sqlExecutionContext);
             }
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, bin BINARY) TIMESTAMP(ts);", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(ts TIMESTAMP, bin BINARY) TIMESTAMP(ts)", 2);
             engine.releaseInactive();
         });
     }
 
     @Test
     public void testSymbol() throws Exception {
-        runTest(false, () -> {
+        runTest("testSymbol", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_symbol(60,2,16,2) sym FROM long_sequence(500)" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts);", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", 2);
             engine.releaseInactive();
         });
     }
 
     @Test
     public void testAllTypes() throws Exception {
-        runTest(true, () -> {
+        runTest("testAllTypes", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT" +
                     " rnd_char() ch," +
@@ -296,22 +302,16 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile(
-                    "CREATE TABLE dest (ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts);",
-                    sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected,
+                    "(ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts)",
+                    8);
             engine.releaseInactive();
         });
     }
 
     @Test
     public void testAllTypesPartitioned() throws Exception {
-        runTest(true, () -> {
+        runTest("testAllTypesPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT" +
                     " rnd_char() ch," +
@@ -336,35 +336,49 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     ") TIMESTAMP (ts) PARTITION BY DAY;",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile(
-                    "CREATE TABLE dest (ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts) PARTITION BY DAY;",
-                    sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected,
+                    "(ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts) PARTITION BY DAY",
+                    8);
             engine.releaseInactive();
         });
     }
 
     @Test
     public void testAllTypesResumeBlock() throws Exception {
-        testAllTypesResumeBlock(Long.MAX_VALUE);
+        int nTest = 0;
+        boolean[] bools = { true, false };
+        long[] maxRowsPerFrameList = { Long.MAX_VALUE, 3, 4 };
+        for (int nThreads = 0; nThreads <= 8; nThreads++) {
+            for (boolean retry : bools) {
+                for (boolean cancel : bools) {
+                    for (boolean partitioned : bools) {
+                        for (boolean commitAllAtOnce : bools) {
+                            for (long maxRowsPerFrame : maxRowsPerFrameList) {
+                                if (!retry && cancel) {
+                                    continue;
+                                }
+                                testAllTypesResumeBlock(nTest++, maxRowsPerFrame, commitAllAtOnce, nThreads, partitioned, retry, cancel);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    @Test
-    public void testAllTypesResumeBlockFragmentedFrames() throws Exception {
-        testAllTypesResumeBlock(4);
-    }
-
-    public void testAllTypesResumeBlock(long maxRowsPerFrame) throws Exception {
-        runTest(true, () -> {
+    public void testAllTypesResumeBlock(int nTest, long maxRowsPerFrame, boolean commitAllAtOnce, int nThreads, boolean partitioned, boolean retry, boolean cancel) throws Exception {
+        if (!retry && cancel) {
+            // This scenario does not make sense;
+            return;
+        }
+        runTest("testAllTypesResumeBlock(" + maxRowsPerFrame + ")", () -> {
+            String sourceTableName = "source" + nTest;
+            String destTableName = "dest" + nTest;
+            String partitionSrt = partitioned ? " PARTITION BY DAY" : "";
             int nConsecutiveRows = 50;
             long tsStart = 0;
             long tsInc = 1000000000;
-            compiler.compile("CREATE TABLE source AS (" +
+            compiler.compile("CREATE TABLE " + sourceTableName + " AS (" +
                     "SELECT" +
                     " rnd_char() ch," +
                     " rnd_long256() ll," +
@@ -385,20 +399,22 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     " rnd_byte(2,50) l," +
                     " rnd_bin(10, 20, 2) m" +
                     " from long_sequence(" + nConsecutiveRows + ")" +
-                    ") TIMESTAMP (ts);",
+                    ") TIMESTAMP (ts)" + partitionSrt + ";",
                     sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM " + sourceTableName);
 
             compiler.compile(
-                    "CREATE TABLE dest (ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts);",
+                    "CREATE TABLE " + destTableName
+                            + " (ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts)"
+                            + partitionSrt + ";",
                     sqlExecutionContext);
-            replicateTable("source", "dest");
+            replicateTable(sourceTableName, destTableName, 0, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
 
-            String actual = select("SELECT * FROM dest");
+            String actual = select("SELECT * FROM " + destTableName);
             Assert.assertEquals(expected, actual);
 
             tsStart += nConsecutiveRows * tsInc;
-            compiler.compile("INSERT INTO source(ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m) " +
+            compiler.compile("INSERT INTO " + sourceTableName + "(ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m) " +
                     "SELECT" +
                     " rnd_char() ch," +
                     " rnd_long256() ll," +
@@ -421,173 +437,23 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     " from long_sequence(" + nConsecutiveRows + ")" +
                     ";",
                     sqlExecutionContext);
-            expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", nConsecutiveRows);
 
-            engine.releaseInactive();
-        });
-    }
+            if (!retry) {
+                expected = select("SELECT * FROM " + sourceTableName);
+                replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
+                actual = select("SELECT * FROM " + destTableName);
+                Assert.assertEquals(expected, actual);
+            } else {
 
-    @Test
-    public void testAllTypesPartitionedResumeBlock() throws Exception {
-        testAllTypesPartitionedResumeBlock(Long.MAX_VALUE);
-    }
+                replicateTable(sourceTableName, destTableName, nConsecutiveRows, false, maxRowsPerFrame, cancel, commitAllAtOnce, nThreads);
+                actual = select("SELECT * FROM " + destTableName);
+                Assert.assertEquals(expected, actual);
 
-    @Test
-    public void testAllTypesPartitionedResumeBlockFragmentedFrames() throws Exception {
-        testAllTypesPartitionedResumeBlock(3);
-    }
-
-    private void testAllTypesPartitionedResumeBlock(long maxRowsPerFrame) throws Exception {
-        runTest(true, () -> {
-            long nConsecuriveRows = 50;
-            long tsStart = 0;
-            long tsInc = 1000000000;
-            compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT" +
-                    " rnd_char() ch," +
-                    " rnd_long256() ll," +
-                    " rnd_int() a1," +
-                    " rnd_int(0, 30, 2) a," +
-                    " rnd_boolean() b," +
-                    " rnd_str(3,3,2) c," +
-                    " rnd_double(2) d," +
-                    " rnd_float(2) e," +
-                    " rnd_short(10,1024) f," +
-                    " rnd_short() f1," +
-                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                    " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
-                    " rnd_symbol(4,4,4,2) i," +
-                    " rnd_long(100,200,2) j," +
-                    " rnd_long() j1," +
-                    " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts," +
-                    " rnd_byte(2,50) l," +
-                    " rnd_bin(10, 20, 2) m" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
-                    ") TIMESTAMP (ts) PARTITION BY DAY;",
-                    sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
-
-            compiler.compile(
-                    "CREATE TABLE dest (ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts) PARTITION BY DAY;",
-                    sqlExecutionContext);
-            replicateTable("source", "dest", 0, true, maxRowsPerFrame, false);
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
-            tsStart += nConsecuriveRows * tsInc;
-            compiler.compile("INSERT INTO source(ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m) " +
-                    "SELECT" +
-                    " rnd_char() ch," +
-                    " rnd_long256() ll," +
-                    " rnd_int() a1," +
-                    " rnd_int(0, 30, 2) a," +
-                    " rnd_boolean() b," +
-                    " rnd_str(3,3,2) c," +
-                    " rnd_double(2) d," +
-                    " rnd_float(2) e," +
-                    " rnd_short(10,1024) f," +
-                    " rnd_short() f1," +
-                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                    " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
-                    " rnd_symbol(4,4,4,2) i," +
-                    " rnd_long(100,200,2) j," +
-                    " rnd_long() j1," +
-                    " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts," +
-                    " rnd_byte(2,50) l," +
-                    " rnd_bin(10, 20, 2) m" +
-                    " from long_sequence(" + (nConsecuriveRows + 2) + ")" +
-                    ";",
-                    sqlExecutionContext);
-            expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", nConsecuriveRows, true, maxRowsPerFrame, false);
-
-            engine.releaseInactive();
-        });
-    }
-
-    @Test
-    public void testAllTypesResumeBlockWithRetry() throws Exception {
-        testAllTypesResumeBlockWithRetry(true);
-    }
-
-    @Test
-    public void testAllTypesResumeBlockWithRetryAndNoCancel() throws Exception {
-        testAllTypesResumeBlockWithRetry(false);
-    }
-
-    private void testAllTypesResumeBlockWithRetry(boolean cancel) throws Exception {
-        runTest(true, () -> {
-            int nConsecuriveRows = 50;
-            long tsStart = 0;
-            long tsInc = 1000000000;
-            compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT" +
-                    " rnd_char() ch," +
-                    " rnd_long256() ll," +
-                    " rnd_int() a1," +
-                    " rnd_int(0, 30, 2) a," +
-                    " rnd_boolean() b," +
-                    " rnd_str(3,3,2) c," +
-                    " rnd_double(2) d," +
-                    " rnd_float(2) e," +
-                    " rnd_short(10,1024) f," +
-                    " rnd_short() f1," +
-                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                    " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
-                    " rnd_symbol(4,4,4,2) i," +
-                    " rnd_long(100,200,2) j," +
-                    " rnd_long() j1," +
-                    " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts," +
-                    " rnd_byte(2,50) l," +
-                    " rnd_bin(10, 20, 2) m" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
-                    ") TIMESTAMP (ts);",
-                    sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
-
-            compiler.compile(
-                    "CREATE TABLE dest (ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts);",
-                    sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
-            tsStart += nConsecuriveRows * tsInc;
-            compiler.compile("INSERT INTO source(ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m) " +
-                    "SELECT" +
-                    " rnd_char() ch," +
-                    " rnd_long256() ll," +
-                    " rnd_int() a1," +
-                    " rnd_int(0, 30, 2) a," +
-                    " rnd_boolean() b," +
-                    " rnd_str(3,3,2) c," +
-                    " rnd_double(2) d," +
-                    " rnd_float(2) e," +
-                    " rnd_short(10,1024) f," +
-                    " rnd_short() f1," +
-                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                    " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
-                    " rnd_symbol(4,4,4,2) i," +
-                    " rnd_long(100,200,2) j," +
-                    " rnd_long() j1," +
-                    " timestamp_sequence(" + tsStart + ", " + tsInc + ") ts," +
-                    " rnd_byte(2,50) l," +
-                    " rnd_bin(10, 20, 2) m" +
-                    " from long_sequence(" + nConsecuriveRows + ")" +
-                    ";",
-                    sqlExecutionContext);
-
-            replicateTable("source", "dest", nConsecuriveRows, false, Long.MAX_VALUE, cancel);
-            actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
-            expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", nConsecuriveRows, true, Long.MAX_VALUE, false);
-            actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
+                expected = select("SELECT * FROM " + sourceTableName);
+                replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
+                actual = select("SELECT * FROM " + destTableName);
+                Assert.assertEquals(expected, actual);
+            }
 
             engine.releaseInactive();
         });
@@ -595,7 +461,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumn1() throws Exception {
-        runTest(false, () -> {
+        runTest("testAddColumn1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
                     ") TIMESTAMP (ts);",
@@ -603,20 +469,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             compiler.compile("ALTER TABLE source ADD COLUMN str STRING",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts);", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts)", 2);
             engine.releaseInactive();
         });
     }
 
     @Test
     public void testAddColumn2() throws Exception {
-        runTest(false, () -> {
+        runTest("testAddColumn2", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
                     ") TIMESTAMP (ts);",
@@ -632,20 +492,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     ";",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts);", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts)", 2);
             engine.releaseInactive();
         });
     }
 
     @Test
     public void testAddColumnPartitioned() throws Exception {
-        runTest(false, () -> {
+        runTest("testAddColumnPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(200)" +
                     ") TIMESTAMP (ts) PARTITION BY DAY;",
@@ -661,61 +515,52 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     ";",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
-
-            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts) PARTITION BY DAY;", sqlExecutionContext);
-            replicateTable("source", "dest");
-
-            String actual = select("SELECT * FROM dest");
-            Assert.assertEquals(expected, actual);
-
+            runReplicationTests(expected, "(ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts) PARTITION BY DAY", 2);
             engine.releaseInactive();
         });
     }
 
-    private final AtomicInteger busyCount = new AtomicInteger();
+    private void runTest(String name, LeakProneCode runnable) throws Exception {
+        LOG.info().$("Starting test ").$(name).$();
+        TestUtils.assertMemoryLeak(runnable);
+        LOG.info().$("Finished test ").$(name).$();
+    }
 
-    private void runTest(boolean threaded, LeakProneCode runnable) throws Exception {
-        final SOCountDownLatch running = new SOCountDownLatch(1);
-        final SOCountDownLatch finished = new SOCountDownLatch(1);
-        Thread t = null;
-        if (threaded) {
-            busyCount.set(0);
-            final TableBlockWriterJob job = new TableBlockWriterJob(engine.getMessageBus());
-            t = new Thread() {
+    private void replicateTable(
+            String sourceTableName, String destTableName, long nFirstRow, boolean commit, long maxRowsPerFrame, boolean cancel, boolean commitAllAtOnce, int nThreads
+    ) {
+        LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$(", nFirstRow=").$(nFirstRow).$(", commit=").$(commit)
+                .$(", maxRowsPerFrame=").$(maxRowsPerFrame).$(", cancel=").$(cancel).$(", commitAllAtOnce=").$(commitAllAtOnce).$(", nThreads=").$(nThreads).$(']').$();
+
+        Thread[] threads = new Thread[nThreads];
+        final SOCountDownLatch threadsStarted = new SOCountDownLatch(nThreads);
+        final AtomicBoolean threadsRunning = new AtomicBoolean(true);
+        final SOCountDownLatch threadsFinished = new SOCountDownLatch(nThreads);
+        final AtomicInteger nBusyCycles = new AtomicInteger(0);
+        final TableBlockWriterJob job = new TableBlockWriterJob(engine.getMessageBus());
+        for (int n = 0; n < nThreads; n++) {
+            final int workerId = n;
+            Thread t = new Thread() {
                 @Override
                 public void run() {
-                    while (running.getCount() > 0) {
-                        boolean busy = job.run(0);
-                        if (busy) {
-                            busyCount.incrementAndGet();
+                    LOG.info().$("Starting worker ").$(workerId).$();
+                    threadsStarted.countDown();
+                    while (threadsRunning.get()) {
+                        if (job.run(workerId)) {
+                            nBusyCycles.incrementAndGet();
                         }
                         Thread.yield();
                     }
-                    finished.countDown();
+                    LOG.info().$("Stopping worker ").$(workerId).$();
+                    threadsFinished.countDown();
                 }
             };
             t.start();
-        } else {
-            busyCount.set(1);
+            threads[n] = t;
         }
-        TestUtils.assertMemoryLeak(runnable);
-        if (null != t) {
-            running.countDown();
-            finished.await();
-        }
-    }
+        threadsStarted.await();
+        LOG.info().$(nThreads).$(" worker threads startede").$();
 
-    private void replicateTable(String sourceTableName, String destTableName) {
-        replicateTable(sourceTableName, destTableName, 0);
-    }
-
-    private void replicateTable(String sourceTableName, String destTableName, long nFirstRow) {
-        replicateTable(sourceTableName, destTableName, nFirstRow, true, Long.MAX_VALUE, false);
-    }
-
-    private void replicateTable(String sourceTableName, String destTableName, long nFirstRow, boolean commit, long maxRowsPerFrame, boolean cancel) {
-        boolean commitAllAtOnce = true;
-        LOG.info().$("Replicating table from row ").$(nFirstRow).$();
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);) {
@@ -761,7 +606,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 nFrames++;
                 if (!commitAllAtOnce) {
                     if (commit) {
-                        while (busyCount.get() == 0) {
+                        while (nThreads > 0 && nBusyCycles.get() == 0) {
                             LockSupport.parkNanos(0);
                         }
                         assert !cancel;
@@ -776,7 +621,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             }
             if (commitAllAtOnce) {
                 if (commit) {
-                    while (busyCount.get() == 0) {
+                    while (nThreads > 0 && nBusyCycles.get() == 0) {
                         LockSupport.parkNanos(0);
                     }
                     assert !cancel;
@@ -787,7 +632,11 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     }
                 }
             }
-            LOG.info().$("Replication finished in ").$(nFrames).$(" frames per row").$();
+
+            LOG.info().$("Waiting for ").$(nThreads).$(" to stop").$();
+            threadsRunning.set(false);
+            threadsFinished.await();
+            LOG.info().$("Replication finished in ").$(nFrames).$(" frames per row, ").$(nBusyCycles.get()).$(" busy cycles").$();
         }
     }
 
