@@ -537,29 +537,45 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         final AtomicBoolean threadsRunning = new AtomicBoolean(true);
         final SOCountDownLatch threadsFinished = new SOCountDownLatch(nThreads);
         final AtomicInteger nBusyCycles = new AtomicInteger(0);
+        final AtomicInteger nIdleCycles = new AtomicInteger(0);
         final TableBlockWriterJob job = new TableBlockWriterJob(engine.getMessageBus());
         for (int n = 0; n < nThreads; n++) {
             final int workerId = n;
-            Thread t = new Thread() {
+            Thread t = new Thread("replication-" + destTableName + "-" + n) {
                 @Override
                 public void run() {
-                    LOG.info().$("Starting worker ").$(workerId).$();
-                    threadsStarted.countDown();
-                    while (threadsRunning.get()) {
-                        if (job.run(workerId)) {
-                            nBusyCycles.incrementAndGet();
-                        }
-                        Thread.yield();
+                    try {
+                        long timeInMs = System.currentTimeMillis();
+                        LOG.info().$("Starting worker ").$(workerId).$();
+                        threadsStarted.countDown();
+                        int nSuccessiveIdle = 0;
+                        do {
+                            if (job.run(workerId)) {
+                                nBusyCycles.incrementAndGet();
+                                nSuccessiveIdle = 0;
+                            } else {
+                                nIdleCycles.incrementAndGet();
+                                long t = System.currentTimeMillis();
+                                if ((t - timeInMs) > 1_000) {
+                                    timeInMs = t;
+                                    LOG.info().$("Running worker ").$(workerId).$(", ").$(nBusyCycles).$(" total busy cycles, ").$(nIdleCycles).$(" total idle cycles").$();
+                                }
+                                LockSupport.parkNanos(1_000);
+                                nSuccessiveIdle++;
+                            }
+                        } while (nSuccessiveIdle < 8 || threadsRunning.get());
+                        LOG.info().$("Stopping worker ").$(workerId).$();
+                        threadsFinished.countDown();
+                    } catch (Throwable t) {
+                        t.printStackTrace();
                     }
-                    LOG.info().$("Stopping worker ").$(workerId).$();
-                    threadsFinished.countDown();
                 }
             };
             t.start();
             threads[n] = t;
         }
         threadsStarted.await();
-        LOG.info().$(nThreads).$(" worker threads startede").$();
+        LOG.info().$(nThreads).$(" worker threads started").$();
 
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
@@ -606,8 +622,10 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 nFrames++;
                 if (!commitAllAtOnce) {
                     if (commit) {
-                        while (nThreads > 0 && nBusyCycles.get() == 0) {
-                            LockSupport.parkNanos(0);
+                        // Wait until at least one worker thread has run
+                        int triggerNIdleCycles = nIdleCycles.get() + nThreads;
+                        while (nIdleCycles.get() < triggerNIdleCycles) {
+                            Thread.yield();
                         }
                         assert !cancel;
                         blockWriter.commit();
@@ -621,8 +639,10 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             }
             if (commitAllAtOnce) {
                 if (commit) {
-                    while (nThreads > 0 && nBusyCycles.get() == 0) {
-                        LockSupport.parkNanos(0);
+                    // Wait until at least one worker thread has run
+                    int triggerNIdleCycles = nIdleCycles.get() + nThreads;
+                    while (nIdleCycles.get() < triggerNIdleCycles) {
+                        Thread.yield();
                     }
                     assert !cancel;
                     blockWriter.commit();
@@ -636,7 +656,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             LOG.info().$("Waiting for ").$(nThreads).$(" to stop").$();
             threadsRunning.set(false);
             threadsFinished.await();
-            LOG.info().$("Replication finished in ").$(nFrames).$(" frames per row, ").$(nBusyCycles.get()).$(" busy cycles").$();
+            LOG.info().$("Replication finished in ").$(nFrames).$(" frames, ").$(nBusyCycles.get()).$(" busy cycles, ").$(nIdleCycles.get()).$(" idle cycles, ").$();
         }
     }
 

@@ -97,16 +97,21 @@ public class TableBlockWriter implements Closeable {
         task.ready.set(true);
         nEnqueuedConcurrentTasks++;
 
-        long seq = pubSeq.next();
-        if (seq < 0) {
-            task.run();
-            return;
-        }
-        try {
-            queue.get(seq).task = task;
-        } finally {
-            pubSeq.done(seq);
-        }
+        do {
+            long seq = pubSeq.next();
+            if (seq >= 0) {
+                try {
+                    queue.get(seq).task = task;
+                } finally {
+                    pubSeq.done(seq);
+                }
+                return;
+            }
+            if (seq == -1) {
+                task.run();
+                return;
+            }
+        } while (true);
     }
 
     private void completePendingConcurrentTasks(boolean cancel) {
@@ -535,11 +540,7 @@ public class TableBlockWriter implements Closeable {
             boolean useful = false;
             while (true) {
                 long cursor = subSeq.next();
-                if (cursor == -1) {
-                    return useful;
-                }
-
-                if (cursor != -2) {
+                if (cursor >= 0) {
                     try {
                         final TableBlockWriterTaskHolder holder = queue.get(cursor);
                         useful |= holder.task.run();
@@ -547,6 +548,10 @@ public class TableBlockWriter implements Closeable {
                     } finally {
                         subSeq.done(cursor);
                     }
+                }
+
+                if (cursor == -1) {
+                    return useful;
                 }
             }
         }
