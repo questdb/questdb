@@ -891,17 +891,17 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
         responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
         switch (transactionState) {
-            case NO_TRANSACTION:
-            case COMMIT_TRANSACTION:
-            case ROLLING_BACK_TRANSACTION:
-            default:
-                responseAsciiSink.put(STATUS_IDLE);
-                break;
             case IN_TRANSACTION:
                 responseAsciiSink.put(STATUS_IN_TRANSACTION);
                 break;
             case ERROR_TRANSACTION:
                 responseAsciiSink.put(STATUS_IN_ERROR);
+                break;
+            case NO_TRANSACTION:
+            case COMMIT_TRANSACTION:
+            case ROLLING_BACK_TRANSACTION:
+            default:
+                responseAsciiSink.put(STATUS_IDLE);
                 break;
         }
     }
@@ -1245,26 +1245,28 @@ public class PGConnectionContext implements IOContext, Mutable {
             sendCursor();
         } else if (currentInsertStatement != null) {
             executeInsert();
-        } else { //this must be a SET/COMMIT/ROLLBACK or empty query
-            if (transactionState == COMMIT_TRANSACTION) {
-                for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-                    TableWriter m = cachedTransactionInsertWriters.get(i);
-                    m.commit();
-                    Misc.free(m);
+        } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
+            if (!Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
+                if (transactionState == COMMIT_TRANSACTION) {
+                    for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
+                        TableWriter m = cachedTransactionInsertWriters.get(i);
+                        m.commit();
+                        Misc.free(m);
+                    }
+                    cachedTransactionInsertWriters.clear();
+                    transactionState = NO_TRANSACTION;
+                } else if (transactionState == ROLLING_BACK_TRANSACTION) {
+                    for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
+                        TableWriter m = cachedTransactionInsertWriters.get(i);
+                        m.rollback();
+                        Misc.free(m);
+                    }
+                    cachedTransactionInsertWriters.clear();
+                    transactionState = NO_TRANSACTION;
                 }
-                cachedTransactionInsertWriters.clear();
-                transactionState = NO_TRANSACTION;
-            } else if (transactionState == ROLLING_BACK_TRANSACTION) {
-                for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-                    TableWriter m = cachedTransactionInsertWriters.get(i);
-                    m.rollback();
-                    Misc.free(m);
+                if (isEmptyQuery) {
+                    prepareNoDataMessage();
                 }
-                cachedTransactionInsertWriters.clear();
-                transactionState = NO_TRANSACTION;
-            }
-            if (isEmptyQuery) {
-                prepareNoDataMessage();
             }
             sendCurrentCursorTail = TAIL_SUCCESS;
             prepareExecuteTail(false);
