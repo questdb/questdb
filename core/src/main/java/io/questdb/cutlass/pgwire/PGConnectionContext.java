@@ -40,7 +40,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.str.*;
 import io.questdb.std.time.DateLocale;
 import org.jetbrains.annotations.NotNull;
@@ -123,10 +122,9 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
     private final DateLocale dateLocale;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
-    private final TimestampLocale timestampLocale;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
-    private boolean requireInitalMessage = false;
+    private boolean requireInitialMessage = false;
     private long recvBufferWriteOffset = 0;
     private long recvBufferReadOffset = 0;
     private int bufferRemainingOffset = 0;
@@ -139,7 +137,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private CharSequence queryTag;
     private CharSequence username;
     private boolean authenticationRequired = true;
-    private long transientCopyBuffer = 0;
     private IODispatcher<PGConnectionContext> dispatcher;
     private Rnd rnd;
     private int rowCount;
@@ -188,7 +185,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.dateLocale = configuration.getDefaultDateLocale();
-        this.timestampLocale = configuration.getDefaultTimestampLocale();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         populateAppender();
     }
@@ -246,7 +242,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void clear() {
         sendCurrentCursorTail = TAIL_NONE;
         sendBufferPtr = sendBuffer;
-        requireInitalMessage = true;
+        requireInitialMessage = true;
         recvBufferWriteOffset = 0;
         recvBufferReadOffset = 0;
         bufferRemainingOffset = 0;
@@ -887,7 +883,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    void prepareReadyForQuery(ResponseAsciiSink responseAsciiSink) {
+    void prepareReadyForQuery() {
         responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
         responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
         switch (transactionState) {
@@ -913,8 +909,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         currentCursor = factory.getCursor(sqlExecutionContext);
         prepareRowDescription();
         sendCursor();
-        prepareReadyForQuery(responseAsciiSink);
-        send();
+        prepareReadyForQuery();
+        sendAndReset();
     }
 
     @Nullable
@@ -958,7 +954,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         final long limit = address + len;
         final int remaining = (int) (limit - address);
 
-        if (requireInitalMessage) {
+        if (requireInitialMessage) {
             processInitialMessage(address, remaining);
             return;
         }
@@ -997,15 +993,15 @@ public class PGConnectionContext implements IOContext, Mutable {
                 cairoSecurityContext = authenticator.authenticate(username, lo, msgLimit);
             } catch (SqlException e) {
                 prepareError(e);
-                send();
+                sendAndReset();
                 return;
             }
 
             if (cairoSecurityContext != null) {
                 sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, null);
                 authenticationRequired = false;
-                prepareLoginOk(responseAsciiSink);
-                send();
+                prepareLoginOk();
+                sendAndReset();
             }
             return;
         }
@@ -1027,14 +1023,12 @@ public class PGConnectionContext implements IOContext, Mutable {
                 processExecute();
                 break;
             case 'H': // flush
-                send();
-                responseAsciiSink.reset();
+                sendAndReset();
                 prepareForNewQuery();
                 break;
             case 'S': // sync
-                prepareReadyForQuery(responseAsciiSink);
-                send();
-                responseAsciiSink.reset();
+                prepareReadyForQuery();
+                sendAndReset();
                 prepareForNewQuery();
                 break;
             case 'D': // describe
@@ -1083,17 +1077,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putNetworkInt(Integer.BYTES);
     }
 
-    private void prepareLoginOk(ResponseAsciiSink sink) {
-        sink.reset();
-        sink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        sink.putNetworkInt(Integer.BYTES * 2); // length of this message
-        sink.putNetworkInt(0); // response code
-        prepareParams(sink, "TimeZone", "GMT");
-        prepareParams(sink, "application_name", "QuestDB");
-        prepareParams(sink, "server_version", serverVersion);
-        prepareParams(sink, "integer_datetimes", "on");
-        prepareParams(sink, "client_encoding", "UTF8");
-        prepareReadyForQuery(sink);
+    private void prepareLoginOk() {
+        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
+        responseAsciiSink.putNetworkInt(Integer.BYTES * 2); // length of this message
+        responseAsciiSink.putNetworkInt(0); // response code
+        prepareParams(responseAsciiSink, "TimeZone", "GMT");
+        prepareParams(responseAsciiSink, "application_name", "QuestDB");
+        prepareParams(responseAsciiSink, "server_version", serverVersion);
+        prepareParams(responseAsciiSink, "integer_datetimes", "on");
+        prepareParams(responseAsciiSink, "client_encoding", "UTF8");
+        prepareReadyForQuery();
     }
 
     private void prepareParseComplete() {
@@ -1334,23 +1327,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         // at this point we may have a current query that is not null
         // this is ok to lose reference to this query because we have cache
         // of all of them, which is looked up by query text
-        final Object cachedFactory = factoryCache.peek(queryText);
-
-        if (cachedFactory instanceof RecordCursorFactory) {
-            queryTag = TAG_SELECT;
-            currentFactory = (RecordCursorFactory) cachedFactory;
-        } else if (cachedFactory instanceof InsertStatement) {
-            queryTag = TAG_INSERT;
-            currentInsertStatement = (InsertStatement) cachedFactory;
-        } else {
-            if (queryText.length() == 0) {
-                isEmptyQuery = true;
-            }
-        }
+        boolean isCachedQuery = isCachedQuery(factoryCache);
 
         //need to cache named statement
         if (statementName != null) {
-            if (cachedFactory == null) {
+            if (!isCachedQuery) {
                 compileQuery(compiler, factoryCache);
             }
             NamedStatementWrapper wrapper = namedStatementWrapperPool.pop();
@@ -1425,7 +1406,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         // there is data for length
         // this is quite specific to message type :(
-        msgLen = getInt(address); // postgesql includes length bytes in length of message
+        msgLen = getInt(address); // postgresql includes length bytes in length of message
 
         // do we have the rest of the message?
         if (msgLen > remaining) {
@@ -1442,13 +1423,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         switch (protocol) {
             case INIT_SSL_REQUEST:
                 // SSLRequest
-                responseAsciiSink.put('N');
-                send();
+                prepareSslResponse();
+                sendAndReset();
                 return;
             case INIT_STARTUP_MESSAGE:
                 // StartupMessage
                 // extract properties
-                requireInitalMessage = false;
+                requireInitialMessage = false;
                 msgLimit = address + msgLen;
                 long lo = address + Long.BYTES;
                 // there is an extra byte at the end and it has to be 0
@@ -1497,7 +1478,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                 }
 
                 checkNotTrue(this.username == null, "user is not specified");
-                sendClearTextPasswordChallenge();
+                prepareLoginResponse();
+                sendAndReset();
                 break;
             case INIT_CANCEL_REQUEST:
                 //todo - 1. do not disconnect
@@ -1509,6 +1491,10 @@ public class PGConnectionContext implements IOContext, Mutable {
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
                 throw BadProtocolException.INSTANCE;
         }
+    }
+
+    private void prepareSslResponse() {
+        responseAsciiSink.put('N');
     }
 
     private void processQuery(
@@ -1550,8 +1536,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                     queryTag = TAG_INSERT;
                     currentInsertStatement = cc.getInsertStatement();
                     executeInsert();
-                    prepareReadyForQuery(responseAsciiSink);
-                    send();
+                    prepareReadyForQuery();
+                    sendAndReset();
                     break;
                 default:
                     // DDL SQL
@@ -1571,7 +1557,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         // the assumption for now is that any  will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
-        // approach for general queries. For streaming protocol we will code something else. PostgeSQL Java driver is
+        // approach for general queries. For streaming protocol we will code something else. PostgreSQL Java driver is
         // slow anyway.
 
         final Record record = currentCursor.getRecord();
@@ -1588,7 +1574,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     rowCount++;
                 } catch (NoSpaceLeftInResponseBufferException e) {
                     responseAsciiSink.resetToBookmark();
-                    send();
+                    sendAndReset();
                     // this is now start of send buffer, when this fails we need to log and disconnect
                     appendRecord(record, metadata, columnCount);
                 }
@@ -1598,7 +1584,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 prepareForNewQuery();
                 sendCurrentCursorTail = TAIL_ERROR;
                 prepareExecuteTail(true);
-                prepareReadyForQuery(responseAsciiSink);
+                prepareReadyForQuery();
                 return;
             }
         }
@@ -1643,25 +1629,18 @@ public class PGConnectionContext implements IOContext, Mutable {
         recvBufferWriteOffset += n;
     }
 
-    private void sendExecuteTail() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareExecuteTail(false);
-        prepareReadyForQuery(responseAsciiSink);
-        sendNoTail();
-    }
-
-    private void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
         doSend(
                 0,
                 (int) (sendBufferPtr - sendBuffer)
         );
+        responseAsciiSink.reset();
     }
 
-    private void sendClearTextPasswordChallenge() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        responseAsciiSink.reset();
+    private void prepareLoginResponse() {
         responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
         responseAsciiSink.putNetworkInt(Integer.BYTES * 2);
         responseAsciiSink.putNetworkInt(3);
-        send();
     }
 
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1681,12 +1660,11 @@ public class PGConnectionContext implements IOContext, Mutable {
                 }
             }
             responseAsciiSink.putLen(addr);
-            transientCopyBuffer = Unsafe.malloc(1024 * 1024);
         } else {
             prepareError(SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist"));
-            prepareReadyForQuery(responseAsciiSink);
+            prepareReadyForQuery();
         }
-        send();
+        sendAndReset();
     }
 
     private void prepareRowDescription() {
@@ -1699,7 +1677,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         for (int i = 0; i < n; i++) {
             final int columnType = metadata.getColumnType(i);
             sink.encodeUtf8Z(metadata.getColumnName(i));
-            sink.putNetworkInt(16385); //tableoid ?
+            sink.putNetworkInt(16385); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
             sink.putNetworkInt(typeOids.get(columnType)); // type
             if (columnType < 10) {
@@ -1723,14 +1701,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         sink.putLen(addr);
     }
 
-    private void sendNoTail() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        sendCurrentCursorTail = PGConnectionContext.TAIL_NONE;
-        send();
-    }
-
     private void sendExecuteTail(int tail) throws PeerDisconnectedException, PeerIsSlowToReadException {
         sendCurrentCursorTail = tail;
-        sendExecuteTail();
+        prepareExecuteTail(false);
+        prepareReadyForQuery();
+        sendAndReset();
     }
 
     private void setupNamedStatement(ObjList<BindVariableSetter> bindVariableSetters, CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap, CharSequence statementName) throws SqlException {
@@ -1960,7 +1935,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     static {
         typeOids.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        typeOids.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMPZ
+        typeOids.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
         typeOids.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
         typeOids.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
         typeOids.extendAndSet(ColumnType.INT, PG_INT4); // INT4
