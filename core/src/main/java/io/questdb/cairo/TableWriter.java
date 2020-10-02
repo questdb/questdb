@@ -119,6 +119,7 @@ public class TableWriter implements Closeable {
     private int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
+    private LongConsumer prevTimestampSetter;
     private int columnCount;
     private long fixedRowCount = 0;
     private long txn;
@@ -2024,9 +2025,6 @@ public class TableWriter implements Closeable {
 
                             long indexSize = dataIndexMax << shl;
                             long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
-//                            if (indexFd < 0) {
-//                                columns.getQuick(getSecondaryColumnIndex(i)).releaseCurrentPage();
-//                            }
 
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, indexAddr);
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, indexSize);
@@ -2132,9 +2130,6 @@ public class TableWriter implements Closeable {
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`]").$();
                             MergeStruct.mergeStructSetSrcFixedFd(mergeStruct, i, dataFd);
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize));
-//                            if (dataFd < 0) {
-//                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
-//                            }
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, dataSize);
                         }
 
@@ -2672,6 +2667,7 @@ public class TableWriter implements Closeable {
 
                 final long partitionTimestampHi = this.partitionHi;
                 final long floorMinTimestamp = timestampFloorMethod.floor(minTimestamp);
+                final long floorMaxTimestamp = timestampFloorMethod.floor(maxTimestamp);
 
                 // find "current" partition boundary in the out of order data
                 // once we know the boundary we can move on to calculating another one
@@ -2733,7 +2729,6 @@ public class TableWriter implements Closeable {
                     // out of order is hitting existing partition
 
                     try {
-                        dFile(path, metadata.getColumnName(timestampIndex));
                         if (partitionTimestampHi == ceilOfMaxTimestamp) {
                             dataTimestampHi = this.maxTimestamp;
                             dataIndexMax = transientRowCountBeforeOutOfOrder;
@@ -2741,19 +2736,19 @@ public class TableWriter implements Closeable {
                             LOG.debug().$("reused FDs").$();
                         } else {
 
+                            dataIndexMax = TableUtils.readPartitionSize(ff, path.trimTo(plen), tempMem8b) / Long.BYTES;
+
                             // out of order data is going into archive partition
                             // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                             // and "high" being newest
 
+                            dFile(path, metadata.getColumnName(timestampIndex));
 
                             // also track the fd that we need to eventually close
                             fd = ff.openRW(path);
                             if (fd == -1) {
                                 throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
                             }
-
-                            // todo: read the archive
-                            dataIndexMax = ff.length(fd) / Long.BYTES;
 
                             // read bottom of file
                             if (ff.read(fd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
@@ -2769,7 +2764,10 @@ public class TableWriter implements Closeable {
 
                         dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
 
-                        LOG.debug().$("read data top [dataTimestampLo=").microTime(dataTimestampLo).$(']').$();
+                        LOG.debug()
+                                .$("read data top [dataTimestampLo=").microTime(dataTimestampLo)
+                                .$(", dataTimestampHi=").microTime(dataTimestampHi)
+                                .$(']').$();
 
                         // create copy jobs
                         // we will have maximum of 3 stages:
@@ -3009,7 +3007,9 @@ public class TableWriter implements Closeable {
                         if (prefixType == OO_BLOCK_NONE && mergeType == OO_BLOCK_NONE) {
                             // We do not need to create a copy of partition when we simply need to append
                             // existing the one.
-                            mergeStruct = prepareAppendMemory(
+                            // todo: there could be append into non-latest partition, which means
+                            //     we can't reuse file descriptors automatically. We will need to open existing files
+                            mergeStruct = prepareAppendMemoryForLastPartition(
                                     indexLo,
                                     indexHi,
                                     indexMax
@@ -3099,10 +3099,10 @@ public class TableWriter implements Closeable {
                 }
 
                 final long partitionSize = dataIndexMax + indexHi - indexLo + 1;
-                if (indexHi + 1 < indexMax || partitionTimestampHi < floorMinTimestamp) {
+                if (indexHi + 1 < indexMax || partitionTimestampHi < floorMaxTimestamp) {
 
                     fixedRowCount += partitionSize;
-                    if (partitionTimestampHi < ceilOfMaxTimestamp) {
+                    if (partitionTimestampHi < floorMaxTimestamp) {
                         fixedRowCount -= dataIndexMax;
                     }
 
@@ -3130,10 +3130,10 @@ public class TableWriter implements Closeable {
                         txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
                     }
 
-                    if (indexHi + 1 >= indexMax) {
+                    if (indexHi + 1 >= indexMax && ooTimestampMin < minTimestamp) {
                         // no more out of order data and we just pre-pended data to existing
                         // partitions
-                        minTimestamp = Math.min(minTimestamp, ooTimestampMin);
+                        minTimestamp = ooTimestampMin;
                         // when we exit here we need to rollback transientRowCount we've been incrementing
                         // while adding out-of-order data
                         transientRowCount = transientRowCountBeforeOutOfOrder;
@@ -3158,14 +3158,18 @@ public class TableWriter implements Closeable {
         // Alright, we finished updating partitions. Now we need to get this writer instance into
         // a consistent state.
         //
-        // We start with ensuring append memory is in ready-to-use state
+        // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
+        // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
         if (ceilOfMaxTimestamp != ceilMaxTimestamp()) {
             // close all columns without truncating the underlying file
             closeAppendMemoryNoTruncate(false);
             openPartition(maxTimestamp);
-            setAppendPosition(this.transientRowCount);
         }
         setAppendPosition(this.transientRowCount);
+        rowFunction = switchPartitionFunction;
+        row.rowColumns = columns;
+        timestampSetter = prevTimestampSetter;
+        transientRowCountBeforeOutOfOrder = 0;
     }
 
     private void mergeShuffle(
@@ -3383,7 +3387,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void prepareAppendColumn(AppendMemory mem, long[] mergeStruct, int columnIndex, long indexMergeSize) {
+    private void prepareAppendColumnForLastPartition(AppendMemory mem, long[] mergeStruct, int columnIndex, long indexMergeSize) {
         final long fd = -mem.getFd();
         final long offset = mem.getAppendOffset();
         MergeStruct.setDestFixedFd(mergeStruct, columnIndex, fd);
@@ -3393,7 +3397,7 @@ public class TableWriter implements Closeable {
         MergeStruct.setDestFixedAppendOffset(mergeStruct, columnIndex, offset);
     }
 
-    private long[] prepareAppendMemory(long indexLo, long indexHi, long indexMax) {
+    private long[] prepareAppendMemoryForLastPartition(long indexLo, long indexHi, long indexMax) {
         long[] mergeStruct = new long[columnCount * MergeStruct.MERGE_STRUCT_ENTRY_SIZE];
 
         for (int i = 0; i < columnCount; i++) {
@@ -3415,7 +3419,7 @@ public class TableWriter implements Closeable {
                     }
 
                     final long dataSize = (hi - lo);
-                    prepareAppendColumn(
+                    prepareAppendColumnForLastPartition(
                             columns.getQuick(getSecondaryColumnIndex(i)),
                             mergeStruct,
                             i,
@@ -3432,7 +3436,7 @@ public class TableWriter implements Closeable {
                     MergeStruct.setDestVarAppendOffset(mergeStruct, i, dataOffset);
                     break;
                 default:
-                    prepareAppendColumn(
+                    prepareAppendColumnForLastPartition(
                             columns.getQuick(getPrimaryColumnIndex(i)),
                             mergeStruct,
                             i,
@@ -4458,6 +4462,7 @@ public class TableWriter implements Closeable {
                 openMergePartition();
                 TableWriter.this.mergeRowCount = 0;
                 assert timestampMergeMem != null;
+                prevTimestampSetter = timestampSetter;
                 timestampSetter = mergeTimestampMethodRef;
                 timestampSetter.accept(timestamp);
                 TableWriter.this.rowFunction = mergePartitionFunction;
