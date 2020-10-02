@@ -173,6 +173,33 @@ public class InterpolationUtil {
         );
     }
 
+    static void interpolateGap(
+            GroupByFunction function,
+            MapValue mapValue,
+            long x,
+            MapValue mapValue1,
+            MapValue mapValue2
+    ) {
+        function.interpolateGap(
+                mapValue,
+                mapValue1, mapValue2,
+                x);
+    }
+
+    static void interpolateBoundary(
+            GroupByFunction function,
+            long boundaryTimestamp,
+            MapValue mapValue1,
+            MapValue mapValue2,
+            boolean isEndOfBoundary
+    ) {
+        function.interpolateBoundary(
+                mapValue1,
+                mapValue2,
+                boundaryTimestamp,
+                isEndOfBoundary);
+    }
+
     static void storeYDouble(GroupByFunction function, MapValue mapValue, long targetAddress) {
         Unsafe.getUnsafe().putDouble(targetAddress, function.getDouble(mapValue));
     }

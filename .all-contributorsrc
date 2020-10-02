@@ -116,6 +116,7 @@
         "maintenance"
       ]
     },
+    {
       "login": "lbowman",
       "name": "Levi Bowman",
       "avatar_url": "https://avatars1.githubusercontent.com/u/1477427?v=4",
@@ -123,6 +124,15 @@
       "contributions": [
         "code",
         "test"
+      ]
+    },
+    {
+      "login": "chankeypathak",
+      "name": "Chankey Pathak",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/424822?v=4",
+      "profile": "https://tutswiki.com/",
+      "contributions": [
+        "blog"
       ]
     }
   ],

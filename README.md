@@ -16,15 +16,15 @@
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
   </a>
-  <a href="https://serieux-saucisson-79115.herokuapp.com/">
-    <img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg" />
+  <a href="https://slack.questdb.io">
+    <img src="https://slack.questdb.io/badge.svg" />
   </a>
 </p>
 
 <div align="center">
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-11-orange.svg)](#contributors)
+[![All Contributors](https://img.shields.io/badge/all_contributors-13-orange.svg)](#contributors)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
 
@@ -212,11 +212,16 @@ Concepts:
 
 ## Support / Contact
 
-[Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
+[Slack Channel](https://slack.questdb.io)
 
 ## Roadmap
 
 [Our roadmap is here](https://github.com/questdb/questdb/projects/3)
+
+## Guides
+
+- [QuestDB in Go](https://questdb.io/docs/tutorial/go)
+- [QuestDB in Python](https://tutswiki.com/setup-access-questdb-python-notebook/)
 
 ## Contribution
 
@@ -248,6 +253,7 @@ Thanks to these wonderful people
     <td align="center"><a href="https://shantanoo-desai.github.io"><img src="https://avatars1.githubusercontent.com/u/12070966?v=4" width="100px;" alt=""/><br /><sub><b>shantanoo-desai</b></sub></a><br /><a href="#blog-shantanoo-desai" title="Blogposts">📝</a> <a href="#example-shantanoo-desai" title="Examples">💡</a></td>
     <td align="center"><a href="http://alexprut.com"><img src="https://avatars2.githubusercontent.com/u/1648497?v=4" width="100px;" alt=""/><br /><sub><b>alexprut</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=alexprut" title="Code">💻</a> <a href="#maintenance-alexprut" title="Maintenance">🚧</a></td>
     <td align="center"><a href="https://github.com/lbowman"><img src="https://avatars1.githubusercontent.com/u/1477427?v=4" width="100px;" alt=""/><br /><sub><b>lbowman</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=lbowman" title="Code">💻</a> <a href="https://github.com/questdb/questdb/commits?author=lbowman" title="Tests">⚠️</a></td>
+    <td align="center"><a href="https://tutswiki.com/"><img src="https://avatars1.githubusercontent.com/u/424822?v=4" width="100px;" alt=""/><br /><sub><b>chankeypathak</b></sub></a><br /><a href="#blog-chankeypathak" title="Blogposts">📝</a></td>
   </tr>
 </table>
 

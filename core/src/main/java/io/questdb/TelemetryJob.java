@@ -52,10 +52,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final static CharSequence configTableName = "telemetry_config";
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
-    private final boolean enabled;
-    private final TableWriter writer;
+    private boolean enabled;
+    private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
-    private final TableWriter writerConfig;
+    private TableWriter writerConfig;
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
 
@@ -75,7 +75,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
 
             try (final Path path = new Path()) {
-
                 if (getTableStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
                     compiler.compile("CREATE TABLE " + tableName + " (created timestamp, event short, origin short) timestamp(created)", sqlExecutionContext);
                 }
@@ -89,17 +88,20 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 this.writer = new TableWriter(configuration, tableName);
             } catch (CairoException ex) {
                 LOG.error().$("could not open [table=").utf8(tableName).$("]").$();
-                throw ex;
+                enabled = false;
+                return;
             }
 
-            // todo: close writerConfig. We currently keep it opened to prevent users from modifying the table.
+            // todo: close writerConfig. We currently keep it opened to prevent users from
+            // modifying the table.
             // Once we have a permission system, we can use that instead.
             try {
                 this.writerConfig = new TableWriter(configuration, configTableName);
             } catch (CairoException ex) {
                 Misc.free(writer);
                 LOG.error().$("could not open [table=").utf8(configTableName).$("]").$();
-                throw ex;
+                enabled = false;
+                return;
             }
 
             final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
@@ -135,11 +137,13 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        runSerially();
-        newRow(TelemetryEvent.DOWN);
-        writer.commit();
-        Misc.free(writer);
-        Misc.free(writerConfig);
+        if (enabled) {
+            runSerially();
+            newRow(TelemetryEvent.DOWN);
+            writer.commit();
+            Misc.free(writer);
+            Misc.free(writerConfig);
+        }
     }
 
     public int getTableStatus(Path path, CharSequence tableName) {

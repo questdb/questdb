@@ -30,9 +30,9 @@ import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.time.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
-
     boolean isEnabled();
 
     CairoSecurityContext getCairoSecurityContext();
@@ -53,13 +53,17 @@ public interface LineTcpReceiverConfiguration {
 
     MicrosecondClock getMicrosecondClock();
 
+    MillisecondClock getMillisecondClock();
+
     WorkerPoolAwareConfiguration getWorkerPoolConfiguration();
 
-    int getnUpdatesPerLoadRebalance();
+    int getNUpdatesPerLoadRebalance();
 
     double getMaxLoadRatio();
 
     int getMaxUncommittedRows();
 
     long getMaintenanceJobHysteresisInMs();
+    
+    String getAuthDbPath();
 }

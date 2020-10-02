@@ -24,6 +24,10 @@
 
 package io.questdb;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.Properties;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
@@ -34,23 +38,51 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMilliTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoSecondTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.SelectFacadeImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.*;
+import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatFactory;
+import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.microtime.TimestampLocaleFactory;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.*;
-
-import java.io.File;
-import java.util.Arrays;
-import java.util.Properties;
+import io.questdb.std.time.DateFormatFactory;
+import io.questdb.std.time.DateLocale;
+import io.questdb.std.time.DateLocaleFactory;
+import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.time.MillisecondClockImpl;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -253,6 +285,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private double lineTcpMaxLoadRatio;
     private int lineTcpMaxUncommittedRows;
     private long lineTcpMaintenanceJobHysteresisInMs;
+    private String lineTcpAuthDbPath;
     private String httpVersion;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
@@ -529,6 +562,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpMaxLoadRatio = getDouble(properties, "line.tcp.max.load.ratio", 1.9);
             this.lineTcpMaxUncommittedRows = getInt(properties, "line.tcp.max.uncommitted.rows", 1000);
             this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
+            this.lineTcpAuthDbPath = getString(properties, "line.tcp.auth.db.path", null);
+            if (null != lineTcpAuthDbPath) {
+                this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
+            }
         }
     }
 
@@ -1660,12 +1697,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public MillisecondClock getMillisecondClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
         public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
             return lineTcpWorkerPoolConfiguration;
         }
 
         @Override
-        public int getnUpdatesPerLoadRebalance() {
+        public int getNUpdatesPerLoadRebalance() {
             return lineTcpNUpdatesPerLoadRebalance;
         }
 
@@ -1682,6 +1724,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaintenanceJobHysteresisInMs() {
             return lineTcpMaintenanceJobHysteresisInMs;
+        }
+        
+        @Override
+        public String getAuthDbPath() {
+             return lineTcpAuthDbPath;
         }
     }
 

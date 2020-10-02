@@ -22,17 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.griffin.engine.functions.groupby;
 
-public interface TimestampSampler {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.std.ObjList;
 
-    long nextTimestamp(long timestamp);
+public class HaversineDistDegreeGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "haversine_dist_deg(DDN)";
+    }
 
-    long previousTimestamp(long timestamp);
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    long round(long timestamp);
-
-    default long getBucketSize() {
-        throw new UnsupportedOperationException();
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new HaversineDistDegreeGroupByFunction(position, args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 }
