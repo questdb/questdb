@@ -1032,7 +1032,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 prepareForNewQuery();
                 break;
             case 'D': // describe
-                processDescribe(bindVariableSetters, lo, msgLimit, namedStatementMap, factoryCache);
+                processDescribe(bindVariableSetters, lo, msgLimit, namedStatementMap, factoryCache, compiler);
                 break;
             case 'Q':
                 processQuery(lo, limit, compiler, factoryCache);
@@ -1197,8 +1197,9 @@ public class PGConnectionContext implements IOContext, Mutable {
             long lo,
             long msgLimit,
             @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
-            @Transient AssociativeCache<Object> factoryCache
-    ) throws SqlException, BadProtocolException {
+            @Transient AssociativeCache<Object> factoryCache,
+            @Transient SqlCompiler compiler
+    ) throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
         lo = lo + 1;
         long hi = getStringLength(lo, msgLimit);
         checkNotTrue(hi == -1, "bad portal name length [msgType='D']");
@@ -1208,7 +1209,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
             if (wrapper != null) {
                 setupNamedStatement(bindVariableSetters, wrapper, statementName);
-            } else {
                 isCachedQuery(factoryCache);
             }
         }
@@ -1330,19 +1330,10 @@ public class PGConnectionContext implements IOContext, Mutable {
             throw BadProtocolException.INSTANCE;
         }
 
-//        // at this point we may have a current query that is not null
-//        // this is ok to lose reference to this query because we have cache
-//        // of all of them, which is looked up by query text
-//        boolean isCachedQuery = isCachedQuery(factoryCache);
-//
         //need to cache named statement
         if (statementName != null) {
             NamedStatementWrapper wrapper = namedStatementWrapperPool.pop();
-            if (currentFactory != null) {
-                wrapper.selectFactory = currentFactory;
-            } else if (currentInsertStatement != null) {
-                wrapper.insertStatement = currentInsertStatement;
-            }
+            wrapper.queryText = queryText.toString();
             wrapper.bindVariableTypes = bindVariableTypes;
             namedStatementMap.put(statementName, wrapper);
         } else if (bindVariableTypes != null) {
@@ -1400,22 +1391,8 @@ public class PGConnectionContext implements IOContext, Mutable {
             bindParameterValues(lo, msgLimit, parameterFormatCount, parameterValueCount, bindVariableSetters);
         }
 
-        if (statementName == null) {
-            compileQuery(compiler, factoryCache);
-        } else {
-            NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
-            if (wrapper == null) {
-                wrapper = namedStatementWrapperPool.pop();
-                compileQuery(compiler, factoryCache);
-                if (currentFactory != null) {
-                    wrapper.selectFactory = currentFactory;
-                } else if (currentInsertStatement != null) {
-                    wrapper.insertStatement = currentInsertStatement;
-                }
-                wrapper.bindVariableTypes = bindVariableTypes;
-                namedStatementMap.put(statementName, wrapper);
-            }
-        }
+        compileQuery(compiler, factoryCache);
+
         prepareBindComplete();
     }
 
@@ -1744,13 +1721,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void setupNamedStatement(ObjList<BindVariableSetter> bindVariableSetters, NamedStatementWrapper wrapper, CharSequence statementName) throws SqlException {
-        if (wrapper.selectFactory != null) {
-            queryTag = TAG_SELECT;
-            currentFactory = wrapper.selectFactory;
-        } else if (wrapper.insertStatement != null) {
-            queryTag = TAG_INSERT;
-            currentInsertStatement = wrapper.insertStatement;
-        }
+        queryText = wrapper.queryText;
+        bindVariableSetters.clear();
         if (wrapper.bindVariableTypes != null) {
             bindVariableSetters.clear();
             setupCachedBindVariables(bindVariableSetters, wrapper.bindVariableTypes);
@@ -1985,13 +1957,12 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     public static class NamedStatementWrapper implements Mutable {
-        public RecordCursorFactory selectFactory = null;
-        public InsertStatement insertStatement = null;
+
+        public CharSequence queryText = null;
         public IntList bindVariableTypes = null;
 
         public void clear() {
-            selectFactory = null;
-            insertStatement = null;
+            queryText = null;
             bindVariableTypes = null;
         }
     }
