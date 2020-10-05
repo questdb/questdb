@@ -2830,7 +2830,6 @@ public class TableWriter implements Closeable {
     }
 
     void commitBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
-
         if (minTimestamp == Long.MAX_VALUE) {
             minTimestamp = firstTimestamp;
         }
@@ -2844,7 +2843,7 @@ public class TableWriter implements Closeable {
             prevMinTimestamp = minTimestamp;
         }
 
-        TableWriter.this.commit();
+        commit();
         setAppendPosition(transientRowCount);
     }
 

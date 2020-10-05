@@ -233,7 +233,11 @@ public class TableBlockWriter implements Closeable {
     }
 
     private class PartitionBlockWriter {
-        private final ObjList<AppendMemory> columns = new ObjList<>();
+        private final LongList columnFds = new LongList();
+        private final LongList columnMappingStart = new LongList();
+        private final LongList columnMappingSize = new LongList();
+        private final LongList additionalMappingStart = new LongList();
+        private final LongList additionalMappingSize = new LongList();
         private final LongList columnStartOffsets = new LongList();
         private final LongList columnAppendOffsets = new LongList();
         private final LongList columnTops = new LongList();
@@ -247,24 +251,14 @@ public class TableBlockWriter implements Closeable {
         private void of(long timestampLo) {
             this.timestampLo = timestampLo;
             opened = false;
-            int columnsSize = columns.size();
             columnTops.ensureCapacity(columnCount);
             int requiredColumnsSize = columnCount << 1;
             columnAppendOffsets.ensureCapacity(requiredColumnsSize);
             columnStartOffsets.ensureCapacity(requiredColumnsSize);
-            while (columnsSize < requiredColumnsSize) {
-                int columnIndex = columnsSize >> 1;
-                columns.extendAndSet(columnsSize++, new AppendMemory());
-                switch (metadata.getColumnType(columnIndex)) {
-                    case ColumnType.STRING:
-                    case ColumnType.BINARY:
-                        columns.extendAndSet(columnsSize, new AppendMemory());
-                        break;
-                    default:
-                        columns.extendAndSet(columnsSize, null);
-                }
-                columnsSize++;
-            }
+
+            columnFds.ensureCapacity(requiredColumnsSize);
+            columnMappingStart.ensureCapacity(columnCount);
+            columnMappingSize.ensureCapacity(columnCount);
         }
 
         private void startPageFrame(long timestamp) {
@@ -280,25 +274,28 @@ public class TableBlockWriter implements Closeable {
                 columnTops.setAll(columnCount, -1);
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     final CharSequence name = metadata.getColumnName(columnIndex);
-                    int i = columnIndex * 2;
-                    AppendMemory mem = columns.getQuick(i);
                     long appendOffset = writer.getPrimaryAppendOffset(timestampLo, columnIndex);
-                    columnAppendOffsets.setQuick(i, appendOffset);
-                    columnStartOffsets.setQuick(i, appendOffset);
-                    mem.of(ff, TableUtils.dFile(path.trimTo(plen), name), ff.getMapPageSize());
-                    // TODO: Figure out if we can avoid the jumpTo
-                    mem.jumpTo(writer.getPrimaryAppendOffset(timestampLo, columnIndex));
+                    columnAppendOffsets.setQuick(columnIndex, appendOffset);
+                    columnStartOffsets.setQuick(columnIndex, appendOffset);
 
-                    AppendMemory imem = columns.getQuick(++i);
-                    if (imem != null) {
-                        appendOffset = writer.getSecondaryAppendOffset(timestampLo, columnIndex);
-                        columnAppendOffsets.setQuick(i, appendOffset);
-                        columnStartOffsets.setQuick(i, appendOffset);
-                        imem.of(ff, iFile(path.trimTo(plen), name), ff.getMapPageSize());
-                        // TODO: Figure out if we can avoid the jumpTo
-                        imem.jumpTo(writer.getSecondaryAppendOffset(timestampLo, columnIndex));
+                    long fd = ff.openRW(TableUtils.dFile(path.trimTo(plen), name));
+                    if (fd == -1) {
+                        throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
                     }
-
+                    int i = columnIndex * 2;
+                    columnFds.setQuick(i, fd);
+                    switch (metadata.getColumnType(columnIndex)) {
+                        case ColumnType.STRING:
+                        case ColumnType.BINARY:
+                            fd = ff.openRW(iFile(path.trimTo(plen), name));
+                            if (fd == -1) {
+                                throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
+                            }
+                            columnFds.setQuick(i + 1, fd);
+                            break;
+                        default:
+                            columnFds.setQuick(i + 1, -1);
+                    }
                 }
 
                 nRowsAdded = 0;
@@ -319,19 +316,54 @@ public class TableBlockWriter implements Closeable {
                 pageFrameMaxNRows = pageFrameNRows;
             }
             if (sourceAddress != 0) {
-                // TODO use ContiguousVirtualMemory, this will only work if AppendMemory is large enough
-                int i = columnIndex << 1;
-                long appendOffset = columnAppendOffsets.getQuick(i);
-                AppendMemory mem = columns.getQuick(i);
-                long destAddress = mem.addressOf(appendOffset);
-                appendOffset += pageFrameLength;
-                columnAppendOffsets.setQuick(i, appendOffset);
+                long appendOffset = columnAppendOffsets.getQuick(columnIndex);
+                long nextAppendOffset = appendOffset + pageFrameLength;
+                columnAppendOffsets.setQuick(columnIndex, nextAppendOffset);
+
+                long destAddress;
+                long columnStartAddress = columnMappingStart.getQuick(columnIndex);
+                if (columnStartAddress == 0) {
+                    int i = columnIndex << 1;
+                    long mapSz = pageFrameLength > ff.getMapPageSize() ? pageFrameLength : ff.getMapPageSize();
+                    long address = mapFile(columnFds.getQuick(i), appendOffset, mapSz);
+                    columnMappingStart.setQuick(columnIndex, address);
+                    columnMappingSize.setQuick(columnIndex, mapSz);
+                    columnStartAddress = address;
+                    destAddress = columnStartAddress;
+                } else {
+                    long initialOffset = columnStartOffsets.getQuick(columnIndex);
+                    assert initialOffset < appendOffset;
+                    if ((nextAppendOffset - initialOffset) > columnMappingSize.getQuick(columnIndex)) {
+                        // TODO
+                        throw new RuntimeException();
+                    }
+                    destAddress = columnMappingStart.getQuick(columnIndex) + appendOffset - initialOffset;
+                }
+
                 TableBlockWriterTask task = getConcurrentTask();
                 task.assignAppendPageFrameColumn(destAddress, pageFrameLength, sourceAddress);
                 enqueueConcurrentTask(task);
             } else {
                 partWriter.setColumnTop(columnIndex, pageFrameLength);
             }
+        }
+
+        private long mapFile(long fd, long mapOffset, long mapSz) {
+            long fileSz = ff.length(fd);
+            long minFileSz = mapOffset + mapSz;
+            if (fileSz < minFileSz) {
+                if (!ff.truncate(fd, minFileSz)) {
+                    throw CairoException.instance(ff.errno()).put("Could not truncate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
+                            .put(mapSz);
+                }
+            }
+            long address = ff.mmap(fd, mapSz, mapOffset, Files.MAP_RW);
+            if (address == -1) {
+                int errno = ff.errno();
+                throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=").put(mapSz).put(", errno=")
+                        .put(errno);
+            }
+            return address;
         }
 
         private void setColumnTop(int columnIndex, long columnTop) {
@@ -349,48 +381,52 @@ public class TableBlockWriter implements Closeable {
                 int columnType = metadata.getColumnType(columnIndex);
                 long columnTop = columnTops.getQuick(columnIndex);
                 long colNRowsAdded = columnTop > 0 ? nRowsAdded - columnTop : nRowsAdded;
+                if (colNRowsAdded > 0) {
+                    // Add binary and string indexes
+                    switch (columnType) {
+                        case ColumnType.STRING:
+                        case ColumnType.BINARY: {
+                            TableBlockWriterTask task = getConcurrentTask();
+                            long offsetLo = columnStartOffsets.getQuick(columnIndex);
+                            long offsetHi = columnAppendOffsets.getQuick(columnIndex);
 
-                // Add binary and string indexes
-                switch (columnType) {
-                    case ColumnType.STRING:
-                    case ColumnType.BINARY: {
-                        TableBlockWriterTask task = getConcurrentTask();
-                        int i = columnIndex << 1;
-                        AppendMemory mem = columns.getQuick(i);
-                        long offsetLo = columnStartOffsets.getQuick(i);
-                        long offsetHi = columnAppendOffsets.getQuick(i);
-                        i++;
-                        AppendMemory memi = columns.getQuick(i);
-                        long indexOffsetLo = columnStartOffsets.getQuick(i);
+                            long columnDataAddressLo = columnMappingStart.getQuick(columnIndex);
+                            assert offsetHi - offsetLo <= columnMappingSize.getQuick(columnIndex);
+                            long columnDataAddressHi = columnDataAddressLo + offsetHi - offsetLo;
+                            long columnDataOffsetLo = offsetLo;
 
-                        // TODO Make sure full column is mmaped
-                        long columnDataAddressLo = mem.addressOf(offsetLo);
-                        long columnDataAddressHi = mem.addressOf(offsetHi);
-                        long columnDataOffsetLo = offsetLo;
-                        long columnIndexAddressLo = memi.addressOf(indexOffsetLo);
-                        if (columnType == ColumnType.STRING) {
-                            task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, columnDataOffsetLo, columnIndexAddressLo);
-                        } else {
-                            task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, columnDataOffsetLo, columnIndexAddressLo);
+                            int i = (columnIndex << 1) + 1;
+                            long indexFd = columnFds.getQuick(i);
+                            long indexOffsetLo = writer.getSecondaryAppendOffset(timestampLo, columnIndex);
+                            long indexMappingSz = Long.BYTES * colNRowsAdded;
+                            long indexMappingStart = mapFile(indexFd, indexOffsetLo, indexMappingSz);
+                            additionalMappingStart.add(indexMappingStart);
+                            additionalMappingSize.add(indexMappingSz);
+
+                            if (columnType == ColumnType.STRING) {
+                                task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, columnDataOffsetLo, indexMappingStart);
+                            } else {
+                                task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, columnDataOffsetLo, indexMappingStart);
+                            }
+                            enqueueConcurrentTask(task);
+                            break;
                         }
-                        enqueueConcurrentTask(task);
-                        break;
-                    }
 
-                    case ColumnType.SYMBOL: {
-                        completeUpdateSymbolCache(columnIndex, colNRowsAdded);
-                        break;
-                    }
+                        case ColumnType.SYMBOL: {
+                            completeUpdateSymbolCache(columnIndex, colNRowsAdded);
+                            break;
+                        }
 
-                    default:
+                        default:
+                    }
                 }
             }
         }
 
         private void completeUpdateSymbolCache(int columnIndex, long colNRowsAdded) {
-            int i = columnIndex << 1;
-            AppendMemory mem = columns.getQuick(i++);
-            int nSymbols = Vect.maxInt(mem.addressOf(mem.getAppendOffset()), colNRowsAdded);
+            long address = columnMappingStart.getQuick(columnIndex);
+            assert address > 0;
+            int nSymbols = Vect.maxInt(address, colNRowsAdded);
             nSymbols++;
             SymbolMapWriter symWriter = writer.getSymbolMapWriter(columnIndex);
             if (nSymbols > symWriter.getSymbolCount()) {
@@ -399,17 +435,38 @@ public class TableBlockWriter implements Closeable {
         }
 
         private void clear() {
-            for (int i = 0, sz = columns.size(); i < sz; i++) {
-                AppendMemory mem = columns.getQuick(i);
-                if (null != mem) {
-                    mem.close(false);
+            if (opened) {
+                int i = 0;
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    long fd = columnFds.getQuick(i++);
+                    ff.close(fd);
+                    fd = columnFds.getQuick(i++);
+                    if (fd != -1) {
+                        ff.close(fd);
+                    }
+                    long address = columnMappingStart.getQuick(columnIndex);
+                    if (address != 0) {
+                        long sz = columnMappingSize.getQuick(columnIndex);
+                        ff.munmap(address, sz);
+                        columnMappingStart.setQuick(columnIndex, 0);
+                    }
                 }
+                int nAdditonalMappings = additionalMappingStart.size();
+                for (i = 0; i < nAdditonalMappings; i++) {
+                    long address = additionalMappingStart.get(i);
+                    long sz = additionalMappingSize.getQuick(i);
+                    ff.munmap(address, sz);
+                }
+                columnFds.clear();
+                columnMappingStart.clear();
+                columnMappingSize.clear();
+                additionalMappingStart.clear();
+                additionalMappingSize.clear();
             }
             opened = false;
         }
 
         private void close() {
-            columns.clear();
             timestampLo = 0;
             path.close();
             opened = false;
@@ -427,27 +484,25 @@ public class TableBlockWriter implements Closeable {
     private class TableBlockWriterTask {
         private TaskType taskType;
         private final AtomicBoolean ready = new AtomicBoolean(false);
-        private PartitionBlockWriter partitionWriter;
-        private int columnIndex;
-        private long blockLength;
         private long sourceAddress;
+        private long sourceSizeOrEnd;
         private long destAddress;
-        private long nRows;
+        private long sourceInitialOffset;
 
         private boolean run() {
             if (ready.compareAndSet(true, false)) {
                 try {
                     switch (taskType) {
                         case AppendBlock:
-                            Unsafe.getUnsafe().copyMemory(sourceAddress, destAddress, blockLength);
+                            Unsafe.getUnsafe().copyMemory(sourceAddress, destAddress, sourceSizeOrEnd);
                             return true;
 
                         case GenerateStringIndex:
-                            completeUpdateStringIndex(sourceAddress, blockLength, nRows, destAddress);
+                            completeUpdateStringIndex(sourceAddress, sourceSizeOrEnd, sourceInitialOffset, destAddress);
                             return true;
 
                         case GenerateBinaryIndex:
-                            completeUpdateBinaryIndex(sourceAddress, blockLength, nRows, destAddress);
+                            completeUpdateBinaryIndex(sourceAddress, sourceSizeOrEnd, sourceInitialOffset, destAddress);
                             return true;
                     }
                 } finally {
@@ -467,7 +522,7 @@ public class TableBlockWriter implements Closeable {
         private void assignAppendPageFrameColumn(long destAddress, long pageFrameLength, long sourceAddress) {
             taskType = TaskType.AppendBlock;
             this.destAddress = destAddress;
-            this.blockLength = pageFrameLength;
+            this.sourceSizeOrEnd = pageFrameLength;
             this.sourceAddress = sourceAddress;
         }
 
@@ -475,8 +530,8 @@ public class TableBlockWriter implements Closeable {
             taskType = TaskType.GenerateStringIndex;
             this.sourceAddress = columnDataAddressLo;
             this.destAddress = columnIndexAddressLo;
-            this.blockLength = columnDataAddressHi;
-            this.nRows = columnDataOffsetLo;
+            this.sourceSizeOrEnd = columnDataAddressHi;
+            this.sourceInitialOffset = columnDataOffsetLo;
         }
 
         private void completeUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo) {
@@ -502,8 +557,8 @@ public class TableBlockWriter implements Closeable {
             taskType = TaskType.GenerateBinaryIndex;
             this.sourceAddress = columnDataAddressLo;
             this.destAddress = columnIndexAddressLo;
-            this.blockLength = columnDataAddressHi;
-            this.nRows = columnDataOffsetLo;
+            this.sourceSizeOrEnd = columnDataAddressHi;
+            this.sourceInitialOffset = columnDataOffsetLo;
         }
 
         private void completeUpdateBinaryIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo) {

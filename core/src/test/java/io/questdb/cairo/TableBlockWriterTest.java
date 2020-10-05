@@ -520,6 +520,19 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testHugePartition() throws Exception {
+        runTest("testPartitioned", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l, rnd_bin(10000, 20000, 1) bin FROM long_sequence(10000)" +
+                    ") TIMESTAMP (ts) PARTITION BY MONTH;",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            runReplicationTests(expected, "(ts TIMESTAMP, l LONG, bin BINARY) TIMESTAMP(ts) PARTITION BY MONTH", 2);
+            engine.releaseInactive();
+        });
+    }
+
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
         TestUtils.assertMemoryLeak(runnable);
