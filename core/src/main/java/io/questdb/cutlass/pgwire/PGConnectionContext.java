@@ -122,6 +122,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
     private final DateLocale dateLocale;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
+    private IntList bindVariableTypes = null;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean requireInitialMessage = false;
@@ -548,42 +549,44 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-        sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
+        if (queryText.length() > 0 && !isCachedQuery(factoryCache)) {
+            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
 
-        switch (cc.getType()) {
-            case CompiledQuery.SELECT:
-                currentFactory = cc.getRecordCursorFactory();
-                queryTag = TAG_SELECT;
-                factoryCache.put(queryText, currentFactory);
-                break;
-            case CompiledQuery.INSERT:
-                currentInsertStatement = cc.getInsertStatement();
-                queryTag = TAG_INSERT;
-                factoryCache.put(queryText, currentInsertStatement);
-                break;
-            case CompiledQuery.COPY_LOCAL:
-                queryTag = TAG_COPY;
-                sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                break;
-            case CompiledQuery.SET:
-                if (SqlKeywords.isBegin(queryText)) {
-                    queryTag = TAG_BEGIN;
-                    transactionState = IN_TRANSACTION;
-                } else if (SqlKeywords.isCommit(queryText)) {
-                    queryTag = TAG_COMMIT;
-                    transactionState = COMMIT_TRANSACTION;
-                } else if (SqlKeywords.isRollback(queryText)) {
-                    queryTag = TAG_ROLLBACK;
-                    transactionState = ROLLING_BACK_TRANSACTION;
-                } else {
-                    queryTag = TAG_SET;
-                }
-                break;
-            default:
-                // DDL SQL
-                queryTag = TAG_OK;
-                break;
+            switch (cc.getType()) {
+                case CompiledQuery.SELECT:
+                    currentFactory = cc.getRecordCursorFactory();
+                    queryTag = TAG_SELECT;
+                    factoryCache.put(queryText, currentFactory);
+                    break;
+                case CompiledQuery.INSERT:
+                    currentInsertStatement = cc.getInsertStatement();
+                    queryTag = TAG_INSERT;
+                    factoryCache.put(queryText, currentInsertStatement);
+                    break;
+                case CompiledQuery.COPY_LOCAL:
+                    queryTag = TAG_COPY;
+                    sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                    break;
+                case CompiledQuery.SET:
+                    if (SqlKeywords.isBegin(queryText)) {
+                        queryTag = TAG_BEGIN;
+                        transactionState = IN_TRANSACTION;
+                    } else if (SqlKeywords.isCommit(queryText)) {
+                        queryTag = TAG_COMMIT;
+                        transactionState = COMMIT_TRANSACTION;
+                    } else if (SqlKeywords.isRollback(queryText)) {
+                        queryTag = TAG_ROLLBACK;
+                        transactionState = ROLLING_BACK_TRANSACTION;
+                    } else {
+                        queryTag = TAG_SET;
+                    }
+                    break;
+                default:
+                    // DDL SQL
+                    queryTag = TAG_OK;
+                    break;
+            }
         }
     }
 
@@ -720,6 +723,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void bindParameterValues(
             long lo,
             long msgLimit,
+            short parameterFormatCount,
             short parameterValueCount,
             @Transient ObjList<BindVariableSetter> bindVariableSetters
     ) throws BadProtocolException, SqlException {
@@ -728,12 +732,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         //   1: client can specify one format for all parameters
         //   2 or greater: format has been define for each parameter, so parameterFormatCount must equal parameterValueCount
         boolean inferTypes = parameterValueCount != bindVariableService.getIndexedVariableCount();
-        boolean allTextFormat = parameterFormats.size() == 0 || (parameterFormats.size() == 1 && parameterFormats.get(0) == 0);
-        boolean allBinaryFormat = parameterFormats.size() == 1 && parameterFormats.get(0) == 1;
-        if (parameterFormats.size() > 1 && parameterFormats.size() != parameterValueCount) {
-            LOG.error().$("parameter format count and parameter value count must match").$();
-            throw BadProtocolException.INSTANCE;
-        }
+        boolean allTextFormat = parameterFormatCount == 0 || (parameterFormatCount == 1 && parameterFormats.get(0) == 0);
+        boolean allBinaryFormat = parameterFormatCount == 1 && parameterFormats.get(0) == 1;
 
         for (int j = 0; j < parameterValueCount; j++) {
             if (lo + Integer.BYTES > msgLimit) {
@@ -1032,7 +1032,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 prepareForNewQuery();
                 break;
             case 'D': // describe
-                processDescribe(bindVariableSetters, lo, msgLimit, namedStatementMap);
+                processDescribe(bindVariableSetters, lo, msgLimit, namedStatementMap, factoryCache);
                 break;
             case 'Q':
                 processQuery(lo, limit, compiler, factoryCache);
@@ -1192,17 +1192,25 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putNetworkInt(Integer.BYTES);
     }
 
-    private void processDescribe(@Transient ObjList<BindVariableSetter> bindVariableSetters,
-                                 long lo,
-                                 long msgLimit,
-                                 @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap) throws SqlException, BadProtocolException {
+    private void processDescribe(
+            @Transient ObjList<BindVariableSetter> bindVariableSetters,
+            long lo,
+            long msgLimit,
+            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
+            @Transient AssociativeCache<Object> factoryCache
+    ) throws SqlException, BadProtocolException {
         lo = lo + 1;
         long hi = getStringLength(lo, msgLimit);
         checkNotTrue(hi == -1, "bad portal name length [msgType='D']");
 
         CharSequence statementName = getStatementName(lo, hi);
         if (statementName != null) {
-            setupNamedStatement(bindVariableSetters, namedStatementMap, statementName);
+            NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
+            if (wrapper != null) {
+                setupNamedStatement(bindVariableSetters, wrapper, statementName);
+            } else {
+                isCachedQuery(factoryCache);
+            }
         }
 
         if (currentFactory != null) {
@@ -1298,7 +1306,6 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         short parameterCount = getShort(lo);
 
-        IntList bindVariableTypes = null;
         bindVariableSetters.clear();
         if (parameterCount > 0) {
             if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
@@ -1314,7 +1321,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             lo += Short.BYTES;
             bindVariableService.clear();
             bindVariableTypes = bindVarTypesPool.pop();
-            bindVariableTypes.clear();
             setupBindVariables(lo, parameterCount, bindVariableSetters, bindVariableTypes);
         } else if (parameterCount < 0) {
             LOG.error()
@@ -1324,16 +1330,13 @@ public class PGConnectionContext implements IOContext, Mutable {
             throw BadProtocolException.INSTANCE;
         }
 
-        // at this point we may have a current query that is not null
-        // this is ok to lose reference to this query because we have cache
-        // of all of them, which is looked up by query text
-        boolean isCachedQuery = isCachedQuery(factoryCache);
-
+//        // at this point we may have a current query that is not null
+//        // this is ok to lose reference to this query because we have cache
+//        // of all of them, which is looked up by query text
+//        boolean isCachedQuery = isCachedQuery(factoryCache);
+//
         //need to cache named statement
         if (statementName != null) {
-            if (!isCachedQuery) {
-                compileQuery(compiler, factoryCache);
-            }
             NamedStatementWrapper wrapper = namedStatementWrapperPool.pop();
             if (currentFactory != null) {
                 wrapper.selectFactory = currentFactory;
@@ -1369,7 +1372,10 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         CharSequence statementName = getStatementName(lo, hi);
         if (statementName != null) {
-            setupNamedStatement(bindVariableSetters, namedStatementMap, statementName);
+            NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
+            if (wrapper != null) {
+                setupNamedStatement(bindVariableSetters, wrapper, statementName);
+            }
         }
 
         lo = hi + 1;
@@ -1386,15 +1392,44 @@ public class PGConnectionContext implements IOContext, Mutable {
         checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter value count");
         parameterValueCount = getShort(lo);
 
+        //we now have all parameter counts, validate them
+        validateParameterCounts(parameterFormatCount, parameterValueCount, bindVariableSetters.size() / 2);
+
         if (parameterValueCount > 0) {
             lo += Short.BYTES;
-            bindParameterValues(lo, msgLimit, parameterValueCount, bindVariableSetters);
+            bindParameterValues(lo, msgLimit, parameterFormatCount, parameterValueCount, bindVariableSetters);
         }
 
-        if (statementName == null && queryText.length() > 0 && !isCachedQuery(factoryCache)) {
+        if (statementName == null) {
             compileQuery(compiler, factoryCache);
+        } else {
+            NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
+            if (wrapper == null) {
+                wrapper = namedStatementWrapperPool.pop();
+                compileQuery(compiler, factoryCache);
+                if (currentFactory != null) {
+                    wrapper.selectFactory = currentFactory;
+                } else if (currentInsertStatement != null) {
+                    wrapper.insertStatement = currentInsertStatement;
+                }
+                wrapper.bindVariableTypes = bindVariableTypes;
+                namedStatementMap.put(statementName, wrapper);
+            }
         }
         prepareBindComplete();
+    }
+
+    private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {
+        if (parameterValueCount > 0) {
+            if (parameterValueCount < parameterTypeCount) {
+                LOG.error().$("parameter type count must be less or equals to number of parameters in query").$();
+                throw BadProtocolException.INSTANCE;
+            }
+            if (parameterFormatCount > 1 && parameterFormatCount != parameterValueCount) {
+                LOG.error().$("parameter format count and parameter value count must match").$();
+                throw BadProtocolException.INSTANCE;
+            }
+        }
     }
 
     private void processInitialMessage(long address, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
@@ -1708,8 +1743,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         sendAndReset();
     }
 
-    private void setupNamedStatement(ObjList<BindVariableSetter> bindVariableSetters, CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap, CharSequence statementName) throws SqlException {
-        final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
+    private void setupNamedStatement(ObjList<BindVariableSetter> bindVariableSetters, NamedStatementWrapper wrapper, CharSequence statementName) throws SqlException {
         if (wrapper.selectFactory != null) {
             queryTag = TAG_SELECT;
             currentFactory = wrapper.selectFactory;
