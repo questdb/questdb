@@ -1713,7 +1713,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         for (int i = 0; i < n; i++) {
             final int columnType = metadata.getColumnType(i);
             sink.encodeUtf8Z(metadata.getColumnName(i));
-            sink.putNetworkInt(16385); //tableOid ?
+            sink.putNetworkInt(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
             sink.putNetworkInt(typeOids.get(columnType)); // type
             if (columnType < 10) {
