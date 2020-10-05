@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.pool.ex.NotEnoughLinesException;
 import io.questdb.cairo.pool.ex.RetryOperationException;
+import io.questdb.cairo.pool.ex.ReceiveBufferTooSmallException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
@@ -96,7 +98,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
 
     public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        long _lo = Long.MAX_VALUE;
+        long _lo = lo;
         long ptr = lo;
         while (ptr < hi) {
             switch (state) {
@@ -213,8 +215,12 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         }
 
         if (state == BODY) {
-            listener.onChunk(_lo, ptr);
-            state = BODY_BROKEN;
+            try {
+                onChunkWithRetryHandle(listener, _lo, ptr, BODY_BROKEN, ptr);
+            } catch (NotEnoughLinesException e) {
+                this.resumePtr = _lo;
+                throw ReceiveBufferTooSmallException.INSTANCE;
+            }
         }
 
         return false;

@@ -210,19 +210,14 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> {
                     // create table
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
+                    new SendAndReceiveRequestBuilder().execute(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                                     RequestHeaders,
                             ResponseHeaders +
                                     "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            true,
-                            false
+                                    "\r\n"
                     );
 
                     TableWriter writer = lockWriter(engine, "balances_x");
@@ -235,19 +230,14 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        sendAndReceive(
-                                                NetworkFacadeImpl.INSTANCE,
+                                        new SendAndReceiveRequestBuilder().execute(
                                                 "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                                                         RequestHeaders,
                                                 ResponseHeaders +
                                                         "0c\r\n" +
                                                         "{\"ddl\":\"OK\"}\r\n" +
                                                         "00\r\n" +
-                                                        "\r\n",
-                                                1,
-                                                0,
-                                                false,
-                                                false
+                                                        "\r\n"
                                         );
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e);
@@ -269,19 +259,14 @@ public class RetryIODispatcherTest {
                     countDownLatch.await();
 
                     // check if we have parallelCount x insertCount  records
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
+                    new SendAndReceiveRequestBuilder().execute(
                             "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
                                     RequestHeaders,
                             ResponseHeaders +
                                     "71\r\n" +
                                     "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount * insertCount + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            false,
-                            false
+                                    "\r\n"
                     );
                 });
     }
@@ -297,19 +282,14 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> {
                     // create table
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
+                    new SendAndReceiveRequestBuilder().execute(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                                     RequestHeaders,
                             ResponseHeaders +
                                     "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            true,
-                            false
+                                    "\r\n"
                     );
 
                     TableWriter writer = lockWriter(engine, "balances_x");
@@ -323,19 +303,14 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        sendAndReceive(
-                                                NetworkFacadeImpl.INSTANCE,
+                                        new SendAndReceiveRequestBuilder().execute(
                                                 "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                                                         RequestHeaders,
                                                 ResponseHeaders +
                                                         "0c\r\n" +
                                                         "{\"ddl\":\"OK\"}\r\n" +
                                                         "00\r\n" +
-                                                        "\r\n",
-                                                1,
-                                                0,
-                                                false,
-                                                true
+                                                        "\r\n"
                                         );
                                     } catch (AssertionError ase) {
                                         fails.incrementAndGet();
@@ -358,19 +333,14 @@ public class RetryIODispatcherTest {
                     }
 
                     // check if we have parallelCount x insertCount  records
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
+                    new SendAndReceiveRequestBuilder().execute(
                             "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
                                     RequestHeaders,
                             ResponseHeaders +
                                     "71\r\n" +
                                     "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount - fails.get()) + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            false,
-                            false
+                                    "\r\n"
                     );
                 });
 
@@ -389,19 +359,14 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> {
                     // create table
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
+                    new SendAndReceiveRequestBuilder().execute(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                                     RequestHeaders,
                             ResponseHeaders +
                                     "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            true,
-                            false
+                                    "\r\n"
                     );
 
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
@@ -413,27 +378,13 @@ public class RetryIODispatcherTest {
                                 for (int j = 0; j < requestMult; j++) {
                                     // insert one record
                                     try {
-                                        sendAndReceive(
-                                                NetworkFacadeImpl.INSTANCE,
-                                                "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
-                                                        RequestHeaders,
-                                                "",
-                                                1,
-                                                5,
-                                                true,
-                                                false
-                                        );
+                                        new SendAndReceiveRequestBuilder()
+                                                .withPauseBetweenSendAndReceive(5)
+                                                .execute("GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" + RequestHeaders, "");
 
-                                        sendAndReceive(
-                                                NetworkFacadeImpl.INSTANCE,
-                                                "GET /query?query=select+123,37463,38934,983,99203,102932,40954,count(*)+count123+from+balances_x&count=true HTTP/1.1\r\n" +
-                                                        RequestHeaders,
-                                                "",
-                                                1,
-                                                5,
-                                                true,
-                                                false
-                                        );
+                                        new SendAndReceiveRequestBuilder()
+                                                .withPauseBetweenSendAndReceive(5)
+                                                .execute("GET /query?query=select+123,37463,38934,983,99203,102932,40954,count(*)+count123+from+balances_x&count=true HTTP/1.1\r\n" + RequestHeaders, "");
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e);
                                     }
@@ -459,19 +410,14 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> {
                     // create table
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
+                    new SendAndReceiveRequestBuilder().execute(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                                     RequestHeaders,
                             ResponseHeaders +
                                     "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            true,
-                            false
+                                    "\r\n"
                     );
 
                     TableWriter writer = lockWriter(engine, "balances_x");
@@ -484,16 +430,12 @@ public class RetryIODispatcherTest {
                                 // insert one record
                                 try {
                                     Thread.sleep(finalI * 5);
-                                    sendAndReceive(
-                                            NetworkFacadeImpl.INSTANCE,
-                                            "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                                    RequestHeaders,
-                                            "",
-                                            1,
-                                            200,
-                                            false,
-                                            false
-                                    );
+                                    new SendAndReceiveRequestBuilder()
+                                            .withPauseBetweenSendAndReceive(200)
+                                            .execute("GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                                            RequestHeaders,
+                                                    ""
+                                            );
                                 } catch (Exception e) {
                                     LOG.error().$("Failed execute insert http request. Server error ").$(e);
                                 }
@@ -515,19 +457,14 @@ public class RetryIODispatcherTest {
                     for (int i = 0; i < waitCount; i++) {
 
                         try {
-                            sendAndReceive(
-                                    NetworkFacadeImpl.INSTANCE,
+                            new SendAndReceiveRequestBuilder().execute(
                                     "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n" +
                                             RequestHeaders,
                                     ResponseHeaders +
                                             "6f\r\n" +
                                             "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + expectedCount + "]],\"count\":1}\r\n" +
                                             "00\r\n" +
-                                            "\r\n",
-                                    1,
-                                    0,
-                                    false,
-                                    false
+                                            "\r\n"
                             );
                             return;
                         } catch (ComparisonFailure e) {
@@ -556,15 +493,7 @@ public class RetryIODispatcherTest {
                         .withNetwork(getSendDelayNetworkFacade(slowNetAfterSending)))
                 .run((engine) -> {
                     // create table and do 1 import
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            ValidImportRequest,
-                            ValidImportResponse,
-                            1,
-                            0,
-                            false,
-                            false
-                    );
+                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
 
                     TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
                     final int validRequestRecordCount = 24;
@@ -577,15 +506,7 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        sendAndReceive(
-                                                NetworkFacadeImpl.INSTANCE,
-                                                ValidImportRequest,
-                                                ValidImportResponse,
-                                                1,
-                                                0,
-                                                false,
-                                                false
-                                        );
+                                        new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
                                     }
@@ -610,20 +531,14 @@ public class RetryIODispatcherTest {
 
                     // check if we have parallelCount x insertCount  records
                     LOG.info().$("Requesting row count").$();
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
+                    new SendAndReceiveRequestBuilder().execute(
                             "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
                                     RequestHeaders,
                             ResponseHeaders +
                                     "83\r\n" +
                                     "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            false,
-                            false
-                    );
+                                    "\r\n");
 
                 });
     }
@@ -638,15 +553,7 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run((engine) -> {
                     // create table and do 1 import
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            ValidImportRequest,
-                            ValidImportResponse,
-                            1,
-                            0,
-                            false,
-                            false
-                    );
+                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
 
                     TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
 
@@ -660,15 +567,7 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        sendAndReceive(
-                                                NetworkFacadeImpl.INSTANCE,
-                                                ValidImportRequest,
-                                                "",
-                                                1,
-                                                0,
-                                                false,
-                                                false
-                                        );
+                                        new SendAndReceiveRequestBuilder().execute(ValidImportRequest, "");
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
                                     }
@@ -689,20 +588,14 @@ public class RetryIODispatcherTest {
 
                         try {
                             // check if we have parallelCount x insertCount  records
-                            sendAndReceive(
-                                    NetworkFacadeImpl.INSTANCE,
+                            new SendAndReceiveRequestBuilder().execute(
                                     "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
                                             RequestHeaders,
                                     ResponseHeaders +
                                             "83\r\n" +
                                             "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                                             "00\r\n" +
-                                            "\r\n",
-                                    1,
-                                    0,
-                                    false,
-                                    false
-                            );
+                                            "\r\n");
                             return;
                         } catch (ComparisonFailure e) {
                             if (i < 9) {
@@ -736,16 +629,7 @@ public class RetryIODispatcherTest {
                 )
                 .run(engine -> {
                     // create table and do 1 import
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            ValidImportRequest,
-                            ValidImportResponse,
-                            1,
-                            0,
-                            false,
-                            false
-                    );
-
+                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
                     TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
                     final int validRequestRecordCount = 24;
                     final int insertCount = 4;
@@ -758,16 +642,15 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        sendAndReceive(
-                                                NetworkFacadeImpl.INSTANCE,
-                                                ValidImportRequest,
-                                                ValidImportResponse,
-                                                1,
-                                                0,
-                                                false,
-                                                false
-                                        );
+                                        // Check that status is 200.
+                                        // Do not check full response. Sometimes TextImport reports dirty insert count
+                                        // e.g. inserts from another transaction visible in the count.
+                                        String response = "HTTP/1.1 200 OK\r\n";
+                                        new SendAndReceiveRequestBuilder()
+                                                .withCompareLength(response.length())
+                                                .execute(ValidImportRequest, response);
                                     } catch (AssertionError e) {
+                                        LOG.error().$(e).$();
                                         failedImports.incrementAndGet();
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
@@ -791,20 +674,12 @@ public class RetryIODispatcherTest {
 
                     // check if we have parallelCount x insertCount  records
                     LOG.info().$("Requesting row count").$();
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
+                    new SendAndReceiveRequestBuilder().execute("GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" + RequestHeaders,
                             ResponseHeaders +
                                     "84\r\n" +
                                     "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
-                                    "\r\n",
-                            1,
-                            0,
-                            false,
-                            false
-                    );
+                                    "\r\n");
 
                 });
     }
@@ -815,18 +690,19 @@ public class RetryIODispatcherTest {
             return NetworkFacadeImpl.INSTANCE;
 
         return new NetworkFacadeImpl() {
-            int totalSent = 0;
+            AtomicInteger totalSent = new AtomicInteger();
 
             @Override
             public int send(long fd, long buffer, int bufferLen) {
+                int sentNow = totalSent.get();
                 if (bufferLen > 0) {
-                    if (totalSent == startDelayDelayAfter) {
-                        totalSent = 0;
+                    if (sentNow >= startDelayDelayAfter) {
+                        totalSent.set(0);
                         return 0;
                     }
 
-                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - totalSent));
-                    totalSent += result;
+                    int result = super.send(fd, buffer, Math.min(bufferLen, startDelayDelayAfter - sentNow));
+                    totalSent.addAndGet(result);
                     return result;
                 }
                 return 0;
@@ -867,33 +743,11 @@ public class RetryIODispatcherTest {
                                 .withHttpProtocolVersion("HTTP/1.1 ")
                 )
                 .run(engine -> {
-                    sendAndReceive(
-                            nf,
-                            request,
-                            response,
-                            requestCount,
-                            0,
-                            false,
-                            expectDisconnect
-                    );
+                    new SendAndReceiveRequestBuilder()
+                            .withNetworkFacade(nf)
+                            .withExpectDisconnect(expectDisconnect)
+                            .withRequestCount(requestCount)
+                            .execute(request, response);
                 });
-    }
-
-    private void sendAndReceive(
-            NetworkFacade nf,
-            String request,
-            String response,
-            int requestCount,
-            long pauseBetweenSendAndReceive,
-            boolean printOnly,
-            boolean expectDisconnect
-    ) throws InterruptedException {
-        new SendAndReceiveRequestBuilder()
-                .withNetworkFacade(nf)
-                .withExpectDisconnect(expectDisconnect)
-                .withPrintOnly(printOnly)
-                .withRequestCount(requestCount)
-                .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
-                .execute(request, response);
     }
 }

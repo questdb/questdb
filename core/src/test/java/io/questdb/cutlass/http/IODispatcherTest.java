@@ -509,11 +509,11 @@ public class IODispatcherTest {
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
-                        .withNetwork(nf)
-                        .withDumpingTraffic(false)
-                        .withAllowDeflateBeforeSend(false)
-                        .withHttpProtocolVersion("HTTP/1.1 ")
-                        .withServerKeepAlive(true)
+                                .withNetwork(nf)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
                 )
                 .run(engine -> {
                     sendAndReceive(
@@ -1230,6 +1230,18 @@ public class IODispatcherTest {
                 false,
                 1 // todo: fix writer queue and increase request count
         );
+    }
+
+    @Test
+    public void testImportMultipleOnSameConnectionSlowLoop() throws Exception {
+        for (int i = 0; i < 10; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportMultipleOnSameConnectionSlow();
+            temp.delete();
+            temp.create();
+        }
     }
 
     @Test

@@ -3,6 +3,7 @@ package io.questdb.cutlass.http;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
@@ -13,12 +14,13 @@ import java.nio.charset.StandardCharsets;
 
 public class SendAndReceiveRequestBuilder {
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
-    private NetworkFacade nf;
+    private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private boolean printOnly;
     private boolean expectDisconnect;
-    private int requestCount;
+    private int requestCount = 1;
     private int maxWaitTimeoutMs = 5000;
+    private int compareLength = -1;
 
     public SendAndReceiveRequestBuilder withNetworkFacade(NetworkFacade nf) {
         this.nf = nf;
@@ -47,6 +49,11 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withMaxTimeoutMs(int maxWaitTimeoutMs) {
         this.maxWaitTimeoutMs = maxWaitTimeoutMs;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
+        this.compareLength = compareLength;
         return this;
     }
 
@@ -135,7 +142,12 @@ public class SendAndReceiveRequestBuilder {
         String actual = new String(receivedBytes, StandardCharsets.UTF_8);
         if (!printOnly) {
             String expected = (new String(expectedResponse, StandardCharsets.UTF_8));
+            if (compareLength > 0) {
+                expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
+                actual = actual.substring(0, Math.min(compareLength, actual.length()) - 1);
+            }
             Assert.assertEquals(expected, actual);
+
         } else {
             System.out.println("actual");
             System.out.println(actual);

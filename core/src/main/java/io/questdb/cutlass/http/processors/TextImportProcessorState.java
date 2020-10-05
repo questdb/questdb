@@ -46,6 +46,7 @@ class TextImportProcessorState implements Mutable, Closeable {
     boolean forceHeader = false;
     int state;
     boolean json = false;
+    CharSequence errorMessage;
 
     TextImportProcessorState(CairoEngine engine) {
         this.textLoader = new TextLoader(engine);
@@ -59,6 +60,7 @@ class TextImportProcessorState implements Mutable, Closeable {
         analysed = false;
         state = STATE_OK;
         textLoader.clear();
+        errorMessage = null;
     }
 
     @Override

@@ -26,7 +26,9 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryUnavailableException;
+import io.questdb.cairo.pool.ex.NotEnoughLinesException;
 import io.questdb.cairo.pool.ex.RetryOperationException;
+import io.questdb.cairo.pool.ex.ReceiveBufferTooSmallException;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.Atomicity;
@@ -262,7 +264,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void onChunk(long lo, long hi)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, ReceiveBufferTooSmallException {
         if (hi > lo) {
             try {
                 transientState.lo = lo;
@@ -274,9 +276,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             } catch (EntryUnavailableException e) {
                 throw RetryOperationException.INSTANCE;
+            } catch (NotEnoughLinesException e) {
+                throw e;
             } catch (TextException | CairoException | CairoError e) {
                 handleTextException(e);
-
             }
         }
     }
@@ -287,7 +290,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         this.transientContext = context;
         this.transientState = LV.get(context);
-        onChunk(transientState.lo, transientState.hi);
+        try {
+            onChunk(transientState.lo, transientState.hi);
+        } catch (ReceiveBufferTooSmallException e) {
+            LOG.error().$("TooFewBytesReadException is thrown when attempted to request retry. Request aborted.").$();
+            throw ServerDisconnectException.INSTANCE;
+        }
     }
 
     @Override
@@ -397,8 +405,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             HttpChunkedResponseSocket socket
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
-
-            if (state.json) {
+            if (state.errorMessage != null) {
+                resumeError(state, socket);
+            } else if (state.json) {
                 resumeJson(state, socket);
             } else {
                 resumeText(state, socket);
@@ -429,7 +438,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             CharSequence message,
             boolean json
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final TextImportProcessorState state = LV.get(context);
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        state.errorMessage = message;
+
         if (json) {
             socket.status(400, CONTENT_TYPE_JSON);
             socket.sendHeader();
@@ -441,6 +453,17 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
         socket.sendChunk();
         socket.done();
+    }
+
+    private void resumeError(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        if (state.json) {
+            socket.put('{').putQuoted("status").put(':').encodeUtf8AndQuote(state.errorMessage).put('}');
+        } else {
+            socket.encodeUtf8(state.errorMessage);
+        }
+        socket.sendChunk();
+        socket.done();
+        throw ServerDisconnectException.INSTANCE;
     }
 
     private void sendResponse(HttpConnectionContext context)
