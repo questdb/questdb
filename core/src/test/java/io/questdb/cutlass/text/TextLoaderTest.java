@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.ex.NotEnoughLinesException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1383,9 +1384,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
             configureLoaderDefaults(textLoader);
             try {
                 playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
-            } catch (TextException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "not enough lines");
+            } catch (NotEnoughLinesException e) {
+                return;
             }
+            Assert.fail();
         });
     }
 
