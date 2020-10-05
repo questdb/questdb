@@ -89,6 +89,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final CharacterStore connectionCharacterStore;
     private final CharacterStore queryCharacterStore;
     private final CharacterStore portalCharacterStore;
+    private final CharacterStore queryTextCharacterStore;
     private final BindVariableService bindVariableService = new BindVariableService();
     private final long sendBufferLimit;
     private final int sendBufferSize;
@@ -177,6 +178,10 @@ public class PGConnectionContext implements IOContext, Mutable {
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
         );
+        this.queryTextCharacterStore = new CharacterStore(
+                configuration.getCharacterStoreCapacity(),
+                configuration.getCharacterStorePoolCapacity()
+        );
         this.connectionCharacterStore = new CharacterStore(256, 2);
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
@@ -249,6 +254,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         bufferRemainingSize = 0;
         responseAsciiSink.reset();
         prepareForNewQuery();
+        queryTextCharacterStore.clear();
         // todo: test that both of these are cleared (unit test)
         authenticationRequired = true;
         username = null;
@@ -1180,6 +1186,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     throw BadProtocolException.INSTANCE;
                 }
             }
+            queryTextCharacterStore.clear();
         } else if (type == 'P') {
             LOG.info().$("close message for portal - ignoring").$();
         } else {
@@ -1319,7 +1326,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
 
         if (wrapper != null) {
-            wrapper.queryText = queryText.toString();
+            CharacterStoreEntry cachedQueryText = queryTextCharacterStore.newEntry();
+            cachedQueryText.put(queryText);
+            wrapper.queryText = queryTextCharacterStore.toImmutable();
             wrapper.bindVariableTypes = bindVariableTypes;
         }
         prepareParseComplete();
