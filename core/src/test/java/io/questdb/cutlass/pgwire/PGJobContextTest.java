@@ -40,6 +40,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
 import org.postgresql.core.BaseConnection;
@@ -58,6 +59,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.std.Numbers.hexDigits;
+import static org.junit.Assert.assertTrue;
 
 public class PGJobContextTest extends AbstractGriffinTest {
 
@@ -1608,7 +1610,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 statement.execute();
                 Assert.fail();
             } catch (SQLException e) {
-                Assert.assertTrue(e instanceof PSQLException);
+                assertTrue(e instanceof PSQLException);
                 PSQLException pe = (PSQLException) e;
                 Assert.assertEquals(15, pe.getServerErrorMessage().getPosition());
                 Assert.assertEquals("'(' or 'as' expected", pe.getServerErrorMessage().getMessage());
@@ -1651,7 +1653,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                     statement.executeQuery();
                     Assert.fail();
                 } catch (SQLException e) {
-                    Assert.assertTrue(Chars.startsWith(e.getMessage(), "ERROR: bad parameter value"));
+                    assertTrue(Chars.startsWith(e.getMessage(), "ERROR: bad parameter value"));
                 }
                 connection.close();
             } finally {
@@ -1885,7 +1887,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 Assert.assertEquals(0, nf.setReusePort(fd));
                 nf.configureNoLinger(fd);
 
-                Assert.assertTrue(nf.bindTcp(fd, 0, 9120));
+                assertTrue(nf.bindTcp(fd, 0, 9120));
                 nf.listen(fd, 128);
 
                 LOG.info().$("listening [fd=").$(fd).$(']').$();
@@ -2387,6 +2389,41 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 "rnd_double(4) расход, ",
                 "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[NUMERIC]\n"
         );
+    }
+
+    /*
+    We want to ensure that tableoid is set to zero, otherwise squirrelSql will not display the result set.
+     */
+    @Test
+    public void testThatTableOidIsSetToZero() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(
+                        NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                properties.setProperty("binaryTransfer", "false");
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+                PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
+
+                ResultSet rs = statement.executeQuery();
+                assertTrue(((PGResultSetMetaData) rs.getMetaData()).getBaseColumnName(1).isEmpty()); // getBaseColumnName returns "" if tableOid is zero
+                rs.close();
+                connection.close();
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
     }
 
     private void assertResultSet(String expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
