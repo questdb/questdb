@@ -234,7 +234,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRW
     return (jlong) openUtf8(
             lpszName,
             GENERIC_WRITE | GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             OPEN_ALWAYS
     );
 }
