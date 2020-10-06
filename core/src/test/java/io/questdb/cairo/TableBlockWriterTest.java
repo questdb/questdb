@@ -6,6 +6,7 @@ import java.util.concurrent.locks.LockSupport;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
@@ -521,6 +522,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testHugePartition() throws Exception {
         runTest("testPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +

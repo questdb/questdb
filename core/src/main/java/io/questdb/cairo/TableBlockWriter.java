@@ -348,24 +348,6 @@ public class TableBlockWriter implements Closeable {
             }
         }
 
-        private long mapFile(long fd, long mapOffset, long mapSz) {
-            long fileSz = ff.length(fd);
-            long minFileSz = mapOffset + mapSz;
-            if (fileSz < minFileSz) {
-                if (!ff.truncate(fd, minFileSz)) {
-                    throw CairoException.instance(ff.errno()).put("Could not truncate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
-                            .put(mapSz);
-                }
-            }
-            long address = ff.mmap(fd, mapSz, mapOffset, Files.MAP_RW);
-            if (address == -1) {
-                int errno = ff.errno();
-                throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=").put(mapSz).put(", errno=")
-                        .put(errno);
-            }
-            return address;
-        }
-
         private void setColumnTop(int columnIndex, long columnTop) {
             columnTops.set(columnIndex, columnTop);
         }
@@ -447,7 +429,7 @@ public class TableBlockWriter implements Closeable {
                     long address = columnMappingStart.getQuick(columnIndex);
                     if (address != 0) {
                         long sz = columnMappingSize.getQuick(columnIndex);
-                        ff.munmap(address, sz);
+                        unmapFile(address, sz);
                         columnMappingStart.setQuick(columnIndex, 0);
                     }
                 }
@@ -455,7 +437,7 @@ public class TableBlockWriter implements Closeable {
                 for (i = 0; i < nAdditonalMappings; i++) {
                     long address = additionalMappingStart.get(i);
                     long sz = additionalMappingSize.getQuick(i);
-                    ff.munmap(address, sz);
+                    unmapFile(address, sz);
                 }
                 columnFds.clear();
                 columnMappingStart.clear();
@@ -464,6 +446,34 @@ public class TableBlockWriter implements Closeable {
                 additionalMappingSize.clear();
             }
             opened = false;
+        }
+
+        private long mapFile(long fd, final long mapOffset, final long mapSz) {
+            long alignedMapOffset = (mapOffset / ff.getPageSize()) * ff.getPageSize();
+            long addressOffsetDueToAlignment = mapOffset - alignedMapOffset;
+            long alignedMapSz = mapSz + addressOffsetDueToAlignment;
+            long fileSz = ff.length(fd);
+            long minFileSz = mapOffset + alignedMapSz;
+            if (fileSz < minFileSz) {
+                if (!ff.truncate(fd, minFileSz)) {
+                    throw CairoException.instance(ff.errno()).put("Could not truncate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
+                            .put(mapSz);
+                }
+            }
+            long address = ff.mmap(fd, alignedMapSz, alignedMapOffset, Files.MAP_RW);
+            if (address == -1) {
+                int errno = ff.errno();
+                throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=").put(mapSz).put(", errno=")
+                        .put(errno);
+            }
+            assert (address / ff.getPageSize()) * ff.getPageSize() == address; // address MUST be page aligned
+            return address + addressOffsetDueToAlignment;
+        }
+
+        private void unmapFile(final long address, final long mapSz) {
+            long alignedAddress = (address / ff.getPageSize()) * ff.getPageSize();
+            long alignedMapSz = mapSz + address - alignedAddress;
+            ff.munmap(alignedAddress, alignedMapSz);
         }
 
         private void close() {
