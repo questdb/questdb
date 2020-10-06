@@ -522,7 +522,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+//                    compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+                    compiler.compile("create table y as (x union all 1am)", sqlExecutionContext);
 
                     // expected outcome
                     sink.clear();
@@ -541,7 +542,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     // insert 1AM data into X
                     compiler.compile("insert into x select * from 1am", sqlExecutionContext);
-                    compiler.compile("insert into x select * from tail", sqlExecutionContext);
+//                    compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
                     // It is necessary to release cached "x" reader because as of yet
                     // reader cannot reload any partition other than "current".
@@ -643,7 +644,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+//                    compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+                    compiler.compile("create table y as (x union all 1am)", sqlExecutionContext);
 
                     // expected outcome
                     sink.clear();
@@ -656,7 +658,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     String expected = Chars.toString(sink);
 
                     compiler.compile("insert into x select * from 1am", sqlExecutionContext);
-                    compiler.compile("insert into x select * from tail", sqlExecutionContext);
+//                    compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
                     // It is necessary to release cached "x" reader because as of yet
                     // reader cannot reload any partition other than "current".
@@ -1044,6 +1046,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     // create third table, which will contain both X and 1AM
                     compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+//                    compiler.compile("create table y as (x union all 1am)", sqlExecutionContext);
 
                     // expected outcome
                     sink.clear();

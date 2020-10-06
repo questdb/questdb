@@ -1161,9 +1161,18 @@ public class TableWriter implements Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    private static void setColumnSize(FilesFacade ff, AppendMemory mem1, AppendMemory mem2, int type, long actualPosition, long buf) {
+    private static void setColumnSize(
+            FilesFacade ff,
+            AppendMemory mem1,
+            AppendMemory mem2,
+            int type,
+            long actualPosition,
+            long buf,
+            boolean ensureFileSize
+    ) {
         long offset;
         long len;
+        long mem1Size;
         if (actualPosition > 0) {
             // subtract column top
             switch (type) {
@@ -1173,7 +1182,12 @@ public class TableWriter implements Closeable {
                     offset = Unsafe.getUnsafe().getLong(buf);
                     readBytes(ff, mem1, buf, Long.BYTES, offset, "Cannot read length, fd=");
                     len = Unsafe.getUnsafe().getLong(buf);
-                    mem1.setSize(len == -1 ? offset + Long.BYTES : offset + len + Long.BYTES);
+                    mem1Size = len == -1 ? offset + Long.BYTES : offset + len + Long.BYTES;
+                    if (ensureFileSize) {
+                        mem1.ensureFileSize(mem1.pageIndex(mem1Size));
+                        mem2.ensureFileSize(mem2.pageIndex(actualPosition * Long.BYTES));
+                    }
+                    mem1.setSize(mem1Size);
                     mem2.setSize(actualPosition * Long.BYTES);
                     break;
                 case ColumnType.STRING:
@@ -1182,11 +1196,20 @@ public class TableWriter implements Closeable {
                     offset = Unsafe.getUnsafe().getLong(buf);
                     readBytes(ff, mem1, buf, Integer.BYTES, offset, "Cannot read length, fd=");
                     len = Unsafe.getUnsafe().getInt(buf);
-                    mem1.setSize(len == -1 ? offset + Integer.BYTES : offset + len * Character.BYTES + Integer.BYTES);
+                    mem1Size = len == -1 ? offset + Integer.BYTES : offset + len * Character.BYTES + Integer.BYTES;
+                    if (ensureFileSize) {
+                        mem1.ensureFileSize(mem1.pageIndex(mem1Size));
+                        mem2.ensureFileSize(mem2.pageIndex(actualPosition * Long.BYTES));
+                    }
+                    mem1.setSize(mem1Size);
                     mem2.setSize(actualPosition * Long.BYTES);
                     break;
                 default:
-                    mem1.setSize(actualPosition << ColumnType.pow2SizeOf(type));
+                    mem1Size = actualPosition << ColumnType.pow2SizeOf(type);
+                    if (ensureFileSize) {
+                        mem1.ensureFileSize(mem1.pageIndex(mem1Size));
+                    }
+                    mem1.setSize(mem1Size);
                     break;
             }
         } else {
@@ -1419,7 +1442,7 @@ public class TableWriter implements Closeable {
                     try {
                         txPendingPartitionSizes.jumpTo((txPartitionCount - 2) * 16);
                         openPartition(prevMaxTimestamp);
-                        setAppendPosition(txPrevTransientRowCount);
+                        setAppendPosition(txPrevTransientRowCount, false);
                         txPartitionCount--;
                     } catch (CairoException e) {
                         freeColumns(false);
@@ -1463,7 +1486,7 @@ public class TableWriter implements Closeable {
 
             // is no column has been changed we take easy option and do nothing
             if (rowChanged) {
-                setAppendPosition(transientRowCount);
+                setAppendPosition(transientRowCount, false);
             }
         }
         refs.fill(0, columnCount, --masterRef);
@@ -2025,6 +2048,9 @@ public class TableWriter implements Closeable {
 
                             long indexSize = dataIndexMax << shl;
                             long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
+//                            if (indexFd < 0) {
+//                                columns.getQuick(getSecondaryColumnIndex(i)).releaseCurrentPage();
+//                            }
 
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, indexAddr);
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, indexSize);
@@ -2130,6 +2156,9 @@ public class TableWriter implements Closeable {
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`]").$();
                             MergeStruct.mergeStructSetSrcFixedFd(mergeStruct, i, dataFd);
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize));
+//                            if (dataFd < 0) {
+//                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
+//                            }
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, dataSize);
                         }
 
@@ -2736,13 +2765,12 @@ public class TableWriter implements Closeable {
                             LOG.debug().$("reused FDs").$();
                         } else {
 
-                            dataIndexMax = TableUtils.readPartitionSize(ff, path.trimTo(plen), tempMem8b) / Long.BYTES;
-
+                            dataIndexMax = readPartitionSize(ff, path, tempMem8b);
                             // out of order data is going into archive partition
                             // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                             // and "high" being newest
 
-                            dFile(path, metadata.getColumnName(timestampIndex));
+                            dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
 
                             // also track the fd that we need to eventually close
                             fd = ff.openRW(path);
@@ -3007,9 +3035,7 @@ public class TableWriter implements Closeable {
                         if (prefixType == OO_BLOCK_NONE && mergeType == OO_BLOCK_NONE) {
                             // We do not need to create a copy of partition when we simply need to append
                             // existing the one.
-                            // todo: there could be append into non-latest partition, which means
-                            //     we can't reuse file descriptors automatically. We will need to open existing files
-                            mergeStruct = prepareAppendMemoryForLastPartition(
+                            mergeStruct = prepareAppendMemory(
                                     indexLo,
                                     indexHi,
                                     indexMax
@@ -3165,7 +3191,7 @@ public class TableWriter implements Closeable {
             closeAppendMemoryNoTruncate(false);
             openPartition(maxTimestamp);
         }
-        setAppendPosition(this.transientRowCount);
+        setAppendPosition(this.transientRowCount, true);
         rowFunction = switchPartitionFunction;
         row.rowColumns = columns;
         timestampSetter = prevTimestampSetter;
@@ -3255,7 +3281,7 @@ public class TableWriter implements Closeable {
 
     private void openFirstPartition(long timestamp) {
         openPartition(repairDataGaps(timestamp));
-        setAppendPosition(transientRowCount);
+        setAppendPosition(transientRowCount, true);
         if (performRecovery) {
             performRecovery();
         }
@@ -3387,7 +3413,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void prepareAppendColumnForLastPartition(AppendMemory mem, long[] mergeStruct, int columnIndex, long indexMergeSize) {
+    private void prepareAppendColumn(AppendMemory mem, long[] mergeStruct, int columnIndex, long indexMergeSize) {
         final long fd = -mem.getFd();
         final long offset = mem.getAppendOffset();
         MergeStruct.setDestFixedFd(mergeStruct, columnIndex, fd);
@@ -3397,7 +3423,7 @@ public class TableWriter implements Closeable {
         MergeStruct.setDestFixedAppendOffset(mergeStruct, columnIndex, offset);
     }
 
-    private long[] prepareAppendMemoryForLastPartition(long indexLo, long indexHi, long indexMax) {
+    private long[] prepareAppendMemory(long indexLo, long indexHi, long indexMax) {
         long[] mergeStruct = new long[columnCount * MergeStruct.MERGE_STRUCT_ENTRY_SIZE];
 
         for (int i = 0; i < columnCount; i++) {
@@ -3419,7 +3445,7 @@ public class TableWriter implements Closeable {
                     }
 
                     final long dataSize = (hi - lo);
-                    prepareAppendColumnForLastPartition(
+                    prepareAppendColumn(
                             columns.getQuick(getSecondaryColumnIndex(i)),
                             mergeStruct,
                             i,
@@ -3436,7 +3462,7 @@ public class TableWriter implements Closeable {
                     MergeStruct.setDestVarAppendOffset(mergeStruct, i, dataOffset);
                     break;
                 default:
-                    prepareAppendColumnForLastPartition(
+                    prepareAppendColumn(
                             columns.getQuick(getPrimaryColumnIndex(i)),
                             mergeStruct,
                             i,
@@ -3961,10 +3987,18 @@ public class TableWriter implements Closeable {
         throw e;
     }
 
-    private void setAppendPosition(final long position) {
+    private void setAppendPosition(final long position, boolean ensureFileSize) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
-            setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), getColumnType(metaMem, i), position - columnTops.getQuick(i), tempMem8b);
+            setColumnSize(
+                    ff,
+                    getPrimaryColumn(i),
+                    getSecondaryColumn(i),
+                    getColumnType(metaMem, i),
+                    position - columnTops.getQuick(i),
+                    tempMem8b,
+                    ensureFileSize
+            );
         }
     }
 
@@ -4084,7 +4118,7 @@ public class TableWriter implements Closeable {
         txPrevTransientRowCount = transientRowCount;
         transientRowCount = 0;
         openPartition(timestamp);
-        setAppendPosition(0);
+        setAppendPosition(0, false);
     }
 
     private void syncColumns(int commitMode) {

@@ -161,11 +161,15 @@ public class AppendMemory extends VirtualMemory {
         return -1;
     }
 
-    private long mapPage(int page) {
+    public void ensureFileSize(int page) {
         long target = pageOffset(page + 1);
         if (ff.length(fd) < target && !ff.truncate(fd, target)) {
             throw CairoException.instance(ff.errno()).put("Appender resize failed fd=").put(fd).put(", size=").put(target);
         }
+    }
+
+    public long mapPage(int page) {
+        ensureFileSize(page);
         long offset = pageOffset(page);
         long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
         if (address != -1) {
