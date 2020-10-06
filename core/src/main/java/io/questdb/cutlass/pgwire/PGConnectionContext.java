@@ -553,7 +553,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putLenEx(a);
     }
 
-    private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
         if (queryText.length() > 0) {
             boolean foundCachedFactory = retrieveCachedFactory(factoryCache);
             if (!foundCachedFactory) {
@@ -581,7 +581,15 @@ public class PGConnectionContext implements IOContext, Mutable {
                             transactionState = IN_TRANSACTION;
                         } else if (SqlKeywords.isCommit(queryText)) {
                             queryTag = TAG_COMMIT;
-                            transactionState = COMMIT_TRANSACTION;
+                            switch (transactionState) {
+                                case ERROR_TRANSACTION:
+                                    transactionState = ERROR_TRANSACTION;
+                                    break;
+                                case IN_TRANSACTION:
+                                default:
+                                    transactionState = COMMIT_TRANSACTION;
+                                    break;
+                            }
                         } else if (SqlKeywords.isRollback(queryText)) {
                             queryTag = TAG_ROLLBACK;
                             transactionState = ROLLING_BACK_TRANSACTION;
@@ -595,6 +603,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                         break;
                 }
             }
+        } else {
+            isEmptyQuery = true;
         }
     }
 
@@ -1209,10 +1219,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         } else if (cachedFactory instanceof InsertStatement) {
             queryTag = TAG_INSERT;
             currentInsertStatement = (InsertStatement) cachedFactory;
-        } else {
-            if (queryText.length() == 0) {
-                isEmptyQuery = true;
-            }
         }
         return cachedFactory != null;
     }
@@ -1245,9 +1251,9 @@ public class PGConnectionContext implements IOContext, Mutable {
                     cachedTransactionInsertWriters.clear();
                     transactionState = NO_TRANSACTION;
                 }
-                if (isEmptyQuery) {
-                    prepareNoDataMessage();
-                }
+            }
+            if (isEmptyQuery) {
+                prepareNoDataMessage();
             }
             sendCurrentCursorTail = TAIL_SUCCESS;
             prepareExecuteTail(false);
@@ -1423,7 +1429,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {
         if (parameterValueCount > 0) {
             if (parameterValueCount < parameterTypeCount) {
-                LOG.error().$("parameter type count must be less or equals to number of parameters in query").$();
+                LOG.error().$("parameter type count must be less or equals to number of parameters values").$();
                 throw BadProtocolException.INSTANCE;
             }
             if (parameterFormatCount > 1 && parameterFormatCount != parameterValueCount) {
