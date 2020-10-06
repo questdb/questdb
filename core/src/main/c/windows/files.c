@@ -487,9 +487,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jlong fd) {
-    DWORD high;
-    DWORD low = GetFileSize((HANDLE) fd, &high);
-    if (LockFile((HANDLE) fd, 0, 0, low, high)) {
+    if (LockFile((HANDLE) fd, 0, 0, 1, 0)) {
         return 0;
     }
 
