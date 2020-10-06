@@ -27,7 +27,7 @@ package io.questdb.cairo;
 public final class MergeStruct {
     final static int MERGE_STRUCT_ENTRY_SIZE = 16;
 
-    static void mergeStructSetSrcFixedFd(long[] mergeStruct, int columnIndex, long value) {
+    static void setSrcFixedFd(long[] mergeStruct, int columnIndex, long value) {
         mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE] = value;
     }
 
@@ -95,7 +95,7 @@ public final class MergeStruct {
         mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 3] = value;
     }
 
-    static void getDestVarAddress(long[] mergeStruct, int columnIndex, long value) {
+    static void setDestVarAddress(long[] mergeStruct, int columnIndex, long value) {
         mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 4] = value;
     }
 

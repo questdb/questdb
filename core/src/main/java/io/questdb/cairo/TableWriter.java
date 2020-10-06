@@ -1415,6 +1415,27 @@ public class TableWriter implements Closeable {
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
     }
 
+    private long calculateMapOffsetAndMapReadWrite(FilesFacade ff, long fd, long lastValueOffset, int columnType, long requiredMapSize) {
+        if (columnType == ColumnType.STRING) {
+            long addr = ff.mmap(fd, Integer.BYTES, lastValueOffset, Files.MAP_RO);
+            int len = Unsafe.getUnsafe().getInt(addr);
+            ff.munmap(addr, Integer.BYTES);
+            if (len < 1) {
+                return ff.mmap(fd, requiredMapSize, lastValueOffset + Integer.BYTES, Files.MAP_RW);
+            }
+            return ff.mmap(fd, requiredMapSize, lastValueOffset + Integer.BYTES + len * Character.BYTES, Files.MAP_RW);
+        } else {
+            // BINARY
+            long addr = ff.mmap(fd, Long.BYTES, lastValueOffset, Files.MAP_RO);
+            long len = Unsafe.getUnsafe().getLong(addr);
+            ff.munmap(addr, Long.BYTES);
+            if (len < 1) {
+                return ff.mmap(fd, requiredMapSize, lastValueOffset + Long.BYTES, Files.MAP_RW);
+            }
+            return ff.mmap(fd, requiredMapSize, lastValueOffset + Long.BYTES + len, Files.MAP_RW);
+        }
+    }
+
     void cancelRow() {
 
         if ((masterRef & 1) == 0) {
@@ -2044,7 +2065,7 @@ public class TableWriter implements Closeable {
 
                             long indexFd = reuseFds ? -columns.getQuick(getSecondaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
                             LOG.info().$("open [fd=").$(indexFd).$(", path=`").utf8(path).$("`]").$();
-                            MergeStruct.mergeStructSetSrcFixedFd(mergeStruct, i, indexFd);
+                            MergeStruct.setSrcFixedFd(mergeStruct, i, indexFd);
 
                             long indexSize = dataIndexMax << shl;
                             long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
@@ -2066,6 +2087,7 @@ public class TableWriter implements Closeable {
                                 dataSize = m.getAppendOffset();
                             } else {
                                 dataFd = openReadWriteOrFail(ff, path);
+                                // todo: read archive file
                                 dataSize = ff.length(dataFd);
                                 if (dataSize == -1) {
                                     throw CairoException.instance(ff.errno()).put("Could not fstat [fd=").put(dataFd).put(']');
@@ -2133,7 +2155,7 @@ public class TableWriter implements Closeable {
 
                         truncateToSizeOrFail(ff, path, dataMergeFd, dataSize);
                         final long dataMergeAddr = mapReadWriteOrFail(ff, path, dataMergeFd, dataSize);
-                        MergeStruct.getDestVarAddress(mergeStruct, i, dataMergeAddr);
+                        MergeStruct.setDestVarAddress(mergeStruct, i, dataMergeAddr);
                         MergeStruct.setDestVarAddressSize(mergeStruct, i, dataSize);
                         MergeStruct.setDestVarAppendOffset(mergeStruct, i, 0L);
                         LOG.info().$("open [fd=").$(dataMergeFd).$(", path=`").utf8(path).$("`, addr=").$(dataMergeAddr).$(", size=").$(dataSize).$(']').$();
@@ -2154,7 +2176,7 @@ public class TableWriter implements Closeable {
                                 dataFd = reuseFds ? -columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
                             }
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`]").$();
-                            MergeStruct.mergeStructSetSrcFixedFd(mergeStruct, i, dataFd);
+                            MergeStruct.setSrcFixedFd(mergeStruct, i, dataFd);
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize));
 //                            if (dataFd < 0) {
 //                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
@@ -2687,7 +2709,7 @@ public class TableWriter implements Closeable {
                     .$(", ceilOfMaxTimestamp=").microTime(ceilOfMaxTimestamp)
                     .$(']').$();
 
-            while (true) {
+            while (indexLo < indexMax) {
                 long ooTimestampLo = getTimestampIndexValue(mergedTimestamps, indexLo);
 
                 path.trimTo(rootLen);
@@ -3156,7 +3178,7 @@ public class TableWriter implements Closeable {
                         txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
                     }
 
-                    if (indexHi + 1 >= indexMax && ooTimestampMin < minTimestamp) {
+                    if (indexHi + 1 >= indexMax) {
                         // no more out of order data and we just pre-pended data to existing
                         // partitions
                         minTimestamp = ooTimestampMin;
@@ -3378,6 +3400,97 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private long[] openPartitionForAppend(
+            Path path,
+            long indexLo,
+            long indexHi,
+            long indexMax,
+            long dataIndexMax,
+            int timestampIndex,
+            long timestampFd
+    ) {
+        long[] mergeStruct = new long[columnCount * MergeStruct.MERGE_STRUCT_ENTRY_SIZE];
+
+        int plen = path.length();
+        for (int i = 0; i < columnCount; i++) {
+            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem2;
+            final int columnType = metadata.getColumnType(i);
+
+            long lo;
+            long hi;
+            int shl;
+            long dataFd;
+            long dataSize;
+            try {
+                switch (columnType) {
+                    case ColumnType.BINARY:
+                    case ColumnType.STRING:
+                        shl = ColumnType.pow2SizeOf(ColumnType.LONG);
+
+                        // index files are opened as normal
+                        iFile(path, metadata.getColumnName(i));
+
+                        long indexFd = openReadWriteOrFail(ff, path);
+                        MergeStruct.setDestFixedFd(mergeStruct, i, indexFd);
+
+                        final long indexSize = (indexHi - indexLo + 1) << shl;
+                        truncateToSizeOrFail(ff, path, indexFd, dataIndexMax * Long.BYTES + indexSize);
+                        // we over-map the file by 8 bytes so that we can read offset value of the last BINARY/STRING entry
+                        // the assumption here is that we do not have empty partition we append to
+                        assert dataIndexMax > 0;
+
+                        MergeStruct.setDestFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, indexFd, (dataIndexMax - 1) * Long.BYTES, indexSize + Long.BYTES));
+                        MergeStruct.setDestFixedAddressSize(mergeStruct, i, indexSize + Long.BYTES);
+                        MergeStruct.setDestFixedAppendOffset(mergeStruct, i, Long.BYTES);
+
+                        // calculate the length of data segment that needs to be appended
+                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        lo = mem2.getLong(indexLo * Long.BYTES);
+                        if (indexHi == indexMax - 1) {
+                            hi = mem.getAppendOffset();
+                        } else {
+                            hi = mem2.getLong((indexHi + 1) * Long.BYTES);
+                        }
+
+                        // open data file now
+                        path.trimTo(plen);
+                        dFile(path, metadata.getColumnName(i));
+                        dataFd = openReadWriteOrFail(ff, path);
+
+                        // now we need to work out the length of data in the .d file
+                        // we do it differently for BINARY and STRING columns
+                        long offset = Unsafe.getUnsafe().getLong(MergeStruct.getDestFixedAddress(mergeStruct, i));
+                        long dataAddr = calculateMapOffsetAndMapReadWrite(ff, dataFd, offset, columnType, hi - lo);
+
+                        MergeStruct.setDestVarFd(mergeStruct, i, dataFd);
+                        MergeStruct.setDestVarAddress(mergeStruct, i, dataAddr);
+                        MergeStruct.setDestVarAddressSize(mergeStruct, i, hi - lo);
+                        break;
+                    default:
+                        shl = ColumnType.pow2SizeOf(columnType);
+                        dFile(path, metadata.getColumnName(i));
+                        dataSize = (indexHi - indexLo + 1) << shl;
+
+                        if (timestampIndex == i && timestampFd != 0) {
+                            // ensure timestamp fd is always negative, we will close it externally
+                            dataFd = timestampFd;
+                        } else {
+                            dataFd = openReadWriteOrFail(ff, path);
+                        }
+                        MergeStruct.setDestFixedFd(mergeStruct, i, dataFd);
+                        truncateToSizeOrFail(ff, path, dataFd, dataSize + (dataIndexMax << shl));
+                        MergeStruct.setDestFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, dataFd, (dataIndexMax << shl), dataSize));
+                        MergeStruct.setDestFixedAddressSize(mergeStruct, i, dataSize);
+                        break;
+                }
+            } finally {
+                path.trimTo(plen);
+            }
+        }
+        return mergeStruct;
+    }
+
     private ReadWriteMemory openTxnFile() {
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
@@ -3457,7 +3570,7 @@ public class TableWriter implements Closeable {
                     final long dataOffset = dataMem.getAppendOffset();
                     MergeStruct.setDestVarFd(mergeStruct, i, dataMergeFd);
                     final long dataMergeAddr = mapReadWriteOrFail(ff, null, -dataMergeFd, 0, dataSize + dataOffset);
-                    MergeStruct.getDestVarAddress(mergeStruct, i, dataMergeAddr);
+                    MergeStruct.setDestVarAddress(mergeStruct, i, dataMergeAddr);
                     MergeStruct.setDestVarAddressSize(mergeStruct, i, dataSize + dataOffset);
                     MergeStruct.setDestVarAppendOffset(mergeStruct, i, dataOffset);
                     break;
@@ -4395,7 +4508,7 @@ public class TableWriter implements Closeable {
         }
 
         commit();
-        setAppendPosition(transientRowCount);
+        setAppendPosition(transientRowCount, true);
     }
 
     public String getDesignatedTimestampColumnName() {
