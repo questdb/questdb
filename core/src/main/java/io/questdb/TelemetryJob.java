@@ -52,12 +52,12 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final static CharSequence configTableName = "telemetry_config";
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
+    private final RingQueue<TelemetryTask> queue;
+    private final SCSequence subSeq;
     private boolean enabled;
     private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
     private TableWriter writerConfig;
-    private final RingQueue<TelemetryTask> queue;
-    private final SCSequence subSeq;
 
     public TelemetryJob(CairoEngine engine) throws SqlException {
         this(engine, null);
@@ -87,7 +87,11 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             try {
                 this.writer = new TableWriter(configuration, tableName);
             } catch (CairoException ex) {
-                LOG.error().$("could not open [table=").utf8(tableName).$("]").$();
+                LOG.error()
+                        .$("could not open [table=`").utf8(tableName)
+                        .$("`, ex=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .$(']').$();
                 enabled = false;
                 return;
             }
@@ -99,7 +103,11 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 this.writerConfig = new TableWriter(configuration, configTableName);
             } catch (CairoException ex) {
                 Misc.free(writer);
-                LOG.error().$("could not open [table=").utf8(configTableName).$("]").$();
+                LOG.error()
+                        .$("could not open [table=`").utf8(configTableName)
+                        .$("`, ex=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .$(']').$();
                 enabled = false;
                 return;
             }
@@ -175,7 +183,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 row.putShort(2, TelemetryOrigin.INTERNAL);
                 row.append();
             } catch (CairoException e) {
-                LOG.error().$("Could not insert a new row in telemetry table [error=").$(e.getMessage()).$("]").$();
+                LOG.error()
+                        .$("Could not insert a new row in telemetry table [error=").$(e.getFlyweightMessage())
+                        .$(", errno=").$(e.getErrno())
+                        .$(']').$();
             }
         }
     }
@@ -187,7 +198,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             row.putShort(2, telemetryRow.origin);
             row.append();
         } catch (CairoException e) {
-            LOG.error().$("Could not insert a new row in telemetry table [error=").$(e.getMessage()).$("]").$();
+            LOG.error()
+                    .$("Could not insert a new row in telemetry table [error=").$(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .$(']').$();
         }
     }
 }
