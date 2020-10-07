@@ -1929,11 +1929,10 @@ public class TableWriter implements Closeable {
         if (fd != 0) {
             long destOldMem = mergeStruct[offset + 1];
             long destOldSize = mergeStruct[offset + 2];
-
             long srcMem = mergeStruct[offset + 4];
             long srcLen = mergeStruct[offset + 5];
 
-
+            truncateToSizeOrFail(ff, null, fd, srcLen);
             final long dest = ff.mmap(fd, srcLen, 0, Files.MAP_RW);
             ff.munmap(destOldMem, destOldSize);
             if (dest == -1) {
@@ -3141,7 +3140,7 @@ public class TableWriter implements Closeable {
                         }
                     } finally {
                         if (fd > 0) {
-                            ff.close(fd);
+                            ff.close(fd); // /tmp/junit7857350253247360798/dbRoot/x
                         }
                     }
                 }

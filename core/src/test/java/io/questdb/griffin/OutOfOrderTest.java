@@ -522,8 +522,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-//                    compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
-                    compiler.compile("create table y as (x union all 1am)", sqlExecutionContext);
+                    compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
                     // expected outcome
                     sink.clear();
@@ -541,8 +540,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     // look different. If this test ever breaks, uncomment the reference query and compare results visually.
 
                     // insert 1AM data into X
-                    compiler.compile("insert into x select * from 1am", sqlExecutionContext);
-//                    compiler.compile("insert into x select * from tail", sqlExecutionContext);
+            compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+            compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
                     // It is necessary to release cached "x" reader because as of yet
                     // reader cannot reload any partition other than "current".
@@ -735,21 +734,47 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-                    // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (select * from x union all select * from 1am)", sqlExecutionContext);
+            compiler.compile(
+                    "create table tail as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(40000000000,1000000L) ts," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_char() t" +
+                            " from long_sequence(100)" +
+                            ") timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
 
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
+            // create third table, which will contain both X and 1AM
+            compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
+
+            // expected outcome
+            sink.clear();
+            try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, factory.getMetadata(), true);
+                }
                     }
 
                     String expected = Chars.toString(sink);
 
                     // insert 1AM data into X
-                    compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+            compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+            compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
                     sink.clear();
                     try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
@@ -1047,7 +1072,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     // create third table, which will contain both X and 1AM
                     compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
-//                    compiler.compile("create table y as (x union all 1am)", sqlExecutionContext);
 
                     // expected outcome
                     sink.clear();
@@ -1123,6 +1147,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_symbol(4,4,4,2) ik," +
                                     " rnd_long() j," +
                                     " timestamp_sequence(1000000000L,100000000L) ts," +
+                                    // 1000000000L
+                                    // 2200712364240
                                     " rnd_byte(2,50) l," +
                                     " rnd_bin(10, 20, 2) m," +
                                     " rnd_str(5,16,2) n," +
@@ -1132,21 +1158,47 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-                    // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (select * from x union all select * from 1am)", sqlExecutionContext);
+            compiler.compile(
+                    "create table tail as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(11500000000L,1000000L) ts," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_char() t" +
+                            " from long_sequence(100)" +
+                            ") timestamp (ts) partition by DAY",
+                    sqlExecutionContext
+            );
 
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
+            // create third table, which will contain both X and 1AM
+            compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
+
+            // expected outcome
+            sink.clear();
+            try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, factory.getMetadata(), true);
+                }
                     }
 
                     String expected = Chars.toString(sink);
 
                     // insert 1AM data into X
-                    compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+            compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+            compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
                     sink.clear();
                     try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
