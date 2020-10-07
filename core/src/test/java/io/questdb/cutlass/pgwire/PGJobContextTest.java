@@ -1441,6 +1441,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                     batchInsert.addBatch();
                     batchInsert.clearParameters();
                     batchInsert.executeLargeBatch();
+                    Assert.fail();
                 } catch (Exception e) {
                     LOG.error().$(e).$();
                 }
@@ -2385,6 +2386,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                     try {
                         insert.setInt(1, 10);
                         insert.execute();
+                        Assert.fail();
                     } catch (SQLException e) {
                         TestUtils.assertContains(e.getMessage(), expectedError);
                     }

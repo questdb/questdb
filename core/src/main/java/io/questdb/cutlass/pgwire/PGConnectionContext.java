@@ -496,17 +496,19 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
-        if (required != valueLen) {
-            LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
-            throw BadProtocolException.INSTANCE;
+        if (required == valueLen) {
+            return;
         }
+        LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
+        throw BadProtocolException.INSTANCE;
     }
 
     private static void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
-        if (lo + required > msgLimit) {
-            LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
-            throw BadProtocolException.INSTANCE;
+        if (lo + required <= msgLimit) {
+            return;
         }
+        LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
+        throw BadProtocolException.INSTANCE;
     }
 
     private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
@@ -553,7 +555,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putLenEx(a);
     }
 
-    private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
+    private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         if (queryText.length() > 0) {
             boolean foundCachedFactory = retrieveCachedFactory(factoryCache);
             if (!foundCachedFactory) {
@@ -815,7 +817,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
             final long addr = responseAsciiSink.skip();
             responseAsciiSink.put('M');
-            responseAsciiSink.encodeUtf8Z((e).getFlyweightMessage());
+            responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
             responseAsciiSink.put('S');
             responseAsciiSink.encodeUtf8Z("ERROR");
             responseAsciiSink.put((char) 0);
