@@ -1932,7 +1932,9 @@ public class TableWriter implements Closeable {
             long srcMem = mergeStruct[offset + 4];
             long srcLen = mergeStruct[offset + 5];
 
-            truncateToSizeOrFail(ff, null, fd, srcLen);
+            if (!ff.isRestrictedFileSystem()) {
+                truncateToSizeOrFail(ff, null, fd, srcLen);
+            }
             final long dest = ff.mmap(fd, srcLen, 0, Files.MAP_RW);
             ff.munmap(destOldMem, destOldSize);
             if (dest == -1) {
@@ -2068,10 +2070,6 @@ public class TableWriter implements Closeable {
 
                             long indexSize = dataIndexMax << shl;
                             long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
-//                            if (indexFd < 0) {
-//                                columns.getQuick(getSecondaryColumnIndex(i)).releaseCurrentPage();
-//                            }
-
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, indexAddr);
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, indexSize);
 
@@ -2094,9 +2092,6 @@ public class TableWriter implements Closeable {
                             }
                             MergeStruct.setSrcVarFd(mergeStruct, i, dataFd);
                             long dataAddr = mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize);
-//                            if (dataFd < 0) {
-//                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
-//                            }
                             MergeStruct.setSrcVarAddress(mergeStruct, i, dataAddr);
                             MergeStruct.setSrcVarAddressSize(mergeStruct, i, dataSize);
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`, addr=").$(dataAddr).$(", size=").$(dataSize).$(']').$();
@@ -2177,9 +2172,6 @@ public class TableWriter implements Closeable {
                             LOG.info().$("open [fd=").$(dataFd).$(", path=`").utf8(path).$("`]").$();
                             MergeStruct.setSrcFixedFd(mergeStruct, i, dataFd);
                             MergeStruct.setSrcFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize));
-//                            if (dataFd < 0) {
-//                                columns.getQuick(getPrimaryColumnIndex(i)).releaseCurrentPage();
-//                            }
                             MergeStruct.setSrcFixedAddressSize(mergeStruct, i, dataSize);
                         }
 
