@@ -290,12 +290,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         this.transientContext = context;
         this.transientState = LV.get(context);
-        try {
-            onChunk(transientState.lo, transientState.hi);
-        } catch (ReceiveBufferTooSmallException e) {
-            LOG.error().$("TooFewBytesReadException is thrown when attempted to request retry. Request aborted.").$();
-            throw ServerDisconnectException.INSTANCE;
-        }
+        onChunk(transientState.lo, transientState.hi);
     }
 
     @Override

@@ -4,10 +4,10 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryUnavailableException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.*;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -146,7 +146,13 @@ public class RetryIODispatcherTest {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testImportWaitsWhenWriterLocked(0);
+            testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
+                            .withTempFolder(temp)
+                            .withWorkerCount(2)
+                            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                                    .withNetwork(getSendDelayNetworkFacade(0))
+                            ),
+                    0, ValidImportRequest, ValidImportResponse, true);
             temp.delete();
             temp.create();
         }
@@ -182,7 +188,35 @@ public class RetryIODispatcherTest {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testImportWaitsWhenWriterLocked(500);
+            testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
+                            .withTempFolder(temp)
+                            .withWorkerCount(2)
+                            .withHttpServerConfigBuilder(
+                                    new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(500))
+                            ),
+                    0, ValidImportRequest, ValidImportResponse, true);
+            temp.delete();
+            temp.create();
+        }
+    }
+
+    @Test
+    public void testFailsWhenInvalidDataImportedLoop() throws Exception {
+        for (int i = 0; i < 5; i++) {
+            System.out.println("*************************************************************************************");
+            System.out.println("**************************         Run " + i + "            ********************************");
+            System.out.println("*************************************************************************************");
+            testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
+                            .withTempFolder(temp)
+                            .withWorkerCount(2)
+                            .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                            .withCustomTextImportProcessor(((configuration, engine, messageBus, workerCount) -> new TextImportProcessor(engine) {
+                                @Override
+                                public void onRequestRetry(HttpConnectionContext context) throws ServerDisconnectException {
+                                    throw ServerDisconnectException.INSTANCE;
+                                }
+                            })),
+                    0, ValidImportRequest, "HTTP/1.1 200 OK\r\n", false);
             temp.delete();
             temp.create();
         }
@@ -200,7 +234,6 @@ public class RetryIODispatcherTest {
         }
     }
 
-    @Test
     public void testInsertWaitsWhenWriterLocked() throws Exception {
         final int parallelCount = 2;
         new HttpQueryTestBuilder()
@@ -271,7 +304,6 @@ public class RetryIODispatcherTest {
                 });
     }
 
-    @Test
     public void testInsertWaitsExceedsRerunProcessingQueueSize() throws Exception {
         final int rerunProcessingQueueSize = 1;
         final int parallelCount = 4;
@@ -349,7 +381,7 @@ public class RetryIODispatcherTest {
     // TODO: investigate failure
     @Test
     @Ignore
-    public void queryAndDisconnect() throws Exception {
+    public void testQueryAndDisconnect() throws Exception {
         final int parallelCount = 4;
         final int requestMult = 4;
         new HttpQueryTestBuilder()
@@ -400,7 +432,6 @@ public class RetryIODispatcherTest {
                 });
     }
 
-    @Test
     public void testInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
         final int parallelCount = 4;
         new HttpQueryTestBuilder()
@@ -479,18 +510,9 @@ public class RetryIODispatcherTest {
                 });
     }
 
-    @Test
-    public void testImportWaitsWhenWriterLocked() throws Exception {
-        testImportWaitsWhenWriterLocked(0);
-    }
-
-    public void testImportWaitsWhenWriterLocked(int slowNetAfterSending) throws Exception {
-        final int parallelCount = 2;
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
-                        .withNetwork(getSendDelayNetworkFacade(slowNetAfterSending)))
+    public void testImportWaitsWhenWriterLocked(HttpQueryTestBuilder httpQueryTestBuilder, int slowServerReceiveNetAfterSending, String importRequest, String importResponse, boolean failOnUnfinished) throws Exception {
+        final int parallelCount = httpQueryTestBuilder.getWorkerCount();
+        httpQueryTestBuilder
                 .run((engine) -> {
                     // create table and do 1 import
                     new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
@@ -499,6 +521,7 @@ public class RetryIODispatcherTest {
                     final int validRequestRecordCount = 24;
                     final int insertCount = 1;
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    AtomicInteger successRequests = new AtomicInteger();
                     for (int i = 0; i < parallelCount; i++) {
                         int finalI = i;
                         new Thread(() -> {
@@ -506,7 +529,12 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
+                                        SendAndReceiveRequestBuilder sendAndReceiveRequestBuilder = new SendAndReceiveRequestBuilder()
+                                                .withNetworkFacade(getSendDelayNetworkFacade(slowServerReceiveNetAfterSending))
+                                                .withCompareLength(importResponse.length());
+                                        sendAndReceiveRequestBuilder
+                                                .execute(importRequest, importResponse);
+                                        successRequests.incrementAndGet();
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
                                     }
@@ -520,9 +548,11 @@ public class RetryIODispatcherTest {
 
                     boolean finished = countDownLatch.await(100, TimeUnit.MILLISECONDS);
 
-                    // Cairo engine should not allow second writer to be opened on the same table
-                    // Cairo is expected to have finished == false
-                    Assert.assertFalse(finished);
+                    if (failOnUnfinished) {
+                        // Cairo engine should not allow second writer to be opened on the same table
+                        // Cairo is expected to have finished == false
+                        Assert.assertFalse(finished);
+                    }
 
                     writer.close();
                     if (!countDownLatch.await(5000, TimeUnit.MILLISECONDS)) {
@@ -536,14 +566,13 @@ public class RetryIODispatcherTest {
                                     RequestHeaders,
                             ResponseHeaders +
                                     "83\r\n" +
-                                    "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                                    "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (successRequests.get() + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
 
                 });
     }
 
-    @Test
     public void testImportProcessedWhenClientDisconnected() throws Exception {
         final int parallelCount = 2;
         new HttpQueryTestBuilder()
@@ -603,16 +632,10 @@ public class RetryIODispatcherTest {
                             } else {
                                 throw e;
                             }
-
                         }
                     }
 
                 });
-    }
-
-    @Test
-    public void testImportRerunsExceedsRerunProcessingQueueSize() throws Exception {
-        testImportRerunsExceedsRerunProcessingQueueSize(0);
     }
 
     public void testImportRerunsExceedsRerunProcessingQueueSize(int startDelay) throws Exception {

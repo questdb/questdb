@@ -11,6 +11,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.Arrays;
@@ -18,22 +19,37 @@ import java.util.Arrays;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class HttpQueryTestBuilder {
+
+    @FunctionalInterface
+    public interface HttpRequestProcessorBuilder {
+        HttpRequestProcessor create(JsonQueryProcessorConfiguration configuration,
+                                    CairoEngine engine,
+                                    @Nullable MessageBus messageBus,
+                                    int workerCount);
+    }
+
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
     private boolean telemetry;
     private TemporaryFolder temp;
     private HttpServerConfigurationBuilder serverConfigBuilder;
+    private HttpRequestProcessorBuilder textImportProcessor;
 
     @FunctionalInterface
     public interface HttpClientCode {
         void run(CairoEngine engine) throws InterruptedException;
     }
 
-    private int workerCount ;
+    private int workerCount = 1;
 
     public HttpQueryTestBuilder withWorkerCount(int workerCount) {
         this.workerCount = workerCount;
         return this;
     }
+
+    public int getWorkerCount() {
+        return this.workerCount;
+    }
+
 
     public HttpQueryTestBuilder withTelemetry(boolean telemetry) {
         this.telemetry = telemetry;
@@ -47,6 +63,12 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withHttpServerConfigBuilder(HttpServerConfigurationBuilder serverConfigBuilder) {
         this.serverConfigBuilder = serverConfigBuilder;
+        return this;
+    }
+
+
+    public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {
+        this.textImportProcessor = textQueryProcessor;
         return this;
     }
 
@@ -103,7 +125,12 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(engine);
+                        return textImportProcessor != null ? textImportProcessor.create(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount()
+                        ) : new TextImportProcessor(engine);
                     }
 
                     @Override

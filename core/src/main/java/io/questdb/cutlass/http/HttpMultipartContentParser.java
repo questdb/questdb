@@ -182,10 +182,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         boundaryPtr = 1;
                         switch (matchBoundary(ptr, hi)) {
                             case BOUNDARY_INCOMPLETE:
-                                onChunkWithRetryHandle(listener, _lo, ptr - 1, POTENTIAL_BOUNDARY, ptr);
+                                onChunkWithRetryHandle(listener, _lo, ptr - 1, POTENTIAL_BOUNDARY, ptr, true);
                                 return false;
                             case BOUNDARY_MATCH:
-                                ptr = onChunkWithRetryHandle(listener, _lo, ptr - 1, PRE_HEADERS, ptr + consumedBoundaryLen);
+                                ptr = onChunkWithRetryHandle(listener, _lo, ptr - 1, PRE_HEADERS, ptr + consumedBoundaryLen, false);
                                 break;
                             default:
                                 break;
@@ -203,7 +203,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             break;
                         default:
                             // can only be BOUNDARY_NO_MATCH:
-                            ptr = onChunkWithRetryHandle(listener, boundary.getLo(), boundary.getLo() + p, BODY_BROKEN, ptr);
+                            ptr = onChunkWithRetryHandle(listener, boundary.getLo(), boundary.getLo() + p, BODY_BROKEN, ptr, true);
                             break;
                     }
                     break;
@@ -215,23 +215,25 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         }
 
         if (state == BODY) {
-            try {
-                onChunkWithRetryHandle(listener, _lo, ptr, BODY_BROKEN, ptr);
-            } catch (NotEnoughLinesException e) {
-                this.resumePtr = _lo;
-                throw ReceiveBufferTooSmallException.INSTANCE;
-            }
+            onChunkWithRetryHandle(listener, _lo, ptr, BODY_BROKEN, ptr, true);
         }
 
         return false;
     }
 
-    private long onChunkWithRetryHandle(HttpMultipartContentListener listener, long lo, long hi, int state, long resumePtr) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+    private long onChunkWithRetryHandle(HttpMultipartContentListener listener, long lo, long hi, int state, long resumePtr, boolean handleIncomplete) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         RetryOperationException needsRetry = null;
         try {
             listener.onChunk(lo, hi);
         } catch (RetryOperationException e) {
             needsRetry = e;
+        } catch (NotEnoughLinesException e) {
+            if (handleIncomplete) {
+                this.resumePtr = lo;
+                throw ReceiveBufferTooSmallException.INSTANCE;
+            } else {
+                throw e;
+            }
         }
 
         // Roll to next state

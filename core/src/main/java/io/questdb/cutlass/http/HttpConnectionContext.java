@@ -66,11 +66,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private boolean pendingRetry = false;
-    private boolean failedQuery = false;
     private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
     private final boolean serverKeepAlive;
+    private int receivedBytes;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -112,6 +112,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.retryAttemptAttributes.waitStartTimestamp = 0;
         this.retryAttemptAttributes.lastRunTimestamp = 0;
         this.retryAttemptAttributes.attempt = 0;
+        this.receivedBytes = 0;
     }
 
     @Override
@@ -131,7 +132,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             LOG.error().$("Closed context with retry pending.").$();
         }
         this.pendingRetry = false;
-        this.failedQuery = false;
+        this.receivedBytes = 0;
         LOG.debug().$("closed").$();
     }
 
@@ -142,7 +143,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     @Override
     public boolean invalid() {
-        return pendingRetry || this.fd == -1;
+        return pendingRetry || receivedBytes > 0 || this.fd == -1;
     }
 
     @Override
@@ -264,6 +265,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             start = headerEnd;
             buf = bufferEnd;
             bufRemaining = (int) (recvBufferSize - (bufferEnd - recvBuffer));
+        } else if (receivedBytes > 0) {
+            start = recvBuffer;
+            buf = start + receivedBytes;
+            bufRemaining = recvBufferSize - receivedBytes;
+            receivedBytes = 0;
         } else {
             buf = start = recvBuffer;
             bufRemaining = recvBufferSize;
@@ -283,7 +289,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
                 buf = start = recvBuffer;
                 bufRemaining = recvBufferSize;
-            } catch (ReceiveBufferTooSmallException e){
+            } catch (ReceiveBufferTooSmallException e) {
                 start = multipartContentParser.getResumePtr();
             }
         }
@@ -321,8 +327,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                         continue;
                     } catch (ReceiveBufferTooSmallException e) {
                         start = multipartContentParser.getResumePtr();
-                        spinsRemaining = multipartIdleSpinCount;
-                        continue;
+                        shiftReceiveBufferUprocessedBytes(start,  (int) (buf - start));
+                        dispatcher.registerChannel(this, IOOperation.READ);
+                        break;
                     }
                 }
 
@@ -351,13 +358,13 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                     bufRemaining = recvBufferSize;
                 } catch (ReceiveBufferTooSmallException e) {
                     start = multipartContentParser.getResumePtr();
-                    int unprocessedSize = (int)(buf - start);
+                    int unprocessedSize = (int) (buf - start);
                     // Shift to start
                     if (unprocessedSize < recvBufferSize) {
-                        Unsafe.getUnsafe().copyMemory(start, recvBuffer, unprocessedSize);
-                        start = recvBuffer;
-                        buf = start + unprocessedSize;
-                        bufRemaining = recvBufferSize - unprocessedSize;
+                        start = multipartContentParser.getResumePtr();
+                        shiftReceiveBufferUprocessedBytes(start,  unprocessedSize);
+                        dispatcher.registerChannel(this, IOOperation.READ);
+                        break;
                     } else {
                         // Header does not fit receive buffer
                         doFail(e, processor);
@@ -367,6 +374,13 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             }
         }
         return keepGoing;
+    }
+
+    private void shiftReceiveBufferUprocessedBytes(long start, int receivedBytes) {
+        // Shift to start
+        this.receivedBytes = receivedBytes;
+        Unsafe.getUnsafe().copyMemory(start, recvBuffer, receivedBytes);
+        LOG.debug().$("peer is slow [multipart]").$();
     }
 
     private boolean parseMultipartResult(long start, long buf, int bufRemaining, HttpMultipartContentListener multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, ReceiveBufferTooSmallException {
@@ -521,10 +535,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             responseSink.resumeSend();
             resumeProcessor.resumeSend(this);
             clear();
-            if (failedQuery) {
-                dispatcher.disconnect(this);
-            }
-            return !failedQuery;
+            return true;
         } catch (PeerIsSlowToReadException ignore) {
             resumeProcessor.parkRequest(this);
             LOG.debug().$("peer is slow reader").$();
@@ -610,12 +621,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     private void fail(CairoException e, HttpRequestProcessor processor) {
         pendingRetry = false;
-        failedQuery = true;
         try {
-            LOG.info().$("Failing client query with: ").$(e.getMessage()).$();
-            processor.failRequest(this, e);
-            clear();
-            dispatcher.disconnect(this);
+            doFail(e, processor);
         } catch (PeerDisconnectedException peerDisconnectedException) {
             dispatcher.disconnect(this);
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {

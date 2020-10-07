@@ -1233,18 +1233,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportMultipleOnSameConnectionSlowLoop() throws Exception {
-        for (int i = 0; i < 10; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
-            testImportMultipleOnSameConnectionSlow();
-            temp.delete();
-            temp.create();
-        }
-    }
-
-    @Test
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
@@ -1385,8 +1373,9 @@ public class IODispatcherTest {
 
                             // start delaying after 800 bytes
 
-                            if (totalSent > 800) {
+                            if (totalSent > 20) {
                                 LockSupport.parkNanos(10000);
+                                totalSent = 0;
                             }
                             return result;
                         }
@@ -1399,7 +1388,7 @@ public class IODispatcherTest {
                             nf,
                             request,
                             expectedResponse,
-                            1,
+                            3,
                             0,
                             false
                     );

@@ -144,7 +144,7 @@ public class SendAndReceiveRequestBuilder {
             String expected = (new String(expectedResponse, StandardCharsets.UTF_8));
             if (compareLength > 0) {
                 expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
-                actual = actual.substring(0, Math.min(compareLength, actual.length()) - 1);
+                actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
             }
             Assert.assertEquals(expected, actual);
 
