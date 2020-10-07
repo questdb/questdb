@@ -547,6 +547,71 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         });
     }
 
+    // TODO
+    @Test
+    public void testMixedWrites() throws Exception {
+        runTest("testMixedWrites", () -> {
+            int nTest = 0;
+            testMixedWrites(nTest++, 0, 1, true, 20);
+            engine.releaseInactive();
+        });
+    }
+
+    private void testMixedWrites(int nTest, int nThreads, int nMappedPages, boolean commitAllAtOnce, int nBatches) throws Exception {
+        N_MAPPED_PAGES.set(nMappedPages);
+        String expected;
+        String actual;
+        String sourceTableName = "source" + nTest;
+        String destTableName = "dest" + nTest;
+        compiler.compile("CREATE TABLE " + sourceTableName
+                + " (batch INT, ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts) PARTITION BY DAY;",
+                sqlExecutionContext);
+        compiler.compile("CREATE TABLE " + destTableName
+                + " (batch INT, ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts) PARTITION BY DAY;",
+                sqlExecutionContext);
+        int nRowsWritten = 0;
+        long tsStart = 0;
+        long tsIncrement = 20000000;
+        for (int batch = 1; batch < nBatches; batch++) {
+            int nBatchRows = batch * 1000;
+            compiler.compile("INSERT INTO " + sourceTableName + " (batch, ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m) " +
+                    "SELECT" +
+                    " " + batch + " batch," +
+                    " rnd_char() ch," +
+                    " rnd_long256() ll," +
+                    " rnd_int() a1," +
+                    " rnd_int(0, 30, 2) a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(3,3,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_short() f1," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2) h," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long(100,200,2) j," +
+                    " rnd_long() j1," +
+                    " timestamp_sequence(" + tsStart + ", " + tsIncrement + ") ts," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m" +
+                    " from long_sequence(" + nBatchRows + ")" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            expected = select("SELECT * FROM " + sourceTableName);
+            if (batch % 2 == 1) {
+                compiler.compile("INSERT INTO " + destTableName + " (batch, ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m) " +
+                        "SELECT batch, ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m FROM " + sourceTableName + " WHERE batch=" + batch + ";", sqlExecutionContext);
+            } else {
+                replicateTable(sourceTableName, destTableName, nRowsWritten, true, 133, false, commitAllAtOnce, nThreads);
+            }
+            actual = select("SELECT * FROM " + destTableName);
+            Assert.assertEquals(expected, actual);
+            nRowsWritten += nBatchRows;
+            tsStart += nBatchRows * tsIncrement;
+        }
+    }
+
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
         TestUtils.assertMemoryLeak(runnable);

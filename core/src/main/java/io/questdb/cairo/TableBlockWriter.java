@@ -323,6 +323,7 @@ public class TableBlockWriter implements Closeable {
                 long destAddress;
                 long columnStartAddress = columnMappingStart.getQuick(columnIndex);
                 if (columnStartAddress == 0) {
+                    assert appendOffset == columnStartOffsets.getQuick(columnIndex);
                     int i = columnIndex << 1;
                     long mapSz = pageFrameLength > ff.getMapPageSize() ? pageFrameLength : ff.getMapPageSize();
                     long address = mapFile(columnFds.getQuick(i), appendOffset, mapSz);
@@ -333,9 +334,14 @@ public class TableBlockWriter implements Closeable {
                 } else {
                     long initialOffset = columnStartOffsets.getQuick(columnIndex);
                     assert initialOffset < appendOffset;
-                    if ((nextAppendOffset - initialOffset) > columnMappingSize.getQuick(columnIndex)) {
-                        // TODO
-                        throw new RuntimeException();
+                    long minMapSz = nextAppendOffset - initialOffset;
+                    if (minMapSz > columnMappingSize.getQuick(columnIndex)) {
+                        additionalMappingStart.add(columnMappingStart.getQuick(columnIndex));
+                        additionalMappingSize.add(columnMappingSize.getQuick(columnIndex));
+                        int i = columnIndex << 1;
+                        long address = mapFile(columnFds.getQuick(i), columnStartOffsets.getQuick(columnIndex), minMapSz);
+                        columnMappingStart.setQuick(columnIndex, address);
+                        columnMappingSize.setQuick(columnIndex, minMapSz);
                     }
                     destAddress = columnMappingStart.getQuick(columnIndex) + appendOffset - initialOffset;
                 }
