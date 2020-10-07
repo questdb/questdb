@@ -38,26 +38,36 @@ import io.questdb.std.microtime.MicrosecondClockImpl;
 import io.questdb.std.time.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Rule;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 
 public class PropServerConfigurationTest {
 
-    @Rule
-    public final TemporaryFolder temp = new TemporaryFolder();
+    @ClassRule
+    public static final TemporaryFolder temp = new TemporaryFolder();
 
-    @Test
-    public void testAllDefaults() throws ServerConfigurationException, IOException, JsonException {
-        Properties properties = new Properties();
+    private static String configPath;
+
+    @BeforeClass
+    public static void setupMimeTypes() throws IOException {
         File root = new File(temp.getRoot(), "root");
         TestUtils.copyMimeTypes(root.getAbsolutePath());
-        PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
+        configPath = root.getAbsolutePath();
+    }
+
+    @Test
+    public void testAllDefaults() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, null);
         Assert.assertEquals(16, configuration.getHttpServerConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getMultipartHeaderBufferSize());
@@ -77,10 +87,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRows());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
 
-
         // this is going to need interesting validation logic
         // configuration path is expected to be relative and we need to check if absolute path is good
-        Assert.assertEquals(new File(root, "public").getAbsolutePath(),
+        Assert.assertEquals(new File(configPath, "public").getAbsolutePath(),
                 configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
 
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
@@ -200,7 +209,7 @@ public class PropServerConfigurationTest {
         Assert.assertSame(NetworkFacadeImpl.INSTANCE, configuration.getLineUdpReceiverConfiguration().getNetworkFacade());
         Assert.assertEquals("http-server", configuration.getHttpServerConfiguration().getDispatcherConfiguration().getDispatcherLogName());
 
-        TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
+        TestUtils.assertEquals(new File(configPath, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
 
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
@@ -232,6 +241,58 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpVersion());
+        Assert.assertEquals(16777216, configuration.getCairoConfiguration().getAppendPageSize());
+    }
+
+    @Test
+    public void testEnvOverrides() throws ServerConfigurationException, JsonException {
+        final Properties properties = new Properties();
+        final Map<String, String> env = new HashMap<>();
+
+        // double
+        properties.setProperty("http.text.max.required.delimiter.stddev", "1.2");
+        env.put("QDB_HTTP_TEXT_MAX_REQUIRED_DELIMITER_STDDEV", "1.5");
+
+        // int
+        properties.setProperty("http.connection.string.pool.capacity", "1200");
+        env.put("QDB_HTTP_CONNECTION_STRING_POOL_CAPACITY", "3000");
+
+        // string
+        properties.setProperty("http.version", "1.0");
+        env.put("QDB_HTTP_VERSION", "2.0");
+
+        // affinity
+        properties.setProperty("shared.worker.count", "2");
+        properties.setProperty("shared.worker.affinity", "2,3");
+        env.put("QDB_SHARED_WORKER_COUNT", "3");
+        env.put("QDB_SHARED_WORKER_AFFINITY", "5,6,7");
+
+        // int size
+        properties.setProperty("http.send.buffer.size", "4k");
+        env.put("QDB_HTTP_SEND_BUFFER_SIZE", "12k");
+
+        // long
+        properties.setProperty("http.multipart.idle.spin.count", "400");
+        env.put("QDB_HTTP_MULTIPART_IDLE_SPIN_COUNT", "900");
+
+        // boolean
+        properties.setProperty("http.security.readonly", "true");
+        env.put("QDB_HTTP_SECURITY_READONLY", "false");
+
+        // long size
+        properties.setProperty("cairo.sql.append.page.size", "3G");
+        env.put("QDB_CAIRO_SQL_APPEND_PAGE_SIZE", "9G");
+
+        PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, env);
+        Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
+        Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
+        Assert.assertEquals("2.0 ", configuration.getHttpServerConfiguration().getHttpVersion());
+        Assert.assertEquals(3, configuration.getWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertArrayEquals(new int[]{5, 6, 7}, configuration.getWorkerPoolConfiguration().getWorkerAffinity());
+        Assert.assertEquals(12288, configuration.getHttpServerConfiguration().getSendBufferSize());
+        Assert.assertEquals(900, configuration.getHttpServerConfiguration().getMultipartIdleSpinCount());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().readOnlySecurityContext());
+        Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getAppendPageSize());
     }
 
     @Test
@@ -239,11 +300,7 @@ public class PropServerConfigurationTest {
         try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-http-disabled.conf")) {
             Properties properties = new Properties();
             properties.load(is);
-
-            File root = new File(temp.getRoot(), "data");
-            TestUtils.copyMimeTypes(root.getAbsolutePath());
-
-            PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
+            PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, null);
             Assert.assertFalse(configuration.getHttpServerConfiguration().isEnabled());
         }
     }
@@ -252,14 +309,56 @@ public class PropServerConfigurationTest {
     public void testInvalidBindToAddress() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6:8990");
-        new PropServerConfiguration("root", properties);
+        new PropServerConfiguration("root", properties, null);
     }
 
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidBindToMissingColon() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         properties.setProperty("http.bind.to", "10.5.6.1");
-        new PropServerConfiguration("root", properties);
+        new PropServerConfiguration("root", properties, null);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidBindToPort() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("http.bind.to", "10.5.6.1:");
+        new PropServerConfiguration("root", properties, null);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidDouble() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("http.text.max.required.delimiter.stddev", "abc");
+        new PropServerConfiguration("root", properties, null);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidIPv4Address() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("line.udp.join", "12a.990.00");
+        new PropServerConfiguration(configPath, properties, null);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidInt() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("http.connection.string.pool.capacity", "1234a");
+        new PropServerConfiguration("root", properties, null);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidIntSize() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("http.request.header.buffer.size", "22g");
+        new PropServerConfiguration("root", properties, null);
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidLong() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.idle.check.interval", "1234a");
+        new PropServerConfiguration(configPath, properties, null);
     }
 
     @Test
@@ -267,78 +366,32 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         properties.setProperty("http.enabled", "false");
         properties.setProperty("line.udp.timestamp", "");
-        PropServerConfiguration configuration = new PropServerConfiguration("root", properties);
+        PropServerConfiguration configuration = new PropServerConfiguration("root", properties, null);
         Assert.assertSame(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "n");
-        configuration = new PropServerConfiguration("root", properties);
+        configuration = new PropServerConfiguration("root", properties, null);
         Assert.assertSame(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "u");
-        configuration = new PropServerConfiguration("root", properties);
+        configuration = new PropServerConfiguration("root", properties, null);
         Assert.assertSame(LineProtoMicroTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "ms");
-        configuration = new PropServerConfiguration("root", properties);
+        configuration = new PropServerConfiguration("root", properties, null);
         Assert.assertSame(LineProtoMilliTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "s");
-        configuration = new PropServerConfiguration("root", properties);
+        configuration = new PropServerConfiguration("root", properties, null);
         Assert.assertSame(LineProtoSecondTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "m");
-        configuration = new PropServerConfiguration("root", properties);
+        configuration = new PropServerConfiguration("root", properties, null);
         Assert.assertSame(LineProtoMinuteTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
 
         properties.setProperty("line.udp.timestamp", "h");
-        configuration = new PropServerConfiguration("root", properties);
+        configuration = new PropServerConfiguration("root", properties, null);
         Assert.assertSame(LineProtoHourTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testInvalidBindToPort() throws ServerConfigurationException, JsonException {
-        Properties properties = new Properties();
-        properties.setProperty("http.bind.to", "10.5.6.1:");
-        new PropServerConfiguration("root", properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testInvalidDouble() throws ServerConfigurationException, JsonException {
-        Properties properties = new Properties();
-        properties.setProperty("http.text.max.required.delimiter.stddev", "abc");
-        new PropServerConfiguration("root", properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testInvalidIPv4Address() throws ServerConfigurationException, IOException, JsonException {
-        Properties properties = new Properties();
-        properties.setProperty("line.udp.join", "12a.990.00");
-        File root = new File(temp.getRoot(), "data");
-        TestUtils.copyMimeTypes(root.getAbsolutePath());
-        new PropServerConfiguration(root.getAbsolutePath(), properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testInvalidInt() throws ServerConfigurationException, JsonException {
-        Properties properties = new Properties();
-        properties.setProperty("http.connection.string.pool.capacity", "1234a");
-        new PropServerConfiguration("root", properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testInvalidIntSize() throws ServerConfigurationException, JsonException {
-        Properties properties = new Properties();
-        properties.setProperty("http.request.header.buffer.size", "22g");
-        new PropServerConfiguration("root", properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testInvalidLong() throws ServerConfigurationException, IOException, JsonException {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.idle.check.interval", "1234a");
-        File root = new File(temp.getRoot(), "data");
-        TestUtils.copyMimeTypes(root.getAbsolutePath());
-        new PropServerConfiguration(root.getAbsolutePath(), properties);
     }
 
     @Test
@@ -347,10 +400,7 @@ public class PropServerConfigurationTest {
             Properties properties = new Properties();
             properties.load(is);
 
-            File root = new File(temp.getRoot(), "data");
-            TestUtils.copyMimeTypes(root.getAbsolutePath());
-
-            PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
+            PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, null);
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getConnectionPoolInitialCapacity());
             Assert.assertEquals(512, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
             Assert.assertEquals(256, configuration.getHttpServerConfiguration().getMultipartHeaderBufferSize());
@@ -372,7 +422,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(500, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
 
-            Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
+            Assert.assertEquals(new File(configPath, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
 
             Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
@@ -501,6 +551,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertFalse(configuration.getHttpServerConfiguration().getServerKeepAlive());
             Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpVersion());
+            Assert.assertEquals(33554432L, configuration.getCairoConfiguration().getAppendPageSize());
         }
     }
 
@@ -510,10 +561,7 @@ public class PropServerConfigurationTest {
             Properties properties = new Properties();
             properties.load(is);
 
-            File root = new File(temp.getRoot(), "data");
-            TestUtils.copyMimeTypes(root.getAbsolutePath());
-
-            PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
+            PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, null);
             Assert.assertNull(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
         }
     }
