@@ -47,6 +47,7 @@ public class PGJobContext implements Closeable {
     public static final int PG_INT4 = 23;
     public static final int PG_INT2 = 21;
     public static final int PG_INT8 = 20;
+    public static final int PG_NUMERIC = 1700;
     public static final int PG_BOOL = 16;
     public static final int PG_CHAR = 18;
     public static final int PG_DATE = 1082;

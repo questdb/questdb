@@ -124,6 +124,11 @@ public class InsertStatementImpl implements InsertStatement {
         }
 
         @Override
+        public TableWriter getWriter() {
+            return writer;
+        }
+
+        @Override
         public void close() {
             writer = Misc.free(writer);
         }
