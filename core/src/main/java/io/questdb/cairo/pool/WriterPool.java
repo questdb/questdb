@@ -371,7 +371,12 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             e.writer = new TableWriter(configuration, name, messageBus, true, e, root);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
-            LOG.error().$("could not open [table=`").utf8(name).$("`, thread=").$(e.owner).$(']').$();
+            LOG.error()
+                    .$("could not open [table=`").utf8(name)
+                    .$("`, thread=").$(e.owner)
+                    .$(", ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .$(']').$();
             e.ex = ex;
             notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
             throw ex;

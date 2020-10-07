@@ -234,7 +234,7 @@ public class TableWriter implements Closeable {
             purgeUnusedPartitions();
             loadRemovedPartitions();
         } catch (CairoException e) {
-            LOG.error().$("cannot open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
+            LOG.error().$("could not open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             doClose(false);
             throw e;
         }
@@ -1521,9 +1521,15 @@ public class TableWriter implements Closeable {
             } catch (CairoException e) {
                 // looks like we could not create key file properly
                 // lets not leave half baked file sitting around
-                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
+                LOG.error()
+                        .$("could not create index [name=").utf8(path)
+                        .$(", errno=").$(e.getErrno())
+                        .$(']').$();
                 if (!ff.remove(path)) {
-                    LOG.error().$("could not remove '").utf8(path).$("'. Please remove MANUALLY.").$();
+                    LOG.error()
+                            .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
+                            .$("[errno=").$(ff.errno())
+                            .$(']').$();
                 }
                 throw e;
             } finally {
@@ -2417,7 +2423,7 @@ public class TableWriter implements Closeable {
         try {
             fragile.run(columnName);
         } catch (CairoException err) {
-            LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
+            LOG.error().$("DOUBLE ERROR: 1st: {").$((Sinkable) e).$('}').$();
             throwDistressException(err);
         }
         throw e;

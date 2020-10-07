@@ -542,7 +542,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 try {
                     parser.processFirstEvent(engine, securityContext, event);
                 } catch (CairoException ex) {
-                    LOG.info().$("could not create parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+                    LOG.info()
+                            .$("could not create parser [jobName=").$(jobName)
+                            .$(" name=").$(event.getTableName())
+                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$(", errno=").$(ex.getErrno())
+                            .$(']').$();
                     parser.close();
                     return false;
                 }
