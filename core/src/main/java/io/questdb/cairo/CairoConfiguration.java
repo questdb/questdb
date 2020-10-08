@@ -184,4 +184,6 @@ public interface CairoConfiguration {
     boolean enableTestFactories();
 
     TelemetryConfiguration getTelemetryConfiguration();
+
+    long getAppendPageSize();
 }

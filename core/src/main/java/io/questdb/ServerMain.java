@@ -102,7 +102,7 @@ public class ServerMain {
             properties.load(is);
         }
 
-        final PropServerConfiguration configuration = new PropServerConfiguration(rootDirectory, properties);
+        final PropServerConfiguration configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv());
 
         // create database directory
         try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
