@@ -22,25 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BinFunction;
-import io.questdb.std.BinarySequence;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.constants.NullBinConstant;
+import io.questdb.std.ObjList;
 
-public final class NullBinConstant extends BinFunction implements ConstantFunction {
-    public NullBinConstant() {
-        super(0);
+public class CastStrToBinaryFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "cast(Su)";
     }
 
     @Override
-    public BinarySequence getBin(Record rec) {
-        return null;
-    }
-
-    @Override
-    public long getBinLen(Record rec) {
-        return TableUtils.NULL_LEN;
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        // expression parser will only allow casting 'null' to binary, nothing else.
+        return new NullBinConstant();
     }
 }
