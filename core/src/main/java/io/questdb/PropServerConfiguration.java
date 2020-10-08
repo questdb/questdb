@@ -40,6 +40,7 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
@@ -258,12 +259,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceJobHysteresisInMs;
     private String lineTcpAuthDbPath;
     private String httpVersion;
+    private final Log log;
 
     public PropServerConfiguration(
             String root,
             Properties properties,
-            @Nullable Map<String, String> env
+            @Nullable Map<String, String> env,
+            Log log
     ) throws ServerConfigurationException, JsonException {
+        this.log = log;
         this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
         this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
@@ -724,6 +728,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         String envCandidate = "QDB_" + key.replace('.', '_').toUpperCase();
         String envValue = env != null ? env.get(envCandidate) : null;
         if (envValue != null) {
+            log.info().$("env config [key=").$(envCandidate).$(']').$();
             return envValue;
         }
         return properties.getProperty(key);
