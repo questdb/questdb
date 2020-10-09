@@ -110,8 +110,9 @@ public class TableWriter implements Closeable {
     private final Timestamps.TimestampAddMethod timestampAddMethod;
     private final int defaultCommitMode;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
-    private final ObjList<Runnable> nullers;
-    private final ObjList<ContiguousVirtualMemory> mergeColumns;
+    private final ObjList<Runnable> nullSetters;
+    private final ObjList<Runnable> oooNullSetters;
+    private final ObjList<ContiguousVirtualMemory> oooColumns;
     private final OnePageMemory timestampSearchColumn = new OnePageMemory();
     private ContiguousVirtualMemory tmpShuffleIndex;
     private ContiguousVirtualMemory tmpShuffleData;
@@ -257,12 +258,14 @@ public class TableWriter implements Closeable {
             this.tmpShuffleData = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
-            this.mergeColumns = new ObjList<>(columnCount * 2);
-            this.row.rowColumns = columns;
+            this.oooColumns = new ObjList<>(columnCount * 2);
+            this.row.activeColumns = columns;
             this.symbolMapWriters = new ObjList<>(columnCount);
             this.indexers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
-            this.nullers = new ObjList<>(columnCount);
+            this.nullSetters = new ObjList<>(columnCount);
+            this.oooNullSetters = new ObjList<>(columnCount);
+            this.row.activeNullSetters = nullSetters;
             this.columnTops = new LongList(columnCount);
             switch (partitionBy) {
                 case PartitionBy.DAY:
@@ -1598,24 +1601,25 @@ public class TableWriter implements Closeable {
     private void configureColumn(int type, boolean indexFlag) {
         final AppendMemory primary = new AppendMemory();
         final AppendMemory secondary;
-        final ContiguousVirtualMemory mergePrimary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
-        final ContiguousVirtualMemory mergeSecondary;
+        final ContiguousVirtualMemory oooPrimary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+        final ContiguousVirtualMemory oooSecondary;
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = new AppendMemory();
-                mergeSecondary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+                oooSecondary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
                 break;
             default:
                 secondary = null;
-                mergeSecondary = null;
+                oooSecondary = null;
                 break;
         }
         columns.add(primary);
         columns.add(secondary);
-        mergeColumns.add(mergePrimary);
-        mergeColumns.add(mergeSecondary);
-        configureNuller(type, primary, secondary);
+        oooColumns.add(oooPrimary);
+        oooColumns.add(oooSecondary);
+        configureNullSetters(nullSetters, type, primary, secondary);
+        configureNullSetters(oooNullSetters, type, oooPrimary, oooSecondary);
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
             populateDenseIndexerList();
@@ -1647,12 +1651,12 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             // todo: when column is removed we need to update this again to reflect shifted columns
-            timestampMergeMem = mergeColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
+            timestampMergeMem = oooColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
         }
         populateDenseIndexerList();
     }
 
-    private void configureNuller(int type, AppendMemory mem1, AppendMemory mem2) {
+    private static void configureNullSetters(ObjList<Runnable> nullers, int type, BigMem mem1, BigMem mem2) {
         switch (type) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
@@ -1701,7 +1705,8 @@ public class TableWriter implements Closeable {
             return value -> {
             };
         } else {
-            nullers.setQuick(index, NOOP);
+            nullSetters.setQuick(index, NOOP);
+            oooNullSetters.setQuick(index, NOOP);
             return getPrimaryColumn(index)::putLong;
         }
     }
@@ -1829,7 +1834,7 @@ public class TableWriter implements Closeable {
 
     private void copyOutOfOrderData(long indexLo, long indexHi, long[] mergeStruct, int timestampIndex) {
         for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem = oooColumns.getQuick(getPrimaryColumnIndex(i));
             ContiguousVirtualMemory mem2;
             final int columnType = metadata.getColumnType(i);
 
@@ -1839,7 +1844,7 @@ public class TableWriter implements Closeable {
                     // we can find out the edge of string column in one of two ways
                     // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
                     // 2  if there are more items behind indexHi we can get offset of indexHi+1
-                    mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                    mem2 = oooColumns.getQuick(getSecondaryColumnIndex(i));
                     copyVarSizeCol(
                             mem2.addressOf(0),
                             mem2.getAppendOffset(),
@@ -2042,7 +2047,7 @@ public class TableWriter implements Closeable {
 
         int plen = path.length();
         for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem = oooColumns.getQuick(getPrimaryColumnIndex(i));
             ContiguousVirtualMemory mem2;
             final int columnType = metadata.getColumnType(i);
 
@@ -2133,7 +2138,7 @@ public class TableWriter implements Closeable {
 
                         MergeStruct.setDestVarFd(mergeStruct, i, dataMergeFd);
 
-                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        mem2 = oooColumns.getQuick(getSecondaryColumnIndex(i));
                         lo = mem2.getLong(indexLo * Long.BYTES);
                         if (indexHi == indexMax - 1) {
                             hi = mem.getAppendOffset();
@@ -2231,7 +2236,7 @@ public class TableWriter implements Closeable {
         if (columns != null) {
             closeAppendMemoryNoTruncate(truncate);
         }
-        Misc.freeObjListAndKeepObjects(mergeColumns);
+        Misc.freeObjListAndKeepObjects(oooColumns);
     }
 
     private void freeIndexers() {
@@ -2501,10 +2506,10 @@ public class TableWriter implements Closeable {
 
         // fixed length column
         final long srcFix1 = MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex);
-        final long srcFix2 = mergeColumns.getQuick(getSecondaryColumnIndex(columnIndex)).addressOf(0);
+        final long srcFix2 = oooColumns.getQuick(getSecondaryColumnIndex(columnIndex)).addressOf(0);
 
         long srcVar1 = MergeStruct.getSrcVarAddress(mergeStruct, columnIndex);
-        long srcVar2 = mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0);
+        long srcVar2 = oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0);
 
         // reverse order
         // todo: cache?
@@ -2542,10 +2547,10 @@ public class TableWriter implements Closeable {
 
         // fixed length column
         final long srcFix1 = MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex);
-        final long srcFix2 = mergeColumns.getQuick(getSecondaryColumnIndex(columnIndex)).addressOf(0);
+        final long srcFix2 = oooColumns.getQuick(getSecondaryColumnIndex(columnIndex)).addressOf(0);
 
         long srcVar1 = MergeStruct.getSrcVarAddress(mergeStruct, columnIndex);
-        long srcVar2 = mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0);
+        long srcVar2 = oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0);
 
         // reverse order
         // todo: cache?
@@ -3214,7 +3219,8 @@ public class TableWriter implements Closeable {
         }
         setAppendPosition(this.transientRowCount, true);
         rowFunction = switchPartitionFunction;
-        row.rowColumns = columns;
+        row.activeColumns = columns;
+        row.activeNullSetters = nullSetters;
         timestampSetter = prevTimestampSetter;
         transientRowCountBeforeOutOfOrder = 0;
     }
@@ -3230,7 +3236,7 @@ public class TableWriter implements Closeable {
         final long offset = MergeStruct.getDestFixedAppendOffset(mergeStruct, columnIndex);
         shuffleFunc.shuffle(
                 MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex),
-                mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0),
+                oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0),
                 MergeStruct.getDestFixedAddress(mergeStruct, columnIndex) + offset,
                 dataOOMergeIndex,
                 count
@@ -3305,14 +3311,15 @@ public class TableWriter implements Closeable {
 
     private void openMergePartition() {
         for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem1 = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem1 = oooColumns.getQuick(getPrimaryColumnIndex(i));
             mem1.clear();
-            ContiguousVirtualMemory mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+            ContiguousVirtualMemory mem2 = oooColumns.getQuick(getSecondaryColumnIndex(i));
             if (mem2 != null) {
                 mem2.clear();
             }
         }
-        row.rowColumns = mergeColumns;
+        row.activeColumns = oooColumns;
+        row.activeNullSetters = oooNullSetters;
         LOG.info().$("switched partition to memory").$();
     }
 
@@ -3406,7 +3413,7 @@ public class TableWriter implements Closeable {
 
         int plen = path.length();
         for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem = oooColumns.getQuick(getPrimaryColumnIndex(i));
             ContiguousVirtualMemory mem2;
             final int columnType = metadata.getColumnType(i);
 
@@ -3438,7 +3445,7 @@ public class TableWriter implements Closeable {
                         MergeStruct.setDestFixedAppendOffset(mergeStruct, i, dataIndexMax << shl);
 
                         // calculate the length of data segment that needs to be appended
-                        mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                        mem2 = oooColumns.getQuick(getSecondaryColumnIndex(i));
                         lo = mem2.getLong(indexLo * Long.BYTES);
                         if (indexHi == indexMax - 1) {
                             hi = mem.getAppendOffset();
@@ -3559,7 +3566,7 @@ public class TableWriter implements Closeable {
         long[] mergeStruct = new long[columnCount * MergeStruct.MERGE_STRUCT_ENTRY_SIZE];
 
         for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(i));
+            ContiguousVirtualMemory mem = oooColumns.getQuick(getPrimaryColumnIndex(i));
             ContiguousVirtualMemory mem2;
             final int columnType = metadata.getColumnType(i);
 
@@ -3568,7 +3575,7 @@ public class TableWriter implements Closeable {
             switch (columnType) {
                 case ColumnType.BINARY:
                 case ColumnType.STRING:
-                    mem2 = mergeColumns.getQuick(getSecondaryColumnIndex(i));
+                    mem2 = oooColumns.getQuick(getSecondaryColumnIndex(i));
                     lo = mem2.getLong(indexLo * Long.BYTES);
                     if (indexHi == indexMax - 1) {
                         hi = mem.getAppendOffset();
@@ -3676,13 +3683,14 @@ public class TableWriter implements Closeable {
         Misc.free(columns.getQuick(si));
         columns.remove(pi);
         columns.remove(pi);
-        Misc.free(mergeColumns.getQuick(pi));
-        Misc.free(mergeColumns.getQuick(si));
-        mergeColumns.remove(pi);
-        mergeColumns.remove(pi);
+        Misc.free(oooColumns.getQuick(pi));
+        Misc.free(oooColumns.getQuick(si));
+        oooColumns.remove(pi);
+        oooColumns.remove(pi);
 
         columnTops.removeIndex(columnIndex);
-        nullers.remove(columnIndex);
+        nullSetters.remove(columnIndex);
+        oooNullSetters.remove(columnIndex);
         if (columnIndex < indexers.size()) {
             Misc.free(indexers.getQuick(columnIndex));
             indexers.remove(columnIndex);
@@ -4183,7 +4191,7 @@ public class TableWriter implements Closeable {
             final int shl,
             final ShuffleOutOfOrderDataInternal shuffleFunc
     ) {
-        final ContiguousVirtualMemory mem = mergeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        final ContiguousVirtualMemory mem = oooColumns.getQuick(getPrimaryColumnIndex(columnIndex));
         final long src = mem.addressOf(0);
         final long srcSize = mem.getAllocatedSize();
         final long tgtSize = indexRowCount << shl;
@@ -4200,8 +4208,8 @@ public class TableWriter implements Closeable {
         tmpShuffleIndex.jumpTo(0);
         tmpShuffleData.jumpTo(0);
 
-        final ContiguousVirtualMemory dataMem = mergeColumns.getQuick(primaryIndex);
-        final ContiguousVirtualMemory indexMem = mergeColumns.getQuick(secondaryIndex);
+        final ContiguousVirtualMemory dataMem = oooColumns.getQuick(primaryIndex);
+        final ContiguousVirtualMemory indexMem = oooColumns.getQuick(secondaryIndex);
         final long dataSize = dataMem.getAppendOffset();
         // ensure we have enough memory allocated
         tmpShuffleData.jumpTo(dataSize);
@@ -4225,8 +4233,8 @@ public class TableWriter implements Closeable {
         tmpShuffleIndex.jumpTo(indexRowCount * Long.BYTES);
 
         // now swap source and target memory
-        mergeColumns.setQuick(primaryIndex, tmpShuffleData);
-        mergeColumns.setQuick(secondaryIndex, tmpShuffleIndex);
+        oooColumns.setQuick(primaryIndex, tmpShuffleData);
+        oooColumns.setQuick(secondaryIndex, tmpShuffleIndex);
 
         tmpShuffleIndex = indexMem;
         tmpShuffleData = dataMem;
@@ -4645,15 +4653,14 @@ public class TableWriter implements Closeable {
     }
 
     public class Row {
-        private ObjList<? extends BigMem> rowColumns;
+        private ObjList<? extends BigMem> activeColumns;
+        private ObjList<Runnable> activeNullSetters;
 
-        // ISO 27001
-        // todo: configure nullers for the merge columns
         public void append() {
             if ((masterRef & 1) != 0) {
                 for (int i = 0; i < columnCount; i++) {
                     if (refs.getQuick(i) < masterRef) {
-                        nullers.getQuick(i).run();
+                        activeNullSetters.getQuick(i).run();
                     }
                 }
                 transientRowCount++;
@@ -4787,11 +4794,11 @@ public class TableWriter implements Closeable {
         }
 
         private BigMem getPrimaryColumn(int columnIndex) {
-            return rowColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+            return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
         }
 
         private BigMem getSecondaryColumn(int columnIndex) {
-            return rowColumns.getQuick(getSecondaryColumnIndex(columnIndex));
+            return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
         }
 
         private void notNull(int index) {

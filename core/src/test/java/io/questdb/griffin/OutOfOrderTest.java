@@ -24,11 +24,13 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1580,6 +1582,52 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     TestUtils.assertEquals(expected, sink);
                 }
         );
+    }
+
+    @Test
+    public void testPartitionedOOONullSetters() throws Exception {
+        assertMemoryLeak(() -> {
+
+            compiler.compile("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
+                TableWriter.Row r;
+
+                r = w.newRow(TimestampFormatUtils.parseTimestamp("2013-02-10T00:10:00.000000Z"));
+                r.putInt(2, 30);
+                r.append();
+
+                r = w.newRow(TimestampFormatUtils.parseTimestamp("2013-02-10T00:05:00.000000Z"));
+                r.putInt(2, 10);
+                r.append();
+
+                r = w.newRow(TimestampFormatUtils.parseTimestamp("2013-02-10T00:06:00.000000Z"));
+                r.putInt(2, 20);
+                r.append();
+
+                w.commit();
+
+                r = w.newRow(TimestampFormatUtils.parseTimestamp("2013-02-10T00:11:00.000000Z"));
+                r.putInt(2, 40);
+                r.append();
+
+                w.commit();
+            }
+
+            sink.clear();
+            try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, factory.getMetadata(), true);
+                }
+            }
+
+            final String expected = "a\tb\tc\tts\n" +
+                    "NaN\tNaN\t10\t2013-02-10T00:05:00.000000Z\n" +
+                    "NaN\tNaN\t20\t2013-02-10T00:06:00.000000Z\n" +
+                    "NaN\tNaN\t30\t2013-02-10T00:10:00.000000Z\n" +
+                    "NaN\tNaN\t40\t2013-02-10T00:11:00.000000Z\n";
+
+            TestUtils.assertEquals(expected, sink);
+        });
     }
 
     @Test
