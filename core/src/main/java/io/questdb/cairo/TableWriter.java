@@ -1297,11 +1297,7 @@ public class TableWriter implements Closeable {
     }
 
     private static long mapReadWriteOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
-        return mapReadWriteOrFail(ff, path, fd, 0, size);
-    }
-
-    private static long mapReadWriteOrFail(FilesFacade ff, @Nullable Path path, long fd, long offset, long size) {
-        long addr = ff.mmap(fd, size, offset, Files.MAP_RW);
+        long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
         if (addr != -1) {
             return addr;
         }
@@ -3256,26 +3252,20 @@ public class TableWriter implements Closeable {
         final long indexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
         final long src = MergeStruct.getSrcFixedAddress(mergeStruct, timestampIndex);
         final long indexStruct = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
-        try {
-            long index = Unsafe.malloc(indexSize);
-            try {
-                for (long l = mergeDataLo; l <= mergeDataHi; l++) {
-                    Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES, Unsafe.getUnsafe().getLong(src + l * Long.BYTES));
-                    Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES, l | (1L << 63));
-                }
-
-                Unsafe.getUnsafe().putLong(indexStruct, index);
-                Unsafe.getUnsafe().putLong(indexStruct + Long.BYTES, mergeDataHi - mergeDataLo + 1);
-                Unsafe.getUnsafe().putLong(indexStruct + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
-                Unsafe.getUnsafe().putLong(indexStruct + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
-
-                return Vect.mergeLongIndexesAsc(indexStruct, 2);
-            } finally {
-                Unsafe.free(index, indexSize);
-            }
-        } finally {
-            Unsafe.free(indexStruct, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+        long index = Unsafe.malloc(indexSize);
+        for (long l = mergeDataLo; l <= mergeDataHi; l++) {
+            Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES, Unsafe.getUnsafe().getLong(src + l * Long.BYTES));
+            Unsafe.getUnsafe().putLong(index + (l - mergeDataLo) * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES, l | (1L << 63));
         }
+
+        Unsafe.getUnsafe().putLong(indexStruct, index);
+        Unsafe.getUnsafe().putLong(indexStruct + Long.BYTES, mergeDataHi - mergeDataLo + 1);
+        Unsafe.getUnsafe().putLong(indexStruct + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
+        Unsafe.getUnsafe().putLong(indexStruct + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
+        long result = Vect.mergeLongIndexesAsc(indexStruct, 2);
+        Unsafe.free(index, indexSize);
+        Unsafe.free(indexStruct, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+        return result;
     }
 
     private void mergeTimestampSetter(long timestamp) {
@@ -3443,7 +3433,7 @@ public class TableWriter implements Closeable {
                         // the assumption here is that we do not have empty partition we append to
                         assert dataIndexMax > 0;
 
-                        MergeStruct.setDestFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, indexFd, 0, indexSize));
+                        MergeStruct.setDestFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, indexFd, indexSize));
                         MergeStruct.setDestFixedAddressSize(mergeStruct, i, indexSize);
                         MergeStruct.setDestFixedAppendOffset(mergeStruct, i, dataIndexMax << shl);
 
@@ -3508,7 +3498,7 @@ public class TableWriter implements Closeable {
                         }
                         MergeStruct.setDestFixedFd(mergeStruct, i, dataFd);
                         truncateToSizeOrFail(ff, path, dataFd, dataSize);
-                        MergeStruct.setDestFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, dataFd, 0, dataSize));
+                        MergeStruct.setDestFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, dataFd, dataSize));
                         MergeStruct.setDestFixedAddressSize(mergeStruct, i, dataSize);
                         MergeStruct.setDestFixedAppendOffset(mergeStruct, i, (dataIndexMax << shl));
                         break;
@@ -3559,7 +3549,7 @@ public class TableWriter implements Closeable {
         final long fd = -mem.getFd();
         final long offset = mem.getAppendOffset();
         MergeStruct.setDestFixedFd(mergeStruct, columnIndex, fd);
-        long indexMergeAddr = mapReadWriteOrFail(ff, null, -fd, 0, indexMergeSize + offset);
+        long indexMergeAddr = mapReadWriteOrFail(ff, null, -fd, indexMergeSize + offset);
         MergeStruct.setDestFixedAddress(mergeStruct, columnIndex, indexMergeAddr);
         MergeStruct.setDestFixedAddressSize(mergeStruct, columnIndex, indexMergeSize + offset);
         MergeStruct.setDestFixedAppendOffset(mergeStruct, columnIndex, offset);
@@ -3598,7 +3588,7 @@ public class TableWriter implements Closeable {
                     final long dataMergeFd = -dataMem.getFd();
                     final long dataOffset = dataMem.getAppendOffset();
                     MergeStruct.setDestVarFd(mergeStruct, i, dataMergeFd);
-                    final long dataMergeAddr = mapReadWriteOrFail(ff, null, -dataMergeFd, 0, dataSize + dataOffset);
+                    final long dataMergeAddr = mapReadWriteOrFail(ff, null, -dataMergeFd, dataSize + dataOffset);
                     MergeStruct.setDestVarAddress(mergeStruct, i, dataMergeAddr);
                     MergeStruct.setDestVarAddressSize(mergeStruct, i, dataSize + dataOffset);
                     MergeStruct.setDestVarAppendOffset(mergeStruct, i, dataOffset);
