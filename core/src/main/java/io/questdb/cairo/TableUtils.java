@@ -518,10 +518,16 @@ public final class TableUtils {
                         return index;
                     } catch (CairoException e) {
                         // right, cannot open file for some reason?
-                        LOG.error().$("Cannot open file: ").$(path).$('[').$(Os.errno()).$(']').$();
+                        LOG.error()
+                                .$("could not open swap [file=").$(path)
+                                .$(", errno=").$(e.getErrno())
+                                .$(']').$();
                     }
                 } else {
-                    LOG.error().$("Cannot remove file: ").$(path).$('[').$(Os.errno()).$(']').$();
+                    LOG.error()
+                            .$("could not remove swap [file=").$(path)
+                            .$(", errno=").$(ff.errno())
+                            .$(']').$();
                 }
             } while (++index < retryCount);
             throw CairoException.instance(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);

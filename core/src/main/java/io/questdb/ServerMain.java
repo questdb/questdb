@@ -107,7 +107,7 @@ public class ServerMain {
         try (InputStream is = new FileInputStream(configurationFile)) {
             properties.load(is);
         }
-        readServerConfiguration(rootDirectory, properties);
+        readServerConfiguration(rootDirectory, properties, log);
 
         // create database directory
         try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
@@ -260,8 +260,8 @@ public class ServerMain {
                 functionFactoryCache);
     }
 
-    protected void readServerConfiguration(final String rootDirectory, final Properties properties) throws ServerConfigurationException, JsonException {
-        configuration = new PropServerConfiguration(rootDirectory, properties);
+    protected void readServerConfiguration(final String rootDirectory, final Properties properties, Log log) throws ServerConfigurationException, JsonException {
+        configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log);
     }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {

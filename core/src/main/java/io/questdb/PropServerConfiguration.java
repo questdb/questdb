@@ -24,10 +24,6 @@
 
 package io.questdb;
 
-import java.io.File;
-import java.util.Arrays;
-import java.util.Properties;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
@@ -38,51 +34,26 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoMilliTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoSecondTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.EpollFacade;
-import io.questdb.network.EpollFacadeImpl;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.IOOperation;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkError;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.SelectFacade;
-import io.questdb.network.SelectFacadeImpl;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.StationaryMillisClock;
+import io.questdb.network.*;
+import io.questdb.std.*;
 import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.MicrosecondClockImpl;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.microtime.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.DateLocaleFactory;
-import io.questdb.std.time.MillisecondClock;
-import io.questdb.std.time.MillisecondClockImpl;
+import io.questdb.std.time.*;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.File;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -160,6 +131,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean lineUdpUnicast;
     private final boolean lineUdpOwnThread;
     private final int sqlCopyBufferSize;
+    private final long sqlAppendPageSize;
     private final int sqlAnalyticColumnPoolCapacity;
     private final int sqlCreateTableModelPoolCapacity;
     private final int sqlColumnCastModelPoolCapacity;
@@ -287,35 +259,42 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceJobHysteresisInMs;
     private String lineTcpAuthDbPath;
     private String httpVersion;
+    private final Log log;
 
-    public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException, JsonException {
-        this.sharedWorkerCount = getInt(properties, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
-        this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
-        this.sharedWorkerHaltOnError = getBoolean(properties, "shared.worker.haltOnError", false);
-        this.httpServerEnabled = getBoolean(properties, "http.enabled", true);
+    public PropServerConfiguration(
+            String root,
+            Properties properties,
+            @Nullable Map<String, String> env,
+            Log log
+    ) throws ServerConfigurationException, JsonException {
+        this.log = log;
+        this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
+        this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
+        this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
+        this.httpServerEnabled = getBoolean(properties, env, "http.enabled", true);
         if (httpServerEnabled) {
-            this.connectionPoolInitialCapacity = getInt(properties, "http.connection.pool.initial.capacity", 16);
-            this.connectionStringPoolCapacity = getInt(properties, "http.connection.string.pool.capacity", 128);
-            this.multipartHeaderBufferSize = getIntSize(properties, "http.multipart.header.buffer.size", 512);
-            this.multipartIdleSpinCount = getLong(properties, "http.multipart.idle.spin.count", 10_000);
-            this.recvBufferSize = getIntSize(properties, "http.receive.buffer.size", 1024 * 1024);
-            this.requestHeaderBufferSize = getIntSize(properties, "http.request.header.buffer.size", 32 * 2014);
-            this.responseHeaderBufferSize = getIntSize(properties, "http.response.header.buffer.size", 32 * 1024);
-            this.httpWorkerCount = getInt(properties, "http.worker.count", 0);
-            this.httpWorkerAffinity = getAffinity(properties, "http.worker.affinity", httpWorkerCount);
-            this.httpWorkerHaltOnError = getBoolean(properties, "http.worker.haltOnError", false);
-            this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
-            this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
-            this.httpFrozenClock = getBoolean(properties, "http.frozen.clock", false);
-            this.httpAllowDeflateBeforeSend = getBoolean(properties, "http.allow.deflate.before.send", false);
-            this.httpServerKeepAlive = getBoolean(properties, "http.server.keep.alive", true);
-            this.httpVersion = getString(properties, "http.version", "HTTP/1.1");
+            this.connectionPoolInitialCapacity = getInt(properties, env, "http.connection.pool.initial.capacity", 16);
+            this.connectionStringPoolCapacity = getInt(properties, env, "http.connection.string.pool.capacity", 128);
+            this.multipartHeaderBufferSize = getIntSize(properties, env, "http.multipart.header.buffer.size", 512);
+            this.multipartIdleSpinCount = getLong(properties, env, "http.multipart.idle.spin.count", 10_000);
+            this.recvBufferSize = getIntSize(properties, env, "http.receive.buffer.size", 1024 * 1024);
+            this.requestHeaderBufferSize = getIntSize(properties, env, "http.request.header.buffer.size", 32 * 2014);
+            this.responseHeaderBufferSize = getIntSize(properties, env, "http.response.header.buffer.size", 32 * 1024);
+            this.httpWorkerCount = getInt(properties, env, "http.worker.count", 0);
+            this.httpWorkerAffinity = getAffinity(properties, env, "http.worker.affinity", httpWorkerCount);
+            this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
+            this.sendBufferSize = getIntSize(properties, env, "http.send.buffer.size", 2 * 1024 * 1024);
+            this.indexFileName = getString(properties, env, "http.static.index.file.name", "index.html");
+            this.httpFrozenClock = getBoolean(properties, env, "http.frozen.clock", false);
+            this.httpAllowDeflateBeforeSend = getBoolean(properties, env, "http.allow.deflate.before.send", false);
+            this.httpServerKeepAlive = getBoolean(properties, env, "http.server.keep.alive", true);
+            this.httpVersion = getString(properties, env, "http.version", "HTTP/1.1");
             if (!httpVersion.endsWith(" ")) {
                 httpVersion += ' ';
             }
 
-            int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 5);
-            int keepAliveMax = getInt(properties, "http.keep-alive.max", 10_000);
+            int keepAliveTimeout = getInt(properties, env, "http.keep-alive.timeout", 5);
+            int keepAliveMax = getInt(properties, env, "http.keep-alive.max", 10_000);
 
             if (keepAliveTimeout > 0 && keepAliveMax > 0) {
                 this.keepAliveHeader = "Keep-Alive: timeout=" + keepAliveTimeout + ", max=" + keepAliveMax + Misc.EOL;
@@ -323,7 +302,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.keepAliveHeader = null;
             }
 
-            final String publicDirectory = getString(properties, "http.static.pubic.directory", "public");
+            final String publicDirectory = getString(properties, env, "http.static.pubic.directory", "public");
             // translate public directory into absolute path
             // this will generate some garbage, but this is ok - we just doing this once on startup
             if (new File(publicDirectory).isAbsolute()) {
@@ -332,45 +311,45 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
             }
 
-            final String databaseRoot = getString(properties, "cairo.root", "db");
+            final String databaseRoot = getString(properties, env, "cairo.root", "db");
             if (new File(databaseRoot).isAbsolute()) {
                 this.databaseRoot = databaseRoot;
             } else {
                 this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
             }
 
-            this.activeConnectionLimit = getInt(properties, "http.net.active.connection.limit", 256);
-            this.eventCapacity = getInt(properties, "http.net.event.capacity", 1024);
-            this.ioQueueCapacity = getInt(properties, "http.net.io.queue.capacity", 1024);
-            this.idleConnectionTimeout = getLong(properties, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
-            this.interestQueueCapacity = getInt(properties, "http.net.interest.queue.capacity", 1024);
-            this.listenBacklog = getInt(properties, "http.net.listen.backlog", 256);
-            this.sndBufSize = getIntSize(properties, "http.net.snd.buf.size", 2 * 1024 * 1024);
-            this.rcvBufSize = getIntSize(properties, "http.net.rcv.buf.size", 2 * 1024 * 1024);
-            this.dateAdapterPoolCapacity = getInt(properties, "http.text.date.adapter.pool.capacity", 16);
-            this.jsonCacheLimit = getIntSize(properties, "http.text.json.cache.limit", 16384);
-            this.jsonCacheSize = getIntSize(properties, "http.text.json.cache.size", 8192);
-            this.maxRequiredDelimiterStdDev = getDouble(properties, "http.text.max.required.delimiter.stddev", 0.1222d);
-            this.maxRequiredLineLengthStdDev = getDouble(properties, "http.text.max.required.line.length.stddev", 0.8);
-            this.metadataStringPoolCapacity = getInt(properties, "http.text.metadata.string.pool.capacity", 128);
+            this.activeConnectionLimit = getInt(properties, env, "http.net.active.connection.limit", 256);
+            this.eventCapacity = getInt(properties, env, "http.net.event.capacity", 1024);
+            this.ioQueueCapacity = getInt(properties, env, "http.net.io.queue.capacity", 1024);
+            this.idleConnectionTimeout = getLong(properties, env, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
+            this.interestQueueCapacity = getInt(properties, env, "http.net.interest.queue.capacity", 1024);
+            this.listenBacklog = getInt(properties, env, "http.net.listen.backlog", 256);
+            this.sndBufSize = getIntSize(properties, env, "http.net.snd.buf.size", 2 * 1024 * 1024);
+            this.rcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 2 * 1024 * 1024);
+            this.dateAdapterPoolCapacity = getInt(properties, env, "http.text.date.adapter.pool.capacity", 16);
+            this.jsonCacheLimit = getIntSize(properties, env, "http.text.json.cache.limit", 16384);
+            this.jsonCacheSize = getIntSize(properties, env, "http.text.json.cache.size", 8192);
+            this.maxRequiredDelimiterStdDev = getDouble(properties, env, "http.text.max.required.delimiter.stddev", 0.1222d);
+            this.maxRequiredLineLengthStdDev = getDouble(properties, env, "http.text.max.required.line.length.stddev", 0.8);
+            this.metadataStringPoolCapacity = getInt(properties, env, "http.text.metadata.string.pool.capacity", 128);
 
-            this.rollBufferLimit = getIntSize(properties, "http.text.roll.buffer.limit", 1024 * 4096);
-            this.rollBufferSize = getIntSize(properties, "http.text.roll.buffer.size", 1024);
-            this.textAnalysisMaxLines = getInt(properties, "http.text.analysis.max.lines", 1000);
-            this.textLexerStringPoolCapacity = getInt(properties, "http.text.lexer.string.pool.capacity", 64);
-            this.timestampAdapterPoolCapacity = getInt(properties, "http.text.timestamp.adapter.pool.capacity", 64);
-            this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
+            this.rollBufferLimit = getIntSize(properties, env, "http.text.roll.buffer.limit", 1024 * 4096);
+            this.rollBufferSize = getIntSize(properties, env, "http.text.roll.buffer.size", 1024);
+            this.textAnalysisMaxLines = getInt(properties, env, "http.text.analysis.max.lines", 1000);
+            this.textLexerStringPoolCapacity = getInt(properties, env, "http.text.lexer.string.pool.capacity", 64);
+            this.timestampAdapterPoolCapacity = getInt(properties, env, "http.text.timestamp.adapter.pool.capacity", 64);
+            this.utf8SinkSize = getIntSize(properties, env, "http.text.utf8.sink.size", 4096);
 
-            this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
-            this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 4);
-            this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 12);
-            this.readOnlySecurityContext = getBoolean(properties, "http.security.readonly", false);
-            this.maxHttpQueryResponseRowLimit = getLong(properties, "http.security.max.response.rows", Long.MAX_VALUE);
-            this.interruptOnClosedConnection = getBoolean(properties, "http.security.interrupt.on.closed.connection", true);
-            this.interruptorNIterationsPerCheck = getInt(properties, "http.security.interruptor.iterations.per.check", 2_000_000);
-            this.interruptorBufferSize = getInt(properties, "http.security.interruptor.buffer.size", 64);
+            this.jsonQueryConnectionCheckFrequency = getInt(properties, env, "http.json.query.connection.check.frequency", 1_000_000);
+            this.jsonQueryFloatScale = getInt(properties, env, "http.json.query.float.scale", 4);
+            this.jsonQueryDoubleScale = getInt(properties, env, "http.json.query.double.scale", 12);
+            this.readOnlySecurityContext = getBoolean(properties, env, "http.security.readonly", false);
+            this.maxHttpQueryResponseRowLimit = getLong(properties, env, "http.security.max.response.rows", Long.MAX_VALUE);
+            this.interruptOnClosedConnection = getBoolean(properties, env, "http.security.interrupt.on.closed.connection", true);
+            this.interruptorNIterationsPerCheck = getInt(properties, env, "http.security.interruptor.iterations.per.check", 2_000_000);
+            this.interruptorBufferSize = getInt(properties, env, "http.security.interruptor.buffer.size", 64);
 
-            parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
+            parseBindTo(properties, env, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
                 bindIPv4Address = a;
                 bindPort = p;
             });
@@ -380,118 +359,126 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
             }
         }
-        this.pgEnabled = getBoolean(properties, "pg.enabled", true);
+        this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
         if (pgEnabled) {
-            pgNetActiveConnectionLimit = getInt(properties, "pg.net.active.connection.limit", 10);
-            parseBindTo(properties, "pg.net.bind.to", "0.0.0.0:8812", (a, p) -> {
+            pgNetActiveConnectionLimit = getInt(properties, env, "pg.net.active.connection.limit", 10);
+            parseBindTo(properties, env, "pg.net.bind.to", "0.0.0.0:8812", (a, p) -> {
                 pgNetBindIPv4Address = a;
                 pgNetBindPort = p;
             });
 
-            this.pgNetEventCapacity = getInt(properties, "pg.net.event.capacity", 1024);
-            this.pgNetIOQueueCapacity = getInt(properties, "pg.net.io.queue.capacity", 1024);
-            this.pgNetIdleConnectionTimeout = getLong(properties, "pg.net.idle.timeout", 300_000);
-            this.pgNetInterestQueueCapacity = getInt(properties, "pg.net.interest.queue.capacity", 1024);
-            this.pgNetListenBacklog = getInt(properties, "pg.net.listen.backlog", 50_000);
-            this.pgNetRcvBufSize = getIntSize(properties, "pg.net.recv.buf.size", -1);
-            this.pgNetSndBufSize = getIntSize(properties, "pg.net.send.buf.size", -1);
-            this.pgCharacterStoreCapacity = getInt(properties, "pg.character.store.capacity", 4096);
-            this.pgCharacterStorePoolCapacity = getInt(properties, "pg.character.store.pool.capacity", 64);
-            this.pgConnectionPoolInitialCapacity = getInt(properties, "pg.connection.pool.capacity", 64);
-            this.pgPassword = getString(properties, "pg.password", "quest");
-            this.pgUsername = getString(properties, "pg.user", "admin");
-            this.pgFactoryCacheColumnCount = getInt(properties, "pg.factory.cache.column.count", 16);
-            this.pgFactoryCacheRowCount = getInt(properties, "pg.factory.cache.row.count", 16);
-            this.pgIdleRecvCountBeforeGivingUp = getInt(properties, "pg.idle.recv.count.before.giving.up", 10_000);
-            this.pgIdleSendCountBeforeGivingUp = getInt(properties, "pg.idle.send.count.before.giving.up", 10_000);
-            this.pgMaxBlobSizeOnQuery = getIntSize(properties, "pg.max.blob.size.on.query", 512 * 1024);
-            this.pgRecvBufferSize = getIntSize(properties, "pg.recv.buffer.size", 1024 * 1024);
-            this.pgSendBufferSize = getIntSize(properties, "pg.send.buffer.size", 1024 * 1024);
-            final String dateLocale = getString(properties, "pg.date.locale", "en");
+            this.pgNetEventCapacity = getInt(properties, env, "pg.net.event.capacity", 1024);
+            this.pgNetIOQueueCapacity = getInt(properties, env, "pg.net.io.queue.capacity", 1024);
+            this.pgNetIdleConnectionTimeout = getLong(properties, env, "pg.net.idle.timeout", 300_000);
+            this.pgNetInterestQueueCapacity = getInt(properties, env, "pg.net.interest.queue.capacity", 1024);
+            this.pgNetListenBacklog = getInt(properties, env, "pg.net.listen.backlog", 50_000);
+            this.pgNetRcvBufSize = getIntSize(properties, env, "pg.net.recv.buf.size", -1);
+            this.pgNetSndBufSize = getIntSize(properties, env, "pg.net.send.buf.size", -1);
+            this.pgCharacterStoreCapacity = getInt(properties, env, "pg.character.store.capacity", 4096);
+            this.pgCharacterStorePoolCapacity = getInt(properties, env, "pg.character.store.pool.capacity", 64);
+            this.pgConnectionPoolInitialCapacity = getInt(properties, env, "pg.connection.pool.capacity", 64);
+            this.pgPassword = getString(properties, env, "pg.password", "quest");
+            this.pgUsername = getString(properties, env, "pg.user", "admin");
+            this.pgFactoryCacheColumnCount = getInt(properties, env, "pg.factory.cache.column.count", 16);
+            this.pgFactoryCacheRowCount = getInt(properties, env, "pg.factory.cache.row.count", 16);
+            this.pgIdleRecvCountBeforeGivingUp = getInt(properties, env, "pg.idle.recv.count.before.giving.up", 10_000);
+            this.pgIdleSendCountBeforeGivingUp = getInt(properties, env, "pg.idle.send.count.before.giving.up", 10_000);
+            this.pgMaxBlobSizeOnQuery = getIntSize(properties, env, "pg.max.blob.size.on.query", 512 * 1024);
+            this.pgRecvBufferSize = getIntSize(properties, env, "pg.recv.buffer.size", 1024 * 1024);
+            this.pgSendBufferSize = getIntSize(properties, env, "pg.send.buffer.size", 1024 * 1024);
+            final String dateLocale = getString(properties, env, "pg.date.locale", "en");
             this.pgDefaultDateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
             if (this.pgDefaultDateLocale == null) {
                 throw new ServerConfigurationException("pg.date.locale", dateLocale);
             }
-            final String timestampLocale = getString(properties, "pg.timestamp.locale", "en");
+            final String timestampLocale = getString(properties, env, "pg.timestamp.locale", "en");
             this.pgDefaultTimestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
             if (this.pgDefaultTimestampLocale == null) {
                 throw new ServerConfigurationException("pg.timestamp.locale", dateLocale);
             }
-            this.pgWorkerCount = getInt(properties, "pg.worker.count", 0);
-            this.pgWorkerAffinity = getAffinity(properties, "pg.worker.affinity", pgWorkerCount);
-            this.pgHaltOnError = getBoolean(properties, "pg.halt.on.error", false);
-            this.pgDaemonPool = getBoolean(properties, "pg.daemon.pool", true);
+            this.pgWorkerCount = getInt(properties, env, "pg.worker.count", 0);
+            this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
+            this.pgHaltOnError = getBoolean(properties, env, "pg.halt.on.error", false);
+            this.pgDaemonPool = getBoolean(properties, env, "pg.daemon.pool", true);
         }
 
-        this.commitMode = getCommitMode(properties, "cairo.commit.mode");
-        this.createAsSelectRetryCount = getInt(properties, "cairo.create.as.select.retry.count", 5);
-        this.defaultMapType = getString(properties, "cairo.default.map.type", "fast");
-        this.defaultSymbolCacheFlag = getBoolean(properties, "cairo.default.symbol.cache.flag", true);
-        this.defaultSymbolCapacity = getInt(properties, "cairo.default.symbol.capacity", 256);
-        this.fileOperationRetryCount = getInt(properties, "cairo.file.operation.retry.count", 30);
-        this.idleCheckInterval = getLong(properties, "cairo.idle.check.interval", 5 * 60 * 1000L);
-        this.inactiveReaderTTL = getLong(properties, "cairo.inactive.reader.ttl", 120_000);
-        this.inactiveWriterTTL = getLong(properties, "cairo.inactive.writer.ttl", 600_000);
-        this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, "cairo.index.value.block.size", 256));
-        this.maxSwapFileCount = getInt(properties, "cairo.max.swap.file.count", 30);
-        this.mkdirMode = getInt(properties, "cairo.mkdir.mode", 509);
-        this.parallelIndexThreshold = getInt(properties, "cairo.parallel.index.threshold", 100000);
-        this.readerPoolMaxSegments = getInt(properties, "cairo.reader.pool.max.segments", 5);
-        this.spinLockTimeoutUs = getLong(properties, "cairo.spin.lock.timeout", 1_000_000);
-        this.sqlCacheRows = getInt(properties, "cairo.cache.rows", 16);
-        this.sqlCacheBlocks = getIntSize(properties, "cairo.cache.blocks", 4);
-        this.sqlCharacterStoreCapacity = getInt(properties, "cairo.character.store.capacity", 1024);
-        this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, "cairo.character.store.sequence.pool.capacity", 64);
-        this.sqlColumnPoolCapacity = getInt(properties, "cairo.column.pool.capacity", 4096);
-        this.sqlCompactMapLoadFactor = getDouble(properties, "cairo.compact.map.load.factor", 0.7);
-        this.sqlExpressionPoolCapacity = getInt(properties, "cairo.expression.pool.capacity", 8192);
-        this.sqlFastMapLoadFactor = getDouble(properties, "cairo.fast.map.load.factor", 0.5);
-        this.sqlJoinContextPoolCapacity = getInt(properties, "cairo.sql.join.context.pool.capacity", 64);
-        this.sqlLexerPoolCapacity = getInt(properties, "cairo.lexer.pool.capacity", 2048);
-        this.sqlMapKeyCapacity = getInt(properties, "cairo.sql.map.key.capacity", 2048 * 1024);
-        this.sqlMapPageSize = getIntSize(properties, "cairo.sql.map.page.size", 4 * 1024 * 1024);
-        this.sqlMapMaxPages = getIntSize(properties, "cairo.sql.map.max.pages", Integer.MAX_VALUE);
-        this.sqlMapMaxResizes = getIntSize(properties, "cairo.sql.map.max.resizes", Integer.MAX_VALUE);
-        this.sqlModelPoolCapacity = getInt(properties, "cairo.model.pool.capacity", 1024);
-        this.sqlSortKeyPageSize = getLongSize(properties, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
-        this.sqlSortKeyMaxPages = getIntSize(properties, "cairo.sql.sort.key.max.pages", Integer.MAX_VALUE);
-        this.sqlSortLightValuePageSize = getLongSize(properties, "cairo.sql.sort.light.value.page.size", 1048576);
-        this.sqlSortLightValueMaxPages = getIntSize(properties, "cairo.sql.sort.light.value.max.pages", Integer.MAX_VALUE);
-        this.sqlHashJoinValuePageSize = getIntSize(properties, "cairo.sql.hash.join.value.page.size", 16777216);
-        this.sqlHashJoinValueMaxPages = getIntSize(properties, "cairo.sql.hash.join.value.max.pages", Integer.MAX_VALUE);
-        this.sqlLatestByRowCount = getInt(properties, "cairo.sql.latest.by.row.count", 1000);
-        this.sqlHashJoinLightValuePageSize = getIntSize(properties, "cairo.sql.hash.join.light.value.page.size", 1048576);
-        this.sqlHashJoinLightValueMaxPages = getIntSize(properties, "cairo.sql.hash.join.light.value.max.pages", Integer.MAX_VALUE);
-        this.sqlSortValuePageSize = getIntSize(properties, "cairo.sql.sort.value.page.size", 16777216);
-        this.sqlSortValueMaxPages = getIntSize(properties, "cairo.sql.sort.value.max.pages", Integer.MAX_VALUE);
-        this.workStealTimeoutNanos = getLong(properties, "cairo.work.steal.timeout.nanos", 10_000);
-        this.parallelIndexingEnabled = getBoolean(properties, "cairo.parallel.indexing.enabled", true);
-        this.sqlJoinMetadataPageSize = getIntSize(properties, "cairo.sql.join.metadata.page.size", 16384);
-        this.sqlJoinMetadataMaxResizes = getIntSize(properties, "cairo.sql.join.metadata.max.resizes", Integer.MAX_VALUE);
-        this.sqlAnalyticColumnPoolCapacity = getInt(properties, "cairo.sql.analytic.column.pool.capacity", 64);
-        this.sqlCreateTableModelPoolCapacity = getInt(properties, "cairo.sql.create.table.model.pool.capacity", 16);
-        this.sqlColumnCastModelPoolCapacity = getInt(properties, "cairo.sql.column.cast.model.pool.capacity", 16);
-        this.sqlRenameTableModelPoolCapacity = getInt(properties, "cairo.sql.rename.table.model.pool.capacity", 16);
-        this.sqlWithClauseModelPoolCapacity = getInt(properties, "cairo.sql.with.clause.model.pool.capacity", 128);
-        this.sqlInsertModelPoolCapacity = getInt(properties, "cairo.sql.insert.model.pool.capacity", 64);
-        this.sqlCopyModelPoolCapacity = getInt(properties, "cairo.sql.copy.model.pool.capacity", 32);
-        this.sqlCopyBufferSize = getIntSize(properties, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
-        this.doubleToStrCastScale = getInt(properties, "cairo.sql.double.cast.scale", 12);
-        this.floatToStrCastScale = getInt(properties, "cairo.sql.float.cast.scale", 4);
-        this.sqlGroupByMapCapacity = getInt(properties, "cairo.sql.groupby.map.capacity", 1024);
-        this.sqlGroupByPoolCapacity = getInt(properties, "cairo.sql.groupby.pool.capacity", 1024);
-        this.sqlMaxSymbolNotEqualsCount = getInt(properties, "cairo.sql.max.symbol.not.equals.count", 100);
-        final String sqlCopyFormatsFile = getString(properties, "cairo.sql.copy.formats.file", "/text_loader.json");
-        this.telemetryEnabled = getBoolean(properties, "telemetry.enabled", true);
-        this.telemetryQueueCapacity = getInt(properties, "telemetry.queue.capacity", 512);
+        this.commitMode = getCommitMode(properties, env, "cairo.commit.mode");
+        this.createAsSelectRetryCount = getInt(properties, env, "cairo.create.as.select.retry.count", 5);
+        this.defaultMapType = getString(properties, env, "cairo.default.map.type", "fast");
+        this.defaultSymbolCacheFlag = getBoolean(properties, env, "cairo.default.symbol.cache.flag", true);
+        this.defaultSymbolCapacity = getInt(properties, env, "cairo.default.symbol.capacity", 256);
+        this.fileOperationRetryCount = getInt(properties, env, "cairo.file.operation.retry.count", 30);
+        this.idleCheckInterval = getLong(properties, env, "cairo.idle.check.interval", 5 * 60 * 1000L);
+        this.inactiveReaderTTL = getLong(properties, env, "cairo.inactive.reader.ttl", 120_000);
+        this.inactiveWriterTTL = getLong(properties, env, "cairo.inactive.writer.ttl", 600_000);
+        this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.index.value.block.size", 256));
+        this.maxSwapFileCount = getInt(properties, env, "cairo.max.swap.file.count", 30);
+        this.mkdirMode = getInt(properties, env, "cairo.mkdir.mode", 509);
+        this.parallelIndexThreshold = getInt(properties, env, "cairo.parallel.index.threshold", 100000);
+        this.readerPoolMaxSegments = getInt(properties, env, "cairo.reader.pool.max.segments", 5);
+        this.spinLockTimeoutUs = getLong(properties, env, "cairo.spin.lock.timeout", 1_000_000);
+        this.sqlCacheRows = getInt(properties, env, "cairo.cache.rows", 16);
+        this.sqlCacheBlocks = getIntSize(properties, env, "cairo.cache.blocks", 4);
+        this.sqlCharacterStoreCapacity = getInt(properties, env, "cairo.character.store.capacity", 1024);
+        this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, "cairo.character.store.sequence.pool.capacity", 64);
+        this.sqlColumnPoolCapacity = getInt(properties, env, "cairo.column.pool.capacity", 4096);
+        this.sqlCompactMapLoadFactor = getDouble(properties, env, "cairo.compact.map.load.factor", 0.7);
+        this.sqlExpressionPoolCapacity = getInt(properties, env, "cairo.expression.pool.capacity", 8192);
+        this.sqlFastMapLoadFactor = getDouble(properties, env, "cairo.fast.map.load.factor", 0.5);
+        this.sqlJoinContextPoolCapacity = getInt(properties, env, "cairo.sql.join.context.pool.capacity", 64);
+        this.sqlLexerPoolCapacity = getInt(properties, env, "cairo.lexer.pool.capacity", 2048);
+        this.sqlMapKeyCapacity = getInt(properties, env, "cairo.sql.map.key.capacity", 2048 * 1024);
+        this.sqlMapPageSize = getIntSize(properties, env, "cairo.sql.map.page.size", 4 * 1024 * 1024);
+        this.sqlMapMaxPages = getIntSize(properties, env, "cairo.sql.map.max.pages", Integer.MAX_VALUE);
+        this.sqlMapMaxResizes = getIntSize(properties, env, "cairo.sql.map.max.resizes", Integer.MAX_VALUE);
+        this.sqlModelPoolCapacity = getInt(properties, env, "cairo.model.pool.capacity", 1024);
+        this.sqlSortKeyPageSize = getLongSize(properties, env, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
+        this.sqlSortKeyMaxPages = getIntSize(properties, env, "cairo.sql.sort.key.max.pages", Integer.MAX_VALUE);
+        this.sqlSortLightValuePageSize = getLongSize(properties, env, "cairo.sql.sort.light.value.page.size", 1048576);
+        this.sqlSortLightValueMaxPages = getIntSize(properties, env, "cairo.sql.sort.light.value.max.pages", Integer.MAX_VALUE);
+        this.sqlHashJoinValuePageSize = getIntSize(properties, env, "cairo.sql.hash.join.value.page.size", 16777216);
+        this.sqlHashJoinValueMaxPages = getIntSize(properties, env, "cairo.sql.hash.join.value.max.pages", Integer.MAX_VALUE);
+        this.sqlLatestByRowCount = getInt(properties, env, "cairo.sql.latest.by.row.count", 1000);
+        this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, "cairo.sql.hash.join.light.value.page.size", 1048576);
+        this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, "cairo.sql.hash.join.light.value.max.pages", Integer.MAX_VALUE);
+        this.sqlSortValuePageSize = getIntSize(properties, env, "cairo.sql.sort.value.page.size", 16777216);
+        this.sqlSortValueMaxPages = getIntSize(properties, env, "cairo.sql.sort.value.max.pages", Integer.MAX_VALUE);
+        this.workStealTimeoutNanos = getLong(properties, env, "cairo.work.steal.timeout.nanos", 10_000);
+        this.parallelIndexingEnabled = getBoolean(properties, env, "cairo.parallel.indexing.enabled", true);
+        this.sqlJoinMetadataPageSize = getIntSize(properties, env, "cairo.sql.join.metadata.page.size", 16384);
+        this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, "cairo.sql.join.metadata.max.resizes", Integer.MAX_VALUE);
+        this.sqlAnalyticColumnPoolCapacity = getInt(properties, env, "cairo.sql.analytic.column.pool.capacity", 64);
+        this.sqlCreateTableModelPoolCapacity = getInt(properties, env, "cairo.sql.create.table.model.pool.capacity", 16);
+        this.sqlColumnCastModelPoolCapacity = getInt(properties, env, "cairo.sql.column.cast.model.pool.capacity", 16);
+        this.sqlRenameTableModelPoolCapacity = getInt(properties, env, "cairo.sql.rename.table.model.pool.capacity", 16);
+        this.sqlWithClauseModelPoolCapacity = getInt(properties, env, "cairo.sql.with.clause.model.pool.capacity", 128);
+        this.sqlInsertModelPoolCapacity = getInt(properties, env, "cairo.sql.insert.model.pool.capacity", 64);
+        this.sqlCopyModelPoolCapacity = getInt(properties, env, "cairo.sql.copy.model.pool.capacity", 32);
+        this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
+        long sqlAppendPageSize = getLongSize(properties, env, "cairo.sql.append.page.size", 16 * 1024 * 1024);
+        // round the append page size to the OS page size
+        final long osPageSize = FilesFacadeImpl.INSTANCE.getPageSize();
+        if ((sqlAppendPageSize % osPageSize) == 0) {
+            this.sqlAppendPageSize = sqlAppendPageSize;
+        } else {
+            this.sqlAppendPageSize = (sqlAppendPageSize / osPageSize + 1) * osPageSize;
+        }
+        this.doubleToStrCastScale = getInt(properties, env, "cairo.sql.double.cast.scale", 12);
+        this.floatToStrCastScale = getInt(properties, env, "cairo.sql.float.cast.scale", 4);
+        this.sqlGroupByMapCapacity = getInt(properties, env, "cairo.sql.groupby.map.capacity", 1024);
+        this.sqlGroupByPoolCapacity = getInt(properties, env, "cairo.sql.groupby.pool.capacity", 1024);
+        this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, "cairo.sql.max.symbol.not.equals.count", 100);
+        final String sqlCopyFormatsFile = getString(properties, env, "cairo.sql.copy.formats.file", "/text_loader.json");
+        this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
+        this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
 
-        final String dateLocale = getString(properties, "cairo.date.locale", "en");
+        final String dateLocale = getString(properties, env, "cairo.date.locale", "en");
         this.dateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
         if (this.dateLocale == null) {
             throw new ServerConfigurationException("cairo.date.locale", dateLocale);
         }
 
-        final String timestampLocale = getString(properties, "cairo.timestamp.locale", "en");
+        final String timestampLocale = getString(properties, env, "cairo.timestamp.locale", "en");
         this.timestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
         if (this.timestampLocale == null) {
             throw new ServerConfigurationException("cairo.timestamp.locale", timestampLocale);
@@ -509,60 +496,60 @@ public class PropServerConfiguration implements ServerConfiguration {
             inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
         }
 
-        this.inputRoot = getString(properties, "cairo.sql.copy.root", null);
-        this.backupRoot = getString(properties, "cairo.sql.backup.root", null);
-        this.backupDirTimestampFormat = getTimestampFormat(properties, "cairo.sql.backup.dir.datetime.format", "yyyy-MM-dd");
-        this.backupTempDirName = getString(properties, "cairo.sql.backup.dir.tmp.name", "tmp");
-        this.backupMkdirMode = getInt(properties, "cairo.sql.backup.mkdir.mode", 509);
+        this.inputRoot = getString(properties, env, "cairo.sql.copy.root", null);
+        this.backupRoot = getString(properties, env, "cairo.sql.backup.root", null);
+        this.backupDirTimestampFormat = getTimestampFormat(properties, env, "cairo.sql.backup.dir.datetime.format", "yyyy-MM-dd");
+        this.backupTempDirName = getString(properties, env, "cairo.sql.backup.dir.tmp.name", "tmp");
+        this.backupMkdirMode = getInt(properties, env, "cairo.sql.backup.mkdir.mode", 509);
 
-        parseBindTo(properties, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
+        parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
             this.lineUdpPort = p;
         });
 
-        this.lineUdpGroupIPv4Address = getIPv4Address(properties, "line.udp.join", "232.1.2.3");
-        this.lineUdpCommitRate = getInt(properties, "line.udp.commit.rate", 1_000_000);
-        this.lineUdpMsgBufferSize = getIntSize(properties, "line.udp.msg.buffer.size", 2048);
-        this.lineUdpMsgCount = getInt(properties, "line.udp.msg.count", 10_000);
-        this.lineUdpReceiveBufferSize = getIntSize(properties, "line.udp.receive.buffer.size", 8 * 1024 * 1024);
-        this.lineUdpEnabled = getBoolean(properties, "line.udp.enabled", true);
-        this.lineUdpOwnThreadAffinity = getInt(properties, "line.udp.own.thread.affinity", -1);
-        this.lineUdpOwnThread = getBoolean(properties, "line.udp.own.thread", false);
-        this.lineUdpUnicast = getBoolean(properties, "line.udp.unicast", false);
-        this.lineUdpCommitMode = getCommitMode(properties, "line.udp.commit.mode");
-        this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, "line.udp.timestamp");
+        this.lineUdpGroupIPv4Address = getIPv4Address(properties, env, "line.udp.join", "232.1.2.3");
+        this.lineUdpCommitRate = getInt(properties, env, "line.udp.commit.rate", 1_000_000);
+        this.lineUdpMsgBufferSize = getIntSize(properties, env, "line.udp.msg.buffer.size", 2048);
+        this.lineUdpMsgCount = getInt(properties, env, "line.udp.msg.count", 10_000);
+        this.lineUdpReceiveBufferSize = getIntSize(properties, env, "line.udp.receive.buffer.size", 8 * 1024 * 1024);
+        this.lineUdpEnabled = getBoolean(properties, env, "line.udp.enabled", true);
+        this.lineUdpOwnThreadAffinity = getInt(properties, env, "line.udp.own.thread.affinity", -1);
+        this.lineUdpOwnThread = getBoolean(properties, env, "line.udp.own.thread", false);
+        this.lineUdpUnicast = getBoolean(properties, env, "line.udp.unicast", false);
+        this.lineUdpCommitMode = getCommitMode(properties, env, "line.udp.commit.mode");
+        this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.udp.timestamp");
 
-        this.lineTcpEnabled = getBoolean(properties, "line.tcp.enabled", true);
+        this.lineTcpEnabled = getBoolean(properties, env, "line.tcp.enabled", true);
         if (lineTcpEnabled) {
-            lineTcpNetActiveConnectionLimit = getInt(properties, "line.tcp.net.active.connection.limit", 10);
-            parseBindTo(properties, "line.tcp.net.bind.to", "0.0.0.0:9009", (a, p) -> {
+            lineTcpNetActiveConnectionLimit = getInt(properties, env, "line.tcp.net.active.connection.limit", 10);
+            parseBindTo(properties, env, "line.tcp.net.bind.to", "0.0.0.0:9009", (a, p) -> {
                 lineTcpNetBindIPv4Address = a;
                 lineTcpNetBindPort = p;
             });
 
-            this.lineTcpNetEventCapacity = getInt(properties, "line.tcp.net.event.capacity", 1024);
-            this.lineTcpNetIOQueueCapacity = getInt(properties, "line.tcp.net.io.queue.capacity", 1024);
-            this.lineTcpNetIdleConnectionTimeout = getLong(properties, "line.tcp.net.idle.timeout", 0);
-            this.lineTcpNetInterestQueueCapacity = getInt(properties, "line.tcp.net.interest.queue.capacity", 1024);
-            this.lineTcpNetListenBacklog = getInt(properties, "line.tcp.net.listen.backlog", 50_000);
-            this.lineTcpNetRcvBufSize = getIntSize(properties, "line.tcp.net.recv.buf.size", -1);
-            this.lineTcpConnectionPoolInitialCapacity = getInt(properties, "line.tcp.connection.pool.capacity", 64);
-            this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, "line.tcp.timestamp");
-            this.lineTcpMsgBufferSize = getIntSize(properties, "line.tcp.msg.buffer.size", 2048);
-            this.lineTcpMaxMeasurementSize = getIntSize(properties, "line.tcp.max.measurement.size", 2048);
+            this.lineTcpNetEventCapacity = getInt(properties, env, "line.tcp.net.event.capacity", 1024);
+            this.lineTcpNetIOQueueCapacity = getInt(properties, env, "line.tcp.net.io.queue.capacity", 1024);
+            this.lineTcpNetIdleConnectionTimeout = getLong(properties, env, "line.tcp.net.idle.timeout", 0);
+            this.lineTcpNetInterestQueueCapacity = getInt(properties, env, "line.tcp.net.interest.queue.capacity", 1024);
+            this.lineTcpNetListenBacklog = getInt(properties, env, "line.tcp.net.listen.backlog", 50_000);
+            this.lineTcpNetRcvBufSize = getIntSize(properties, env, "line.tcp.net.recv.buf.size", -1);
+            this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 64);
+            this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.tcp.timestamp");
+            this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 2048);
+            this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 2048);
             if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
                 throw new IllegalArgumentException(
                         "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
             }
-            this.lineTcpWriterQueueSize = getIntSize(properties, "line.tcp.writer.queue.size", 128);
-            this.lineTcpWorkerCount = getInt(properties, "line.tcp.worker.count", 0);
-            this.lineTcpWorkerAffinity = getAffinity(properties, "line.tcp.worker.affinity", lineTcpWorkerCount);
-            this.lineTcpWorkerPoolHaltOnError = getBoolean(properties, "line.tcp.halt.on.error", false);
-            this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, "line.tcp.n.updates.per.load.balance", 10_000);
-            this.lineTcpMaxLoadRatio = getDouble(properties, "line.tcp.max.load.ratio", 1.9);
-            this.lineTcpMaxUncommittedRows = getInt(properties, "line.tcp.max.uncommitted.rows", 1000);
-            this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
-            this.lineTcpAuthDbPath = getString(properties, "line.tcp.auth.db.path", null);
+            this.lineTcpWriterQueueSize = getIntSize(properties, env, "line.tcp.writer.queue.size", 128);
+            this.lineTcpWorkerCount = getInt(properties, env, "line.tcp.worker.count", 0);
+            this.lineTcpWorkerAffinity = getAffinity(properties, env, "line.tcp.worker.affinity", lineTcpWorkerCount);
+            this.lineTcpWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.halt.on.error", false);
+            this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000);
+            this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
+            this.lineTcpMaxUncommittedRows = getInt(properties, env, "line.tcp.max.uncommitted.rows", 1000);
+            this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, env, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
+            this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
             if (null != lineTcpAuthDbPath) {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
@@ -599,9 +586,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         return pgWireConfiguration;
     }
 
-    private int[] getAffinity(Properties properties, String key, int httpWorkerCount) throws ServerConfigurationException {
+    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, String key, int httpWorkerCount) throws ServerConfigurationException {
         final int[] result = new int[httpWorkerCount];
-        String value = properties.getProperty(key);
+        String value = overrideWithEnv(properties, env, key);
         if (value == null) {
             Arrays.fill(result, -1);
         } else {
@@ -620,13 +607,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         return result;
     }
 
-    protected boolean getBoolean(Properties properties, String key, boolean defaultValue) {
-        final String value = properties.getProperty(key);
+    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, String key, boolean defaultValue) {
+        final String value = overrideWithEnv(properties, env, key);
         return value == null ? defaultValue : Boolean.parseBoolean(value);
     }
 
-    private int getCommitMode(Properties properties, String property) {
-        final String commitMode = properties.getProperty(property);
+    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, String key) {
+        final String commitMode = overrideWithEnv(properties, env, key);
 
         if (commitMode == null) {
             return CommitMode.NOSYNC;
@@ -647,8 +634,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         return CommitMode.NOSYNC;
     }
 
-    private double getDouble(Properties properties, String key, double defaultValue) throws ServerConfigurationException {
-        final String value = properties.getProperty(key);
+    private double getDouble(Properties properties, @Nullable Map<String, String> env, String key, double defaultValue) throws ServerConfigurationException {
+        final String value = overrideWithEnv(properties, env, key);
         try {
             return value != null ? Numbers.parseDouble(value) : defaultValue;
         } catch (NumericException e) {
@@ -657,8 +644,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @SuppressWarnings("SameParameterValue")
-    protected int getIPv4Address(Properties properties, String key, String defaultValue) throws ServerConfigurationException {
-        final String value = getString(properties, key, defaultValue);
+    protected int getIPv4Address(Properties properties, Map<String, String> env, String key, String defaultValue) throws ServerConfigurationException {
+        final String value = getString(properties, env, key, defaultValue);
         try {
             return Net.parseIPv4(value);
         } catch (NetworkError e) {
@@ -666,8 +653,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private int getInt(Properties properties, String key, int defaultValue) throws ServerConfigurationException {
-        final String value = properties.getProperty(key);
+    private int getInt(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
+        final String value = overrideWithEnv(properties, env, key);
         try {
             return value != null ? Numbers.parseInt(value) : defaultValue;
         } catch (NumericException e) {
@@ -675,8 +662,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected int getIntSize(Properties properties, String key, int defaultValue) throws ServerConfigurationException {
-        final String value = properties.getProperty(key);
+    protected int getIntSize(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
+        final String value = overrideWithEnv(properties, env, key);
         try {
             return value != null ? Numbers.parseIntSize(value) : defaultValue;
         } catch (NumericException e) {
@@ -684,8 +671,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, String propNm) {
-        final String lineUdpTimestampSwitch = getString(properties, propNm, "n");
+    private LineProtoTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, String propNm) {
+        final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
         switch (lineUdpTimestampSwitch) {
             case "u":
                 return LineProtoMicroTimestampAdapter.INSTANCE;
@@ -702,8 +689,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private long getLong(Properties properties, String key, long defaultValue) throws ServerConfigurationException {
-        final String value = properties.getProperty(key);
+    private long getLong(Properties properties, @Nullable Map<String, String> env, String key, long defaultValue) throws ServerConfigurationException {
+        final String value = overrideWithEnv(properties, env, key);
         try {
             return value != null ? Numbers.parseLong(value) : defaultValue;
         } catch (NumericException e) {
@@ -711,8 +698,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private long getLongSize(Properties properties, String key, long defaultValue) throws ServerConfigurationException {
-        final String value = properties.getProperty(key);
+    private long getLongSize(Properties properties, @Nullable Map<String, String> env, String key, long defaultValue) throws ServerConfigurationException {
+        final String value = overrideWithEnv(properties, env, key);
         try {
             return value != null ? Numbers.parseLongSize(value) : defaultValue;
         } catch (NumericException e) {
@@ -720,16 +707,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private String getString(Properties properties, String key, String defaultValue) {
-        String value = properties.getProperty(key);
+    private String getString(Properties properties, @Nullable Map<String, String> env, String key, String defaultValue) {
+        String value = overrideWithEnv(properties, env, key);
         if (value == null) {
             return defaultValue;
         }
         return value;
     }
 
-    private TimestampFormat getTimestampFormat(Properties properties, String key, final String defaultPattern) {
-        final String pattern = properties.getProperty(key);
+    private TimestampFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env, String key, final String defaultPattern) {
+        final String pattern = overrideWithEnv(properties, env, key);
         DateFormatCompiler compiler = new DateFormatCompiler();
         if (null != pattern) {
             return compiler.compile(pattern);
@@ -737,14 +724,25 @@ public class PropServerConfiguration implements ServerConfiguration {
         return compiler.compile(defaultPattern);
     }
 
+    private String overrideWithEnv(Properties properties, @Nullable Map<String, String> env, String key) {
+        String envCandidate = "QDB_" + key.replace('.', '_').toUpperCase();
+        String envValue = env != null ? env.get(envCandidate) : null;
+        if (envValue != null) {
+            log.info().$("env config [key=").$(envCandidate).$(']').$();
+            return envValue;
+        }
+        return properties.getProperty(key);
+    }
+
     protected void parseBindTo(
             Properties properties,
+            Map<String, String> env,
             String key,
             String defaultValue,
             BindToParser parser
     ) throws ServerConfigurationException {
 
-        final String bindTo = getString(properties, key, defaultValue);
+        final String bindTo = getString(properties, env, key, defaultValue);
         final int colonIndex = bindTo.indexOf(':');
         if (colonIndex == -1) {
             throw new ServerConfigurationException(key, bindTo);
@@ -1457,6 +1455,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getAppendPageSize() {
+            return sqlAppendPageSize;
+        }
+
+        @Override
         public int getTableBlockWriterQueueSize() {
             return 1024;
         }
@@ -1725,10 +1728,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getMaintenanceJobHysteresisInMs() {
             return lineTcpMaintenanceJobHysteresisInMs;
         }
-        
+
         @Override
         public String getAuthDbPath() {
-             return lineTcpAuthDbPath;
+            return lineTcpAuthDbPath;
         }
     }
 

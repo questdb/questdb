@@ -117,7 +117,11 @@ public class SqlCompiler implements Closeable {
             try {
                 backupTable(nativeLPSZ, currentExecutionContext);
             } catch (CairoException ex) {
-                LOG.error().$("could not backup [path=").$(nativeLPSZ).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+                LOG.error()
+                        .$("could not backup [path=").$(nativeLPSZ)
+                        .$(", ex=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .$(']').$();
             }
         }
     };
@@ -157,6 +161,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SET", this::compileSet);
         keywordBasedExecutors.put("begin", this::compileSet);
         keywordBasedExecutors.put("BEGIN", this::compileSet);
+        keywordBasedExecutors.put("commit", this::compileSet);
+        keywordBasedExecutors.put("COMMIT", this::compileSet);
         keywordBasedExecutors.put("rollback", this::compileSet);
         keywordBasedExecutors.put("ROLLBACK", this::compileSet);
         keywordBasedExecutors.put("drop", this::dropTable);
@@ -724,7 +730,9 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put("`]");
             }
         } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+            throw SqlException.position(tableNamePosition)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
         }
     }
 
@@ -735,7 +743,9 @@ public class SqlCompiler implements Closeable {
         try {
             engine.unlockWriter(tok);
         } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+            throw SqlException.position(tableNamePosition)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
         }
     }
 
@@ -938,7 +948,9 @@ public class SqlCompiler implements Closeable {
                 );
             } catch (CairoException e) {
                 LOG.error().$("Cannot add column '").$(writer.getName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "Cannot add column [error=").put(e.getFlyweightMessage()).put(']');
+                throw SqlException.$(tableNamePosition, "could add column [error=").put(e.getFlyweightMessage())
+                        .put(", errno=").put(e.getErrno())
+                        .put(']');
             }
 
             if (tok == null) {
@@ -959,7 +971,8 @@ public class SqlCompiler implements Closeable {
             }
             w.addIndex(columnName, configuration.getIndexValueBlockSize());
         } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
         }
     }
 
@@ -978,7 +991,8 @@ public class SqlCompiler implements Closeable {
 
             writer.changeCacheFlag(columnIndex, cache);
         } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage());
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
         }
     }
 
@@ -996,7 +1010,39 @@ public class SqlCompiler implements Closeable {
                 writer.removeColumn(tok);
             } catch (CairoException e) {
                 LOG.error().$("cannot drop column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot drop column. Try again later.");
+                throw SqlException.$(tableNamePosition, "cannot drop column. Try again later [errno=").put(e.getErrno()).put(']');
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null) {
+                break;
+            }
+
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+            }
+        } while (true);
+    }
+
+    private void alterTableDropPartition(TableWriter writer) throws SqlException {
+        do {
+            CharSequence tok = expectToken(lexer, "partition name");
+            if (Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
+            }
+            final CharSequence unquoted = GenericLexer.unquote(tok);
+
+            final long timestamp;
+            try {
+                timestamp = writer.partitionNameToTimestamp(unquoted);
+            } catch (CairoException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
+                        .put("[errno=").put(e.getErrno()).put(']');
+            }
+
+            if (!writer.removePartition(timestamp)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "could not remove partition '").put(unquoted).put('\'');
             }
 
             tok = SqlUtil.fetchNext(lexer);
@@ -1044,38 +1090,7 @@ public class SqlCompiler implements Closeable {
                 writer.renameColumn(existingName, newName);
             } catch (CairoException e) {
                 LOG.error().$("cannot rename column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "cannot rename column. Try again later.");
-            }
-
-            tok = SqlUtil.fetchNext(lexer);
-
-            if (tok == null) {
-                break;
-            }
-
-            if (!Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
-            }
-        } while (true);
-    }
-
-    private void alterTableDropPartition(TableWriter writer) throws SqlException {
-        do {
-            CharSequence tok = expectToken(lexer, "partition name");
-            if (Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
-            }
-            final CharSequence unquoted = GenericLexer.unquote(tok);
-
-            final long timestamp;
-            try {
-                timestamp = writer.partitionNameToTimestamp(unquoted);
-            } catch (CairoException e) {
-                throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
-            }
-
-            if (!writer.removePartition(timestamp)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "could not remove partition '").put(unquoted).put('\'');
+                throw SqlException.$(tableNamePosition, "cannot rename column. Try again later [errno=").put(e.getErrno()).put(']');
             }
 
             tok = SqlUtil.fetchNext(lexer);
@@ -1133,7 +1148,11 @@ public class SqlCompiler implements Closeable {
                 renamePath.trimTo(renameRootLen).$();
             }
         } catch (CairoException ex) {
-            LOG.info().$("could not backup [table=").$(tableName).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            LOG.info()
+                    .$("could not backup [table=").$(tableName)
+                    .$(", ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .$(']').$();
             path.of(cachedTmpBackupRoot).concat(tableName).put(Files.SEPARATOR).$();
             if (!ff.rmdir(path)) {
                 LOG.error().$("coult not delete directory [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
