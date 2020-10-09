@@ -32,65 +32,9 @@ public class VectTest {
 
     private static final Rnd rnd = new Rnd();
 
-    static {
-        Os.init();
-    }
-
     @Before
     public void setUp() {
         rnd.reset();
-    }
-
-    private long seedAndSort(int count) {
-        final long indexAddr = Unsafe.malloc(count * 2 * Long.BYTES);
-        seedMem(count, indexAddr);
-        Vect.sortLongIndexAscInPlace(indexAddr, count);
-        return indexAddr;
-    }
-
-    private void seedMem(int count, long p) {
-        for (int i = 0; i < count; i++) {
-            long z = rnd.nextPositiveLong();
-            Unsafe.getUnsafe().putLong(p + i * 2 * Long.BYTES, z);
-            Unsafe.getUnsafe().putLong(p + i * 2 * Long.BYTES + 8, i);
-        }
-    }
-
-    @Test
-    public void testMergeZero() {
-        Assert.assertEquals(0, Vect.mergeLongIndexesAsc(0, 0));
-    }
-
-    @Test
-    public void testMergeOne() {
-        long indexPtr = seedAndSort(150);
-        try {
-            assertIndexAsc(150, indexPtr);
-        } finally {
-            Unsafe.free(indexPtr, 150 * 2 * Long.BYTES);
-        }
-    }
-
-    @Test
-    public void testMergeTwoSameSize() {
-        final int count = 1_000_000;
-        long indexPtr1 = seedAndSort(count);
-        long indexPtr2 = seedAndSort(count);
-
-        long struct = Unsafe.malloc(Long.BYTES * 4);
-        Unsafe.getUnsafe().putLong(struct, indexPtr1);
-        Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
-        Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
-        Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count);
-        try {
-            long merged = Vect.mergeLongIndexesAsc(struct, 2);
-            assertIndexAsc(count * 2, merged);
-            Vect.freeMergedIndex(merged);
-        } finally {
-            Unsafe.free(indexPtr1, count * 2 * Long.BYTES);
-            Unsafe.free(indexPtr2, count * 2 * Long.BYTES);
-            Unsafe.free(struct, Long.BYTES * 4);
-        }
     }
 
     @Test
@@ -127,25 +71,12 @@ public class VectTest {
     }
 
     @Test
-    public void testMergeTwoDifferentSizesAB() {
-        final int count1 = 1_000_000;
-        final int count2 = 500_000;
-        long indexPtr1 = seedAndSort(count1);
-        long indexPtr2 = seedAndSort(count2);
-
-        long struct = Unsafe.malloc(Long.BYTES * 4);
-        Unsafe.getUnsafe().putLong(struct, indexPtr1);
-        Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
-        Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
-        Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count2);
+    public void testMergeOne() {
+        long indexPtr = seedAndSort(150);
         try {
-            long merged = Vect.mergeLongIndexesAsc(struct, 2);
-            assertIndexAsc(count1 + count2, merged);
-            Vect.freeMergedIndex(merged);
+            assertIndexAsc(150, indexPtr);
         } finally {
-            Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES);
-            Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES);
-            Unsafe.free(struct, Long.BYTES * 4);
+            Unsafe.free(indexPtr, 150 * 2 * Long.BYTES);
         }
     }
 
@@ -177,6 +108,28 @@ public class VectTest {
         }
     }
 
+    @Test
+    public void testMergeTwoDifferentSizesAB() {
+        final int count1 = 1_000_000;
+        final int count2 = 500_000;
+        long indexPtr1 = seedAndSort(count1);
+        long indexPtr2 = seedAndSort(count2);
+
+        long struct = Unsafe.malloc(Long.BYTES * 4);
+        Unsafe.getUnsafe().putLong(struct, indexPtr1);
+        Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
+        Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
+        Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count2);
+        try {
+            long merged = Vect.mergeLongIndexesAsc(struct, 2);
+            assertIndexAsc(count1 + count2, merged);
+            Vect.freeMergedIndex(merged);
+        } finally {
+            Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES);
+            Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES);
+            Unsafe.free(struct, Long.BYTES * 4);
+        }
+    }
 
     @Test
     public void testMergeTwoDifferentSizesBA() {
@@ -202,6 +155,45 @@ public class VectTest {
     }
 
     @Test
+    public void testMergeTwoSameSize() {
+        final int count = 1_000_000;
+        long indexPtr1 = seedAndSort(count);
+        long indexPtr2 = seedAndSort(count);
+
+        long struct = Unsafe.malloc(Long.BYTES * 4);
+        Unsafe.getUnsafe().putLong(struct, indexPtr1);
+        Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
+        Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
+        Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count);
+        try {
+            long merged = Vect.mergeLongIndexesAsc(struct, 2);
+            assertIndexAsc(count * 2, merged);
+            Vect.freeMergedIndex(merged);
+        } finally {
+            Unsafe.free(indexPtr1, count * 2 * Long.BYTES);
+            Unsafe.free(indexPtr2, count * 2 * Long.BYTES);
+            Unsafe.free(struct, Long.BYTES * 4);
+        }
+    }
+
+    @Test
+    public void testMergeZero() {
+        Assert.assertEquals(0, Vect.mergeLongIndexesAsc(0, 0));
+    }
+
+    @Test
+    public void testSort1M() {
+        testSort(1_000_000);
+    }
+
+    @Test
+    public void testSortFour() {
+        for (int i = 0; i < 100; i++) {
+            testSort(4);
+        }
+    }
+
+    @Test
     public void testSortOne() {
         final long indexAddr = Unsafe.malloc(2 * Long.BYTES);
         try {
@@ -214,21 +206,38 @@ public class VectTest {
         }
     }
 
-    @Test
-    public void testSortFour() {
-        testSort(4);
+    private void assertIndexAsc(int count, long indexAddr) {
+        long v = Unsafe.getUnsafe().getLong(indexAddr);
+        for (int i = 1; i < count; i++) {
+            long next = Unsafe.getUnsafe().getLong(indexAddr + i * 2 * Long.BYTES);
+            if (next < v) {
+                System.out.println("wtf?: " + next + " < " + v);
+            }
+            Assert.assertTrue(next >= v);
+            v = next;
+        }
     }
 
-    @Test
-    public void testSort1M() {
-        testSort(1_000_000);
+    private long seedAndSort(int count) {
+        final long indexAddr = Unsafe.malloc(count * 2 * Long.BYTES);
+        seedMem(count, indexAddr);
+        Vect.sortLongIndexAscInPlace(indexAddr, count);
+        return indexAddr;
+    }
+
+    private void seedMem(int count, long p) {
+        for (int i = 0; i < count; i++) {
+            final long z = rnd.nextPositiveLong();
+            Unsafe.getUnsafe().putLong(p + i * 2 * Long.BYTES, z);
+            Unsafe.getUnsafe().putLong(p + i * 2 * Long.BYTES + 8, i);
+        }
     }
 
     private void testSort(int count) {
         final int size = count * 2 * Long.BYTES;
         final long indexAddr = Unsafe.malloc(size);
         try {
-            seedMem(1, indexAddr);
+            seedMem(count, indexAddr);
             Vect.sortLongIndexAscInPlace(indexAddr, count);
             assertIndexAsc(count, indexAddr);
         } finally {
@@ -236,12 +245,7 @@ public class VectTest {
         }
     }
 
-    private void assertIndexAsc(int count, long indexAddr) {
-        long v = Unsafe.getUnsafe().getLong(indexAddr);
-        for (int i = 1; i < count; i++) {
-            long next = Unsafe.getUnsafe().getLong(indexAddr + i * 2 * Long.BYTES);
-            Assert.assertTrue(next >= v);
-            v = next;
-        }
+    static {
+        Os.init();
     }
 }

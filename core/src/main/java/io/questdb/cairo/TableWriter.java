@@ -1308,6 +1308,9 @@ public class TableWriter implements Closeable {
     }
 
     private static void truncateToSizeOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
+        if (ff.isRestrictedFileSystem()) {
+            return;
+        }
         if (!ff.truncate(fd, size)) {
             throw CairoException.instance(ff.errno()).put("could resize [file=").put(path).put(", size=").put(size).put(", fd=").put(fd).put(']');
         }
@@ -1327,6 +1330,49 @@ public class TableWriter implements Closeable {
 
     private static long getTimestampIndexValue(long timestampIndex, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
+    }
+
+    private static void configureNullSetters(ObjList<Runnable> nullers, int type, BigMem mem1, BigMem mem2) {
+        switch (type) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+                nullers.add(() -> mem1.putByte((byte) 0));
+                break;
+            case ColumnType.DOUBLE:
+                nullers.add(() -> mem1.putDouble(Double.NaN));
+                break;
+            case ColumnType.FLOAT:
+                nullers.add(() -> mem1.putFloat(Float.NaN));
+                break;
+            case ColumnType.INT:
+                nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
+                break;
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
+                break;
+            case ColumnType.LONG256:
+                nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
+                break;
+            case ColumnType.SHORT:
+                nullers.add(() -> mem1.putShort((short) 0));
+                break;
+            case ColumnType.CHAR:
+                nullers.add(() -> mem1.putChar((char) 0));
+                break;
+            case ColumnType.STRING:
+                nullers.add(() -> mem2.putLong(mem1.putNullStr()));
+                break;
+            case ColumnType.SYMBOL:
+                nullers.add(() -> mem1.putInt(SymbolTable.VALUE_IS_NULL));
+                break;
+            case ColumnType.BINARY:
+                nullers.add(() -> mem2.putLong(mem1.putNullBin()));
+                break;
+            default:
+                break;
+        }
     }
 
     private int addColumnToMeta(
@@ -1656,49 +1702,6 @@ public class TableWriter implements Closeable {
         populateDenseIndexerList();
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int type, BigMem mem1, BigMem mem2) {
-        switch (type) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-                nullers.add(() -> mem1.putByte((byte) 0));
-                break;
-            case ColumnType.DOUBLE:
-                nullers.add(() -> mem1.putDouble(Double.NaN));
-                break;
-            case ColumnType.FLOAT:
-                nullers.add(() -> mem1.putFloat(Float.NaN));
-                break;
-            case ColumnType.INT:
-                nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
-                break;
-            case ColumnType.LONG256:
-                nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
-                break;
-            case ColumnType.SHORT:
-                nullers.add(() -> mem1.putShort((short) 0));
-                break;
-            case ColumnType.CHAR:
-                nullers.add(() -> mem1.putChar((char) 0));
-                break;
-            case ColumnType.STRING:
-                nullers.add(() -> mem2.putLong(mem1.putNullStr()));
-                break;
-            case ColumnType.SYMBOL:
-                nullers.add(() -> mem1.putInt(SymbolTable.VALUE_IS_NULL));
-                break;
-            case ColumnType.BINARY:
-                nullers.add(() -> mem2.putLong(mem1.putNullBin()));
-                break;
-            default:
-                break;
-        }
-    }
-
     private LongConsumer configureTimestampSetter() {
         int index = metadata.getTimestampIndex();
         if (index == -1) {
@@ -1920,12 +1923,12 @@ public class TableWriter implements Closeable {
 
     private void copyTempPartitionBack(long[] mergeStruct) {
         for (int i = 0; i < columnCount; i++) {
-            copyTempPartitionColumnBack(mergeStruct, msGetOffsetDataFd(i));
-            copyTempPartitionColumnBack(mergeStruct, msGetOffsetTargetFd(i));
+            copyTempPartitionColumnBack(mergeStruct, msGetOffsetDataFd(i), metadata.isColumnIndexed(i), metadata.getColumnName(i));
+            copyTempPartitionColumnBack(mergeStruct, msGetOffsetTargetFd(i), false, null);
         }
     }
 
-    private void copyTempPartitionColumnBack(long[] mergeStruct, int offset) {
+    private void copyTempPartitionColumnBack(long[] mergeStruct, int offset, boolean indexed, @Nullable CharSequence name) {
         long fd = Math.abs(mergeStruct[offset]);
         if (fd != 0) {
             long destOldMem = mergeStruct[offset + 1];
@@ -1933,9 +1936,7 @@ public class TableWriter implements Closeable {
             long srcMem = mergeStruct[offset + 4];
             long srcLen = mergeStruct[offset + 5];
 
-            if (!ff.isRestrictedFileSystem()) {
-                truncateToSizeOrFail(ff, null, fd, srcLen);
-            }
+            truncateToSizeOrFail(ff, null, fd, srcLen);
             final long dest = ff.mmap(fd, srcLen, 0, Files.MAP_RW);
             ff.munmap(destOldMem, destOldSize);
             if (dest == -1) {
@@ -4245,7 +4246,6 @@ public class TableWriter implements Closeable {
         // added so far. Index writers will start point to different
         // files after switch.
         updateIndexes();
-
 
         // We need to store reference on partition so that archive
         // file can be created in appropriate directory.
