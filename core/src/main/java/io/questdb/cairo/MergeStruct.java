@@ -115,6 +115,22 @@ public final class MergeStruct {
         mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 6] = value;
     }
 
+    static void setIndexKeyFd(long[] mergeStruct, int columnIndex, long value) {
+        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 7] = value;
+    }
+
+    static long getIndexKeyFd(long[] mergeStruct, int columnIndex) {
+        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 7];
+    }
+
+    static long getIndexValueFd(long[] mergeStruct, int columnIndex) {
+        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 7];
+    }
+
+    static void setIndexValueFd(long[] mergeStruct, int columnIndex, long value) {
+        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 7] = value;
+    }
+
     static long getDestVarAppendOffset(long[] mergeStruct, int columnIndex) {
         return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 6];
     }
