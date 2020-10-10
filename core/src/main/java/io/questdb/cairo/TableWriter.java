@@ -1307,6 +1307,7 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(", fd=").put(fd).put(", size=").put(size).put(']');
     }
 
+    // todo: test all sites where truncate might fail for resource leak
     private static void truncateToSizeOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
         if (ff.isRestrictedFileSystem()) {
             return;
@@ -1974,7 +1975,7 @@ public class TableWriter implements Closeable {
         Unsafe.getUnsafe().copyMemory(srcVar + lo, dest, len);
         MergeStruct.setDestVarAppendOffset(mergeStruct, columnIndex, offset + len);
         if (lo == offset) {
-            copyFixedSizeCol(srcFixed, mergeStruct, columnIndex, indexLo, indexHi, 3);
+            copyFixedSizeCol(srcFixed, mergeStruct, columnIndex, indexLo, indexHi, 3);///tmp/junit5575360739858136984/dbRoot/x/1970-01-06
         } else {
             shiftCopyFixedSizeColumnData(lo - offset, srcFixed, mergeStruct, columnIndex, indexLo, indexHi);
         }
@@ -3490,6 +3491,7 @@ public class TableWriter implements Closeable {
 
                         MergeStruct.setDestVarFd(mergeStruct, i, dataFd);
                         MergeStruct.setDestVarAddress(mergeStruct, i, dataAddr);
+                        truncateToSizeOrFail(ff, path, dataFd, dataOffset + requiredMapSize);
                         MergeStruct.setDestVarAddressSize(mergeStruct, i, dataOffset + requiredMapSize);
                         MergeStruct.setDestVarAppendOffset(mergeStruct, i, dataOffset);
                         break;
