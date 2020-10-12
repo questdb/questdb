@@ -1283,14 +1283,6 @@ public class TableWriter implements Closeable {
         return low;
     }
 
-    private static long mapReadOnlyOrFail(FilesFacade ff, Path path, long fd, long size) {
-        long dataAddr = ff.mmap(fd, size, 0, Files.MAP_RO);
-        if (dataAddr == -1) {
-            throw CairoException.instance(ff.errno()).put("could not mmap file read-only [file=").put(path).put(", offset=0, size=").put(size + Integer.BYTES);
-        }
-        return dataAddr;
-    }
-
     private static long mapReadWriteOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
         long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
         if (addr != -1) {
@@ -1916,12 +1908,12 @@ public class TableWriter implements Closeable {
 
     private void copyTempPartitionBack(long[] mergeStruct) {
         for (int i = 0; i < columnCount; i++) {
-            copyTempPartitionColumnBack(mergeStruct, MergeStruct.getFirstColumnOffset(i), metadata.isColumnIndexed(i), metadata.getColumnName(i));
-            copyTempPartitionColumnBack(mergeStruct, MergeStruct.getSecondColumnOffset(i), false, null);
+            copyTempPartitionColumnBack(mergeStruct, MergeStruct.getFirstColumnOffset(i));
+            copyTempPartitionColumnBack(mergeStruct, MergeStruct.getSecondColumnOffset(i));
         }
     }
 
-    private void copyTempPartitionColumnBack(long[] mergeStruct, int offset, boolean indexed, @Nullable CharSequence name) {
+    private void copyTempPartitionColumnBack(long[] mergeStruct, int offset) {
         long fd = Math.abs(MergeStruct.getSrcFdFromOffset(mergeStruct, offset));
         if (fd != 0) {
             long destOldMem = MergeStruct.getSrcAddressFromOffset(mergeStruct, offset);
@@ -1973,11 +1965,10 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private Path createDirsOrFail(Path path) {
+    private void createDirsOrFail(Path path) {
         if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
-        return path;
     }
 
     /**
@@ -2039,10 +2030,8 @@ public class TableWriter implements Closeable {
             long indexHi,
             long indexMax,
             long dataIndexMax,
-            int destIndex,
-            boolean reuseFds,
             int timestampIndex,
-            long timestampFd
+            long timestampFd // this value is always negative
     ) {
         long[] mergeStruct = new long[columnCount * MergeStruct.MERGE_STRUCT_ENTRY_SIZE];
 
@@ -2050,90 +2039,71 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             final int columnType = metadata.getColumnType(i);
             int shl;
-            long dataSize;
             try {
                 switch (columnType) {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
-                        shl = ColumnType.pow2SizeOf(ColumnType.LONG);
+                        // index files are opened as normal
+                        iFile(path.trimTo(plen), metadata.getColumnName(i));
+                        oooMapSrcColumn(
+                                mergeStruct,
+                                getSecondaryColumnIndex(i),
+                                MergeStruct.getFirstColumnOffset(i),
+                                path
+                        );
 
-                        if (dataIndexMax > 0) {
-                            // index files are opened as normal
-                            iFile(path, metadata.getColumnName(i));
+                        // open data file now
+                        dFile(path.trimTo(plen), metadata.getColumnName(i));
+                        oooMapSrcColumn(
+                                mergeStruct,
+                                getPrimaryColumnIndex(i),
+                                MergeStruct.getSecondColumnOffset(i),
+                                path
+                        );
 
-                            long indexFd = reuseFds ? -columns.getQuick(getSecondaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
-                            MergeStruct.setSrcFixedFd(mergeStruct, i, indexFd);
-
-                            final long indexSize = dataIndexMax << shl;
-                            final long indexAddr = mapReadWriteOrFail(ff, path, Math.abs(indexFd), indexSize);
-                            MergeStruct.setSrcFixedAddress(mergeStruct, i, indexAddr);
-                            MergeStruct.setSrcFixedAddressSize(mergeStruct, i, indexSize);
-
-                            // open data file now
-
-                            path.trimTo(plen);
-                            dFile(path, metadata.getColumnName(i));
-                            final long dataFd;
-                            if (reuseFds) {
-                                final AppendMemory m = columns.getQuick(getPrimaryColumnIndex(i));
-                                dataFd = -m.getFd();
-                                dataSize = m.getAppendOffset();
-                            } else {
-                                dataFd = openReadWriteOrFail(ff, path);
-                                dataSize = getVarColumnSize(
-                                        columnType,
-                                        dataFd,
-                                        Unsafe.getUnsafe().getLong(
-                                                indexAddr + indexSize - Long.BYTES
-                                        )
-                                );
-                            }
-                            MergeStruct.setSrcVarFd(mergeStruct, i, dataFd);
-                            MergeStruct.setSrcVarAddress(mergeStruct, i, mapReadOnlyOrFail(ff, path, Math.abs(dataFd), dataSize));
-                            MergeStruct.setSrcVarAddressSize(mergeStruct, i, dataSize);
-                        } else {
-                            dataSize = 0;
-                        }
-
-                        oooSetPathAndEnsureDir(path, destIndex, plen, i, FILE_SUFFIX_I);
+                        oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_I);
                         oooMapDestColumn(
                                 mergeStruct,
                                 MergeStruct.getFirstColumnOffset(i),
                                 path,
-                                ((indexHi - indexLo + 1) + dataIndexMax) << shl,
+                                (indexHi - indexLo + 1 + dataIndexMax) * Long.BYTES,
                                 0L
                         );
 
-                        oooSetPathAndEnsureDir(path, destIndex, plen, i, FILE_SUFFIX_D);
+                        oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_D);
                         oooMapDestColumn(
                                 mergeStruct,
                                 MergeStruct.getSecondColumnOffset(i),
                                 path,
-                                dataSize + getOutOfOrderVarColumnSize(indexLo, indexHi, indexMax, i),
+                                MergeStruct.getSrcVarAddressSize(mergeStruct, i) + getOutOfOrderVarColumnSize(indexLo, indexHi, indexMax, i),
                                 0L
                         );
                         break;
 
                     default:
                         shl = ColumnType.pow2SizeOf(columnType);
+                        dFile(path, metadata.getColumnName(i));
 
-                        if (dataIndexMax > 0) {
-                            dFile(path, metadata.getColumnName(i));
-                            dataSize = dataIndexMax << shl;
-
-                            long dataFd;
-                            if (timestampIndex == i && timestampFd != 0) {
-                                // ensure timestamp fd is always negative, we will close it externally
-                                dataFd = timestampFd > 0 ? -timestampFd : timestampFd;
-                            } else {
-                                dataFd = reuseFds ? -columns.getQuick(getPrimaryColumnIndex(i)).getFd() : openReadWriteOrFail(ff, path);
-                            }
-                            MergeStruct.setSrcFixedFd(mergeStruct, i, dataFd);
-                            MergeStruct.setSrcFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize));
-                            MergeStruct.setSrcFixedAddressSize(mergeStruct, i, dataSize);
+                        if (timestampIndex == i && timestampFd != 0) {
+                            // ensure timestamp fd is always negative, we will close it externally
+                            assert timestampFd < 0;
+                            oooMapSrcColumn(
+                                    mergeStruct,
+                                    MergeStruct.getFirstColumnOffset(i),
+                                    timestampFd,
+                                    path,
+                                    dataIndexMax << shl
+                            );
+                        } else {
+                            oooMapSrcColumn(
+                                    mergeStruct,
+                                    getPrimaryColumnIndex(i),
+                                    MergeStruct.getFirstColumnOffset(i),
+                                    path
+                            );
                         }
 
-                        oooSetPathAndEnsureDir(path, destIndex, plen, i, FILE_SUFFIX_D);
+                        oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_D);
                         oooMapDestColumn(
                                 mergeStruct,
                                 MergeStruct.getFirstColumnOffset(i),
@@ -2722,7 +2692,7 @@ public class TableWriter implements Closeable {
                             .$(']').$();
                 }
 
-                long fd = 0;
+                long timestampFd = 0;
                 long dataTimestampLo;
                 long dataTimestampHi = Long.MIN_VALUE;
                 long dataIndexMax = 0;
@@ -2756,7 +2726,7 @@ public class TableWriter implements Closeable {
                         if (partitionTimestampHi == ceilOfMaxTimestamp) {
                             dataTimestampHi = this.maxTimestamp;
                             dataIndexMax = transientRowCountBeforeOutOfOrder;
-                            fd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
+                            timestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
                             LOG.debug().$("reused FDs").$();
                         } else {
 
@@ -2768,20 +2738,20 @@ public class TableWriter implements Closeable {
                             dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
 
                             // also track the fd that we need to eventually close
-                            fd = ff.openRW(path);
-                            if (fd == -1) {
+                            timestampFd = ff.openRW(path);
+                            if (timestampFd == -1) {
                                 throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
                             }
 
                             // read bottom of file
-                            if (ff.read(fd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
+                            if (ff.read(timestampFd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
                                 throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
                             }
                             dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
                         }
 
                         // read the top value
-                        if (ff.read(Math.abs(fd), tempMem8b, Long.BYTES, 0) != Long.BYTES) {
+                        if (ff.read(Math.abs(timestampFd), tempMem8b, Long.BYTES, 0) != Long.BYTES) {
                             throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
                         }
 
@@ -2815,7 +2785,7 @@ public class TableWriter implements Closeable {
                         long suffixHi = -1;
 
                         // this is an overloaded function, page size is derived from the file size
-                        timestampSearchColumn.of(ff, Math.abs(fd), path, dataIndexMax * Long.BYTES);
+                        timestampSearchColumn.of(ff, Math.abs(timestampFd), path, dataIndexMax * Long.BYTES);
 
                         try {
                             if (ooTimestampLo < dataTimestampLo) {
@@ -3038,7 +3008,7 @@ public class TableWriter implements Closeable {
                                         indexMax,
                                         dataIndexMax,
                                         timestampIndex,
-                                        fd
+                                        timestampFd
                                 );
                             } else {
                                 mergeStruct = oooOpenLastPartitionForAppend(
@@ -3048,16 +3018,15 @@ public class TableWriter implements Closeable {
                                 );
                             }
                         } else {
-                            if (fd > -1) {
+                            if (timestampFd > -1) {
                                 mergeStruct = oooOpenMidPartitionForMerge(
                                         path,
                                         indexLo,
                                         indexHi,
                                         indexMax,
                                         dataIndexMax,
-                                        1,
                                         timestampIndex,
-                                        fd
+                                        timestampFd
                                 );
                             } else {
                                 mergeStruct = createTempPartition(
@@ -3066,10 +3035,8 @@ public class TableWriter implements Closeable {
                                         indexHi,
                                         indexMax,
                                         dataIndexMax,
-                                        1,
-                                        true,
                                         timestampIndex,
-                                        fd
+                                        timestampFd
                                 );
                             }
                         }
@@ -3138,8 +3105,8 @@ public class TableWriter implements Closeable {
                             freeMergeStruct(mergeStruct);
                         }
                     } finally {
-                        if (fd > 0) {
-                            ff.close(fd);
+                        if (timestampFd > 0) {
+                            ff.close(timestampFd);
                         }
                     }
                 }
@@ -3219,44 +3186,6 @@ public class TableWriter implements Closeable {
         transientRowCountBeforeOutOfOrder = 0;
     }
 
-    private void oooMapDestColumn(
-            long[] mergeStruct,
-            int columnOffset,
-            @NotNull Path path,
-            long size,
-            long appendOffset
-    ) {
-        oooMapDestColumn(
-                mergeStruct,
-                columnOffset,
-                openReadWriteOrFail(ff, path),
-                path,
-                size,
-                appendOffset
-        );
-    }
-
-    private void oooMapDestColumn(long[] mergeStruct, int dataColumnIndex, int columnOffset, long oooSize) {
-        final AppendMemory mem = columns.getQuick(dataColumnIndex);
-        final long offset = mem.getAppendOffset();
-        oooMapDestColumn(
-                mergeStruct,
-                columnOffset,
-                -mem.getFd(),
-                null,
-                oooSize + offset,
-                offset
-        );
-    }
-
-    private void oooMapDestColumn(long[] mergeStruct, int columnOffset, long fd, @Nullable Path path, long size, long appendOffset) {
-        MergeStruct.setDestFdFromOffset(mergeStruct, columnOffset, fd);
-        truncateToSizeOrFail(ff, path, Math.abs(fd), size);
-        MergeStruct.setDestAddressFromOffset(mergeStruct, columnOffset, mapReadWriteOrFail(ff, path, Math.abs(fd), size));
-        MergeStruct.setDestAddressSizeFromOffset(mergeStruct, columnOffset, size);
-        MergeStruct.setDestAppendOffsetFromOffset(mergeStruct, columnOffset, appendOffset);
-    }
-
     private void mergeShuffle(
             long[] mergeStruct,
             long dataOOMergeIndex,
@@ -3309,6 +3238,51 @@ public class TableWriter implements Closeable {
     private void mergeTimestampSetter(long timestamp) {
         timestampMergeMem.putLong(timestamp);
         timestampMergeMem.putLong(mergeRowCount++);
+    }
+
+    private void oooMapDestColumn(
+            long[] mergeStruct,
+            int columnOffset,
+            @NotNull Path path,
+            long size,
+            long appendOffset
+    ) {
+        oooMapDestColumn(
+                mergeStruct,
+                columnOffset,
+                openReadWriteOrFail(ff, path),
+                path,
+                size,
+                appendOffset
+        );
+    }
+
+    private void oooMapDestColumn(long[] mergeStruct, int dataColumnIndex, int columnOffset, long oooSize) {
+        final AppendMemory mem = columns.getQuick(dataColumnIndex);
+        final long offset = mem.getAppendOffset();
+        oooMapDestColumn(
+                mergeStruct,
+                columnOffset,
+                -mem.getFd(),
+                null,
+                oooSize + offset,
+                offset
+        );
+    }
+
+    private void oooMapDestColumn(long[] mergeStruct, int columnOffset, long fd, @Nullable Path path, long size, long appendOffset) {
+        MergeStruct.setDestFdFromOffset(mergeStruct, columnOffset, fd);
+        truncateToSizeOrFail(ff, path, Math.abs(fd), size);
+        MergeStruct.setDestAddressFromOffset(mergeStruct, columnOffset, mapReadWriteOrFail(ff, path, Math.abs(fd), size));
+        MergeStruct.setDestAddressSizeFromOffset(mergeStruct, columnOffset, size);
+        MergeStruct.setDestAppendOffsetFromOffset(mergeStruct, columnOffset, appendOffset);
+    }
+
+    private void oooMapSrcColumn(long[] mergeStruct, int dataColumnIndex, int columnOffset, Path path) {
+        final AppendMemory mem = columns.getQuick(dataColumnIndex);
+        MergeStruct.setSrcFdFromOffset(mergeStruct, columnOffset, -mem.getFd());
+        MergeStruct.setSrcAddressFromOffset(mergeStruct, columnOffset, mapReadWriteOrFail(ff, path, mem.getFd(), mem.getAppendOffset()));
+        MergeStruct.setSrcAddressSizeFromOffset(mergeStruct, columnOffset, mem.getAppendOffset());
     }
 
     private void oooMapSrcColumn(long[] mergeStruct, int offset, long fd, Path path, long size) {
@@ -3436,7 +3410,6 @@ public class TableWriter implements Closeable {
             long indexHi,
             long indexMax,
             long dataIndexMax,
-            int destIndex,
             int timestampIndex,
             long timestampFd
     ) {
@@ -3456,7 +3429,8 @@ public class TableWriter implements Closeable {
                         iFile(path.trimTo(plen), metadata.getColumnName(i));
                         oooMapSrcColumn(
                                 mergeStruct,
-                                MergeStruct.getFirstColumnOffset(i), openReadWriteOrFail(ff, path),
+                                MergeStruct.getFirstColumnOffset(i),
+                                openReadWriteOrFail(ff, path),
                                 path,
                                 dataIndexMax * Long.BYTES
                         );
@@ -3478,7 +3452,7 @@ public class TableWriter implements Closeable {
                                 dataSize
                         );
 
-                        oooSetPathAndEnsureDir(path, destIndex, plen, i, FILE_SUFFIX_I);
+                        oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_I);
                         oooMapDestColumn(
                                 mergeStruct,
                                 MergeStruct.getFirstColumnOffset(i),
@@ -3487,7 +3461,7 @@ public class TableWriter implements Closeable {
                                 0L
                         );
 
-                        oooSetPathAndEnsureDir(path, destIndex, plen, i, FILE_SUFFIX_D);
+                        oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_D);
                         oooMapDestColumn(
                                 mergeStruct,
                                 MergeStruct.getSecondColumnOffset(i),
@@ -3503,7 +3477,8 @@ public class TableWriter implements Closeable {
                         dFile(path.trimTo(plen), metadata.getColumnName(i));
                         if (timestampIndex == i && timestampFd != 0) {
                             // ensure timestamp fd is always negative, we will close it externally
-                            dataFd = timestampFd > 0 ? -timestampFd : timestampFd;
+                            assert timestampFd > 0;
+                            dataFd = -timestampFd;
                         } else {
                             dataFd = openReadWriteOrFail(ff, path);
                         }
@@ -3514,11 +3489,8 @@ public class TableWriter implements Closeable {
                                 path,
                                 dataIndexMax << shl
                         );
-//                        MergeStruct.setSrcFixedFd(mergeStruct, i, dataFd);
-//                        MergeStruct.setSrcFixedAddress(mergeStruct, i, mapReadWriteOrFail(ff, path, Math.abs(dataFd), dataSize));
-//                        MergeStruct.setSrcFixedAddressSize(mergeStruct, i, dataSize);
 
-                        oooSetPathAndEnsureDir(path, destIndex, plen, i, FILE_SUFFIX_D);
+                        oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_D);
                         oooMapDestColumn(
                                 mergeStruct,
                                 MergeStruct.getFirstColumnOffset(i),

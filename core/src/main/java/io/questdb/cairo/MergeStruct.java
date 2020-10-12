@@ -36,24 +36,12 @@ public final class MergeStruct {
         return getFirstColumnOffset(columnIndex) + SECONDARY_COL_OFFSET;
     }
 
-    static void setSrcFixedFd(long[] mergeStruct, int columnIndex, long value) {
-        setSrcFdFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
-    }
-
     static void setSrcFdFromOffset(long[] mergeStruct, int offset, long value) {
         mergeStruct[offset] = value;
     }
 
-    static long getSrcFixedFd(long[] mergeStruct, int columnIndex) {
-        return getSrcFdFromOffset(mergeStruct, getFirstColumnOffset(columnIndex));
-    }
-
     static long getSrcFdFromOffset(long[] mergeStruct, int offset) {
         return mergeStruct[offset];
-    }
-
-    static void setSrcFixedAddress(long[] mergeStruct, int columnIndex, long value) {
-        setSrcAddressFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
     }
 
     static void setSrcAddressFromOffset(long[] mergeStruct, int offset, long value) {
@@ -68,10 +56,6 @@ public final class MergeStruct {
         return mergeStruct[offset + 1];
     }
 
-    static void setSrcFixedAddressSize(long[] mergeStruct, int columnIndex, long value) {
-        setSrcAddressSizeFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
-    }
-
     static long getSrcFixedAddressSize(long[] mergeStruct, int columnIndex) {
         return getSrcAddressSizeFromOffset(mergeStruct, getFirstColumnOffset(columnIndex));
     }
@@ -80,20 +64,8 @@ public final class MergeStruct {
         return mergeStruct[offset + 2];
     }
 
-    static void setSrcVarFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[getSecondColumnOffset(columnIndex)] = value;
-    }
-
-    static void setSrcVarAddress(long[] mergeStruct, int columnIndex, long value) {
-        setSrcAddressFromOffset(mergeStruct, getSecondColumnOffset(columnIndex), value);
-    }
-
     static long getSrcVarAddress(long[] mergeStruct, int columnIndex) {
         return getSrcAddressFromOffset(mergeStruct, getSecondColumnOffset(columnIndex));
-    }
-
-    static void setSrcVarAddressSize(long[] mergeStruct, int columnIndex, long value) {
-        setSrcAddressSizeFromOffset(mergeStruct, getSecondColumnOffset(columnIndex), value);
     }
 
     static void setSrcAddressSizeFromOffset(long[] mergeStruct, int offset, long value) {
@@ -104,16 +76,8 @@ public final class MergeStruct {
         return mergeStruct[getSecondColumnOffset(columnIndex) + 2];
     }
 
-    static void setDestFixedFd(long[] mergeStruct, int columnIndex, long value) {
-        setDestFdFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
-    }
-
     static void setDestFdFromOffset(long[] mergeStruct, int offset, long value) {
         mergeStruct[offset + 3] = value;
-    }
-
-    static void setDestFixedAddress(long[] mergeStruct, int columnIndex, long value) {
-        setDestAddressFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
     }
 
     static void setDestAddressFromOffset(long[] mergeStruct, int offset, long value) {
@@ -126,10 +90,6 @@ public final class MergeStruct {
 
     static long getDestAddressFromOffset(long[] mergeStruct, int offset) {
         return mergeStruct[offset + 4];
-    }
-
-    static void setDestFixedAddressSize(long[] mergeStruct, int columnIndex, long value) {
-        setDestAddressSizeFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
     }
 
     static void setDestAddressSizeFromOffset(long[] mergeStruct, int offset, long value) {
@@ -148,20 +108,8 @@ public final class MergeStruct {
         return mergeStruct[getFirstColumnOffset(columnIndex) + 6];
     }
 
-    static void setDestVarFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[getSecondColumnOffset(columnIndex) + 3] = value;
-    }
-
-    static void setDestVarAddress(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[getSecondColumnOffset(columnIndex) + 4] = value;
-    }
-
     static long getDestVarAddress(long[] mergeStruct, int columnIndex) {
         return mergeStruct[getSecondColumnOffset(columnIndex) + 4];
-    }
-
-    static void setDestVarAddressSize(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[getSecondColumnOffset(columnIndex) + 5] = value;
     }
 
     static long getDestVarAddressSize(long[] mergeStruct, int columnIndex) {
@@ -180,16 +128,16 @@ public final class MergeStruct {
         mergeStruct[getFirstColumnOffset(columnIndex) + 7] = value;
     }
 
+    static long getIndexValueFd(long[] mergeStruct, int columnIndex) {
+        return mergeStruct[getFirstColumnOffset(columnIndex) + 8];
+    }
+
     static long getIndexKeyFd(long[] mergeStruct, int columnIndex) {
         return mergeStruct[getFirstColumnOffset(columnIndex) + 7];
     }
 
-    static long getIndexValueFd(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[getSecondColumnOffset(columnIndex) + 7];
-    }
-
     static void setIndexValueFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[getSecondColumnOffset(columnIndex) + 7] = value;
+        mergeStruct[getFirstColumnOffset(columnIndex) + 8] = value;
     }
 
     static long getDestVarAppendOffset(long[] mergeStruct, int columnIndex) {
