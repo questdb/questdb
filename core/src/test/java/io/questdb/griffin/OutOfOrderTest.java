@@ -193,7 +193,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     // expected outcome
                     sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y where sym='ibm' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             printer.print(cursor, factory.getMetadata(), true);
                         }
@@ -209,15 +209,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     engine.releaseAllReaders();
 
                     sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x where sym='ibm'", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile("x where sym = 'googl'", sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             printer.print(cursor, factory.getMetadata(), true);
                         }
                     }
 
-                    System.out.println(expected);
-
-//                    TestUtils.assertEquals(expected, sink);
+                    TestUtils.assertEquals(expected, sink);
                 }
         );
     }
