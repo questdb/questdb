@@ -25,113 +25,174 @@
 package io.questdb.cairo;
 
 public final class MergeStruct {
-    final static int MERGE_STRUCT_ENTRY_SIZE = 16;
+    final static int MERGE_STRUCT_ENTRY_SIZE = 32;
+    private final static int SECONDARY_COL_OFFSET = 16;
+
+    public static int getFirstColumnOffset(int columnIndex) {
+        return columnIndex * MERGE_STRUCT_ENTRY_SIZE;
+    }
+
+    public static int getSecondColumnOffset(int columnIndex) {
+        return getFirstColumnOffset(columnIndex) + SECONDARY_COL_OFFSET;
+    }
 
     static void setSrcFixedFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE] = value;
+        setSrcFdFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
+    }
+
+    static void setSrcFdFromOffset(long[] mergeStruct, int offset, long value) {
+        mergeStruct[offset] = value;
+    }
+
+    static long getSrcFixedFd(long[] mergeStruct, int columnIndex) {
+        return getSrcFdFromOffset(mergeStruct, getFirstColumnOffset(columnIndex));
+    }
+
+    static long getSrcFdFromOffset(long[] mergeStruct, int offset) {
+        return mergeStruct[offset];
     }
 
     static void setSrcFixedAddress(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 1] = value;
+        setSrcAddressFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
+    }
+
+    static void setSrcAddressFromOffset(long[] mergeStruct, int offset, long value) {
+        mergeStruct[offset + 1] = value;
     }
 
     static long getSrcFixedAddress(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 1];
+        return getSrcAddressFromOffset(mergeStruct, getFirstColumnOffset(columnIndex));
+    }
+
+    static long getSrcAddressFromOffset(long[] mergeStruct, int offset) {
+        return mergeStruct[offset + 1];
     }
 
     static void setSrcFixedAddressSize(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 2] = value;
+        setSrcAddressSizeFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
     }
 
     static long getSrcFixedAddressSize(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 2];
+        return getSrcAddressSizeFromOffset(mergeStruct, getFirstColumnOffset(columnIndex));
+    }
+
+    static long getSrcAddressSizeFromOffset(long[] mergeStruct, int offset) {
+        return mergeStruct[offset + 2];
     }
 
     static void setSrcVarFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8] = value;
+        mergeStruct[getSecondColumnOffset(columnIndex)] = value;
     }
 
     static void setSrcVarAddress(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 1] = value;
+        setSrcAddressFromOffset(mergeStruct, getSecondColumnOffset(columnIndex), value);
     }
 
     static long getSrcVarAddress(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 1];
+        return getSrcAddressFromOffset(mergeStruct, getSecondColumnOffset(columnIndex));
     }
 
     static void setSrcVarAddressSize(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 2] = value;
+        setSrcAddressSizeFromOffset(mergeStruct, getSecondColumnOffset(columnIndex), value);
+    }
+
+    static void setSrcAddressSizeFromOffset(long[] mergeStruct, int offset, long value) {
+        mergeStruct[offset + 2] = value;
     }
 
     static long getSrcVarAddressSize(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 2];
+        return mergeStruct[getSecondColumnOffset(columnIndex) + 2];
     }
 
     static void setDestFixedFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 3] = value;
+        setDestFdFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
+    }
+
+    static void setDestFdFromOffset(long[] mergeStruct, int offset, long value) {
+        mergeStruct[offset + 3] = value;
     }
 
     static void setDestFixedAddress(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 4] = value;
+        setDestAddressFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
+    }
+
+    static void setDestAddressFromOffset(long[] mergeStruct, int offset, long value) {
+        mergeStruct[offset + 4] = value;
     }
 
     static long getDestFixedAddress(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 4];
+        return getDestAddressFromOffset(mergeStruct, getFirstColumnOffset(columnIndex));
+    }
+
+    static long getDestAddressFromOffset(long[] mergeStruct, int offset) {
+        return mergeStruct[offset + 4];
     }
 
     static void setDestFixedAddressSize(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 5] = value;
+        setDestAddressSizeFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
+    }
+
+    static void setDestAddressSizeFromOffset(long[] mergeStruct, int offset, long value) {
+        mergeStruct[offset + 5] = value;
     }
 
     static void setDestFixedAppendOffset(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 6] = value;
+        setDestAppendOffsetFromOffset(mergeStruct, getFirstColumnOffset(columnIndex), value);
+    }
+
+    static void setDestAppendOffsetFromOffset(long[] mergeStruct, int offset, long value) {
+        mergeStruct[offset + 6] = value;
     }
 
     static long getDestFixedAppendOffset(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 6];
+        return mergeStruct[getFirstColumnOffset(columnIndex) + 6];
     }
 
     static void setDestVarFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 3] = value;
+        mergeStruct[getSecondColumnOffset(columnIndex) + 3] = value;
     }
 
     static void setDestVarAddress(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 4] = value;
+        mergeStruct[getSecondColumnOffset(columnIndex) + 4] = value;
     }
 
     static long getDestVarAddress(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 4];
+        return mergeStruct[getSecondColumnOffset(columnIndex) + 4];
     }
 
     static void setDestVarAddressSize(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 5] = value;
+        mergeStruct[getSecondColumnOffset(columnIndex) + 5] = value;
     }
 
     static long getDestVarAddressSize(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 5];
+        return getDestAddressSizeFromOffset(mergeStruct, getSecondColumnOffset(columnIndex));
+    }
+
+    static long getDestAddressSizeFromOffset(long[] mergeStruct, int offset) {
+        return mergeStruct[offset + 5];
     }
 
     static void setDestVarAppendOffset(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 6] = value;
+        mergeStruct[getSecondColumnOffset(columnIndex) + 6] = value;
     }
 
     static void setIndexKeyFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 7] = value;
+        mergeStruct[getFirstColumnOffset(columnIndex) + 7] = value;
     }
 
     static long getIndexKeyFd(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 7];
+        return mergeStruct[getFirstColumnOffset(columnIndex) + 7];
     }
 
     static long getIndexValueFd(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 7];
+        return mergeStruct[getSecondColumnOffset(columnIndex) + 7];
     }
 
     static void setIndexValueFd(long[] mergeStruct, int columnIndex, long value) {
-        mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 7] = value;
+        mergeStruct[getSecondColumnOffset(columnIndex) + 7] = value;
     }
 
     static long getDestVarAppendOffset(long[] mergeStruct, int columnIndex) {
-        return mergeStruct[columnIndex * MERGE_STRUCT_ENTRY_SIZE + 8 + 6];
+        return mergeStruct[getSecondColumnOffset(columnIndex) + 6];
     }
 }
