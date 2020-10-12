@@ -529,4 +529,25 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             printSqlResult(expected, query, "timestamp", null, null, true, true, true);
         });
     }
+
+    @Test
+    public void testTimestampParseWithYearMonthDayTHourMinuteSecondTimeZone() throws Exception {
+        //yyyy-MM-ddTHH:mm:ssz
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-12-31T23:59:59Z'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+        });
+    }
+
 }
