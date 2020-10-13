@@ -24,8 +24,7 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.pool.ex.NotEnoughLinesException;
-import io.questdb.cairo.pool.ex.ReceiveBufferTooSmallException;
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Unsafe;

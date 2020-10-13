@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.pool.ex.RetryFailedOperationException;
+import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.mp.*;
 import io.questdb.std.time.MillisecondClock;
 import org.jetbrains.annotations.Nullable;

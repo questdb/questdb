@@ -22,21 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.ex;
 
-public interface Retry {
-    /**
-     * Run a retry
-     */
-    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
+import io.questdb.cutlass.http.HttpException;
 
-    /**
-     * Gets retry run attributes
-     */
-    RetryAttemptAttributes getAttemptDetails();
+public class RetryOperationException extends HttpException {
+    public static final RetryOperationException INSTANCE;
 
-    /**
-     * Notify client that re-run failed
-     */
-    void fail(HttpRequestProcessorSelector selector, HttpException e);
+    static {
+        INSTANCE = new RetryOperationException();
+        INSTANCE.put("resource is busy");
+    }
 }

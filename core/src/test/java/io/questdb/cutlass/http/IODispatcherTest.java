@@ -28,14 +28,15 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
@@ -46,7 +47,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -515,17 +515,15 @@ public class IODispatcherTest {
                                 .withHttpProtocolVersion("HTTP/1.1 ")
                                 .withServerKeepAlive(true)
                 )
-                .run(engine -> {
-                    sendAndReceive(
-                            nf,
-                            request,
-                            response,
-                            requestCount,
-                            0,
-                            false,
-                            expectDisconnect
-                    );
-                });
+                .run(engine -> sendAndReceive(
+                        nf,
+                        request,
+                        response,
+                        requestCount,
+                        0,
+                        false,
+                        expectDisconnect
+                ));
     }
 
     @Test
@@ -5137,59 +5135,6 @@ public class IODispatcherTest {
                 .withRequestCount(requestCount)
                 .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
                 .execute(request, response);
-    }
-
-    private void sendAndReceive(
-            NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean print, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
-            HttpClientStateListener listener
-    ) throws InterruptedException {
-        int sent = 0;
-        int reqLen = request.length();
-        Chars.asciiStrCpy(request, reqLen, ptr);
-        while (sent < reqLen) {
-            int n = nf.send(fd, ptr + sent, reqLen - sent);
-            Assert.assertTrue(n > -1);
-            sent += n;
-        }
-
-        if (pauseBetweenSendAndReceive > 0) {
-            Thread.sleep(pauseBetweenSendAndReceive);
-        }
-        // receive response
-        final int expectedToReceive = expectedResponse.length;
-        int received = 0;
-        if (print) {
-            System.out.println("expected");
-            System.out.println(new String(expectedResponse, StandardCharsets.UTF_8));
-        }
-        boolean disconnected = false;
-        while (received < expectedToReceive) {
-            int n = nf.recv(fd, ptr + received, len - received);
-            if (n > 0) {
-                // compare bytes
-                for (int i = 0; i < n; i++) {
-                    if (print) {
-                        System.out.print((char) Unsafe.getUnsafe().getByte(ptr + received + i));
-                    } else {
-                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                            LOG.error().$("received not what expected [contents=`").utf8(new DirectByteCharSequence().of(ptr, ptr + received + n)).$("`]").$();
-                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
-                        }
-                    }
-                }
-                received += n;
-                if (null != listener) {
-                    listener.onReceived(received);
-                }
-            } else if (n < 0) {
-                disconnected = true;
-                break;
-            }
-        }
-        if (disconnected && !expectDisconnect) {
-            LOG.error().$("disconnected?").$();
-            Assert.fail();
-        }
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {

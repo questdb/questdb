@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoEngine;
@@ -378,60 +402,6 @@ public class RetryIODispatcherTest {
 
     }
 
-    // TODO: investigate failure
-    @Test
-    @Ignore
-    public void testQueryAndDisconnect() throws Exception {
-        final int parallelCount = 4;
-        final int requestMult = 4;
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(parallelCount)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(engine -> {
-                    // create table
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
-                            ResponseHeaders +
-                                    "0c\r\n" +
-                                    "{\"ddl\":\"OK\"}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
-                    );
-
-                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    Thread[] threads = new Thread[parallelCount * requestMult];
-                    for (int i = 0; i < parallelCount; i++) {
-                        int finalI = i;
-                        threads[i] = new Thread(() -> {
-                            try {
-                                for (int j = 0; j < requestMult; j++) {
-                                    // insert one record
-                                    try {
-                                        new SendAndReceiveRequestBuilder()
-                                                .withPauseBetweenSendAndReceive(5)
-                                                .execute("GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" + RequestHeaders, "");
-
-                                        new SendAndReceiveRequestBuilder()
-                                                .withPauseBetweenSendAndReceive(5)
-                                                .execute("GET /query?query=select+123,37463,38934,983,99203,102932,40954,count(*)+count123+from+balances_x&count=true HTTP/1.1\r\n" + RequestHeaders, "");
-                                    } catch (Exception e) {
-                                        LOG.error().$("Failed execute insert http request. Server error ").$(e);
-                                    }
-                                }
-                            } finally {
-                                countDownLatch.countDown();
-                            }
-                        });
-                        threads[i].start();
-                    }
-                    countDownLatch.await();
-                    Thread.sleep(1000);
-                });
-    }
-
     public void testInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
         final int parallelCount = 4;
         new HttpQueryTestBuilder()
@@ -483,8 +453,7 @@ public class RetryIODispatcherTest {
                     writer.close();
 
                     // check if we have parallelCount x insertCount  records
-                    int expectedCount = parallelCount;
-                    int waitCount = 1000 / 50 * expectedCount;
+                    int waitCount = 1000 / 50 * parallelCount;
                     for (int i = 0; i < waitCount; i++) {
 
                         try {
@@ -493,7 +462,7 @@ public class RetryIODispatcherTest {
                                             RequestHeaders,
                                     ResponseHeaders +
                                             "6f\r\n" +
-                                            "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + expectedCount + "]],\"count\":1}\r\n" +
+                                            "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
                                             "00\r\n" +
                                             "\r\n"
                             );
@@ -713,7 +682,7 @@ public class RetryIODispatcherTest {
             return NetworkFacadeImpl.INSTANCE;
 
         return new NetworkFacadeImpl() {
-            AtomicInteger totalSent = new AtomicInteger();
+            final AtomicInteger totalSent = new AtomicInteger();
 
             @Override
             public int send(long fd, long buffer, int bufferLen) {
@@ -751,26 +720,4 @@ public class RetryIODispatcherTest {
         return writer;
     }
 
-    public void testImport(
-            String response,
-            String request,
-            NetworkFacade nf,
-            boolean expectDisconnect,
-            int requestCount
-    ) throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder()
-                                .withServerKeepAlive(true)
-                                .withHttpProtocolVersion("HTTP/1.1 ")
-                )
-                .run(engine -> {
-                    new SendAndReceiveRequestBuilder()
-                            .withNetworkFacade(nf)
-                            .withExpectDisconnect(expectDisconnect)
-                            .withRequestCount(requestCount)
-                            .execute(request, response);
-                });
-    }
 }

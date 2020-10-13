@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool.ex;
+package io.questdb.cutlass.http.ex;
 
-import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.http.HttpException;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
@@ -32,7 +32,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class NotEnoughLinesException extends CairoException implements Sinkable, FlyweightMessageContainer {
+public class NotEnoughLinesException extends HttpException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<NotEnoughLinesException> tlException = new ThreadLocal<>(NotEnoughLinesException::new);
     private final StringSink message = new StringSink();
 

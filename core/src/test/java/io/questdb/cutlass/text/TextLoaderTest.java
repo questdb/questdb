@@ -25,7 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.pool.ex.NotEnoughLinesException;
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;

@@ -22,16 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool.ex;
+package io.questdb.cutlass.http.ex;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.network.PeerDisconnectedException;
+import io.questdb.cutlass.http.HttpException;
 
-public class RetryOperationException extends CairoException {
-    public static final RetryOperationException INSTANCE;
+public class TooFewBytesReceivedException extends HttpException {
+    public static final TooFewBytesReceivedException INSTANCE;
 
     static {
-        INSTANCE = new RetryOperationException();
-        INSTANCE.put("resource is busy");
+        INSTANCE = new TooFewBytesReceivedException();
+        INSTANCE.put("bytes read are not enough to parse the table header");
     }
 }

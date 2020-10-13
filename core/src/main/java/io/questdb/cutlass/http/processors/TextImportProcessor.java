@@ -26,9 +26,9 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryUnavailableException;
-import io.questdb.cairo.pool.ex.NotEnoughLinesException;
-import io.questdb.cairo.pool.ex.RetryOperationException;
-import io.questdb.cairo.pool.ex.ReceiveBufferTooSmallException;
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
+import io.questdb.cutlass.http.ex.RetryOperationException;
+import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.Atomicity;
@@ -264,7 +264,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void onChunk(long lo, long hi)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, ReceiveBufferTooSmallException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, TooFewBytesReceivedException {
         if (hi > lo) {
             try {
                 transientState.lo = lo;
@@ -294,7 +294,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void failRequest(HttpConnectionContext context, CairoException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         sendError(transientContext, e.getFlyweightMessage(), Chars.equalsNc("json", transientContext.getRequestHeader().getUrlParam("fmt")));
         throw ServerDisconnectException.INSTANCE;
     }

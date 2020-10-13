@@ -22,21 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.ex;
 
-public interface Retry {
-    /**
-     * Run a retry
-     */
-    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
+import io.questdb.cutlass.http.HttpException;
 
-    /**
-     * Gets retry run attributes
-     */
-    RetryAttemptAttributes getAttemptDetails();
+public class BufferOverflowException extends HttpException {
+    public static final BufferOverflowException INSTANCE;
 
-    /**
-     * Notify client that re-run failed
-     */
-    void fail(HttpRequestProcessorSelector selector, HttpException e);
+    static {
+        INSTANCE = new BufferOverflowException();
+        INSTANCE.put("cannot parse import because of receive buffer is not big enough to parse table structure");
+    }
 }

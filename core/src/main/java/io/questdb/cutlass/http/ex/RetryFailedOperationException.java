@@ -22,15 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool.ex;
+package io.questdb.cutlass.http.ex;
 
-import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.http.HttpException;
 
-public class ReceiveBufferTooSmallException extends CairoException {
-    public static final ReceiveBufferTooSmallException INSTANCE;
+public class RetryFailedOperationException extends HttpException {
+    public static final RetryFailedOperationException INSTANCE;
 
     static {
-        INSTANCE = new ReceiveBufferTooSmallException();
-        INSTANCE.put("server receive buffer is not big enough to parse the table header");
+        INSTANCE = new RetryFailedOperationException();
+        INSTANCE.put("resource is busy and retry queue is full");
     }
 }

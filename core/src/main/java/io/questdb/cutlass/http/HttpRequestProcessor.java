@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
@@ -48,6 +47,6 @@ public interface HttpRequestProcessor {
     default void parkRequest(HttpConnectionContext context) {
     }
 
-    default void failRequest(HttpConnectionContext context, CairoException exception) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    default void failRequest(HttpConnectionContext context, HttpException exception) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 }

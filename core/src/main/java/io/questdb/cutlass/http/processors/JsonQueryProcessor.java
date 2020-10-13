@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.pool.ex.EntryUnavailableException;
-import io.questdb.cairo.pool.ex.RetryOperationException;
+import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
@@ -345,7 +345,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void failRequest(HttpConnectionContext context, CairoException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
         JsonQueryProcessorState state = LV.get(context);
         internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
         readyForNextRequest(context);

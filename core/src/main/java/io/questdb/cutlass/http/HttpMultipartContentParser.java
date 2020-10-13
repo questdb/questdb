@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.pool.ex.NotEnoughLinesException;
-import io.questdb.cairo.pool.ex.RetryOperationException;
-import io.questdb.cairo.pool.ex.ReceiveBufferTooSmallException;
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
+import io.questdb.cutlass.http.ex.RetryOperationException;
+import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
@@ -230,7 +230,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         } catch (NotEnoughLinesException e) {
             if (handleIncomplete) {
                 this.resumePtr = lo;
-                throw ReceiveBufferTooSmallException.INSTANCE;
+                throw TooFewBytesReceivedException.INSTANCE;
             } else {
                 throw e;
             }

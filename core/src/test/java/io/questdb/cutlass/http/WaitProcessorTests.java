@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.pool.ex.RetryFailedOperationException;
 import io.questdb.std.time.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -33,7 +32,7 @@ import org.junit.Test;
 public class WaitProcessorTests {
     private long currentTimeMs;
     private int job1Attempts = 0;
-    private HttpRequestProcessorSelector emptySelector = createEmptySelector();
+    private final HttpRequestProcessorSelector emptySelector = createEmptySelector();
 
     @Test
     public void testRescheduleNotHappensImmediately() {
@@ -92,7 +91,7 @@ public class WaitProcessorTests {
                         }
 
                         @Override
-                        public void fail(HttpRequestProcessorSelector selector, RetryFailedOperationException e) {
+                        public void fail(HttpRequestProcessorSelector selector, HttpException e) {
                             throw new UnsupportedOperationException();
                         }
                     });
@@ -131,7 +130,7 @@ public class WaitProcessorTests {
             }
 
             @Override
-            public void fail(HttpRequestProcessorSelector selector, RetryFailedOperationException e) {
+            public void fail(HttpRequestProcessorSelector selector, HttpException e) {
                 throw new UnsupportedOperationException();
             }
         };
