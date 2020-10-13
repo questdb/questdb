@@ -24,42 +24,14 @@
 
 package io.questdb.griffin.engine;
 
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.VirtualRecordNoRowid;
-import io.questdb.std.ObjList;
 
-final public class EmptyTableNoSizeRecordCursor implements NoRandomAccessRecordCursor {
-    public static final EmptyTableNoSizeRecordCursor INSTANCE = new EmptyTableNoSizeRecordCursor();
+import org.junit.Assert;
+import org.junit.Test;
 
-    private final Record record = new VirtualRecordNoRowid(new ObjList<>());
+public class EmptyTableNoSizeRecordCursorTest {
 
-    @Override
-    public void close() {
-    }
-
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @Override
-    public void toTop() {
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return null;
-    }
-
-    @Override
-    public long size() {
-        return -1;
+    @Test
+    public void testImplementsSymbolTable() {
+        Assert.assertNull(EmptyTableNoSizeRecordCursor.INSTANCE.getSymbolTable(0));
     }
 }
