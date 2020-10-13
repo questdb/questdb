@@ -35,6 +35,7 @@ public class TimestampFormatUtils {
     public static final int HOUR_PM = 1;
     public static final int HOUR_AM = 0;
     public static final TimestampFormat UTC_FORMAT;
+    public static final TimestampFormat SEC_UTC_FORMAT;
     public static final TimestampFormat USEC_UTC_FORMAT;
     public static final TimestampFormat PG_TIMESTAMP_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
@@ -53,6 +54,7 @@ public class TimestampFormatUtils {
         UTC_FORMAT = compiler.compile(UTC_PATTERN);
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
         USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
+        SEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ssz");
         PG_TIMESTAMP_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
     }
 
@@ -344,6 +346,8 @@ public class TimestampFormatUtils {
     private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
         if (lim - lo == 27) {
             return USEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
+        } else if (lim - lo == 20) {
+            return SEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
         } else {
             return UTC_FORMAT.parse(seq, lo, lim, enLocale);
         }

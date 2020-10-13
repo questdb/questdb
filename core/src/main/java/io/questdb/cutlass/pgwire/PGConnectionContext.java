@@ -372,6 +372,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         } catch (SqlException e) {
             sendExecuteTail(TAIL_ERROR);
             clearRecvBuffer();
+            queryTag = TAG_OK;
         }
     }
 
@@ -955,7 +956,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 return typeOids.get(typeAdapter.getType());
             }
         }
-        return -1;
+        return PG_VARCHAR;
     }
 
     /**
@@ -1235,7 +1236,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         } else if (currentInsertStatement != null) {
             executeInsert();
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
-            if (!Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
+            if (queryTag != null && !Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
                 if (transactionState == COMMIT_TRANSACTION) {
                     for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
                         TableWriter m = cachedTransactionInsertWriters.get(i);
