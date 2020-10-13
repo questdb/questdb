@@ -695,7 +695,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
-        LOG.info().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
+        LOG.debug().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
         return checkAndCreateFunction(candidate, args, node.position, configuration, isNegated, isFlipped);
     }
 
