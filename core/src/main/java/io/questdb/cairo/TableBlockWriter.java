@@ -157,6 +157,11 @@ public class TableBlockWriter implements Closeable {
     public void cancel() {
         completePendingConcurrentTasks(true);
         writer.cancelRow();
+        for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
+            PartitionBlockWriter partWriter = partitionBlockWriters.get(n);
+            partWriter.cancel();
+        }
+        writer.purgeUnusedPartitions();
         LOG.info().$("cancelled new block [table=").$(writer.getName()).$(']').$();
         clear();
     }
@@ -300,6 +305,7 @@ public class TableBlockWriter implements Closeable {
 
                 nRowsAdded = 0;
                 pageFrameMaxNRows = 0;
+                path.trimTo(plen);
                 opened = true;
                 LOG.info().$("opened partition to '").$(path).$('\'').$();
             } else {
@@ -420,6 +426,10 @@ public class TableBlockWriter implements Closeable {
             if (nSymbols > symWriter.getSymbolCount()) {
                 symWriter.commitAppendedBlock(nSymbols - symWriter.getSymbolCount());
             }
+        }
+
+        private void cancel() {
+            clear();
         }
 
         private void clear() {

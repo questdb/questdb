@@ -2014,7 +2014,7 @@ public class TableWriter implements Closeable {
         indexCount = denseIndexers.size();
     }
 
-    private void purgeUnusedPartitions() {
+    void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirsNewerThan(maxTimestamp);
         }
@@ -2786,6 +2786,7 @@ public class TableWriter implements Closeable {
 
     public TableBlockWriter newBlock() {
         bumpMasterRef();
+        this.prevMaxTimestamp = maxTimestamp;
         blockWriter.open(this);
         return blockWriter;
     }
@@ -2812,7 +2813,6 @@ public class TableWriter implements Closeable {
             switchPartition(timestampLo);
         }
         transientRowCount += nRowsAdded;
-        this.prevMaxTimestamp = maxTimestamp;
         this.maxTimestamp = timestampHi;
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
