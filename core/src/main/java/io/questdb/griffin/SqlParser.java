@@ -83,6 +83,7 @@ public final class SqlParser {
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
         joinStartSet.put("lt", QueryModel.JOIN_LT);
+        joinStartSet.put(",", QueryModel.JOIN_CROSS);
         //
         setOperations.add("union");
         setOperations.add("except");
@@ -1126,7 +1127,7 @@ public final class SqlParser {
         joinModel.setJoinType(joinType);
         joinModel.setJoinKeywordPosition(lexer.lastTokenPosition());
 
-        if (!isJoinKeyword(tok)) {
+        if (!isJoinKeyword(tok) && !Chars.equals(tok, ',')) {
             expectTok(lexer, "join");
         }
 
