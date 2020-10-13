@@ -551,7 +551,11 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     public void testMixedWrites() throws Exception {
         runTest("testMixedWrites", () -> {
             int nTest = 0;
-            testMixedWrites(nTest++, 0, 1, true, 20);
+            boolean[] bools = { true, false };
+            for (boolean commitAllAtOnce : bools) {
+                testMixedWrites(nTest++, 0, 1, commitAllAtOnce, 20);
+                testMixedWrites(nTest++, 2, 1, commitAllAtOnce, 10);
+            }
             engine.releaseInactive();
         });
     }
