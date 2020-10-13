@@ -4275,9 +4275,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testColumnsOfSimpleSelectWithSemicolon() throws SqlException {
         assertColumnNames("select 1;", "1");
-        FunctionFactoryCache factory = new FunctionFactoryCache(configuration, List.of(new VersionFunctionFactory(), new LongSequenceFunctionFactory()));
-        SqlCompiler compiler = new SqlCompiler(engine, engine.getMessageBus(), factory);
-        assertColumnNames(compiler, "select version();");
+        assertColumnNames("select 1, 1, 1;", "1", "11", "12");
     }
 
     @Test
