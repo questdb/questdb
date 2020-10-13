@@ -724,8 +724,10 @@ public final class SqlParser {
 
             tok = optTok(lexer);
 
-            if (tok != null && columnAliasStop.excludes(tok)) {
-
+            if (tok != null && Chars.equals(tok, ';')) {
+                alias = createColumnAlias(expr, model);
+                tok = optTok(lexer);
+            } else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
                 if (isAsKeyword(tok)) {
