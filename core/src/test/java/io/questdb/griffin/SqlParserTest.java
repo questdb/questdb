@@ -26,12 +26,17 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import java.util.List;
+import junit.runner.Version;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -4268,6 +4273,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnsOfSimpleSelectWithSemicolon() throws SqlException {
+        assertColumnNames("select 1;", "1");
+        assertColumnNames("select 1, 1, 1;", "1", "11", "12");
+    }
+
+    @Test
     public void testSelectOnItsOwn() throws Exception {
         assertSyntaxError("select ", 7, "column expected");
     }
@@ -5202,6 +5213,19 @@ public class SqlParserTest extends AbstractGriffinTest {
             ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);
         }, tableModels);
+    }
+
+    private void assertColumnNames(SqlCompiler compiler, String query, String... columns) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        RecordMetadata metadata = cc.getRecordCursorFactory().getMetadata();
+
+        for(int idx = 0; idx < columns.length; idx++) {
+            TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
+        }
+    }
+
+    private void assertColumnNames(String query, String... columns) throws SqlException {
+        assertColumnNames(this.compiler, query, columns);
     }
 
     private void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
