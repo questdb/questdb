@@ -2801,7 +2801,7 @@ public class TableWriter implements Closeable {
         }
 
         if (partitionBy != PartitionBy.NONE && timestampLo > partitionHi) {
-            // TODO parse the truncate flag to switchPartition all the way down to the mem.close
+            // Need close memory without truncating
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 AppendMemory mem1 = getPrimaryColumn(columnIndex);
                 mem1.close(false);

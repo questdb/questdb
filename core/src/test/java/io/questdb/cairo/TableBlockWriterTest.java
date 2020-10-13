@@ -547,7 +547,6 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         });
     }
 
-    // TODO
     @Test
     public void testMixedWrites() throws Exception {
         runTest("testMixedWrites", () -> {
@@ -571,9 +570,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 sqlExecutionContext);
         int nRowsWritten = 0;
         long tsStart = 0;
-        long tsIncrement = 20000000;
+        long tsIncrement = 200000000;
         for (int batch = 1; batch < nBatches; batch++) {
-            int nBatchRows = batch * 1000;
+            int nBatchRows = batch * 100;
             compiler.compile("INSERT INTO " + sourceTableName + " (batch, ch, ll, a1, a, b, c, d, e, f, f1, g, h, i, j, j1, ts, l, m) " +
                     "SELECT" +
                     " " + batch + " batch," +
