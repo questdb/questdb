@@ -1656,77 +1656,80 @@ class SqlOptimiser {
     }
 
     private ExpressionNode optimiseBooleanNot(final ExpressionNode node, boolean reverse) {
-        switch (notOps.get(node.token)) {
-            case NOT_OP_NOT:
-                if (reverse) {
-                    return optimiseBooleanNot(node.rhs, false);
-                } else {
-                    switch (node.rhs.type) {
-                        case ExpressionNode.LITERAL:
-                        case ExpressionNode.CONSTANT:
-                            return node;
-                        default:
-                            return optimiseBooleanNot(node.rhs, true);
+        if (node.token != null) {
+            switch (notOps.get(node.token)) {
+                case NOT_OP_NOT:
+                    if (reverse) {
+                        return optimiseBooleanNot(node.rhs, false);
+                    } else {
+                        switch (node.rhs.type) {
+                            case ExpressionNode.LITERAL:
+                            case ExpressionNode.CONSTANT:
+                                break;
+                            default:
+                                return optimiseBooleanNot(node.rhs, true);
+                        }
                     }
-                }
-            case NOT_OP_AND:
-                if (reverse) {
-                    node.token = "or";
-                }
-                node.lhs = optimiseBooleanNot(node.lhs, reverse);
-                node.rhs = optimiseBooleanNot(node.rhs, reverse);
-                return node;
-            case NOT_OP_OR:
-                if (reverse) {
-                    node.token = "and";
-                }
-                node.lhs = optimiseBooleanNot(node.lhs, reverse);
-                node.rhs = optimiseBooleanNot(node.rhs, reverse);
-                return node;
-            case NOT_OP_GREATER:
-                if (reverse) {
-                    node.token = "<=";
-                }
-                return node;
-            case NOT_OP_GREATER_EQ:
-                if (reverse) {
-                    node.token = "<";
-                }
-                return node;
-
-            case NOT_OP_LESS:
-                if (reverse) {
-                    node.token = ">=";
-                }
-                return node;
-            case NOT_OP_LESS_EQ:
-                if (reverse) {
-                    node.token = ">";
-                }
-                return node;
-            case NOT_OP_EQUAL:
-                if (reverse) {
-                    node.token = "!=";
-                }
-                return node;
-            case NOT_OP_NOT_EQ:
-                if (reverse) {
-                    node.token = "=";
-                } else {
-                    node.token = "!=";
-                }
-                return node;
-            default:
-                if (reverse) {
-                    ExpressionNode n = expressionNodePool.next();
-                    n.token = "not";
-                    n.paramCount = 1;
-                    n.rhs = node;
-                    n.type = ExpressionNode.OPERATION;
-                    return n;
-                }
-                return node;
+                    break;
+                case NOT_OP_AND:
+                    if (reverse) {
+                        node.token = "or";
+                    }
+                    node.lhs = optimiseBooleanNot(node.lhs, reverse);
+                    node.rhs = optimiseBooleanNot(node.rhs, reverse);
+                    break;
+                case NOT_OP_OR:
+                    if (reverse) {
+                        node.token = "and";
+                    }
+                    node.lhs = optimiseBooleanNot(node.lhs, reverse);
+                    node.rhs = optimiseBooleanNot(node.rhs, reverse);
+                    break;
+                case NOT_OP_GREATER:
+                    if (reverse) {
+                        node.token = "<=";
+                    }
+                    break;
+                case NOT_OP_GREATER_EQ:
+                    if (reverse) {
+                        node.token = "<";
+                    }
+                    break;
+                case NOT_OP_LESS:
+                    if (reverse) {
+                        node.token = ">=";
+                    }
+                    break;
+                case NOT_OP_LESS_EQ:
+                    if (reverse) {
+                        node.token = ">";
+                    }
+                    break;
+                case NOT_OP_EQUAL:
+                    if (reverse) {
+                        node.token = "!=";
+                    }
+                    break;
+                case NOT_OP_NOT_EQ:
+                    if (reverse) {
+                        node.token = "=";
+                    } else {
+                        node.token = "!=";
+                    }
+                    break;
+                default:
+                    if (reverse) {
+                        ExpressionNode n = expressionNodePool.next();
+                        n.token = "not";
+                        n.paramCount = 1;
+                        n.rhs = node;
+                        n.type = ExpressionNode.OPERATION;
+                        return n;
+                    }
+                    break;
+            }
         }
+        return node;
     }
 
     private void optimiseBooleanNot(QueryModel model) {
