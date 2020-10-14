@@ -8,7 +8,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
 public class TablePageFrameCursor implements PageFrameCursor {
@@ -31,7 +30,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
     private long nFrameRows;
     private long nPartitionRows;
     private long firstTimestamp = Long.MIN_VALUE;
-    private long lastTimestamp = Numbers.LONG_NaN;;
     private int columnBase;
     private boolean checkNFrameRowsForColumnTops;
 
@@ -176,7 +174,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
 
                     if (timestampColumnIndex == columnIndex) {
                         firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
-                        lastTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress + columnPageLength - Long.BYTES);
                     }
                 } else {
                     columnFrameAddresses.setQuick(i, 0);
@@ -226,7 +223,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
         moveToNextPartition = true;
         partitionCount = reader.getPartitionCount();
         firstTimestamp = Long.MIN_VALUE;
-        lastTimestamp = 0;
     }
 
     @Override
@@ -251,11 +247,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
             return firstTimestamp;
         }
 
-        @Override
-        public long getLastTimestamp() {
-            return lastTimestamp;
-        }
-
         public int getPartitionIndex() {
             return partitionIndex;
         }
@@ -263,11 +254,6 @@ public class TablePageFrameCursor implements PageFrameCursor {
         @Override
         public long getPageLength(int i) {
             return columnFrameLengths.getQuick(i);
-        }
-
-        @Override
-        public long getColumnTop(int i) {
-            return columnTops.getQuick(i);
         }
     }
 }
