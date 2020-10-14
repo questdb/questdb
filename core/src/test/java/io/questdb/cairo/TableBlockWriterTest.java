@@ -538,7 +538,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         // Ensure partition data is more than the amount of data mapped into memory by the writer (see FilesFacade#FilesFacade)
         runTest("testPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT timestamp_sequence(0, 10000000000) ts, rnd_long(-55, 9009, 2) l, rnd_bin(10000, 20000, 1) bin FROM long_sequence(1000)" +
+                    "SELECT timestamp_sequence(0, 25000000000) ts, rnd_long(-55, 9009, 2) l, rnd_bin(10000, 20000, 1) bin FROM long_sequence(200)" +
                     ") TIMESTAMP (ts) PARTITION BY MONTH;",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
