@@ -1217,6 +1217,33 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwoBetweenIntervalsWithOr() throws Exception {
+        IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' or timestamp between '2014-02-01T12:30:00.000Z' and '2014-02-02T12:30:00.000Z'");
+        Assert.assertNull(m.intervals);
+        assertFilter(m, "'2014-02-02T12:30:00.000Z''2014-02-01T12:30:00.000Z'timestampbetween'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetweenor");
+    }
+
+    @Test
+    public void testTwoBetweenIntervalsWithAnd() throws Exception {
+        IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and timestamp between '2014-01-01T16:30:00.000Z' and '2014-01-05T12:30:00.000Z'");
+        TestUtils.assertEquals("[{lo=2014-01-01T16:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
+        Assert.assertNull(m.filter);
+    }
+
+    @Test
+    public void testTwoIntervalsWithOr() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ( '2014-01-01T12:30:00.000Z' ,  '2014-01-02T12:30:00.000Z') or timestamp in ('2014-02-01T12:30:00.000Z', '2014-02-02T12:30:00.000Z')");
+        Assert.assertNull(m.intervals);
+        assertFilter(m, "'2014-02-02T12:30:00.000Z''2014-02-01T12:30:00.000Z'timestampin'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampinor");
+    }
+
+    @Test
+    public void testTwoIntervalsWithAnd() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp in ('2014-01-01T16:30:00.000Z', '2014-01-05T12:30:00.000Z')");
+        TestUtils.assertEquals("[{lo=2014-01-01T16:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
+    }
+
+    @Test
     public void testSimpleLambda() throws Exception {
         IntrinsicModel m = modelOf("sym in (select * from xyz)");
         Assert.assertNotNull(m.keySubQuery);

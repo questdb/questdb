@@ -317,6 +317,7 @@ class ExpressionParser {
                         if (SqlKeywords.isBetweenKeyword(tok)) {
                             thisBranch = BRANCH_BETWEEN_START;
                             betweenCount++;
+                            paramCount = 0;
                         }
                         processDefaultBranch = true;
                         break;
@@ -372,7 +373,7 @@ class ExpressionParser {
                             betweenCount--;
                             opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
 
-                            final int betweenParamCOunt = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1);
+                            final int betweenParamCount = paramCount + 1;
                             while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
                                 argStackDepth = onNode(listener, node, argStackDepth);
                             }
@@ -383,7 +384,7 @@ class ExpressionParser {
 
                             // enable operation or literal absorb parameters
                             if (node.type == ExpressionNode.SET_OPERATION) {
-                                node.paramCount = betweenParamCOunt + (node.paramCount == 2 ? 1 : 0);
+                                node.paramCount = betweenParamCount + (node.paramCount == 2 ? 1 : 0);
                                 node.type = ExpressionNode.FUNCTION;
                                 argStackDepth = onNode(listener, node, argStackDepth);
                             }
