@@ -334,7 +334,7 @@
                                         <argument>--module-path</argument>
                                         <argument>${project.build.outputDirectory}</argument>
                                         <argument>--add-modules</argument>
-                                        <argument>io.questdb</argument>
+                                        <argument>io.questdb,jdk.crypto.ec</argument>
                                         <argument>--output</argument>
                                         <argument>${project.build.directory}/runtime</argument>
                                         <argument>--no-header-files</argument>
