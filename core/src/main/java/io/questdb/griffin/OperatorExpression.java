@@ -50,6 +50,7 @@ public final class OperatorExpression {
         add(new OperatorExpression("<>", 7, true, BINARY));
         add(new OperatorExpression("!~", 7, true, BINARY));
         add(new OperatorExpression("in", 7, true, SET, false));
+        add(new OperatorExpression("between", 7, true, SET, false));
         add(new OperatorExpression("and", 11, true, BINARY, false));
         add(new OperatorExpression("or", 11, true, BINARY, false));
         add(new OperatorExpression("not", 11, true, UNARY, false));

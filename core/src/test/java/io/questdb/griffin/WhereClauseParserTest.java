@@ -1210,6 +1210,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSimpleBetweenAndInterval() throws Exception {
+        IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'");
+        TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
+        Assert.assertNull(m.filter);
+    }
+
+    @Test
     public void testSimpleLambda() throws Exception {
         IntrinsicModel m = modelOf("sym in (select * from xyz)");
         Assert.assertNotNull(m.keySubQuery);

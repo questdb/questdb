@@ -43,6 +43,8 @@ class ExpressionParser {
     private static final int BRANCH_CASE_CONTROL = 10;
     private static final int BRANCH_CAST_AS = 11;
     private static final int BRANCH_DOT = 12;
+    private static final int BRANCH_BETWEEN_START = 13;
+    private static final int BRANCH_BETWEEN_END = 14;
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
     private final IntStack paramCountStack = new IntStack();
@@ -88,6 +90,7 @@ class ExpressionParser {
         try {
             int paramCount = 0;
             int braceCount = 0;
+            int betweenCount = 0;
             int caseCount = 0;
             int argStackDepth = 0;
             int castAsCount = 0;
@@ -290,9 +293,32 @@ class ExpressionParser {
                             } else {
                                 processDefaultBranch = true;
                             }
+                        } else if (SqlKeywords.isAndKeyword(tok)) {
+                            if (betweenCount == 1) {
+                                thisBranch = BRANCH_BETWEEN_END;
+                                while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
+                                    argStackDepth = onNode(listener, node, argStackDepth);
+                                }
+
+                                if (node != null) {
+                                    opStack.push(node);
+                                }
+
+                                paramCount++;
+                            } else {
+                                processDefaultBranch = true;
+                            }
                         } else {
                             processDefaultBranch = true;
                         }
+                        break;
+                    case 'b':
+                    case 'B':
+                        if (SqlKeywords.isBetweenKeyword(tok)) {
+                            thisBranch = BRANCH_BETWEEN_START;
+                            betweenCount++;
+                        }
+                        processDefaultBranch = true;
                         break;
                     case 's':
                     case 'S':
@@ -342,8 +368,27 @@ class ExpressionParser {
                                 break;
                             }
                         }
+                        if (prevBranch == BRANCH_BETWEEN_END) {
+                            betweenCount--;
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
 
-                        if (prevBranch != BRANCH_DOT && nonLiteralBranches.excludes(prevBranch)) {
+                            final int betweenParamCOunt = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1);
+                            while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
+                                argStackDepth = onNode(listener, node, argStackDepth);
+                            }
+
+                            if (argStackDepthStack.notEmpty()) {
+                                argStackDepth += argStackDepthStack.pop();
+                            }
+
+                            // enable operation or literal absorb parameters
+                            if (node.type == ExpressionNode.SET_OPERATION) {
+                                node.paramCount = betweenParamCOunt + (node.paramCount == 2 ? 1 : 0);
+                                node.type = ExpressionNode.FUNCTION;
+                                argStackDepth = onNode(listener, node, argStackDepth);
+                            }
+                            break;
+                        } else if (prevBranch != BRANCH_DOT && nonLiteralBranches.excludes(prevBranch)) {
                             opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                             break;
                         } else {
