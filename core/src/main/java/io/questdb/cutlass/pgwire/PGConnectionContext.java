@@ -1725,22 +1725,17 @@ public class PGConnectionContext implements IOContext, Mutable {
             sink.putNetworkInt(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
             sink.putNetworkInt(typeOids.get(columnType)); // type
-            if (columnType < 10) {
+            if (columnType < ColumnType.STRING) {
                 //type size
-                sink.putNetworkShort((short) 4);
-                //type modifier
-                sink.put('\uFFFF');
-                sink.put('\uFFFF');
-                sink.put('\uFFFF');
-                sink.put('\uFFFF');
+                sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
             } else {
                 // type size
-                sink.put('\uFFFF');
-                sink.put('\uFFFF');
-                // type modifier
-                sink.putNetworkInt(0);
+                sink.put((short) -1);
             }
+            //type modifier
+            sink.putNetworkInt(-1);
             // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+            // format code
             sink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
         }
         sink.putLen(addr);

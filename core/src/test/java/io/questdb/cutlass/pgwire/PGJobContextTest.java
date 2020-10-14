@@ -210,7 +210,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
-//                properties.setProperty("sslmode", "disable");
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 Statement statement = connection.createStatement();
@@ -2568,6 +2567,7 @@ nodejs code:
                 }
                 switch (JDBCType.valueOf(metaData.getColumnType(i))) {
                     case VARCHAR:
+                    case NUMERIC:
                         String stringValue = rs.getString(i);
                         if (rs.wasNull()) {
                             sink.put("null");
@@ -2616,14 +2616,6 @@ nodejs code:
                             sink.put("null");
                         } else {
                             sink.put(longValue);
-                        }
-                        break;
-                    case NUMERIC:
-                        String long256Value = rs.getString(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(long256Value);
                         }
                         break;
                     case CHAR:

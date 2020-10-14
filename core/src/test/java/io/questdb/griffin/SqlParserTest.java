@@ -4691,6 +4691,21 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNullChecks() throws SqlException {
+        assertQuery(
+                "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z','2020-09-20T17:00:00.312334Z'))",
+                "SELECT \n" +
+                        "a\n" +
+                        "FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')\n" +
+                        "select *", // <-- dangling 'select *'
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("time")
+        );
+    }
+
+    @Test
     public void testTableNameAsArithmetic() throws Exception {
         assertSyntaxError(
                 "select x from 'tab' + 1",

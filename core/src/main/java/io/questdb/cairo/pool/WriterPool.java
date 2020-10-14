@@ -271,6 +271,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, name, PoolListener.EV_UNLOCKED);
+            LOG.info().$("unlocked [table=`").utf8(name).$("`]").$();
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not lock owner of ").put(name);
