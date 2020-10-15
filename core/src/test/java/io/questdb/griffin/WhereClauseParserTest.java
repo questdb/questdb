@@ -1226,7 +1226,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testBetweenInFunctionOfThreeArgs() throws Exception {
         IntrinsicModel m = modelOf("func(2, timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z', 'abc')");
-        Assert.fail();
         Assert.assertNull(m.intervals);
         assertFilter(m, "'abc''2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetween2func");
     }
