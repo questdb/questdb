@@ -36,6 +36,8 @@ public class TimestampFormatUtils {
     public static final int HOUR_AM = 0;
     public static final TimestampFormat UTC_FORMAT;
     public static final TimestampFormat SEC_UTC_FORMAT;
+    public static final TimestampFormat GREEDY_MILLIS1_UTC_FORMAT;
+    public static final TimestampFormat GREEDY_MILLIS2_UTC_FORMAT;
     public static final TimestampFormat USEC_UTC_FORMAT;
     public static final TimestampFormat PG_TIMESTAMP_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
@@ -55,6 +57,8 @@ public class TimestampFormatUtils {
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
         USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
         SEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ssz");
+        GREEDY_MILLIS1_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.Sz");
+        GREEDY_MILLIS2_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSz");
         PG_TIMESTAMP_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
     }
 
@@ -344,10 +348,15 @@ public class TimestampFormatUtils {
     }
 
     private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
-        if (lim - lo == 27) {
+        int len = lim - lo;
+        if (len == 27) {
             return USEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-        } else if (lim - lo == 20) {
+        } else if (len == 20) {
             return SEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
+        } else if (len == 22) {
+            return GREEDY_MILLIS1_UTC_FORMAT.parse(seq, lo, lim, enLocale);
+        } else if (len == 23) {
+            return GREEDY_MILLIS2_UTC_FORMAT.parse(seq, lo, lim, enLocale);
         } else {
             return UTC_FORMAT.parse(seq, lo, lim, enLocale);
         }
