@@ -349,17 +349,17 @@ public class TimestampFormatUtils {
 
     private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
         int len = lim - lo;
-        if (len == 27) {
-            return USEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-        } else if (len == 20) {
-            return SEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-        } else if (len == 22) {
-            return GREEDY_MILLIS1_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-        } else if (len == 23) {
-            return GREEDY_MILLIS2_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-        } else {
-            return UTC_FORMAT.parse(seq, lo, lim, enLocale);
+        switch (len) {
+            case 27:
+                return USEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
+            case 20:
+                return SEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
+            case 22:
+                return GREEDY_MILLIS1_UTC_FORMAT.parse(seq, lo, lim, enLocale);
+            case 23:
+                return GREEDY_MILLIS2_UTC_FORMAT.parse(seq, lo, lim, enLocale);
+            default:
+                return UTC_FORMAT.parse(seq, lo, lim, enLocale);
         }
     }
-
 }
