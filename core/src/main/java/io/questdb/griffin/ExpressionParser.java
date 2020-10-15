@@ -134,7 +134,7 @@ class ExpressionParser {
                         thisBranch = BRANCH_DOT;
                         break;
                     case ',':
-                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE) {
+                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE || betweenCount > 0) {
                             throw missingArgs(lexer.lastTokenPosition());
                         }
                         thisBranch = BRANCH_COMMA;
@@ -325,6 +325,9 @@ class ExpressionParser {
                     case 'S':
                         if (SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
+                            if (betweenCount > 0) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "constant expected");
+                            }
                             argStackDepth = processLambdaQuery(lexer, listener, argStackDepth);
                         } else {
                             processDefaultBranch = true;
@@ -504,6 +507,10 @@ class ExpressionParser {
                         }
                         opStack.push(node);
                     } else if (caseCount > 0 || nonLiteralBranches.excludes(thisBranch)) {
+
+                        if (betweenCount > 0) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "between/and parameters must be constants");
+                        }
 
                         // here we handle literals, in case of "case" statement some of these literals
                         // are going to flush operation stack
