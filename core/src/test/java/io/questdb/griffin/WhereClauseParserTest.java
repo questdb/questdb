@@ -1260,6 +1260,28 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwoNestedBetween1() {
+        try {
+            modelOf("ask between between 1 and 2 and bid+ask/2");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
+            Assert.assertEquals(4, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testTwoNestedBetween2() {
+        try {
+            modelOf("ask between (between 1 and 2) and bid+ask/2");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
+            Assert.assertEquals(13, e.getPosition());
+        }
+    }
+
+    @Test
     public void testBetweenIntervalWithCaseStatementAsParam() {
         try {
             modelOf("timestamp between case when true then '2014-01-02T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'");
