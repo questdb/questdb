@@ -215,6 +215,16 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isConcatOperator(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == '|'
+                && (tok.charAt(i) | 32) == '|';
+    }
+
     public static boolean isCastKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return false;
