@@ -39,6 +39,7 @@ public class LogFactory implements Closeable {
 
     public static final LogFactory INSTANCE = new LogFactory();
     public static final String DEBUG_TRIGGER = "ebug";
+    public static final String DEBUG_TRIGGER_ENV = "QDB_DEBUG";
     public static final String CONFIG_SYSTEM_PROPERTY = "questdbLog";
 
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
@@ -342,7 +343,7 @@ public class LogFactory implements Closeable {
             }
         }
 
-        if (System.getProperty(DEBUG_TRIGGER) != null) {
+        if (isForcedDebug()) {
             level = level | LogLevel.LOG_LEVEL_DEBUG;
         }
 
@@ -373,6 +374,10 @@ public class LogFactory implements Closeable {
                 throw new LogError("Error creating log writer", e);
             }
         });
+    }
+
+    private static  boolean isForcedDebug() {
+        return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);
     }
 
     /**
@@ -412,7 +417,7 @@ public class LogFactory implements Closeable {
 
     private void configureDefaultWriter() {
         int level = LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_ERROR;
-        if (System.getProperty(DEBUG_TRIGGER) != null) {
+        if (isForcedDebug()) {
             level = level | LogLevel.LOG_LEVEL_DEBUG;
         }
         add(new LogWriterConfig(level, LogConsoleWriter::new));

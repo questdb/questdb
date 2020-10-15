@@ -35,11 +35,11 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -119,23 +119,41 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                     final Record record = cursor.getRecord();
                     final boolean _enabled = record.getBool(1);
 
+                    // if the configuration changed to enable or disable telemetry
+                    // we need to update the table to reflect that
                     if (enabled != _enabled) {
-                        final StringSink sink = new StringSink();
                         final TableWriter.Row row = writerConfig.newRow();
-                        record.getLong256(0, sink);
-                        row.putLong256(0, sink);
+                        final Long256 l256 = record.getLong256A(0);
+                        row.putLong256(0, l256);
                         row.putBool(1, enabled);
                         row.append();
                         writerConfig.commit();
+                        LOG.info()
+                                .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
+                                .$(", enabled=").$(this.enabled)
+                                .$(']').$();
+                    } else {
+                        final Long256 l256 = record.getLong256A(0);
+                        LOG.error()
+                                .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
+                                .$(", enabled=").$(this.enabled)
+                                .$(']').$();
                     }
                 } else {
+                    // if there are no record for telemetry id we need to create one using clocks
                     final MicrosecondClock clock = configuration.getMicrosecondClock();
                     final NanosecondClock nanosecondClock = configuration.getNanosecondClock();
                     final TableWriter.Row row = writerConfig.newRow();
-                    row.putLong256(0, nanosecondClock.getTicks(), clock.getTicks(), 0, 0);
+                    final long a = nanosecondClock.getTicks();
+                    final long b = clock.getTicks();
+                    row.putLong256(0, a, b, 0, 0);
                     row.putBool(1, enabled);
                     row.append();
                     writerConfig.commit();
+                    LOG.info()
+                            .$("new instance [id=").$256(a, b, 0, 0)
+                            .$(", enabled=").$(this.enabled)
+                            .$(']').$();
                 }
             }
 

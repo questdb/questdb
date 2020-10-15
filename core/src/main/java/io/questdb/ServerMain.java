@@ -120,24 +120,26 @@ public class ServerMain {
                 log.info().$("database root [dir=").$(path).$(']').$();
             }
         }
+
+        log.info().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
         switch (Os.type) {
             case Os.WINDOWS:
-                log.info().$("OS: windows-amd64 ").$(Vect.getSupportedInstructionSetName()).$();
+                log.info().$("OS: windows-amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_AMD64:
-                log.info().$("OS: linux-amd64 ").$(Vect.getSupportedInstructionSetName()).$();
+                log.info().$("OS: linux-amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.OSX:
-                log.info().$("OS: apple-amd64 ").$(Vect.getSupportedInstructionSetName()).$();
+                log.info().$("OS: apple-amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_ARM64:
-                log.info().$("OS: linux-arm64 ").$(Vect.getSupportedInstructionSetName()).$();
+                log.info().$("OS: linux-arm64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.FREEBSD:
-                log.info().$("OS: freebsd-amd64 ").$(Vect.getSupportedInstructionSetName()).$();
+                log.info().$("OS: freebsd-amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             default:
-                log.error().$("Unsupported OS ").$(Vect.getSupportedInstructionSetName()).$();
+                log.error().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
                 break;
         }
 

@@ -202,6 +202,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $256(long a, long b, long c, long d) {
+        Numbers.appendLong256(a, b, c, d, sink());
+        return this;
+    }
+
+    @Override
     public LogRecord debug() {
         return xdebug().ts().$(" D ").$(name);
     }
