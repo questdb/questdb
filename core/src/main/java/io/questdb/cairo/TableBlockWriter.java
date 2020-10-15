@@ -26,9 +26,7 @@ import io.questdb.std.str.Path;
 
 public class TableBlockWriter implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableBlockWriter.class);
-    private static final Timestamps.TimestampFloorMethod NO_PARTITIONING_FLOOR = (ts) -> {
-        return 0;
-    };
+    private static final Timestamps.TimestampFloorMethod NO_PARTITIONING_FLOOR = (ts) -> 0;
 
     private TableWriter writer;
     private final CharSequence root;
@@ -51,7 +49,7 @@ public class TableBlockWriter implements Closeable {
     private int nextPartitionBlockWriterIndex;
     private final ObjList<TableBlockWriterTask> concurrentTasks = new ObjList<>();
     private int nEnqueuedConcurrentTasks;
-    private final AtomicInteger nCompletedConcurrentTasks = new AtomicInteger();;
+    private final AtomicInteger nCompletedConcurrentTasks = new AtomicInteger();
     private PartitionBlockWriter partWriter;
 
     TableBlockWriter(CairoConfiguration configuration, MessageBus messageBus) {
@@ -71,9 +69,9 @@ public class TableBlockWriter implements Closeable {
         LOG.info().$("appending data").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", pageFrameLength=").$(pageFrameLength).$(", pageFrameNRows=")
                 .$(pageFrameNRows).$(']').$();
         if (columnIndex == timestampColumnIndex) {
-            long firstBlockTimetamp = Unsafe.getUnsafe().getLong(sourceAddress);
-            if (firstBlockTimetamp < firstTimestamp) {
-                firstTimestamp = firstBlockTimetamp;
+            long firstBlockTimestamp = Unsafe.getUnsafe().getLong(sourceAddress);
+            if (firstBlockTimestamp < firstTimestamp) {
+                firstTimestamp = firstBlockTimestamp;
             }
             long addr = sourceAddress + pageFrameLength - Long.BYTES;
             long lastBlockTimestamp = Unsafe.getUnsafe().getLong(addr);
@@ -150,7 +148,7 @@ public class TableBlockWriter implements Closeable {
         }
         completePendingConcurrentTasks(false);
         writer.commitBlock(firstTimestamp, lastTimestamp, nTotalRowsAdded);
-        LOG.info().$("commited new block [table=").$(writer.getName()).$(']').$();
+        LOG.info().$("committed new block [table=").$(writer.getName()).$(']').$();
         clear();
     }
 
@@ -331,7 +329,7 @@ public class TableBlockWriter implements Closeable {
                 if (columnStartAddress == 0) {
                     assert appendOffset == columnStartOffsets.getQuick(columnIndex);
                     int i = columnIndex << 1;
-                    long mapSz = pageFrameLength > ff.getMapPageSize() ? pageFrameLength : ff.getMapPageSize();
+                    long mapSz = Math.max(pageFrameLength, ff.getMapPageSize());
                     long address = mapFile(columnFds.getQuick(i), appendOffset, mapSz);
                     columnMappingStart.setQuick(columnIndex, address);
                     columnMappingSize.setQuick(columnIndex, mapSz);
@@ -367,7 +365,7 @@ public class TableBlockWriter implements Closeable {
         private void startCommitAppendedBlock() {
             nRowsAdded += pageFrameMaxNRows;
             pageFrameMaxNRows = 0;
-            long blockLastTimestamp = timestampHi < lastTimestamp ? timestampHi : lastTimestamp;
+            long blockLastTimestamp = Math.min(timestampHi, lastTimestamp);
             LOG.info().$("committing ").$(nRowsAdded).$(" rows to partition at ").$(path).$(" [firstTimestamp=").$ts(timestampLo).$(", lastTimestamp=").$ts(timestampHi).$(']').$();
             writer.startAppendedBlock(timestampLo, blockLastTimestamp, nRowsAdded, columnTops);
 
@@ -387,7 +385,6 @@ public class TableBlockWriter implements Closeable {
                             long columnDataAddressLo = columnMappingStart.getQuick(columnIndex);
                             assert offsetHi - offsetLo <= columnMappingSize.getQuick(columnIndex);
                             long columnDataAddressHi = columnDataAddressLo + offsetHi - offsetLo;
-                            long columnDataOffsetLo = offsetLo;
 
                             int i = (columnIndex << 1) + 1;
                             long indexFd = columnFds.getQuick(i);
@@ -398,9 +395,9 @@ public class TableBlockWriter implements Closeable {
                             additionalMappingSize.add(indexMappingSz);
 
                             if (columnType == ColumnType.STRING) {
-                                task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, columnDataOffsetLo, indexMappingStart);
+                                task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexMappingStart, indexMappingStart + indexMappingSz);
                             } else {
-                                task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, columnDataOffsetLo, indexMappingStart);
+                                task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexMappingStart);
                             }
                             enqueueConcurrentTask(task);
                             break;
@@ -449,8 +446,8 @@ public class TableBlockWriter implements Closeable {
                         columnMappingStart.setQuick(columnIndex, 0);
                     }
                 }
-                int nAdditonalMappings = additionalMappingStart.size();
-                for (i = 0; i < nAdditonalMappings; i++) {
+                int nAdditionalMappings = additionalMappingStart.size();
+                for (i = 0; i < nAdditionalMappings; i++) {
                     long address = additionalMappingStart.get(i);
                     long sz = additionalMappingSize.getQuick(i);
                     unmapFile(address, sz);
@@ -505,7 +502,7 @@ public class TableBlockWriter implements Closeable {
 
     private enum TaskType {
         AppendBlock, GenerateStringIndex, GenerateBinaryIndex
-    };
+    }
 
     private class TableBlockWriterTask {
         private TaskType taskType;
@@ -513,6 +510,7 @@ public class TableBlockWriter implements Closeable {
         private long sourceAddress;
         private long sourceSizeOrEnd;
         private long destAddress;
+        private long destAddressLimit;
         private long sourceInitialOffset;
 
         private boolean run() {
@@ -524,7 +522,7 @@ public class TableBlockWriter implements Closeable {
                             return true;
 
                         case GenerateStringIndex:
-                            completeUpdateStringIndex(sourceAddress, sourceSizeOrEnd, sourceInitialOffset, destAddress);
+                            completeUpdateStringIndex(sourceAddress, sourceSizeOrEnd, sourceInitialOffset, destAddress, destAddressLimit);
                             return true;
 
                         case GenerateBinaryIndex:
@@ -552,19 +550,21 @@ public class TableBlockWriter implements Closeable {
             this.sourceAddress = sourceAddress;
         }
 
-        private void assignUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo) {
+        private void assignUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo, long columnIndexAddressLimit) {
             taskType = TaskType.GenerateStringIndex;
             this.sourceAddress = columnDataAddressLo;
             this.destAddress = columnIndexAddressLo;
+            this.destAddressLimit = columnIndexAddressLimit;
             this.sourceSizeOrEnd = columnDataAddressHi;
             this.sourceInitialOffset = columnDataOffsetLo;
         }
 
-        private void completeUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo) {
+        private void completeUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo, long columnIndexAddressLimit) {
             long offset = columnDataOffsetLo;
             long columnDataAddress = columnDataAddressLo;
             long columnIndexAddress = columnIndexAddressLo;
             while (columnDataAddress < columnDataAddressHi) {
+                assert columnIndexAddress + Long.BYTES < columnIndexAddressLimit;
                 Unsafe.getUnsafe().putLong(columnIndexAddress, offset);
                 columnIndexAddress += Long.BYTES;
                 long strLen = Unsafe.getUnsafe().getInt(columnDataAddress);

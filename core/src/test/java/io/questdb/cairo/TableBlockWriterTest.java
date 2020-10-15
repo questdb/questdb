@@ -7,6 +7,7 @@ import java.util.concurrent.locks.LockSupport;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
@@ -353,6 +354,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testAllTypesResumeBlock() throws Exception {
         int nTest = 0;
         boolean[] bools = { true, false };
@@ -451,22 +453,15 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     ";",
                     sqlExecutionContext);
 
-            if (!retry) {
-                expected = select("SELECT * FROM " + sourceTableName);
-                replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
-                actual = select("SELECT * FROM " + destTableName);
-                Assert.assertEquals(expected, actual);
-            } else {
-
+            if (retry) {
                 replicateTable(sourceTableName, destTableName, nConsecutiveRows, false, maxRowsPerFrame, cancel, commitAllAtOnce, nThreads);
                 actual = select("SELECT * FROM " + destTableName);
                 Assert.assertEquals(expected, actual);
-
-                expected = select("SELECT * FROM " + sourceTableName);
-                replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
-                actual = select("SELECT * FROM " + destTableName);
-                Assert.assertEquals(expected, actual);
             }
+            expected = select("SELECT * FROM " + sourceTableName);
+            replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
+            actual = select("SELECT * FROM " + destTableName);
+            Assert.assertEquals(expected, actual);
 
             engine.releaseInactive();
         });
@@ -548,6 +543,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testMixedWrites() throws Exception {
         runTest("testMixedWrites", () -> {
             int nTest = 0;
@@ -627,7 +623,6 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$(", nFirstRow=").$(nFirstRow).$(", commit=").$(commit)
                 .$(", maxRowsPerFrame=").$(maxRowsPerFrame).$(", cancel=").$(cancel).$(", commitAllAtOnce=").$(commitAllAtOnce).$(", nThreads=").$(nThreads).$(']').$();
 
-        Thread[] threads = new Thread[nThreads];
         final SOCountDownLatch threadsStarted = new SOCountDownLatch(nThreads);
         final AtomicBoolean threadsRunning = new AtomicBoolean(true);
         final SOCountDownLatch threadsFinished = new SOCountDownLatch(nThreads);
@@ -667,14 +662,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 }
             };
             t.start();
-            threads[n] = t;
         }
         threadsStarted.await();
         LOG.info().$(nThreads).$(" worker threads started").$();
 
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
-                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName);) {
+                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName)
+        ) {
 
             final int columnCount = writer.getMetadata().getColumnCount();
             int nFrames = 0;
@@ -709,10 +704,12 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 }
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    long pageAddress = frame.getPageAddress(columnIndex);
-                    long pageFrameLength = frame.getPageLength(columnIndex);
-                    long pageFrameNRows = frame.getPageValueCount(columnIndex);
-                    blockWriter.appendPageFrameColumn(columnIndex, pageFrameLength, pageAddress, pageFrameNRows);
+                    blockWriter.appendPageFrameColumn(
+                            columnIndex,
+                            frame.getPageLength(columnIndex),
+                            frame.getPageAddress(columnIndex),
+                            frame.getPageValueCount(columnIndex)
+                    );
                 }
                 nFrames++;
                 if (!commitAllAtOnce) {
@@ -758,7 +755,10 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     private String select(CharSequence selectSql) throws SqlException {
         sink.clear();
         CompiledQuery query = compiler.compile(selectSql, sqlExecutionContext);
-        try (RecordCursorFactory factory = query.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext);) {
+        try (
+                RecordCursorFactory factory = query.getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
             printer.print(cursor, factory.getMetadata(), true);
         }
         return sink.toString();
