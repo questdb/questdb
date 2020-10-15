@@ -47,13 +47,6 @@ public class LogFactory implements Closeable {
     private static final String EMPTY_STR = "";
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
-
-    static {
-        reserved.add("scope");
-        reserved.add("class");
-        reserved.add("level");
-    }
-
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
@@ -71,20 +64,44 @@ public class LogFactory implements Closeable {
         this.clock = clock;
     }
 
-    @SuppressWarnings("rawtypes")
-    public static Log getLog(Class clazz) {
-        return getLog(clazz.getName());
-    }
+    public static void configureFromProperties(LogFactory factory, Properties properties, WorkerPool workerPool) {
 
-    public static Log getLog(CharSequence key) {
-        if (!INSTANCE.configured) {
-            configureFromSystemProperties(INSTANCE, null);
+        factory.workerPool = workerPool;
+        String writers = getProperty(properties, "writers");
+
+        if (writers == null) {
+            factory.configured = true;
+            return;
         }
-        return INSTANCE.create(key);
-    }
 
-    public static void configureFromSystemProperties(WorkerPool workerPool) {
-        configureFromSystemProperties(INSTANCE, workerPool);
+        String s;
+
+        s = getProperty(properties, "queueDepth");
+        if (s != null && s.length() > 0) {
+            try {
+                factory.setQueueDepth(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for queueDepth");
+            }
+        }
+
+        s = getProperty(properties, "recordLength");
+        if (s != null && s.length() > 0) {
+            try {
+                factory.setRecordLength(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for recordLength");
+            }
+        }
+
+        for (String w : writers.split(",")) {
+            LogWriterConfig conf = createWriter(properties, w.trim());
+            if (conf != null) {
+                factory.add(conf);
+            }
+        }
+
+        factory.bind();
     }
 
     public static void configureFromSystemProperties(LogFactory factory) {
@@ -123,153 +140,20 @@ public class LogFactory implements Closeable {
         factory.startThread();
     }
 
-    public static void configureFromProperties(LogFactory factory, Properties properties, WorkerPool workerPool) {
-
-        factory.workerPool = workerPool;
-        String writers = properties.getProperty("writers");
-
-        if (writers == null) {
-            factory.configured = true;
-            return;
-        }
-
-        String s;
-
-        s = properties.getProperty("queueDepth");
-        if (s != null && s.length() > 0) {
-            try {
-                factory.setQueueDepth(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for queueDepth");
-            }
-        }
-
-        s = properties.getProperty("recordLength");
-        if (s != null && s.length() > 0) {
-            try {
-                factory.setRecordLength(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for recordLength");
-            }
-        }
-
-        for (String w : writers.split(",")) {
-            LogWriterConfig conf = createWriter(properties, w.trim());
-            if (conf != null) {
-                factory.add(conf);
-            }
-        }
-
-        factory.bind();
+    public static void configureFromSystemProperties(WorkerPool workerPool) {
+        configureFromSystemProperties(INSTANCE, workerPool);
     }
 
     @SuppressWarnings("rawtypes")
-    private static LogWriterConfig createWriter(final Properties properties, String w) {
-        final String writer = "w." + w + '.';
-        final String clazz = properties.getProperty(writer + "class");
-        final String levelStr = properties.getProperty(writer + "level");
-        final String scope = properties.getProperty(writer + "scope");
-
-        if (clazz == null) {
-            return null;
-        }
-
-        final Class<?> cl;
-        final Constructor constructor;
-        try {
-            cl = Class.forName(clazz);
-            constructor = cl.getDeclaredConstructor(RingQueue.class, SCSequence.class, int.class);
-        } catch (ClassNotFoundException e) {
-            throw new LogError("Class not found " + clazz, e);
-        } catch (NoSuchMethodException e) {
-            throw new LogError("Constructor(RingQueue, Sequence, int) expected: " + clazz, e);
-        }
-
-        int level = 0;
-        if (levelStr != null) {
-            for (String s : levelStr.split(",")) {
-                switch (s.toUpperCase()) {
-                    case "DEBUG":
-                        level |= LogLevel.LOG_LEVEL_DEBUG;
-                        break;
-                    case "INFO":
-                        level |= LogLevel.LOG_LEVEL_INFO;
-                        break;
-                    case "ERROR":
-                        level |= LogLevel.LOG_LEVEL_ERROR;
-                        break;
-                    default:
-                        throw new LogError("Unknown level: " + s);
-                }
-            }
-        }
-
-        if (System.getProperty(DEBUG_TRIGGER) != null) {
-            level = level | LogLevel.LOG_LEVEL_DEBUG;
-        }
-
-        return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -> {
-            try {
-                LogWriter w1 = (LogWriter) constructor.newInstance(ring, seq, level1);
-
-                for (String n : properties.stringPropertyNames()) {
-                    if (n.startsWith(writer)) {
-                        String p = n.substring(writer.length());
-
-                        if (reserved.contains(p)) {
-                            continue;
-                        }
-
-                        try {
-                            Field f = cl.getDeclaredField(p);
-                            if (f.getType() == String.class) {
-                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), properties.getProperty(n));
-                            }
-                        } catch (Exception e) {
-                            throw new LogError("Unknown property: " + n, e);
-                        }
-                    }
-                }
-                return w1;
-            } catch (Exception e) {
-                throw new LogError("Error creating log writer", e);
-            }
-        });
+    public static Log getLog(Class clazz) {
+        return getLog(clazz.getName());
     }
 
-    /**
-     * Converts fully qualified class name into an abbreviated form:
-     * com.questdb.mp.Sequence -> c.n.m.Sequence
-     *
-     * @param key typically class name
-     * @return abbreviated form of key
-     */
-    private static CharSequence compressScope(CharSequence key) {
-        StringBuilder builder = new StringBuilder();
-        char c = 0;
-        boolean pick = true;
-        int z = 0;
-        for (int i = 0, n = key.length(); i < n; i++) {
-            char a = key.charAt(i);
-            if (a == '.') {
-                if (!pick) {
-                    builder.append(c).append('.');
-                    pick = true;
-                }
-            } else if (pick) {
-                c = a;
-                z = i;
-                pick = false;
-            }
+    public static Log getLog(CharSequence key) {
+        if (!INSTANCE.configured) {
+            configureFromSystemProperties(INSTANCE, null);
         }
-
-        for (; z < key.length(); z++) {
-            builder.append(key.charAt(z));
-        }
-
-        builder.append(' ');
-
-        return builder;
+        return INSTANCE.create(key);
     }
 
     public void add(final LogWriterConfig config) {
@@ -282,6 +166,15 @@ public class LogFactory implements Closeable {
             scopeConf = scopeConfigMap.valueAtQuick(index);
         }
         scopeConf.add(config);
+    }
+
+    public void assign(WorkerPool workerPool) {
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            workerPool.assign(jobs.get(i));
+        }
+        if (this.workerPool == null) {
+            this.workerPool = workerPool;
+        }
     }
 
     public void bind() {
@@ -400,13 +293,121 @@ public class LogFactory implements Closeable {
         workerPool.start(null);
     }
 
-    public void assign(WorkerPool workerPool) {
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            workerPool.assign(jobs.get(i));
+    private static String getProperty(final Properties properties, String key) {
+        final String envValue = System.getenv("QDB_LOG_" + key.replace('.', '_').toUpperCase());
+        if (envValue == null) {
+            return properties.getProperty(key);
         }
-        if (this.workerPool == null) {
-            this.workerPool = workerPool;
+        return envValue;
+    }
+
+    @SuppressWarnings("rawtypes")
+    private static LogWriterConfig createWriter(final Properties properties, String w) {
+        final String writer = "w." + w + '.';
+        final String clazz = getProperty(properties, writer + "class");
+        final String levelStr = getProperty(properties, writer + "level");
+        final String scope = getProperty(properties, writer + "scope");
+
+        if (clazz == null) {
+            return null;
         }
+
+        final Class<?> cl;
+        final Constructor constructor;
+        try {
+            cl = Class.forName(clazz);
+            constructor = cl.getDeclaredConstructor(RingQueue.class, SCSequence.class, int.class);
+        } catch (ClassNotFoundException e) {
+            throw new LogError("Class not found " + clazz, e);
+        } catch (NoSuchMethodException e) {
+            throw new LogError("Constructor(RingQueue, Sequence, int) expected: " + clazz, e);
+        }
+
+        int level = 0;
+        if (levelStr != null) {
+            for (String s : levelStr.split(",")) {
+                switch (s.toUpperCase()) {
+                    case "DEBUG":
+                        level |= LogLevel.LOG_LEVEL_DEBUG;
+                        break;
+                    case "INFO":
+                        level |= LogLevel.LOG_LEVEL_INFO;
+                        break;
+                    case "ERROR":
+                        level |= LogLevel.LOG_LEVEL_ERROR;
+                        break;
+                    default:
+                        throw new LogError("Unknown level: " + s);
+                }
+            }
+        }
+
+        if (System.getProperty(DEBUG_TRIGGER) != null) {
+            level = level | LogLevel.LOG_LEVEL_DEBUG;
+        }
+
+        return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -> {
+            try {
+                LogWriter w1 = (LogWriter) constructor.newInstance(ring, seq, level1);
+
+                for (String n : properties.stringPropertyNames()) {
+                    if (n.startsWith(writer)) {
+                        String p = n.substring(writer.length());
+
+                        if (reserved.contains(p)) {
+                            continue;
+                        }
+
+                        try {
+                            Field f = cl.getDeclaredField(p);
+                            if (f.getType() == String.class) {
+                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), getProperty(properties, n));
+                            }
+                        } catch (Exception e) {
+                            throw new LogError("Unknown property: " + n, e);
+                        }
+                    }
+                }
+                return w1;
+            } catch (Exception e) {
+                throw new LogError("Error creating log writer", e);
+            }
+        });
+    }
+
+    /**
+     * Converts fully qualified class name into an abbreviated form:
+     * com.questdb.mp.Sequence -> c.n.m.Sequence
+     *
+     * @param key typically class name
+     * @return abbreviated form of key
+     */
+    private static CharSequence compressScope(CharSequence key) {
+        StringBuilder builder = new StringBuilder();
+        char c = 0;
+        boolean pick = true;
+        int z = 0;
+        for (int i = 0, n = key.length(); i < n; i++) {
+            char a = key.charAt(i);
+            if (a == '.') {
+                if (!pick) {
+                    builder.append(c).append('.');
+                    pick = true;
+                }
+            } else if (pick) {
+                c = a;
+                z = i;
+                pick = false;
+            }
+        }
+
+        for (; z < key.length(); z++) {
+            builder.append(key.charAt(z));
+        }
+
+        builder.append(' ');
+
+        return builder;
     }
 
     private void configureDefaultWriter() {
@@ -606,5 +607,11 @@ public class LogFactory implements Closeable {
                 Misc.free(ring.get(i));
             }
         }
+    }
+
+    static {
+        reserved.add("scope");
+        reserved.add("class");
+        reserved.add("level");
     }
 }
