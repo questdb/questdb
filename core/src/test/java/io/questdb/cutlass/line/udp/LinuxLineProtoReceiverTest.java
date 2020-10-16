@@ -28,6 +28,7 @@ import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Os;
@@ -207,7 +208,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             try {
                 factory.create(receiverCfg, engine, null, true, null, null);
                 Assert.fail();
-            } catch (CairoException ignore) {
+            } catch (NetworkError ignore) {
             }
         }
     }
@@ -277,7 +278,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                         }
 
                         Assert.assertTrue(count > 0);
-                        receiver.halt();
+                        receiver.close();
 
                         StringSink sink = new StringSink();
                         RecordCursorPrinter printer = new RecordCursorPrinter(sink);
