@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
@@ -145,7 +146,7 @@ public class LineProtoLexer implements Mutable, Closeable {
                 parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);
             }
         }
-        
+
         return p;
     }
 
@@ -213,12 +214,22 @@ public class LineProtoLexer implements Mutable, Closeable {
     private void fireEventTransition2() {
         switch (state) {
             case LineProtoParser.EVT_TAG_NAME:
-                fireEvent();
-                state = LineProtoParser.EVT_TAG_VALUE;
+                if (!TableUtils.isInvalidColumnName(cs)) {
+                    fireEvent();
+                    state = LineProtoParser.EVT_TAG_VALUE;
+                } else {
+                    errorCode = LineProtoParser.ERROR_INVALID_COLUMN_NAME;
+                    throw LineProtoException.INSTANCE;
+                }
                 break;
             case LineProtoParser.EVT_FIELD_NAME:
-                fireEvent();
-                state = LineProtoParser.EVT_FIELD_VALUE;
+                if (!TableUtils.isInvalidColumnName(cs)) {
+                    fireEvent();
+                    state = LineProtoParser.EVT_FIELD_VALUE;
+                } else {
+                    errorCode = LineProtoParser.ERROR_INVALID_COLUMN_NAME;
+                    throw LineProtoException.INSTANCE;
+                }
                 break;
             default:
                 errorCode = LineProtoParser.ERROR_EXPECTED;

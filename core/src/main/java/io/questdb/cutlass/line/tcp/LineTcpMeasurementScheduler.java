@@ -542,14 +542,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                 try {
                     parser.processFirstEvent(engine, securityContext, event);
                 } catch (CairoException ex) {
-                    LOG.info()
-                            .$("could not create parser [jobName=").$(jobName)
+                    LOG.error()
+                            .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
                             .$(" name=").$(event.getTableName())
                             .$(", ex=").$(ex.getFlyweightMessage())
                             .$(", errno=").$(ex.getErrno())
                             .$(']').$();
                     parser.close();
-                    return false;
+                    return true;
                 }
                 LOG.info().$("created parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(']').$();
                 parserCache.put(Chars.toString(event.getTableName()), parser);
@@ -703,8 +703,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 assert null == writer;
                 int status = engine.getStatus(securityContext, path, event.getTableName(), 0, event.getTableName().length());
                 if (status == TableUtils.TABLE_EXISTS) {
-                    writer = engine.getWriter(securityContext, event.getTableName());
-                    processEvent(event);
+                    try {
+                        writer = engine.getWriter(securityContext, event.getTableName());
+                        processEvent(event);
+                    } catch (RuntimeException ex) {
+                        handleWriterCreationFailure(ex);
+                    }
                     return;
                 }
 
@@ -719,8 +723,28 @@ class LineTcpMeasurementScheduler implements Closeable {
                 for (int n = 0; n < nValues; n++) {
                     colIndexMappings.add(n, n);
                 }
-                writer = engine.getWriter(securityContext, event.getTableName());
-                addRow(event);
+                try {
+                    writer = engine.getWriter(securityContext, event.getTableName());
+                    addRow(event);
+                } catch (RuntimeException ex) {
+                    handleWriterCreationFailure(ex);
+                }
+            }
+
+            private void handleWriterCreationFailure(RuntimeException ex) {
+                if (null != writer) {
+                    try {
+                        writer.close();
+                    } catch (RuntimeException ex2) {
+                        // An error should already be logged, because there was another failure
+                        LOG.info().$("failed to close writer [table=").$(writer.getName())
+                                .$(", exception=").$(ex2)
+                                .$(']').$();
+                    } finally {
+                        writer = null;
+                    }
+                }
+                throw ex;
             }
 
         }

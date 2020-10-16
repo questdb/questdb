@@ -35,6 +35,7 @@ public interface LineProtoParser {
     int ERROR_EXPECTED = 1;
     int ERROR_ENCODING = 2;
     int ERROR_EMPTY = 3;
+    int ERROR_INVALID_COLUMN_NAME = 4;
 
     void onError(int position, int state, int code);
 
