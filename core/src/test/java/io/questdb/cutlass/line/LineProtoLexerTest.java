@@ -49,7 +49,7 @@ public class LineProtoLexerTest {
     @Test
     public void testCommaInTagName() {
         assertThat(
-                "measurement,t,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n",
+                "measurement-- error --\n",
                 "measurement,t\\,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n"
         );
     }
@@ -249,7 +249,7 @@ public class LineProtoLexerTest {
 
     @Test
     public void testSpaceTagName() {
-        assertThat("measurement,t ag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,t\\ ag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
+        assertThat("measurement-- error --\n", "measurement,t\\ ag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
