@@ -37,6 +37,7 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
@@ -373,9 +374,17 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     .$(']').$();
             switchModeToSkipLine();
         } else {
-            columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
-            writer.addColumn(cache.get(columnName), valueType);
-            columnValues.add(value.getCacheAddress());
+            CharSequence colNameAsChars = cache.get(columnName);
+            if (!TableUtils.isInvalidColumnName(colNameAsChars)) {
+                columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
+                writer.addColumn(colNameAsChars, valueType);
+                columnValues.add(value.getCacheAddress());
+            } else {
+                LOG.error().$("invalid column name [table=").$(writer.getName())
+                        .$(", columnName=").$(colNameAsChars)
+                        .$(']').$();
+                switchModeToSkipLine();
+            }
         }
     }
 

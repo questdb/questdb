@@ -299,6 +299,7 @@ public class TableWriter implements Closeable {
 
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
+        assert !TableUtils.isInvalidColumnName(name) : "invalid column name";
 
         checkDistressed();
 

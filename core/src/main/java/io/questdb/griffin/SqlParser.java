@@ -533,7 +533,7 @@ public final class SqlParser {
             final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));
             final int type = toColumnType(lexer, notTermTok(lexer));
 
-            if (SqlKeywords.isInvalidColumnName(name)) {
+            if (TableUtils.isInvalidColumnName(name)) {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 

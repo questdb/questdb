@@ -643,7 +643,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                     int colType = colTypes.getQuick(n);
                     if (colIndex == -1) {
                         colIndex = metadata.getColumnCount();
-                        writer.addColumn(event.getName(n), colType);
+                        CharSequence columnName = event.getName(n);
+                        if (!TableUtils.isInvalidColumnName(columnName)) {
+                            writer.addColumn(columnName, colType);
+                        } else {
+                            LOG.error().$("invalid column name [table=").$(writer.getName())
+                                    .$(", columnName=").$(columnName)
+                                    .$(']').$();
+                            error = true;
+                        }
                     } else {
                         int tableColType = metadata.getColumnType(colIndex);
                         if (tableColType != colType) {

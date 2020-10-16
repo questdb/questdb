@@ -342,7 +342,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     public void testColumnConversion1() throws Exception {
         runInContext(() -> {
             try (@SuppressWarnings("resource")
-                 TableModel model = new TableModel(configuration, "t_ilp21",
+            TableModel model = new TableModel(configuration, "t_ilp21",
                     PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).timestamp()) {
                 CairoTestUtils.create(model);
             }
@@ -729,7 +729,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         nWriterThreads = 3;
         int nTables = 12;
         int nIterations = 20_000;
-        double[] loadFactors = {10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60};
+        double[] loadFactors = { 10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60 };
         testThreading(nTables, nIterations, loadFactors);
 
         int maxLoad = Integer.MIN_VALUE;
@@ -774,9 +774,36 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testColumnNameWithSlash() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81,no/way/humidity=23 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
     private void addTable(String tableName) {
         try (@SuppressWarnings("resource")
-             TableModel model = new TableModel(configuration, tableName,
+        TableModel model = new TableModel(configuration, tableName,
                 PartitionBy.NONE).col("location", ColumnType.SYMBOL).col("temperature", ColumnType.DOUBLE).timestamp()) {
             CairoTestUtils.create(model);
         }
