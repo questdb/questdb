@@ -1561,7 +1561,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public String getDispatcherLogName() {
-            return "line-server";
+            return "tcp-line-server";
         }
 
         @Override

@@ -40,6 +40,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.time.Dates;
+import org.jetbrains.annotations.Nullable;
 import sun.misc.Signal;
 
 import java.io.*;
@@ -180,20 +181,24 @@ public class ServerMain {
                 pgWireServer = null;
             }
 
-            final AbstractLineProtoReceiver lineProtocolReceiver;
+            final AbstractLineProtoReceiver lineUdpServer;
 
-            if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-                lineProtocolReceiver = new LinuxMMLineProtoReceiver(
-                        configuration.getLineUdpReceiverConfiguration(),
-                        cairoEngine,
-                        workerPool
-                );
+            if (configuration.getLineUdpReceiverConfiguration().isEnabled()) {
+                if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+                    lineUdpServer = new LinuxMMLineProtoReceiver(
+                            configuration.getLineUdpReceiverConfiguration(),
+                            cairoEngine,
+                            workerPool
+                    );
+                } else {
+                    lineUdpServer = new LineProtoReceiver(
+                            configuration.getLineUdpReceiverConfiguration(),
+                            cairoEngine,
+                            workerPool
+                    );
+                }
             } else {
-                lineProtocolReceiver = new LineProtoReceiver(
-                        configuration.getLineUdpReceiverConfiguration(),
-                        cairoEngine,
-                        workerPool
-                );
+                lineUdpServer = null;
             }
 
             LineTcpServer lineTcpServer = LineTcpServer.create(
@@ -202,7 +207,7 @@ public class ServerMain {
                     log,
                     cairoEngine
             );
-            startQuestDb(workerPool, lineProtocolReceiver, log);
+            startQuestDb(workerPool, lineUdpServer, log);
             logWebConsoleUrls(log, configuration);
 
             System.gc();
@@ -220,7 +225,7 @@ public class ServerMain {
                         cairoEngine,
                         httpServer,
                         pgWireServer,
-                        lineProtocolReceiver,
+                        lineUdpServer,
                         telemetryJob,
                         lineTcpServer
                 );
@@ -418,11 +423,11 @@ public class ServerMain {
             final CairoEngine cairoEngine,
             final HttpServer httpServer,
             final PGWireServer pgWireServer,
-            final AbstractLineProtoReceiver lineProtocolReceiver,
+            @Nullable final AbstractLineProtoReceiver lineProtocolReceiver,
             final TelemetryJob telemetryJob,
             final LineTcpServer lineTcpServer
     ) {
-        lineProtocolReceiver.halt();
+        Misc.free(lineProtocolReceiver);
         Misc.free(telemetryJob);
         workerPool.halt();
         Misc.free(pgWireServer);
@@ -434,10 +439,12 @@ public class ServerMain {
 
     protected static void startQuestDb(
             final WorkerPool workerPool,
-            final AbstractLineProtoReceiver lineProtocolReceiver,
+            @Nullable final AbstractLineProtoReceiver lineProtocolReceiver,
             final Log log
     ) {
         workerPool.start(log);
-        lineProtocolReceiver.start();
+        if (lineProtocolReceiver != null) {
+            lineProtocolReceiver.start();
+        }
     }
 }
