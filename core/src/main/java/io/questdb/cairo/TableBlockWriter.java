@@ -564,7 +564,7 @@ public class TableBlockWriter implements Closeable {
             long columnDataAddress = columnDataAddressLo;
             long columnIndexAddress = columnIndexAddressLo;
             while (columnDataAddress < columnDataAddressHi) {
-                assert columnIndexAddress + Long.BYTES < columnIndexAddressLimit;
+                assert columnIndexAddress + Long.BYTES <= columnIndexAddressLimit;
                 Unsafe.getUnsafe().putLong(columnIndexAddress, offset);
                 columnIndexAddress += Long.BYTES;
                 long strLen = Unsafe.getUnsafe().getInt(columnDataAddress);

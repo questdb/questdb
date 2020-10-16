@@ -198,7 +198,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
     private long calculateBinaryPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn binLenCol, long row, long maxRows) {
         assert row > 0;
 
-        if (row < (maxRows - 1)) {
+        if (row < maxRows) {
             long binLenOffset = row << 3;
             return binLenCol.getLong(binLenOffset);
         }
@@ -209,7 +209,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
     private long calculateStringPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn strLenCol, long row, long maxRows) {
         assert row > 0;
 
-        if (row < (maxRows - 1)) {
+        if (row < maxRows) {
             long strLenOffset = row << 3;
             return strLenCol.getLong(strLenOffset);
         }

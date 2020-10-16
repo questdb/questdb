@@ -354,7 +354,6 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testAllTypesResumeBlock() throws Exception {
         int nTest = 0;
         boolean[] bools = { true, false };
@@ -543,7 +542,6 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testMixedWrites() throws Exception {
         runTest("testMixedWrites", () -> {
             int nTest = 0;
