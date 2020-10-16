@@ -36,11 +36,10 @@ import java.io.Closeable;
 
 public class SymbolMapWriter implements Closeable {
     public static final int HEADER_SIZE = 64;
-    private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
     public static final int HEADER_CAPACITY = 0;
     public static final int HEADER_CACHE_ENABLED = 4;
     public static final int HEADER_NULL_FLAG = 8;
-
+    private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
     private final BitmapIndexWriter indexWriter;
     private final ReadWriteMemory charMem;
     private final ReadWriteMemory offsetMem;
@@ -133,6 +132,22 @@ public class SymbolMapWriter implements Closeable {
         return path.concat(columnName).put(".o").$();
     }
 
+    @Override
+    public void close() {
+        Misc.free(indexWriter);
+        Misc.free(charMem);
+        if (this.offsetMem != null) {
+            long fd = this.offsetMem.getFd();
+            Misc.free(offsetMem);
+            LOG.info().$("closed [fd=").$(fd).$(']').$();
+        }
+        nullValue = false;
+    }
+
+    public int getSymbolCount() {
+        return offsetToKey(offsetMem.getAppendOffset());
+    }
+
     public int put(char c) {
         return put(SingleCharCharSequence.get(c));
     }
@@ -154,38 +169,6 @@ public class SymbolMapWriter implements Closeable {
         return lookupAndPut(symbol);
     }
 
-    static int offsetToKey(long offset) {
-        return (int) ((offset - HEADER_SIZE) / 8L);
-    }
-
-    static long keyToOffset(int key) {
-        return HEADER_SIZE + key * 8L;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(indexWriter);
-        Misc.free(charMem);
-        if (this.offsetMem != null) {
-            long fd = this.offsetMem.getFd();
-            Misc.free(offsetMem);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
-        }
-        nullValue = false;
-    }
-
-    public int getSymbolCount() {
-        return offsetToKey(offsetMem.getAppendOffset());
-    }
-
-    public void updateNullFlag(boolean flag) {
-        offsetMem.putBool(HEADER_NULL_FLAG, flag);
-    }
-
-    public void updateCacheFlag(boolean flag) {
-        offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
-    }
-
     public void rollback(int symbolCount) {
         indexWriter.rollbackValues(keyToOffset(symbolCount));
         offsetMem.jumpTo(keyToOffset(symbolCount));
@@ -193,6 +176,22 @@ public class SymbolMapWriter implements Closeable {
         if (cache != null) {
             cache.clear();
         }
+    }
+
+    public void updateCacheFlag(boolean flag) {
+        offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
+    }
+
+    public void updateNullFlag(boolean flag) {
+        offsetMem.putBool(HEADER_NULL_FLAG, flag);
+    }
+
+    static int offsetToKey(long offset) {
+        return (int) ((offset - HEADER_SIZE) / 8L);
+    }
+
+    static long keyToOffset(int key) {
+        return HEADER_SIZE + key * 8L;
     }
 
     boolean isCached() {
@@ -233,5 +232,12 @@ public class SymbolMapWriter implements Closeable {
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         return offsetToKey(offsetOffset);
+    }
+
+    void truncate() {
+        offsetMem.jumpTo(keyToOffset(0));
+        charMem.jumpTo(0);
+        indexWriter.truncate();
+        cache.clear();
     }
 }

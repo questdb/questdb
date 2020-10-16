@@ -752,8 +752,8 @@ public class WriterPoolTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
 
-            Assert.assertEquals(1, pool.size());
-            Assert.assertEquals(1, pool.getBusyCount());
+            Assert.assertEquals(0, pool.size());
+            Assert.assertEquals(0, pool.getBusyCount());
 
             pool.releaseInactive();
             Assert.assertEquals(0, pool.size());

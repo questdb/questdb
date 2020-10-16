@@ -141,6 +141,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                     notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
                     // this writer failed to allocate by this very thread
                     // ensure consistent response
+                    entries.remove(tableName);
                     throw e.ex;
                 }
                 return checkClosedAndGetWriter(tableName, e);
