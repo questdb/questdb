@@ -56,14 +56,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private static void indexInts(SlidingWindowMemory srcMem, BitmapIndexWriter writer, long hi) {
-        srcMem.updateSize();
-        for (long r = 0L; r < hi; r++) {
-            final long offset = r * 4;
-            writer.add(srcMem.getInt(offset), offset);
-        }
-    }
-
     @Override
     @Before
     public void setUp0() {
@@ -736,6 +728,51 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncate() {
+        create(configuration, path.trimTo(plen), "x", 1024);
+
+        int count = 2_500;
+        // add multiple keys, 1,2,3,4,5,6,7... etc
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < count; i++) {
+                writer.add(i, 1000);
+            }
+
+            // check that these keys exist in the index
+            Assert.assertEquals(count, writer.getKeyCount());
+
+            for (int i = 0; i < count; i++) {
+                RowCursor cursor = writer.getCursor(i);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(1000, cursor.next());
+                Assert.assertFalse(cursor.hasNext());
+            }
+
+            writer.truncate();
+            Assert.assertEquals(0, writer.getKeyCount());
+
+            // now add middle key first
+            writer.add(900, 8000);
+            Assert.assertEquals(901, writer.getKeyCount());
+
+            try (BitmapIndexReader reader = new BitmapIndexBwdReader(configuration, path, "x", 0)) {
+                Assert.assertEquals(901, reader.getKeyCount());
+                RowCursor cursor = reader.getCursor(true, 900, 0, 1_000_000);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(8000, cursor.next());
+                Assert.assertFalse(cursor.hasNext());
+
+                // assert that key below 900 do no have values
+                for (int i = 0; i < 900; i++) {
+                    Assert.assertFalse(reader.getCursor(true, i, 0, 1_000_000).hasNext());
+                }
+            }
+
+        }
+
+    }
+
+    @Test
     public void testWriterConstructorBadSequence() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             setupIndexHeader();
@@ -788,6 +825,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
             assertWriterConstructorFail("Key count");
         });
+    }
+
+    private static void indexInts(SlidingWindowMemory srcMem, BitmapIndexWriter writer, long hi) {
+        srcMem.updateSize();
+        for (long r = 0L; r < hi; r++) {
+            final long offset = r * 4;
+            writer.add(srcMem.getInt(offset), offset);
+        }
     }
 
     private void assertBackwardCursorLimit(BitmapIndexBwdReader reader, long max, LongList tmp) {

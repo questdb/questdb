@@ -341,6 +341,10 @@ public class BitmapIndexWriter implements Closeable {
         valueMemSize = TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE;
     }
 
+    public int getKeyCount() {
+        return keyCount;
+    }
+
     void updateKeyCount(int key) {
         keyCount = key + 1;
 

@@ -96,30 +96,6 @@ public class SymbolMapTest extends AbstractCairoTest {
         });
     }
 
-//    @Test
-//    public void testLookupPerformanceOld() throws JournalException {
-//        int N = 100000000;
-//        int symbolCount = 1024;
-//        ObjList<String> symbols = new ObjList<>();
-//        MMappedSymbolTable tab = new MMappedSymbolTable(symbolCount, 256, 1, new File(configuration.getRoot().toString()), "x", JournalMode.APPEND, 0, 0, false, true);
-//        Rnd rnd = new Rnd();
-//        long prev = -1L;
-//        for (int i = 0; i < symbolCount; i++) {
-//            CharSequence cs = rnd.nextChars(10);
-//            long key = tab.put(cs);
-//            symbols.add(cs.toString());
-//            Assert.assertEquals(prev + 1, key);
-//            prev = key;
-//        }
-//
-//        long t = System.nanoTime();
-//        for (int i = 0; i < N; i++) {
-//            int key = rnd.nextPositiveInt() % symbolCount;
-//            Assert.assertEquals(key, tab.put(symbols.getQuick(key)));
-//        }
-//        System.out.println(System.nanoTime() - t);
-//    }
-
     @Test
     public void testLookupPerformance() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -237,6 +213,48 @@ public class SymbolMapTest extends AbstractCairoTest {
                         prev = key;
                     }
 
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTruncate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1024;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                create(path, "x", N, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0);
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", 0)
+                ) {
+                    Rnd rnd = new Rnd();
+                    long prev = -1L;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+
+                    Assert.assertEquals(N, writer.getSymbolCount());
+
+                    writer.truncate();
+
+                    Assert.assertEquals(0, writer.getSymbolCount());
+
+                    // reset RND to exercise symbol cache
+                    rnd.reset();
+                    prev = -1;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+                    Assert.assertEquals(N, writer.getSymbolCount());
                 }
             }
         });
