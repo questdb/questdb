@@ -55,12 +55,12 @@ The interactive console to import data (drag and drop) and start querying right
 away. Check our Web Console guide to get started:
 
 <div align="center">
-  <a href="https://questdb.io/docs/guide/web-console">
+  <a href="https://questdb.io/docs/reference/client/web-console/">
     <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" />
   </a>
 </div>
 <div align="center">
-  <a href="https://questdb.io/docs/guide/web-console">
+  <a href="https://questdb.io/docs/docs/reference/client/web-console/">
     Web Console guide
   </a>
 </div>
@@ -98,23 +98,22 @@ The easiest way to get started is with Docker:
 docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
-You can more information about Docker usage
-[here](https://hub.docker.com/repository/docker/questdb/questdb/).
+You can more information about Docker usage on the
+[dedicated page](https://questdb.io/docs/get-started/docker/).
 
 #### Alternative methods
 
-- [Start with Homebrew](https://questdb.io/docs/guide/homebrew)
-- [Start with the binaries](https://questdb.io/docs/guide/binaries)
+- [Start with Homebrew](https://questdb.io/docs/get-started/homebrew/)
+- [Start with the binaries](https://questdb.io/docs/get-started/binaries/)
 
 ### Connecting to QuestDB
 
 You can interact with QuestDB using:
 
-- [Web Console](https://questdb.io/docs/guide/web-console) listening on port
-  `9000`: [localhost:9000](http://localhost:9000)
-- [Postgres wire](https://questdb.io/docs/guide/postgres-wire), for example with
-  PSQL (alpha) on port `8812`
-- [REST API](https://questdb.io/docs/guide/rest) listening on port `9000`
+- [Web Console](https://questdb.io/docs/reference/client/web-console/) listening
+  on port `9000`: [localhost:9000](http://localhost:9000)
+- [Postgres](https://questdb.io/docs/reference/api/postgres/) on port `8812`
+- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
 
 Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
@@ -187,28 +186,27 @@ java -p core/target/questdb-5.0.4-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMa
 ## Resources
 
 Complete references are available in the
-[Documentation](https://questdb.io/docs/introduction). There are also several
-guides to get started.
+[Documentation](https://questdb.io/docs/introduction/).
 
-Quick-start guides:
+Get started:
 
-- [Docker](https://questdb.io/docs/guide/docker)
-- [Homebrew](https://questdb.io/docs/guide/homebrew)
-- [Using the binaries](https://questdb.io/docs/guide/binaries)
+- [Docker](https://questdb.io/docs/get-started/docker/)
+- [Binaries](https://questdb.io/docs/get-started/binaries/)
+- [Homebrew](https://questdb.io/docs/get-started/homebrew/)
 
-Usage guides:
+Develop:
 
-- [Web Console](https://questdb.io/docs/guide/web-console)
-- [Postgres wire with PSQL](https://questdb.io/docs/guide/postgres-wire) (alpha)
-- [REST API](https://questdb.io/docs/guide/rest)
-- [CRUD operations](https://questdb.io/docs/guide/crud)
+- [Connect](https://questdb.io/docs/develop/connect/)
+- [Insert data](https://questdb.io/docs/develop/insert-data/)
+- [Query data](https://questdb.io/docs/develop/query-data/)
+- [Authenticate](https://questdb.io/docs/develop/authenticate/)
 
 Concepts:
 
-- [SQL extensions](https://questdb.io/docs/concept/sql-extensions)
-- [Storage model](https://questdb.io/docs/concept/storage-model)
-- [Partitions](https://questdb.io/docs/concept/partitions)
-- [Designated timestamp](https://questdb.io/docs/concept/designated-timestamp)
+- [SQL extensions](https://questdb.io/docs/concept/sql-extensions/)
+- [Storage model](https://questdb.io/docs/concept/storage-model/)
+- [Partitions](https://questdb.io/docs/concept/partitions/)
+- [Designated timestamp](https://questdb.io/docs/concept/designated-timestamp/)
 
 ## Support / Contact
 
@@ -217,11 +215,6 @@ Concepts:
 ## Roadmap
 
 [Our roadmap is here](https://github.com/questdb/questdb/projects/3)
-
-## Guides
-
-- [QuestDB in Go](https://questdb.io/docs/tutorial/go)
-- [QuestDB in Python](https://tutswiki.com/setup-access-questdb-python-notebook/)
 
 ## Contribution
 
