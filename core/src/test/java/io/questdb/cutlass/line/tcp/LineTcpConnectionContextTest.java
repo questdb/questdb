@@ -866,7 +866,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testCairoExceptionOnAddColumn() throws Exception {
         FF_OPENRW_TASK = (fnm) -> {
-            if (fnm.toString().endsWith("/broken.d")) {
+            if (fnm.toString().endsWith("broken.d")) {
                 throw CairoException.instance(2).put("Cannot open ").put(fnm);
             }
           return null;  
@@ -899,7 +899,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testCairoExceptionOnCreateTable() throws Exception {
         FF_OPENRW_TASK = (fnm) -> {
-            if (fnm.toString().endsWith("/broken.d")) {
+            if (fnm.toString().endsWith("broken.d")) {
                 throw CairoException.instance(2).put("Cannot open ").put(fnm);
             }
             return null;
