@@ -24,21 +24,47 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import java.io.Closeable;
+import java.util.Arrays;
+
+import io.questdb.cairo.AppendMemory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.CachedCharSequence;
+import io.questdb.cutlass.line.CairoLineProtoParserSupport;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
+import io.questdb.cutlass.line.CharSequenceCache;
+import io.questdb.cutlass.line.LineProtoParser;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.TruncatedLineProtoLexer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.Job;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SPSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
-
-import java.io.Closeable;
-import java.util.Arrays;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -521,7 +547,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
                 if (event.threadId == id) {
-                    eventProcessed = processNextEvent(event);
+                    processNextEvent(event);
+                    eventProcessed = true;
                 } else {
                     if (event.isRebalanceEvent()) {
                         eventProcessed = processRebalance(event);
@@ -535,28 +562,27 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        private boolean processNextEvent(LineTcpMeasurementEvent event) {
+        private void processNextEvent(LineTcpMeasurementEvent event) {
             Parser parser = parserCache.get(event.getTableName());
-            if (null == parser) {
-                parser = new Parser();
-                try {
+            try {
+                if (null == parser) {
+                    parser = new Parser();
                     parser.processFirstEvent(engine, securityContext, event);
-                } catch (CairoException ex) {
-                    LOG.error()
-                            .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
-                            .$(" name=").$(event.getTableName())
-                            .$(", ex=").$(ex.getFlyweightMessage())
-                            .$(", errno=").$(ex.getErrno())
-                            .$(']').$();
-                    parser.close();
-                    return true;
+                    LOG.info().$("created parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(']').$();
+                    parserCache.put(Chars.toString(event.getTableName()), parser);
+                } else {
+                    parser.processEvent(event);
                 }
-                LOG.info().$("created parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(']').$();
-                parserCache.put(Chars.toString(event.getTableName()), parser);
-            } else {
-                parser.processEvent(event);
+            } catch (CairoException ex) {
+                LOG.error()
+                        .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
+                        .$(" name=").$(event.getTableName())
+                        .$(", ex=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .$(']').$();
+                parser.close();
+                parserCache.remove(event.getTableName());
             }
-            return true;
         }
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
@@ -703,12 +729,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 assert null == writer;
                 int status = engine.getStatus(securityContext, path, event.getTableName(), 0, event.getTableName().length());
                 if (status == TableUtils.TABLE_EXISTS) {
-                    try {
-                        writer = engine.getWriter(securityContext, event.getTableName());
-                        processEvent(event);
-                    } catch (RuntimeException ex) {
-                        handleWriterCreationFailure(ex);
-                    }
+                    writer = engine.getWriter(securityContext, event.getTableName());
+                    processEvent(event);
                     return;
                 }
 
@@ -717,36 +739,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                         securityContext,
                         appendMemory,
                         path,
-                        tableStructureAdapter.of(event, this)
-                );
+                        tableStructureAdapter.of(event, this));
                 int nValues = event.getNValues();
                 for (int n = 0; n < nValues; n++) {
                     colIndexMappings.add(n, n);
                 }
-                try {
-                    writer = engine.getWriter(securityContext, event.getTableName());
-                    addRow(event);
-                } catch (RuntimeException ex) {
-                    handleWriterCreationFailure(ex);
-                }
+                writer = engine.getWriter(securityContext, event.getTableName());
+                addRow(event);
             }
-
-            private void handleWriterCreationFailure(RuntimeException ex) {
-                if (null != writer) {
-                    try {
-                        writer.close();
-                    } catch (RuntimeException ex2) {
-                        // An error should already be logged, because there was another failure
-                        LOG.info().$("failed to close writer [table=").$(writer.getName())
-                                .$(", exception=").$(ex2)
-                                .$(']').$();
-                    } finally {
-                        writer = null;
-                    }
-                }
-                throw ex;
-            }
-
         }
 
         private class TableStructureAdapter implements TableStructure {

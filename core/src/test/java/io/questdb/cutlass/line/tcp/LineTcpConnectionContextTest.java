@@ -24,20 +24,25 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
@@ -51,9 +56,12 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
@@ -72,9 +80,36 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private int rebalanceNRebalances = 0;
 
     private long microSecondTicks;
+    private static Function<LPSZ, Void> FF_OPENRW_TASK;
+
+    @BeforeClass
+    public static void setUp() throws IOException {
+        // it is necessary to initialise logger before tests start
+        // logger doesn't relinquish memory until JVM stops
+        // which causes memory leak detector to fail should logger be
+        // created mid-test
+        LOG.info().$("begin").$();
+        root = temp.newFolder("dbRoot").getAbsolutePath();
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                FF_OPENRW_TASK.apply(name);
+                return super.openRW(name);
+            }
+        };
+        configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+    }
 
     @Before
     public void before() {
+        FF_OPENRW_TASK = (name) -> {
+            return null;
+        };
         NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
             public int recv(long fd, long buffer, int bufferLen) {
@@ -824,6 +859,66 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testCairoExceptionOnAddColumn() throws Exception {
+        FF_OPENRW_TASK = (fnm) -> {
+            if (fnm.toString().endsWith("/broken.d")) {
+                throw CairoException.instance(2).put("Cannot open ").put(fnm);
+            }
+          return null;  
+        };
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81,broken=23 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testCairoExceptionOnCreateTable() throws Exception {
+        FF_OPENRW_TASK = (fnm) -> {
+            if (fnm.toString().endsWith("/broken.d")) {
+                throw CairoException.instance(2).put("Cannot open ").put(fnm);
+            }
+            return null;
+        };
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-eastcoast temperature=81,broken=23 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\tbroken\ttimestamp\n";
             assertTable(expected, "weather");
         });
     }
