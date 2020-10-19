@@ -196,25 +196,45 @@ public class TablePageFrameCursor implements PageFrameCursor {
     }
 
     private long calculateBinaryPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn binLenCol, long row, long maxRows) {
-        assert row > 0;
+    	assert row > 0 && row <= maxRows;
 
         if (row < maxRows) {
             long binLenOffset = row << 3;
             return binLenCol.getLong(binLenOffset);
         }
 
-        return col.getGrownLength();
+        long binLenOffset = (row -1) << 3;
+        long prevBinOffset = binLenCol.getLong(binLenOffset);
+        long binLen =  col.getInt(prevBinOffset);
+        long sz;
+        if (binLen == TableUtils.NULL_LEN) {
+            sz = Long.BYTES;
+        } else {
+            sz = Long.BYTES + binLen;
+        }
+        
+        return prevBinOffset + sz;
     }
 
     private long calculateStringPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn strLenCol, long row, long maxRows) {
-        assert row > 0;
+        assert row > 0 && row <= maxRows;
 
         if (row < maxRows) {
             long strLenOffset = row << 3;
             return strLenCol.getLong(strLenOffset);
         }
 
-        return col.getGrownLength();
+        long strLenOffset = (row -1) << 3;
+        long prevStrOffset = strLenCol.getLong(strLenOffset);
+        long strLen = col.getInt(prevStrOffset);
+        long sz;
+        if (strLen == TableUtils.NULL_LEN) {
+            sz = VirtualMemory.STRING_LENGTH_BYTES;
+        } else {
+            sz = VirtualMemory.STRING_LENGTH_BYTES + 2 * strLen;
+        }
+
+        return prevStrOffset + sz;
     }
 
     @Override
