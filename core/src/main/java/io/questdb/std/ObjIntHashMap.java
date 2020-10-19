@@ -53,7 +53,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     @SuppressWarnings("unchecked")
     private ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
         assert loadFactor > 0 && loadFactor < 1.0;
-        this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : initialCapacity;
+        this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
         this.loadFactor = loadFactor;
         this.noKeyValue = noKeyValue;
         keys = (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / loadFactor))];

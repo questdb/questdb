@@ -28,7 +28,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 public interface FilesFacade {
-    public static final long MAP_FAILED = -1;
+    long MAP_FAILED = -1;
 
     long append(long fd, long buf, int len);
 

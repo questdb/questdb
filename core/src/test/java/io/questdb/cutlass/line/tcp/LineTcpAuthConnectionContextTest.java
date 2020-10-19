@@ -69,7 +69,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     private LineTcpAuthConnectionContext context;
     private LineTcpReceiverConfiguration lineTcpConfiguration;
     private LineTcpMeasurementScheduler scheduler;
-    private AtomicInteger netMsgBufferSize = new AtomicInteger(1024);
+    private final AtomicInteger netMsgBufferSize = new AtomicInteger(1024);
     private boolean disconnected;
     private String recvBuffer;
 
@@ -111,7 +111,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                     return maxSendBytes;
                 }
 
-                int nSent = bufferLen <= maxSendBytes ? bufferLen : maxSendBytes;
+                int nSent = Math.min(bufferLen, maxSendBytes);
                 sentBytes = new byte[nSent];
 
                 for (int n = 0; n < nSent; n++) {

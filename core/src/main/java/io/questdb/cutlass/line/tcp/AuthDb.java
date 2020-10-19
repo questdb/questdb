@@ -21,6 +21,7 @@ import java.security.spec.ECPoint;
 import java.security.spec.ECPrivateKeySpec;
 import java.security.spec.ECPublicKeySpec;
 import java.security.spec.InvalidKeySpecException;
+import java.security.spec.InvalidParameterSpecException;
 import java.util.Base64;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -47,6 +48,24 @@ public class AuthDb {
             return KeyFactory.getInstance(EC_ALGORITHM).generatePrivate(privateKeySpec);
         } catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException | InvalidKeySpecException ex) {
             throw new IllegalArgumentException("Failed to decode " + encodedPrivateKey, ex);
+        }
+    }
+
+    public static PublicKey importPublicKey(String encodedX, String encodedY) {
+        byte[] xBytes = Base64.getUrlDecoder().decode(encodedX);
+        byte[] yBytes = Base64.getUrlDecoder().decode(encodedY);
+        try {
+            BigInteger x = new BigInteger(xBytes);
+            BigInteger y = new BigInteger(yBytes);
+            ECPoint point = new ECPoint(x, y);
+
+            AlgorithmParameters parameters = AlgorithmParameters.getInstance(EC_ALGORITHM);
+            parameters.init(new ECGenParameterSpec(EC_CURVE));
+            ECParameterSpec ecParameters = parameters.getParameterSpec(ECParameterSpec.class);
+            ECPublicKeySpec pubKeySpec = new ECPublicKeySpec(point, ecParameters);
+            return KeyFactory.getInstance(EC_ALGORITHM).generatePublic(pubKeySpec);
+        } catch (NoSuchAlgorithmException | InvalidKeySpecException | InvalidParameterSpecException ex) {
+            throw new IllegalArgumentException("Failed to decode " + encodedX + "," + encodedY, ex);
         }
     }
 
@@ -95,17 +114,7 @@ public class AuthDb {
                     throw new IllegalArgumentException("Duplicate keyId " + keyId);
                 }
 
-                byte[] xBytes = Base64.getUrlDecoder().decode(tokens[2]);
-                byte[] yBytes = Base64.getUrlDecoder().decode(tokens[3]);
-                BigInteger x = new BigInteger(xBytes);
-                BigInteger y = new BigInteger(yBytes);
-                ECPoint point = new ECPoint(x, y);
-
-                AlgorithmParameters parameters = AlgorithmParameters.getInstance(EC_ALGORITHM);
-                parameters.init(new ECGenParameterSpec(EC_CURVE));
-                ECParameterSpec ecParameters = parameters.getParameterSpec(ECParameterSpec.class);
-                ECPublicKeySpec pubKeySpec = new ECPublicKeySpec(point, ecParameters);
-                PublicKey publicKey = KeyFactory.getInstance(EC_ALGORITHM).generatePublic(pubKeySpec);
+                PublicKey publicKey = importPublicKey(tokens[2], tokens[3]);
                 publicKeyByKeyId.put(keyId, publicKey);
             } while (null != line);
         } catch (Exception ex) {

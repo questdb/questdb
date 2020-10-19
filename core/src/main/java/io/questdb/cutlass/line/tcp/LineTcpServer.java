@@ -74,15 +74,16 @@ public class LineTcpServer implements Closeable {
                     return dispatcher.processIOQueue(onRequest);
                 }
 
-                if (! handleIO(busyContext)) {
+                if (!handleIO(busyContext)) {
                     busyContext = null;
                     return true;
                 }
-                
+
                 return false;
             }
 
             private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
+
             private void onRequest(int operation, LineTcpConnectionContext context) {
                 assert busyContext == null;
                 if (handleIO(context)) {
@@ -90,7 +91,7 @@ public class LineTcpServer implements Closeable {
                 }
             }
         });
- 
+
         final Closeable cleaner = contextFactory::closeContextPool;
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
@@ -100,18 +101,20 @@ public class LineTcpServer implements Closeable {
     }
 
     private boolean handleIO(LineTcpConnectionContext context) {
-        switch (context.handleIO()) {
-            case NEEDS_READ:
-                context.getDispatcher().registerChannel(context, IOOperation.READ);
-                return false;
-            case NEEDS_WRITE:
-                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                return false;
-            case NEEDS_CPU:
-                return true;
-            case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context);
-                return false;
+        if (!context.invalid()) {
+            switch (context.handleIO()) {
+                case NEEDS_READ:
+                    context.getDispatcher().registerChannel(context, IOOperation.READ);
+                    return false;
+                case NEEDS_WRITE:
+                    context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                    return false;
+                case NEEDS_CPU:
+                    return true;
+                case NEEDS_DISCONNECT:
+                    context.getDispatcher().disconnect(context);
+                    return false;
+            }
         }
         return false;
     }

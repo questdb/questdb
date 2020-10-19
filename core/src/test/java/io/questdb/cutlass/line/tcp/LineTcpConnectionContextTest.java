@@ -24,41 +24,36 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Unsafe;
+import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.LPSZ;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
-
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IOOperation;
-import io.questdb.network.IORequestProcessor;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Unsafe;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.MicrosecondClockImpl;
-import io.questdb.test.tools.TestUtils;
+import java.util.function.Function;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
     private static final int FD = 1_000_000;
+    private static Function<LPSZ, Void> FF_OPENRW_TASK;
     private LineTcpConnectionContext context;
     private LineTcpReceiverConfiguration lineTcpConfiguration;
     private LineTcpMeasurementScheduler scheduler;
@@ -66,15 +61,37 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private String recvBuffer;
     private int nWriterThreads;
     private WorkerPool workerPool;
-
     private int[] rebalanceLoadByThread;
     private int rebalanceNLoadCheckCycles = 0;
     private int rebalanceNRebalances = 0;
-
     private long microSecondTicks;
+
+    @BeforeClass
+    public static void setUp() throws IOException {
+        // it is necessary to initialise logger before tests start
+        // logger doesn't relinquish memory until JVM stops
+        // which causes memory leak detector to fail should logger be
+        // created mid-test
+        LOG.info().$("begin").$();
+        root = temp.newFolder("dbRoot").getAbsolutePath();
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                FF_OPENRW_TASK.apply(name);
+                return super.openRW(name);
+            }
+        };
+        configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+    }
 
     @Before
     public void before() {
+        FF_OPENRW_TASK = (name) -> null;
         NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
             public int recv(long fd, long buffer, int bufferLen) {
@@ -339,11 +356,71 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCairoExceptionOnAddColumn() throws Exception {
+        FF_OPENRW_TASK = (fnm) -> {
+            if (fnm.toString().endsWith("broken.d")) {
+                throw CairoException.instance(2).put("Cannot open ").put(fnm);
+            }
+            return null;
+        };
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81,broken=23 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testCairoExceptionOnCreateTable() throws Exception {
+        FF_OPENRW_TASK = (fnm) -> {
+            if (fnm.toString().endsWith("broken.d")) {
+                throw CairoException.instance(2).put("Cannot open ").put(fnm);
+            }
+            return null;
+        };
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-eastcoast temperature=81,broken=23 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\tbroken\ttimestamp\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
     public void testColumnConversion1() throws Exception {
         runInContext(() -> {
-            try (@SuppressWarnings("resource")
-                 TableModel model = new TableModel(configuration, "t_ilp21",
-                    PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).timestamp()) {
+            try (
+                    TableModel model = new TableModel(configuration, "t_ilp21",
+                            PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).timestamp()) {
                 CairoTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
@@ -357,6 +434,60 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t2016-06-13T17:43:50.102800Z\n" +
                     "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t2016-06-13T17:43:50.102800Z\n";
             assertTable(expected, "t_ilp21");
+        });
+    }
+
+    @Test
+    public void testColumnNameWithSlash1() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81,no/way/humidity=23 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testColumnNameWithSlash2() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-eastcoast temperature=81,no/way/humidity=23 1465839830101400200\n" +
+                    "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast temperature=80 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
         });
     }
 
@@ -775,9 +906,10 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     private void addTable(String tableName) {
-        try (@SuppressWarnings("resource")
-             TableModel model = new TableModel(configuration, tableName,
-                PartitionBy.NONE).col("location", ColumnType.SYMBOL).col("temperature", ColumnType.DOUBLE).timestamp()) {
+        try (
+                TableModel model = new TableModel(configuration, tableName,
+                        PartitionBy.NONE).col("location", ColumnType.SYMBOL).col("temperature", ColumnType.DOUBLE).timestamp()
+        ) {
             CairoTestUtils.create(model);
         }
     }
@@ -812,6 +944,23 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             scheduler.close();
             scheduler = null;
         }
+    }
+
+    private boolean handleContextIO() {
+        switch (context.handleIO()) {
+            case NEEDS_READ:
+                context.getDispatcher().registerChannel(context, IOOperation.READ);
+                return false;
+            case NEEDS_WRITE:
+                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                return false;
+            case NEEDS_CPU:
+                return true;
+            case NEEDS_DISCONNECT:
+                context.getDispatcher().disconnect(context);
+                return false;
+        }
+        return false;
     }
 
     private void runInContext(Runnable r) throws Exception {
@@ -995,23 +1144,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable]);
             }
         });
-    }
-
-    private boolean handleContextIO() {
-        switch (context.handleIO()) {
-            case NEEDS_READ:
-                context.getDispatcher().registerChannel(context, IOOperation.READ);
-                return false;
-            case NEEDS_WRITE:
-                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                return false;
-            case NEEDS_CPU:
-                return true;
-            case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context);
-                return false;
-        }
-        return false;
     }
 
     private void waitForIOCompletion() {

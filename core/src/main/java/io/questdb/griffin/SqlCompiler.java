@@ -852,7 +852,7 @@ public class SqlCompiler implements Closeable {
 
             CharSequence columnName = GenericLexer.immutableOf(tok);
 
-            if (SqlKeywords.isInvalidColumnName(columnName)) {
+            if (!TableUtils.isValidColumnName(columnName)) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
@@ -1082,7 +1082,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
             }
 
-            if (SqlKeywords.isInvalidColumnName(tok)) {
+            if (!TableUtils.isValidColumnName(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
