@@ -765,7 +765,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (columnIndex == getTimestampIndex()) {
                     return "timestamp";
                 }
-                return event.getName(columnIndex);
+                CharSequence colName = event.getName(columnIndex);
+                if (!TableUtils.isInvalidColumnName(colName)) {
+                    return colName;
+                }
+                throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
             }
 
             @Override

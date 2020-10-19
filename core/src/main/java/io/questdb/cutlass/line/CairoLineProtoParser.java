@@ -493,7 +493,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             if (columnIndex == getTimestampIndex()) {
                 return "timestamp";
             }
-            return cache.get(columnNameType.getQuick(columnIndex * 2));
+            CharSequence colName = cache.get(columnNameType.getQuick(columnIndex * 2));
+            if (!TableUtils.isInvalidColumnName(colName)) {
+                return colName;
+            }
+            throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
         }
 
         @Override
