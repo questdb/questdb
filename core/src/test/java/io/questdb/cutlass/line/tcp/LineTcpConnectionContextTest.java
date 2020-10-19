@@ -946,23 +946,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         }
     }
 
-    private boolean handleContextIO() {
-        switch (context.handleIO()) {
-            case NEEDS_READ:
-                context.getDispatcher().registerChannel(context, IOOperation.READ);
-                return false;
-            case NEEDS_WRITE:
-                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                return false;
-            case NEEDS_CPU:
-                return true;
-            case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context);
-                return false;
-        }
-        return false;
-    }
-
     private void runInContext(Runnable r) throws Exception {
         runInContext(r, null);
     }
@@ -1027,7 +1010,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
             @Override
             public int getConnectionCount() {
-                return 0;
+                return disconnected ? 0 : 1;
             }
 
             @Override
@@ -1146,14 +1129,29 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    private void handleContextIO() {
+        switch (context.handleIO()) {
+            case NEEDS_READ:
+                context.getDispatcher().registerChannel(context, IOOperation.READ);
+                return;
+            case NEEDS_WRITE:
+                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                return;
+            case NEEDS_CPU:
+                return;
+            case NEEDS_DISCONNECT:
+                context.getDispatcher().disconnect(context);
+                return;
+        }
+        return;
+    }
+
     private void waitForIOCompletion() {
         int maxIterations = 256;
         recvBuffer = null;
         // Guard against slow writers on disconnect
-        while (maxIterations-- > 0) {
-            if (!handleContextIO()) {
-                break;
-            }
+        while (maxIterations-- > 0 && context.getDispatcher().getConnectionCount() > 0) {
+            handleContextIO();
             LockSupport.parkNanos(1_000_000);
         }
         Assert.assertTrue(maxIterations > 0);
