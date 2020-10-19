@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstByteGroupByFunction extends ByteFunction implements GroupByFunction, UnaryFunction {

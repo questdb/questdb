@@ -68,9 +68,8 @@ public class ExtendendOnePageMemoryTest {
         path.of(f.getCanonicalPath()).$();
     }
 
-    @SuppressWarnings("resource")
     @BeforeClass
-    public static void beforeClass() throws IOException {
+    public static void beforeClass() {
         ff = new FilesFacadeImpl() {
             @Override
             public long mmap(long fd, long len, long offset, int mode) {
@@ -91,7 +90,7 @@ public class ExtendendOnePageMemoryTest {
     }
 
     @AfterClass
-    public static void afterClass() throws IOException {
+    public static void afterClass() {
         path.close();
     }
 }

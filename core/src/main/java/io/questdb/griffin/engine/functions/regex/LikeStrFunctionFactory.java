@@ -39,7 +39,6 @@ import io.questdb.std.str.StringSink;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 public class LikeStrFunctionFactory implements FunctionFactory {
     @Override

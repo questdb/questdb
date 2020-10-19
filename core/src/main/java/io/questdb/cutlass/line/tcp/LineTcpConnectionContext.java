@@ -39,7 +39,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     enum IOContextResult {
         NEEDS_READ, NEEDS_WRITE, NEEDS_CPU, NEEDS_DISCONNECT
-    };
+    }
+
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;

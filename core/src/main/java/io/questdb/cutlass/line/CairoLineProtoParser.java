@@ -375,9 +375,9 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             switchModeToSkipLine();
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
-            if (!TableUtils.isInvalidColumnName(colNameAsChars)) {
-                columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
+            if (TableUtils.isValidColumnName(colNameAsChars)) {
                 writer.addColumn(colNameAsChars, valueType);
+                columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
                 columnValues.add(value.getCacheAddress());
             } else {
                 LOG.error().$("invalid column name [table=").$(writer.getName())
@@ -494,7 +494,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 return "timestamp";
             }
             CharSequence colName = cache.get(columnNameType.getQuick(columnIndex * 2));
-            if (!TableUtils.isInvalidColumnName(colName)) {
+            if (TableUtils.isValidColumnName(colName)) {
                 return colName;
             }
             throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');

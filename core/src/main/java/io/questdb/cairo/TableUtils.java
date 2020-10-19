@@ -535,7 +535,7 @@ public final class TableUtils {
         fmtYear = compiler.compile("yyyy");
     }
 
-    public static boolean isInvalidColumnName(CharSequence seq) {
+    public static boolean isValidColumnName(CharSequence seq) {
         for (int i = 0, l = seq.length(); i < l; i++) {
             char c = seq.charAt(i);
             switch (c) {
@@ -557,11 +557,11 @@ public final class TableUtils {
                 case '%':
                 case '~':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
-                    return true;
+                    return false;
                 default:
-
+                    break;
             }
         }
-        return false;
+        return true;
     }
 }

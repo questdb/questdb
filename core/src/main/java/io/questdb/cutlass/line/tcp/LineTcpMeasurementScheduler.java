@@ -55,13 +55,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.IntHashSet;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
@@ -580,7 +574,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         .$(", ex=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .$(']').$();
-                parser.close();
+                Misc.free(parser);
                 parserCache.remove(event.getTableName());
             }
         }
@@ -666,20 +660,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 RecordMetadata metadata = writer.getMetadata();
                 for (int n = 0; n < nMeasurementValues; n++) {
                     int colIndex = metadata.getColumnIndexQuiet(event.getName(n));
-                    int colType = colTypes.getQuick(n);
+                    final int colType = colTypes.getQuick(n);
                     if (colIndex == -1) {
-                        colIndex = metadata.getColumnCount();
-                        CharSequence columnName = event.getName(n);
-                        if (!TableUtils.isInvalidColumnName(columnName)) {
-                            writer.addColumn(columnName, colType);
-                        } else {
-                            LOG.error().$("invalid column name [table=").$(writer.getName())
-                                    .$(", columnName=").$(columnName)
-                                    .$(']').$();
-                            error = true;
-                        }
+                        colIndex = addColumn(event, metadata, n, colType);
                     } else {
-                        int tableColType = metadata.getColumnType(colIndex);
+                        final int tableColType = metadata.getColumnType(colIndex);
                         if (tableColType != colType) {
                             if (colType == ColumnType.LONG && ALLOWED_LONG_CONVERSIONS.contains(tableColType)) {
                                 colTypes.setQuick(n, tableColType);
@@ -696,6 +681,20 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                     colIndexMappings.add(n, colIndex);
                 }
+            }
+
+            private int addColumn(LineTcpMeasurementEvent event, RecordMetadata metadata, int n, int colType) {
+                final int colIndex = metadata.getColumnCount();
+                CharSequence columnName = event.getName(n);
+                if (TableUtils.isValidColumnName(columnName)) {
+                    writer.addColumn(columnName, colType);
+                } else {
+                    LOG.error().$("invalid column name [table=").$(writer.getName())
+                            .$(", columnName=").$(columnName)
+                            .$(']').$();
+                    error = true;
+                }
+                return colIndex;
             }
 
             private void parseTypes(LineTcpMeasurementEvent event) {
@@ -766,7 +765,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     return "timestamp";
                 }
                 CharSequence colName = event.getName(columnIndex);
-                if (!TableUtils.isInvalidColumnName(colName)) {
+                if (TableUtils.isValidColumnName(colName)) {
                     return colName;
                 }
                 throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
