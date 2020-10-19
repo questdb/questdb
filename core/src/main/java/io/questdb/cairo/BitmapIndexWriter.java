@@ -333,7 +333,19 @@ public class BitmapIndexWriter implements Closeable {
         this.seekValueBlockOffset = offset;
     }
 
-    private void updateKeyCount(int key) {
+    void truncate() {
+        keyMem.truncate();
+        valueMem.truncate();
+        initKeyMemory(keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+        keyCount = 0;
+        valueMemSize = TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE;
+    }
+
+    public int getKeyCount() {
+        return keyCount;
+    }
+
+    void updateKeyCount(int key) {
         keyCount = key + 1;
 
         // also write key count to header of key memory

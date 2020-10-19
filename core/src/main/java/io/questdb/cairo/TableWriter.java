@@ -913,6 +913,11 @@ public class TableWriter implements Closeable {
      */
     public final void truncate() {
 
+        // we do this before size check so that "old" corrupt symbol tables are brought back in line
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            denseSymbolMapWriters.getQuick(i).truncate();
+        }
+
         if (size() == 0) {
             return;
         }

@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 public class ReadWriteMemory extends VirtualMemory {
@@ -55,11 +56,20 @@ public class ReadWriteMemory extends VirtualMemory {
         }
     }
 
-    public void sync(int pageIndex, boolean async) {
-        if (ff.msync(pages.getQuick(pageIndex), getMapPageSize(), async) == 0) {
-            return;
+    @Override
+    protected long allocateNextPage(int page) {
+        final long offset = pageOffset(page);
+        final long pageSize = getMapPageSize();
+
+        if (ff.length(fd) < offset + pageSize) {
+            ff.truncate(fd, offset + pageSize);
         }
-        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+
+        final long address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
+        if (address != -1) {
+            return address;
+        }
+        throw CairoException.instance(ff.errno()).put("Cannot mmap read-write fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
     }
 
     @Override
@@ -102,25 +112,41 @@ public class ReadWriteMemory extends VirtualMemory {
         }
     }
 
+    public void sync(int pageIndex, boolean async) {
+        if (ff.msync(pages.getQuick(pageIndex), getMapPageSize(), async) == 0) {
+            return;
+        }
+        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+    }
+
     public void sync(boolean async) {
         for (int i = 0, n = pages.size(); i < n; i++) {
             sync(i, async);
         }
     }
 
-    @Override
-    protected long allocateNextPage(int page) {
-        final long offset = pageOffset(page);
+    public void truncate() {
+        // We may have many pages papped. Keep one, unmap all others and
+        // truncate file to the size of first page
+        final long firstPage = getPageAddress(0);
         final long pageSize = getMapPageSize();
-
-        if (ff.length(fd) < offset + pageSize) {
-            ff.truncate(fd, offset + pageSize);
+        Unsafe.getUnsafe().setMemory(firstPage, pageSize, (byte) 0);
+        for (int i = 1, n = pages.size(); i < n; i++) {
+            release(i, pages.getQuick(i));
+            pages.setQuick(i, 0);
         }
+        jumpTo(0);
+        long fileSize = ff.length(fd);
+        if (fileSize > pageSize) {
+            if (ff.truncate(fd, pageSize)) {
+                return;
+            }
 
-        final long address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
-        if (address != -1) {
-            return address;
+            // we could not truncate the file; we have to clear it via memory mapping
+            long mem = ff.mmap(fd, fileSize, 0,  Files.MAP_RW);
+            Unsafe.getUnsafe().setMemory(mem + pageSize, fileSize - pageSize, (byte) 0);
+            ff.munmap(mem, fileSize);
+            LOG.info().$("could not truncate, zeroed [fd=").$(fd).$(']').$();
         }
-        throw CairoException.instance(ff.errno()).put("Cannot mmap read-write fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
     }
 }
