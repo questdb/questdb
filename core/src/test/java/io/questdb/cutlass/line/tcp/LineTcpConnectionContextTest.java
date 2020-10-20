@@ -920,12 +920,17 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         }
     }
 
-    private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
+    private void assertTableCount(CharSequence tableName, int nExpectedRows, long initialTimestampNanos, long timestampIncrementInNanos, long maxExpectedTimestampNanos) {
         try (TableReader reader = new TableReader(configuration, tableName)) {
             Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
+            int timestampColIndex = reader.getMetadata().getTimestampIndex();
             TableReaderRecordCursor recordCursor = reader.getCursor();
             int nRows = 0;
+            long timestampinNanos = initialTimestampNanos;
             while (recordCursor.hasNext()) {
+                long actualTimestampInMicros = recordCursor.getRecord().getTimestamp(timestampColIndex);
+                Assert.assertEquals(timestampinNanos / 1000, actualTimestampInMicros);
+                timestampinNanos += timestampIncrementInNanos;
                 nRows++;
             }
             Assert.assertEquals(nExpectedRows, nRows);
@@ -944,23 +949,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             scheduler.close();
             scheduler = null;
         }
-    }
-
-    private boolean handleContextIO() {
-        switch (context.handleIO()) {
-            case NEEDS_READ:
-                context.getDispatcher().registerChannel(context, IOOperation.READ);
-                return false;
-            case NEEDS_WRITE:
-                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                return false;
-            case NEEDS_CPU:
-                return true;
-            case NEEDS_DISCONNECT:
-                context.getDispatcher().disconnect(context);
-                return false;
-        }
-        return false;
     }
 
     private void runInContext(Runnable r) throws Exception {
@@ -1027,7 +1015,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
             @Override
             public int getConnectionCount() {
-                return 0;
+                return disconnected ? 0 : 1;
             }
 
             @Override
@@ -1101,9 +1089,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         Random random = new Random(0);
         int[] countByTable = new int[nTables];
         long[] maxTimestampByTable = new long[nTables];
+        final long initialTimestampNanos = 1465839830100400200L;
+        final long timestampIncrementInNanos = 1000;
+        Arrays.fill(maxTimestampByTable, initialTimestampNanos);
         runInContext(() -> {
             int nTablesSelected = 0;
-            long timestamp = 1465839830100400200L;
             int nTotalUpdates = 0;
             for (int nIter = 0; nIter < nIterations; nIter++) {
                 int nLines = random.nextInt(50) + 1;
@@ -1121,11 +1111,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                             }
                         }
                     }
+                    long timestamp = maxTimestampByTable[nTable];
+                    maxTimestampByTable[nTable] += timestampIncrementInNanos;
                     double temperature = 50.0 + (random.nextInt(500) / 10.0);
                     recvBuffer += "weather" + nTable + ",location=us-midwest temperature=" + temperature + " " + timestamp + "\n";
                     countByTable[nTable]++;
-                    maxTimestampByTable[nTable] = timestamp;
-                    timestamp += 1000;
                     nTotalUpdates++;
                 }
                 do {
@@ -1141,19 +1131,34 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             LOG.info().$("Completed ").$(nTotalUpdates).$(" measurements with ").$(nTables).$(" measurement types processed by ").$(nWriterThreads).$(" threads. ")
                     .$(rebalanceNLoadCheckCycles).$(" load checks lead to ").$(rebalanceNRebalances).$(" load rebalancing operations").$();
             for (int nTable = 0; nTable < nTables; nTable++) {
-                assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable]);
+                assertTableCount("weather" + nTable, countByTable[nTable], initialTimestampNanos, timestampIncrementInNanos, maxTimestampByTable[nTable] - timestampIncrementInNanos);
             }
         });
+    }
+
+    private void handleContextIO() {
+        switch (context.handleIO()) {
+            case NEEDS_READ:
+                context.getDispatcher().registerChannel(context, IOOperation.READ);
+                return;
+            case NEEDS_WRITE:
+                context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                return;
+            case NEEDS_CPU:
+                return;
+            case NEEDS_DISCONNECT:
+                context.getDispatcher().disconnect(context);
+                return;
+        }
+        return;
     }
 
     private void waitForIOCompletion() {
         int maxIterations = 256;
         recvBuffer = null;
         // Guard against slow writers on disconnect
-        while (maxIterations-- > 0) {
-            if (!handleContextIO()) {
-                break;
-            }
+        while (maxIterations-- > 0 && context.getDispatcher().getConnectionCount() > 0) {
+            handleContextIO();
             LockSupport.parkNanos(1_000_000);
         }
         Assert.assertTrue(maxIterations > 0);

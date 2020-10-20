@@ -220,7 +220,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private void loadRebalance() {
-        LOG.info().$("load check cycle ").$(++nLoadCheckCycles).$();
+        LOG.info().$("load check [cycle=").$(++nLoadCheckCycles).$(']').$();
         calcThreadLoad();
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         int fromThreadId = -1;
@@ -294,7 +294,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null == event) {
                 return;
             }
-            LOG.info().$("rebalance cycle ").$(++nRebalances).$(" moving ").$(tableNameToMove).$(" from ").$(fromThreadId).$(" to ").$(toThreadId).$();
+            LOG.info().$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances).$(", table=").$(tableNameToMove).$(", fromThreadId=").$(fromThreadId).$(", toThreadId=")
+                    .$(toThreadId).$(']').$();
             commitRebalanceEvent(event, fromThreadId, toThreadId, tableNameToMove);
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNameToMove);
             stats.threadId = toThreadId;
@@ -318,7 +319,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int rebalanceFromThreadId;
         private int rebalanceToThreadId;
         private String rebalanceTableName;
-        private boolean rebalanceReleasedByFromThread;
+        private volatile boolean rebalanceReleasedByFromThread;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             lexer = new TruncatedLineProtoLexer(maxMeasurementSize);
@@ -389,6 +390,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             rebalanceFromThreadId = fromThreadId;
             rebalanceToThreadId = toThreadId;
             rebalanceTableName = tableName;
+            rebalanceReleasedByFromThread = false;
         }
 
         int getErrorCode() {
@@ -562,7 +564,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (null == parser) {
                     parser = new Parser();
                     parser.processFirstEvent(engine, securityContext, event);
-                    LOG.info().$("created parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(']').$();
+                    LOG.info().$("created parser [jobName=").$(jobName).$(" table=").$(event.getTableName()).$(']').$();
                     parserCache.put(Chars.toString(event.getTableName()), parser);
                 } else {
                     parser.processEvent(event);
@@ -570,7 +572,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             } catch (CairoException ex) {
                 LOG.error()
                         .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
-                        .$(" name=").$(event.getTableName())
+                        .$(", table=").$(event.getTableName())
                         .$(", ex=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .$(']').$();
@@ -581,10 +583,16 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
             if (event.rebalanceToThreadId == id) {
-                return event.rebalanceReleasedByFromThread;
+                if (event.rebalanceReleasedByFromThread) {
+                    LOG.info().$("rebalance cycle, new thread ready [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
+                    return true;
+                }
+
+                return false;
             }
 
             if (event.rebalanceFromThreadId == id) {
+                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
                 Parser parser = parserCache.get(event.rebalanceTableName);
                 parserCache.remove(event.rebalanceTableName);
                 parser.close();
