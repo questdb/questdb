@@ -9,8 +9,10 @@ ENV PATH="/mvn/$MVN/bin":$PATH
 WORKDIR /mvn
 
 RUN \
-  yum update -y -q \
+  curl -sL https://rpm.nodesource.com/setup_12.x | bash - \
+  && yum update -y -q \
   && yum install -y -q \
+  nodejs \
   java-11-amazon-corretto-headless \
   git \
   tar \
@@ -22,4 +24,4 @@ WORKDIR /app
 
 RUN \
   git clone --depth 1 https://github.com/questdb/questdb.git "$(pwd)" \
-  && mvn clean package -Dprofile.install-local-nodejs -DskipTests
+  && mvn clean package -B -DskipTests -P build-web-console,build-binaries
