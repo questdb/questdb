@@ -318,7 +318,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int rebalanceFromThreadId;
         private int rebalanceToThreadId;
         private String rebalanceTableName;
-        private boolean rebalanceReleasedByFromThread;
+        private volatile boolean rebalanceReleasedByFromThread;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             lexer = new TruncatedLineProtoLexer(maxMeasurementSize);
@@ -389,6 +389,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             rebalanceFromThreadId = fromThreadId;
             rebalanceToThreadId = toThreadId;
             rebalanceTableName = tableName;
+            rebalanceReleasedByFromThread = false;
         }
 
         int getErrorCode() {
@@ -581,10 +582,16 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
             if (event.rebalanceToThreadId == id) {
-                return event.rebalanceReleasedByFromThread;
+                if (event.rebalanceReleasedByFromThread) {
+                    LOG.info().$("rebalance cycle thread ").$(id).$(" can now get writer for ").$(event.rebalanceTableName).$();
+                    return true;
+                }
+
+                return false;
             }
 
             if (event.rebalanceFromThreadId == id) {
+                LOG.info().$("rebalance cycle thread ").$(id).$(" releasing table ").$(event.rebalanceTableName).$();
                 Parser parser = parserCache.get(event.rebalanceTableName);
                 parserCache.remove(event.rebalanceTableName);
                 parser.close();
