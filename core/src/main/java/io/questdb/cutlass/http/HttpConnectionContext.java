@@ -576,7 +576,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
             } catch (PeerDisconnectedException ignore) {
                 dispatcher.disconnect(this);
             } catch (PeerIsSlowToReadException e2) {
-                LOG.info().$("Peer is slow on running the rerun [fd=").$(fd).$(']').$();
+                LOG.info().$("Peer is slow on running the rerun [fd=").$(fd).$(", thread=")
+                        .$(Thread.currentThread().getId()).$(']').$();
                 processor.parkRequest(this);
                 resumeProcessor = processor;
                 dispatcher.registerChannel(this, IOOperation.WRITE);
@@ -635,5 +636,4 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         clear();
         dispatcher.disconnect(this);
     }
-
 }

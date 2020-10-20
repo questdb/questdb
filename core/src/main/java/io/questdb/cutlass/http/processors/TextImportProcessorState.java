@@ -35,7 +35,10 @@ class TextImportProcessorState implements Mutable, Closeable {
     public static final int STATE_OK = 0;
     //    public static final int STATE_INVALID_FORMAT = 1;
     public static final int STATE_DATA_ERROR = 2;
-    final TextLoader textLoader;
+    public TextLoaderCompletedState completeState;
+    public long parsedCount;
+    public long writtenCount;
+    TextLoader textLoader;
     public int columnIndex = 0;
     long hi;
     long lo;
@@ -66,6 +69,13 @@ class TextImportProcessorState implements Mutable, Closeable {
     @Override
     public void close() {
         clear();
-        Misc.free(textLoader);
+        textLoader = Misc.free(textLoader);
+    }
+
+    public void copyCompleteState() {
+        if (completeState == null) {
+            completeState = new TextLoaderCompletedState();
+        }
+        completeState.copyState(textLoader);
     }
 }

@@ -45,12 +45,13 @@ public class HttpServerConfigurationBuilder {
     private String httpProtocolVersion = "HTTP/1.1 ";
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private int rerunProcessingQueueSize = 4096;
+    private int receiveBufferSize = 1024 * 1024;
 
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
         return this;
     }
-    
+
     public HttpServerConfigurationBuilder withBaseDir(String baseDir) {
         this.baseDir = baseDir;
         return this;
@@ -88,6 +89,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withRerunProcessingQueueSize(int rerunProcessingQueueSize) {
         this.rerunProcessingQueueSize = rerunProcessingQueueSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withReceiveBufferSize(int receiveBufferSize) {
+        this.receiveBufferSize = receiveBufferSize;
         return this;
     }
 
@@ -192,6 +198,11 @@ public class HttpServerConfigurationBuilder {
                         return rerunProcessingQueueSize;
                     }
                 };
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return receiveBufferSize;
             }
 
             @Override

@@ -89,8 +89,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
         switch (state.responseState) {
             case RESPONSE_PREFIX:
-                long totalRows = state.textLoader.getParsedLineCount();
-                long importedRows = state.textLoader.getWrittenLineCount();
+                long totalRows = state.parsedCount;
+                long importedRows = state.writtenCount;
                 socket.put('{')
                         .putQuoted("status").put(':').putQuoted("OK").put(',')
                         .putQuoted("location").put(':').encodeUtf8AndQuote(textLoader.getTableName()).put(',')
@@ -178,16 +178,16 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     private static void resumeText(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final TextLoader textLoader = state.textLoader;
-        final RecordMetadata metadata = textLoader.getMetadata();
-        LongList errors = textLoader.getColumnErrorCounts();
+        final TextLoaderCompletedState textLoaderCompletedState = state.completeState;
+        final RecordMetadata metadata = textLoaderCompletedState.getMetadata();
+        LongList errors = textLoaderCompletedState.getColumnErrorCounts();
 
         switch (state.responseState) {
             case RESPONSE_PREFIX:
                 sep(socket);
                 socket.put('|');
                 pad(socket, TO_STRING_COL1_PAD, "Location:");
-                pad(socket, TO_STRING_COL2_PAD, textLoader.getTableName());
+                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getTableName());
                 pad(socket, TO_STRING_COL3_PAD, "Pattern");
                 pad(socket, TO_STRING_COL4_PAD, "Locale");
                 pad(socket, TO_STRING_COL5_PAD, "Errors").put(Misc.EOL);
@@ -195,7 +195,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
                 socket.put('|');
                 pad(socket, TO_STRING_COL1_PAD, "Partition by");
-                pad(socket, TO_STRING_COL2_PAD, PartitionBy.toString(textLoader.getPartitionBy()));
+                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getPartitionBy());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
                 pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
@@ -203,14 +203,14 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
                 socket.put('|');
                 pad(socket, TO_STRING_COL1_PAD, "Rows handled");
-                pad(socket, TO_STRING_COL2_PAD, textLoader.getParsedLineCount() + textLoader.getErrorLineCount());
+                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getParsedLineCount() + textLoaderCompletedState.getErrorLineCount());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
                 pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
 
                 socket.put('|');
                 pad(socket, TO_STRING_COL1_PAD, "Rows imported");
-                pad(socket, TO_STRING_COL2_PAD, textLoader.getWrittenLineCount());
+                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getWrittenLineCount());
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
                 pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
@@ -276,8 +276,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 }
             } catch (EntryUnavailableException e) {
                 throw RetryOperationException.INSTANCE;
-            } catch (NotEnoughLinesException e) {
-                throw e;
             } catch (TextException | CairoException | CairoError e) {
                 handleTextException(e);
             }
@@ -465,6 +463,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         final TextImportProcessorState state = LV.get(context);
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+
+        // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
+        state.copyCompleteState();
+        state.clear();
+
         if (state.state == TextImportProcessorState.STATE_OK) {
             if (state.json) {
                 socket.status(200, CONTENT_TYPE_JSON);
