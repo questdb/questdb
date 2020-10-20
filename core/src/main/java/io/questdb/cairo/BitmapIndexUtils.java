@@ -164,9 +164,7 @@ public final class BitmapIndexUtils {
                 final long lo = valueMem.getLong(valueBlockOffset);
                 if (minValue > lo) {
                     // yes, we do
-                    valueCount = searchValueBlock(valueMem, valueBlockOffset, cellCount, minValue - 1);
-                    seeker.seek(valueCount, valueBlockOffset);
-                    return;
+                    valueCount -= searchValueBlock(valueMem, valueBlockOffset, cellCount, minValue - 1);
                 }
             }
         }

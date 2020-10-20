@@ -45,6 +45,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $(CharSequence sequence, int lo, int hi) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(int x) {
         return this;
     }
@@ -100,13 +105,13 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public boolean isEnabled() {
-        return false;
+    public LogRecord $256(long a, long b, long c, long d) {
+        return this;
     }
 
     @Override
-    public LogRecord $(CharSequence sequence, int lo, int hi) {
-        return this;
+    public boolean isEnabled() {
+        return false;
     }
 
     @Override

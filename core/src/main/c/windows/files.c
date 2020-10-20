@@ -234,7 +234,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRW
     return (jlong) openUtf8(
             lpszName,
             GENERIC_WRITE | GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             OPEN_ALWAYS
     );
 }
@@ -358,7 +358,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
 
 inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    LPCVOID newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags);
+    jlong newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags);
     // Note that unmapping will not flush dirty pages because the mapping to address is shared with newAddress
     Java_io_questdb_std_Files_munmap0((JNIEnv *) NULL, (jclass) NULL, address, previousLen);
     return (jlong) newAddress;
@@ -487,9 +487,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jlong fd) {
-    DWORD high;
-    DWORD low = GetFileSize((HANDLE) fd, &high);
-    if (LockFile((HANDLE) fd, 0, 0, low, high)) {
+    if (LockFile((HANDLE) fd, 0, 0, 1, 0)) {
         return 0;
     }
 

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.std.ObjList;
 
@@ -50,6 +51,11 @@ final public class EmptyTableNoSizeRecordCursor implements NoRandomAccessRecordC
 
     @Override
     public void toTop() {
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return null;
     }
 
     @Override

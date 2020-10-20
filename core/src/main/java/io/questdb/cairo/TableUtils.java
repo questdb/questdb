@@ -454,10 +454,16 @@ public final class TableUtils {
                         return index;
                     } catch (CairoException e) {
                         // right, cannot open file for some reason?
-                        LOG.error().$("Cannot open file: ").$(path).$('[').$(Os.errno()).$(']').$();
+                        LOG.error()
+                                .$("could not open swap [file=").$(path)
+                                .$(", errno=").$(e.getErrno())
+                                .$(']').$();
                     }
                 } else {
-                    LOG.error().$("Cannot remove file: ").$(path).$('[').$(Os.errno()).$(']').$();
+                    LOG.error()
+                            .$("could not remove swap [file=").$(path)
+                            .$(", errno=").$(ff.errno())
+                            .$(']').$();
                 }
             } while (++index < retryCount);
             throw CairoException.instance(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);
@@ -527,5 +533,35 @@ public final class TableUtils {
         fmtDay = compiler.compile("yyyy-MM-dd");
         fmtMonth = compiler.compile("yyyy-MM");
         fmtYear = compiler.compile("yyyy");
+    }
+
+    public static boolean isValidColumnName(CharSequence seq) {
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case ' ':
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case '\0':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                default:
+                    break;
+            }
+        }
+        return true;
     }
 }

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecord;
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;

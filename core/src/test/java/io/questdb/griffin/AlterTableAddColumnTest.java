@@ -148,7 +148,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         compiler.compile("alter table x add column D int", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Cannot add column [error=Duplicate column name: D]");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could add column [error=Duplicate column name: D, errno=0]");
                     }
                 }
         );

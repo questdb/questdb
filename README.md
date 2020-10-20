@@ -16,15 +16,15 @@
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
   </a>
-  <a href="https://serieux-saucisson-79115.herokuapp.com/">
-    <img src="https://serieux-saucisson-79115.herokuapp.com/badge.svg" />
+  <a href="https://slack.questdb.io">
+    <img src="https://slack.questdb.io/badge.svg" />
   </a>
 </p>
 
 <div align="center">
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-13-orange.svg)](#contributors)
+[![All Contributors](https://img.shields.io/badge/all_contributors-14-orange.svg)](#contributors)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 </div>
 
@@ -55,12 +55,12 @@ The interactive console to import data (drag and drop) and start querying right
 away. Check our Web Console guide to get started:
 
 <div align="center">
-  <a href="https://questdb.io/docs/guide/web-console">
+  <a href="https://questdb.io/docs/reference/client/web-console/">
     <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" />
   </a>
 </div>
 <div align="center">
-  <a href="https://questdb.io/docs/guide/web-console">
+  <a href="https://questdb.io/docs/docs/reference/client/web-console/">
     Web Console guide
   </a>
 </div>
@@ -98,23 +98,22 @@ The easiest way to get started is with Docker:
 docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
-You can more information about Docker usage
-[here](https://hub.docker.com/repository/docker/questdb/questdb/).
+You can more information about Docker usage on the
+[dedicated page](https://questdb.io/docs/get-started/docker/).
 
 #### Alternative methods
 
-- [Start with Homebrew](https://questdb.io/docs/guide/homebrew)
-- [Start with the binaries](https://questdb.io/docs/guide/binaries)
+- [Start with Homebrew](https://questdb.io/docs/get-started/homebrew/)
+- [Start with the binaries](https://questdb.io/docs/get-started/binaries/)
 
 ### Connecting to QuestDB
 
 You can interact with QuestDB using:
 
-- [Web Console](https://questdb.io/docs/guide/web-console) listening on port
-  `9000`: [localhost:9000](http://localhost:9000)
-- [Postgres wire](https://questdb.io/docs/guide/postgres-wire), for example with
-  PSQL (alpha) on port `8812`
-- [REST API](https://questdb.io/docs/guide/rest) listening on port `9000`
+- [Web Console](https://questdb.io/docs/reference/client/web-console/) listening
+  on port `9000`: [localhost:9000](http://localhost:9000)
+- [Postgres](https://questdb.io/docs/reference/api/postgres/) on port `8812`
+- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
 
 Both the HTTP and PostgreSQL servers reference the database in
 `<root_directory>/db`.
@@ -187,40 +186,35 @@ java -p core/target/questdb-5.0.4-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMa
 ## Resources
 
 Complete references are available in the
-[Documentation](https://questdb.io/docs/introduction). There are also several
-guides to get started.
+[Documentation](https://questdb.io/docs/introduction/).
 
-Quick-start guides:
+Get started:
 
-- [Docker](https://questdb.io/docs/guide/docker)
-- [Homebrew](https://questdb.io/docs/guide/homebrew)
-- [Using the binaries](https://questdb.io/docs/guide/binaries)
+- [Docker](https://questdb.io/docs/get-started/docker/)
+- [Binaries](https://questdb.io/docs/get-started/binaries/)
+- [Homebrew](https://questdb.io/docs/get-started/homebrew/)
 
-Usage guides:
+Develop:
 
-- [Web Console](https://questdb.io/docs/guide/web-console)
-- [Postgres wire with PSQL](https://questdb.io/docs/guide/postgres-wire) (alpha)
-- [REST API](https://questdb.io/docs/guide/rest)
-- [CRUD operations](https://questdb.io/docs/guide/crud)
+- [Connect](https://questdb.io/docs/develop/connect/)
+- [Insert data](https://questdb.io/docs/develop/insert-data/)
+- [Query data](https://questdb.io/docs/develop/query-data/)
+- [Authenticate](https://questdb.io/docs/develop/authenticate/)
 
 Concepts:
 
-- [SQL extensions](https://questdb.io/docs/concept/sql-extensions)
-- [Storage model](https://questdb.io/docs/concept/storage-model)
-- [Partitions](https://questdb.io/docs/concept/partitions)
-- [Designated timestamp](https://questdb.io/docs/concept/designated-timestamp)
+- [SQL extensions](https://questdb.io/docs/concept/sql-extensions/)
+- [Storage model](https://questdb.io/docs/concept/storage-model/)
+- [Partitions](https://questdb.io/docs/concept/partitions/)
+- [Designated timestamp](https://questdb.io/docs/concept/designated-timestamp/)
 
 ## Support / Contact
 
-[Slack Channel](https://join.slack.com/t/questdb/shared_invite/enQtNzk4Nzg4Mjc2MTE2LTEzZThjMzliMjUzMTBmYzVjYWNmM2UyNWJmNDdkMDYyZmE0ZDliZTQxN2EzNzk5MDE3Zjc1ZmJiZmFiZTIwMGY)
+[Slack Channel](https://slack.questdb.io)
 
 ## Roadmap
 
 [Our roadmap is here](https://github.com/questdb/questdb/projects/3)
-
-## Guides
-- [QuestDB in Go](https://questdb.io/docs/tutorial/go)
-- [QuestDB in Python](https://tutswiki.com/setup-access-questdb-python-notebook/)
 
 ## Contribution
 
@@ -253,6 +247,7 @@ Thanks to these wonderful people
     <td align="center"><a href="http://alexprut.com"><img src="https://avatars2.githubusercontent.com/u/1648497?v=4" width="100px;" alt=""/><br /><sub><b>alexprut</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=alexprut" title="Code">💻</a> <a href="#maintenance-alexprut" title="Maintenance">🚧</a></td>
     <td align="center"><a href="https://github.com/lbowman"><img src="https://avatars1.githubusercontent.com/u/1477427?v=4" width="100px;" alt=""/><br /><sub><b>lbowman</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=lbowman" title="Code">💻</a> <a href="https://github.com/questdb/questdb/commits?author=lbowman" title="Tests">⚠️</a></td>
     <td align="center"><a href="https://tutswiki.com/"><img src="https://avatars1.githubusercontent.com/u/424822?v=4" width="100px;" alt=""/><br /><sub><b>chankeypathak</b></sub></a><br /><a href="#blog-chankeypathak" title="Blogposts">📝</a></td>
+    <td align="center"><a href="https://github.com/upsidedownsmile"><img src="https://avatars0.githubusercontent.com/u/26444088?v=4" width="100px;" alt=""/><br /><sub><b>upsidedownsmile</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=upsidedownsmile" title="Code">💻</a></td>
   </tr>
 </table>
 

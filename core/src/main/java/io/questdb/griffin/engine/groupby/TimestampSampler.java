@@ -31,4 +31,8 @@ public interface TimestampSampler {
     long previousTimestamp(long timestamp);
 
     long round(long timestamp);
+
+    default long getBucketSize() {
+        throw new UnsupportedOperationException();
+    }
 }

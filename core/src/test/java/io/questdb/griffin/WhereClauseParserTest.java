@@ -124,7 +124,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testBadDate() {
         try {
-            modelOf("timestamp = '2015-02-23T10:00:55.00z;30m'");
+            modelOf("timestamp = '2015-02-23T10:00:55.0000z;30m'");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(12, e.getPosition());
@@ -1207,6 +1207,138 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
         Assert.assertNull(m.filter);
+    }
+
+    @Test
+    public void testSimpleBetweenAndInterval() throws Exception {
+        IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'");
+        TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
+        Assert.assertNull(m.filter);
+    }
+
+    @Test
+    public void testTwoBetweenIntervalsWithOr() throws Exception {
+        IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' or timestamp between '2014-02-01T12:30:00.000Z' and '2014-02-02T12:30:00.000Z'");
+        Assert.assertNull(m.intervals);
+        assertFilter(m, "'2014-02-02T12:30:00.000Z''2014-02-01T12:30:00.000Z'timestampbetween'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetweenor");
+    }
+
+    @Test
+    public void testBetweenInFunctionOfThreeArgs() throws Exception {
+        IntrinsicModel m = modelOf("func(2, timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z', 'abc')");
+        Assert.assertNull(m.intervals);
+        assertFilter(m, "'abc''2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetween2func");
+    }
+
+    @Test
+    public void testBetweenInFunctionOfThreeArgsDangling() {
+        try {
+            modelOf("func(2, timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z',)");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(84, e.getPosition());
+            TestUtils.assertEquals("missing arguments", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
+    public void testTwoBetweenIntervalsForIntColumn() throws Exception {
+        IntrinsicModel m = modelOf("bidSize between 5 and 10 ");
+        Assert.assertNull(m.intervals);
+        assertFilter(m, "105bidSizebetween");
+    }
+
+    @Test
+    public void testTwoBetweenIntervalsForDoubleColumn() throws Exception {
+        IntrinsicModel m = modelOf("bid between 5 and 10 ");
+        Assert.assertNull(m.intervals);
+        assertFilter(m, "105bidbetween");
+    }
+
+    @Test
+    public void testTwoBetweenIntervalsForExpression() {
+        try {
+            modelOf("ask between bid+ask/2 and 10 ");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "between/and parameters must be constants");
+            Assert.assertEquals(12, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testTwoBetweenIntervalsForExpression2() {
+        try {
+            modelOf("ask between 1 and bid+ask/2");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "between/and parameters must be constants");
+            Assert.assertEquals(18, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testTwoNestedBetween1() {
+        try {
+            modelOf("ask between between 1 and 2 and bid+ask/2");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
+            Assert.assertEquals(4, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testTwoNestedBetween2() {
+        try {
+            modelOf("ask between (between 1 and 2) and bid+ask/2");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "too few");
+            Assert.assertEquals(13, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testBetweenIntervalWithCaseStatementAsParam() {
+        try {
+            modelOf("timestamp between case when true then '2014-01-02T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "between/and parameters must be constants");
+            Assert.assertEquals(18, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testBetweenIntervalWithCaseStatementAsParam2() {
+        try {
+            modelOf("timestamp between '2014-01-02T12:30:00.000Z' and case when true then '2014-01-02T12:30:00.000Z' else '2014-01-02T12:30:00.000Z'");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "between/and parameters must be constants");
+            Assert.assertEquals(49, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testTwoBetweenIntervalsWithAnd() throws Exception {
+        IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and timestamp between '2014-01-01T16:30:00.000Z' and '2014-01-05T12:30:00.000Z'");
+        TestUtils.assertEquals("[{lo=2014-01-01T16:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
+        Assert.assertNull(m.filter);
+    }
+
+    @Test
+    public void testTwoIntervalsWithOr() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ( '2014-01-01T12:30:00.000Z' ,  '2014-01-02T12:30:00.000Z') or timestamp in ('2014-02-01T12:30:00.000Z', '2014-02-02T12:30:00.000Z')");
+        Assert.assertNull(m.intervals);
+        assertFilter(m, "'2014-02-02T12:30:00.000Z''2014-02-01T12:30:00.000Z'timestampin'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampinor");
+    }
+
+    @Test
+    public void testTwoIntervalsWithAnd() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp in ('2014-01-01T16:30:00.000Z', '2014-01-05T12:30:00.000Z')");
+        TestUtils.assertEquals("[{lo=2014-01-01T16:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", GriffinParserTestUtils.intervalToString(m.intervals));
     }
 
     @Test

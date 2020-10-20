@@ -75,13 +75,14 @@ public class InsertStatementImpl implements InsertStatement {
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext) {
         initContext(executionContext);
-
-        final TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName);
-        if (writer.getStructureVersion() != getStructureVersion()) {
-            writer.close();
-            throw WriterOutOfDateException.INSTANCE;
+        if (insertMethod.writer == null) {
+            final TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName);
+            if (writer.getStructureVersion() != getStructureVersion()) {
+                writer.close();
+                throw WriterOutOfDateException.INSTANCE;
+            }
+            insertMethod.writer = writer;
         }
-        insertMethod.writer = writer;
         return insertMethod;
     }
 
@@ -95,9 +96,7 @@ public class InsertStatementImpl implements InsertStatement {
 
     private void initContext(SqlExecutionContext executionContext) {
         final ObjList<? extends Function> functions = virtualRecord.getFunctions();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).init(null, executionContext);
-        }
+        Function.init(functions, null, executionContext);
         if (timestampFunction != null) {
             timestampFunction.init(null, executionContext);
         }
@@ -121,6 +120,16 @@ public class InsertStatementImpl implements InsertStatement {
         @Override
         public void commit() {
             writer.commit();
+        }
+
+        @Override
+        public void rollback() {
+            writer.rollback();
+        }
+
+        @Override
+        public TableWriter getWriter() {
+            return writer;
         }
 
         @Override

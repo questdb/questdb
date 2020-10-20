@@ -56,7 +56,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         assert hashFactor > 0 && hashFactor < 1d;
 
         initialCapacity = (int) (initialCapacity * (1 + hashFactor));
-        this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : initialCapacity;
+        this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
         this.loadFactor = loadFactor;
         keys = (T[]) new Object[Numbers.ceilPow2(capacity)];
         mask = keys.length - 1;

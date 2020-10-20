@@ -411,6 +411,47 @@ public class CairoMemoryTest {
     }
 
     @Test
+    public void testReadWriteMemoryTruncate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+                int pageSize = 1024 * 1024;
+                try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, pageSize)) {
+                    int count = 2 * pageSize / Long.BYTES;
+                    for (int i = 0; i < count; i++) {
+                        mem.putLong(i);
+                    }
+
+                    long fileSize = FF.length(path);
+
+                    // read the whole file
+                    long addr = FF.mmap(mem.getFd(), fileSize, 0, Files.MAP_RO);
+                    try {
+                        for (int i = 0; i < count; i++) {
+                            Assert.assertEquals(i, Unsafe.getUnsafe().getLong(addr + i * Long.BYTES));
+                        }
+                    } finally {
+                        FF.munmap(addr, fileSize);
+                    }
+                    // truncate
+                    mem.truncate();
+
+                    // ensure that entire file is zeroed out
+                    fileSize = FF.length(path);
+                    addr = FF.mmap(mem.getFd(), fileSize, 0, Files.MAP_RO);
+                    try {
+                        for (int i = 0; i < fileSize / Long.BYTES; i++) {
+                            Assert.assertEquals(0, Unsafe.getUnsafe().getLong(addr + i * Long.BYTES));
+                        }
+                    } finally {
+                        FF.munmap(addr, fileSize);
+                    }
+
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSlidingWindowMemory() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
@@ -526,8 +567,8 @@ public class CairoMemoryTest {
                             }
 
                             @Override
-                            public boolean wasCalled() {
-                                return wasCalled;
+                            public boolean isRestrictedFileSystem() {
+                                return true;
                             }
 
                             @Override
@@ -541,8 +582,8 @@ public class CairoMemoryTest {
                             }
 
                             @Override
-                            public boolean isRestrictedFileSystem() {
-                                return true;
+                            public boolean wasCalled() {
+                                return wasCalled;
                             }
 
 

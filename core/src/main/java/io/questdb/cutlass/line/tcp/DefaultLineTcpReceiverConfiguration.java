@@ -35,6 +35,8 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.time.MillisecondClockImpl;
 
 public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
@@ -90,12 +92,17 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
+
+    @Override
     public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
         return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
     }
 
     @Override
-    public int getnUpdatesPerLoadRebalance() {
+    public int getNUpdatesPerLoadRebalance() {
         return 1000;
     }
 
@@ -113,4 +120,9 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public long getMaintenanceJobHysteresisInMs() {
         return 100;
     }
+	
+	@Override
+	public String getAuthDbPath() {
+	    return null;
+	}
 }

@@ -45,4 +45,9 @@ class MicroTimestampSampler implements TimestampSampler {
     public long round(long value) {
         return value - value % bucket;
     }
+
+    @Override
+    public long getBucketSize() {
+        return this.bucket;
+    }
 }
