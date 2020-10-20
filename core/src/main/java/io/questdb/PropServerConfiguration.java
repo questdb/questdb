@@ -365,10 +365,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
             }
 
-            this.maxRerunWaitCapMs = getLong(properties,"http.busy.retry.maximum.wait.before.retry", 1000);
-            this.rerunExponentialWaitMultiplier = getDouble(properties, "http.busy.retry.exponential.wait.multipier", 2.0);
-            this.rerunInitialWaitQueueSize = getIntSize(properties, "http.busy.retry.initialWaitQueueSize", 64);
-            this.rerunMaxProcessingQueueSize = getIntSize(properties, "http.busy.retry.maxProcessingQueueSize", 4096);
+            this.maxRerunWaitCapMs = getLong(properties, env,"http.busy.retry.maximum.wait.before.retry", 1000);
+            this.rerunExponentialWaitMultiplier = getDouble(properties, env,"http.busy.retry.exponential.wait.multipier", 2.0);
+            this.rerunInitialWaitQueueSize = getIntSize(properties, env,"http.busy.retry.initialWaitQueueSize", 64);
+            this.rerunMaxProcessingQueueSize = getIntSize(properties, env,"http.busy.retry.maxProcessingQueueSize", 4096);
         }
         this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
         if (pgEnabled) {
