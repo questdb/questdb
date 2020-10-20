@@ -240,7 +240,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, pool.countFreeWriters());
                 Assert.assertNotNull(x);
                 Assert.assertTrue(x.isOpen());
-                Assert.assertSame(x, pool.get("z"));
                 pool.close();
             } finally {
                 x.close();
@@ -423,7 +422,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, pool.countFreeWriters());
                 Assert.assertNotNull(x);
                 Assert.assertTrue(x.isOpen());
-                Assert.assertSame(x, pool.get("z"));
             } finally {
                 x.close();
             }

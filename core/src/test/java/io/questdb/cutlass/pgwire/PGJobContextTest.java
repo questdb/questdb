@@ -1444,8 +1444,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 } catch (Exception e) {
                     LOG.error().$(e).$();
                 }
-                connection.commit();
-
                 //now transaction fail, we should rollback transaction
                 connection.rollback();
                 connection.setAutoCommit(true);
