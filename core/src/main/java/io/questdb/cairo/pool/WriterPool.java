@@ -144,7 +144,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                     entries.remove(tableName);
                     throw e.ex;
                 }
-                return checkClosedAndGetWriter(tableName, e);
             }
             LOG.error().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;

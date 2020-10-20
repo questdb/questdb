@@ -99,6 +99,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
                         .put(" [size=").put(size)
                         .put(", fd=").put(fd)
                         .put(", memUsed=").put(Unsafe.getMemUsed())
+                        .put(", fileLen=").put(ff.length(fd))
                         .put(']');
             }
             this.absolutePointer = page;

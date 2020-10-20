@@ -33,6 +33,8 @@ public interface InsertMethod extends Closeable {
 
     void commit();
 
+    void rollback();
+
     TableWriter getWriter();
 
     @Override

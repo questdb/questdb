@@ -61,9 +61,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         RecordCursor cursor = baseFactory.getCursor(executionContext);
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).init(cursor, executionContext);
-        }
+        Function.init(functions, cursor, executionContext);
         this.cursor.of(cursor);
         return this.cursor;
     }
