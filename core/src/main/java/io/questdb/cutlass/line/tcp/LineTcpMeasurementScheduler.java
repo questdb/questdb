@@ -220,7 +220,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private void loadRebalance() {
-        LOG.info().$("load check cycle ").$(++nLoadCheckCycles).$();
+        LOG.info().$("load check [cycle=").$(++nLoadCheckCycles).$(']').$();
         calcThreadLoad();
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         int fromThreadId = -1;
@@ -564,7 +564,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (null == parser) {
                     parser = new Parser();
                     parser.processFirstEvent(engine, securityContext, event);
-                    LOG.info().$("created parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(']').$();
+                    LOG.info().$("created parser [jobName=").$(jobName).$(" table=").$(event.getTableName()).$(']').$();
                     parserCache.put(Chars.toString(event.getTableName()), parser);
                 } else {
                     parser.processEvent(event);
@@ -572,7 +572,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             } catch (CairoException ex) {
                 LOG.error()
                         .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
-                        .$(" name=").$(event.getTableName())
+                        .$(", table=").$(event.getTableName())
                         .$(", ex=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .$(']').$();
