@@ -175,6 +175,12 @@ system.
 mvn clean test
 ```
 
+To release to Maven Central use the following command that activates deploy profile. Ensure that your `~/.m2/settings.xml` contains username/password for server `central` and `gnupg` is on hand to sign the artefacts.
+
+```script
+mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-release
+```
+
 #### (d) Run QuestDB
 
 ```script
