@@ -294,7 +294,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null == event) {
                 return;
             }
-            LOG.info().$("rebalance cycle ").$(++nRebalances).$(" moving ").$(tableNameToMove).$(" from ").$(fromThreadId).$(" to ").$(toThreadId).$();
+            LOG.info().$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances).$(", table=").$(tableNameToMove).$(", fromThreadId=").$(fromThreadId).$(", toThreadId=")
+                    .$(toThreadId).$(']').$();
             commitRebalanceEvent(event, fromThreadId, toThreadId, tableNameToMove);
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNameToMove);
             stats.threadId = toThreadId;
@@ -583,7 +584,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private boolean processRebalance(LineTcpMeasurementEvent event) {
             if (event.rebalanceToThreadId == id) {
                 if (event.rebalanceReleasedByFromThread) {
-                    LOG.info().$("rebalance cycle thread ").$(id).$(" can now get writer for ").$(event.rebalanceTableName).$();
+                    LOG.info().$("rebalance cycle, new thread ready [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
                     return true;
                 }
 
@@ -591,7 +592,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             if (event.rebalanceFromThreadId == id) {
-                LOG.info().$("rebalance cycle thread ").$(id).$(" releasing table ").$(event.rebalanceTableName).$();
+                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
                 Parser parser = parserCache.get(event.rebalanceTableName);
                 parserCache.remove(event.rebalanceTableName);
                 parser.close();
