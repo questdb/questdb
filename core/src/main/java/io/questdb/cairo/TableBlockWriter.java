@@ -232,8 +232,6 @@ public class TableBlockWriter implements Closeable {
 
     private class PartitionBlockWriter {
         private final PartitionStruct partitionStruct = new PartitionStruct();
-        private final LongList columnMappingStart = new LongList();
-        private final LongList columnMappingSize = new LongList();
         private final LongList additionalMappingStart = new LongList();
         private final LongList additionalMappingSize = new LongList();
         private final LongList columnStartOffsets = new LongList();
@@ -254,9 +252,6 @@ public class TableBlockWriter implements Closeable {
             int requiredColumnsSize = columnCount << 1;
             columnAppendOffsets.ensureCapacity(requiredColumnsSize);
             columnStartOffsets.ensureCapacity(requiredColumnsSize);
-
-            columnMappingStart.ensureCapacity(columnCount);
-            columnMappingSize.ensureCapacity(columnCount);
         }
 
         private void startPageFrame(long timestamp) {
@@ -319,27 +314,27 @@ public class TableBlockWriter implements Closeable {
                 columnAppendOffsets.setQuick(columnIndex, nextAppendOffset);
 
                 long destAddress;
-                long columnStartAddress = columnMappingStart.getQuick(columnIndex);
+                long columnStartAddress = partitionStruct.getColumnMappingStart(columnIndex);
                 if (columnStartAddress == 0) {
                     assert appendOffset == columnStartOffsets.getQuick(columnIndex);
                     long mapSz = Math.max(pageFrameLength, ff.getMapPageSize());
                     long address = mapFile(partitionStruct.getColumnDataFd(columnIndex), appendOffset, mapSz);
-                    columnMappingStart.setQuick(columnIndex, address);
-                    columnMappingSize.setQuick(columnIndex, mapSz);
+                    partitionStruct.setColumnMappingStart(columnIndex, address);
+                    partitionStruct.setColumnMappingSize(columnIndex, mapSz);
                     columnStartAddress = address;
                     destAddress = columnStartAddress;
                 } else {
                     long initialOffset = columnStartOffsets.getQuick(columnIndex);
                     assert initialOffset < appendOffset;
                     long minMapSz = nextAppendOffset - initialOffset;
-                    if (minMapSz > columnMappingSize.getQuick(columnIndex)) {
-                        additionalMappingStart.add(columnMappingStart.getQuick(columnIndex));
-                        additionalMappingSize.add(columnMappingSize.getQuick(columnIndex));
+                    if (minMapSz > partitionStruct.getColumnMappingSize(columnIndex)) {
+                        additionalMappingStart.add(partitionStruct.getColumnMappingStart(columnIndex));
+                        additionalMappingSize.add(partitionStruct.getColumnMappingSize(columnIndex));
                         long address = mapFile(partitionStruct.getColumnDataFd(columnIndex), columnStartOffsets.getQuick(columnIndex), minMapSz);
-                        columnMappingStart.setQuick(columnIndex, address);
-                        columnMappingSize.setQuick(columnIndex, minMapSz);
+                        partitionStruct.setColumnMappingStart(columnIndex, address);
+                        partitionStruct.setColumnMappingSize(columnIndex, minMapSz);
                     }
-                    destAddress = columnMappingStart.getQuick(columnIndex) + appendOffset - initialOffset;
+                    destAddress = partitionStruct.getColumnMappingStart(columnIndex) + appendOffset - initialOffset;
                 }
 
                 TableBlockWriterTask task = getConcurrentTask();
@@ -374,8 +369,8 @@ public class TableBlockWriter implements Closeable {
                             long offsetLo = columnStartOffsets.getQuick(columnIndex);
                             long offsetHi = columnAppendOffsets.getQuick(columnIndex);
 
-                            long columnDataAddressLo = columnMappingStart.getQuick(columnIndex);
-                            assert offsetHi - offsetLo <= columnMappingSize.getQuick(columnIndex);
+                            long columnDataAddressLo = partitionStruct.getColumnMappingStart(columnIndex);
+                            assert offsetHi - offsetLo <= partitionStruct.getColumnMappingSize(columnIndex);
                             long columnDataAddressHi = columnDataAddressLo + offsetHi - offsetLo;
 
                             long indexFd = partitionStruct.getColumnIndexFd(columnIndex);
@@ -406,7 +401,7 @@ public class TableBlockWriter implements Closeable {
         }
 
         private void completeUpdateSymbolCache(int columnIndex, long colNRowsAdded) {
-            long address = columnMappingStart.getQuick(columnIndex);
+            long address = partitionStruct.getColumnMappingStart(columnIndex);
             assert address > 0;
             int nSymbols = Vect.maxInt(address, colNRowsAdded);
             nSymbols++;
@@ -430,11 +425,11 @@ public class TableBlockWriter implements Closeable {
                     if (fd != -1) {
                         ff.close(fd);
                     }
-                    long address = columnMappingStart.getQuick(columnIndex);
+                    long address = partitionStruct.getColumnMappingStart(columnIndex);
                     if (address != 0) {
-                        long sz = columnMappingSize.getQuick(columnIndex);
+                        long sz = partitionStruct.getColumnMappingSize(columnIndex);
                         unmapFile(address, sz);
-                        columnMappingStart.setQuick(columnIndex, 0);
+                        partitionStruct.setColumnMappingStart(columnIndex, 0);
                     }
                 }
                 int nAdditionalMappings = additionalMappingStart.size();
@@ -443,8 +438,6 @@ public class TableBlockWriter implements Closeable {
                     long sz = additionalMappingSize.getQuick(i);
                     unmapFile(address, sz);
                 }
-                columnMappingStart.clear();
-                columnMappingSize.clear();
                 additionalMappingStart.clear();
                 additionalMappingSize.clear();
             }
@@ -487,7 +480,7 @@ public class TableBlockWriter implements Closeable {
     }
 
     private static class PartitionStruct {
-        private static int MAPPING_STRUCT_ENTRY_SIZE = 2;
+        private static int MAPPING_STRUCT_ENTRY_SIZE = 4;
         private final LongList mappingData = new LongList();
 
         private void ensureCapacity(int columnCount) {
@@ -508,6 +501,22 @@ public class TableBlockWriter implements Closeable {
 
         private long getColumnIndexFd(int columnIndex) {
             return mappingData.getQuick(getMappingDataIndex(columnIndex, 1));
+        }
+
+        private void setColumnMappingStart(int columnIndex, long address) {
+            mappingData.setQuick(getMappingDataIndex(columnIndex, 2), address);
+        }
+
+        private long getColumnMappingStart(int columnIndex) {
+            return mappingData.getQuick(getMappingDataIndex(columnIndex, 2));
+        }
+
+        private void setColumnMappingSize(int columnIndex, long size) {
+            mappingData.setQuick(getMappingDataIndex(columnIndex, 3), size);
+        }
+
+        private long getColumnMappingSize(int columnIndex) {
+            return mappingData.getQuick(getMappingDataIndex(columnIndex, 3));
         }
 
         private int getMappingDataIndex(int columnIndex, int fieldIndex) {
