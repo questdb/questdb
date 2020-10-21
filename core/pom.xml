@@ -37,7 +37,7 @@
         <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED -Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>5.0.4</version>
+    <version>5.0.5-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
