@@ -131,11 +131,6 @@ public class TableBlockWriter implements Closeable {
         nCompletedConcurrentTasks.set(0);
     }
 
-    public void appendSymbolCharsBlock(int columnIndex, long blockLength, long sourceAddress) {
-        LOG.info().$("appending symbols").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", blockLength=").$(blockLength).$(']').$();
-        writer.getSymbolMapWriter(columnIndex).appendSymbolCharsBlock(blockLength, sourceAddress);
-    }
-
     public void commit() {
         LOG.info().$("committing block write").$(" [tableName=").$(writer.getName()).$(", firstTimestamp=").$ts(firstTimestamp).$(", lastTimestamp=").$ts(lastTimestamp).$(']').$();
         // Need to complete all data tasks before we can start index tasks

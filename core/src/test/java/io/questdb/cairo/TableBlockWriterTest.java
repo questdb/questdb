@@ -7,7 +7,6 @@ import java.util.concurrent.locks.LockSupport;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
@@ -664,10 +663,22 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         threadsStarted.await();
         LOG.info().$(nThreads).$(" worker threads started").$();
 
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
+                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName)) {
+            final int columnCount = writer.getMetadata().getColumnCount();
+
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                int columnType = writer.getMetadata().getColumnType(columnIndex);
+                if (columnType == ColumnType.SYMBOL) {
+                    SymbolMapReader symReader = reader.getSymbolMapReader(columnIndex);
+                    writer.updateSymbols(columnIndex, symReader);
+                }
+            }
+        }
+
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
-                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName)
-        ) {
+                TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName)) {
 
             final int columnCount = writer.getMetadata().getColumnCount();
             int nFrames = 0;
@@ -678,6 +689,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             if (commitAllAtOnce) {
                 blockWriter = writer.newBlock();
             }
+
             while ((frame = cursor.next()) != null) {
                 if (!commitAllAtOnce) {
                     blockWriter = writer.newBlock();
@@ -685,21 +697,6 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 long firstTimestamp = frame.getFirstTimestamp();
                 LOG.info().$("Replicating frame from ").$ts(firstTimestamp).$();
                 blockWriter.startPageFrame(firstTimestamp);
-
-                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    int columnType = writer.getMetadata().getColumnType(columnIndex);
-                    if (columnType == ColumnType.SYMBOL) {
-                        SymbolMapReader symReader = reader.getSymbolMapReader(columnIndex);
-                        int nSourceSymbols = symReader.size();
-                        int nDestinationSymbols = writer.getSymbolMapWriter(columnIndex).getSymbolCount();
-
-                        if (nSourceSymbols > nDestinationSymbols) {
-                            long address = symReader.symbolCharsAddressOf(nDestinationSymbols);
-                            long addressHi = symReader.symbolCharsAddressOf(nSourceSymbols);
-                            blockWriter.appendSymbolCharsBlock(columnIndex, addressHi - address, address);
-                        }
-                    }
-                }
 
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     blockWriter.appendPageFrameColumn(

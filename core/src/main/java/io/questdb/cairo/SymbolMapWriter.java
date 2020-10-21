@@ -244,11 +244,11 @@ public class SymbolMapWriter implements Closeable {
         return offsetToKey(offsetOffset);
     }
 
-    public void appendSymbolCharsBlock(long blockLength, long sourceAddress) {
+    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
         long appendOffset = charMem.getAppendOffset();
         try {
             charMem.jumpTo(appendOffset);
-            charMem.putBlockOfBytes(sourceAddress, blockLength);
+            charMem.putBlockOfBytes(sourceAddress, blockSize);
         } finally {
             charMem.jumpTo(appendOffset);
         }

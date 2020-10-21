@@ -1775,6 +1775,18 @@ public class TableWriter implements Closeable {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
+    public void updateSymbols(int columnIndex, SymbolMapReader symReader) {
+        int nSourceSymbols = symReader.size();
+        SymbolMapWriter symWriter = getSymbolMapWriter(columnIndex);
+        int nDestinationSymbols = symWriter.getSymbolCount();
+
+        if (nSourceSymbols > nDestinationSymbols) {
+            long address = symReader.symbolCharsAddressOf(nDestinationSymbols);
+            long addressHi = symReader.symbolCharsAddressOf(nSourceSymbols);
+            symWriter.appendSymbolCharsBlock(addressHi - address, address);
+        }
+    }
+
     SymbolMapWriter getSymbolMapWriter(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex);
     }
