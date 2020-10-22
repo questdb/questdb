@@ -69,9 +69,20 @@ public class GenericLexerTest {
         lex.of("insert into data values ('{ title: \\\"Title\\\"}');");
 
         CharSequence tok;
+        final StringSink sink = new StringSink();
         while ((tok = SqlUtil.fetchNext(lex)) != null) {
-            System.out.println(tok);
+            sink.put(tok).put('\n');
         }
+        TestUtils.assertEquals("insert\n" +
+                        "into\n" +
+                        "data\n" +
+                        "values\n" +
+                        "(\n" +
+                        "'{ title: \\\"Title\\\"}'\n" +
+                        ")\n" +
+                        ";\n",
+                sink
+        );
     }
 
     @Test
