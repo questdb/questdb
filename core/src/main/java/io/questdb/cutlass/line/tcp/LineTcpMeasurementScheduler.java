@@ -423,7 +423,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     timestamp = timestampAdapter.getMicros(cache.get(timestampAddress));
                     timestampAddress = 0;
                 } catch (NumericException e) {
-                    LOG.info().$("invalid timestamp: ").$(cache.get(timestampAddress)).$();
+                    LOG.error().$("invalid timestamp: ").$(cache.get(timestampAddress)).$();
                     timestamp = Long.MIN_VALUE;
                     throw e;
                 }
