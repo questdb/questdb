@@ -29,7 +29,7 @@ public interface PageFrame {
 
     long getPageValueCount(int columnIndex);
 
-    default long getPageLength(int columnIndex) {
+    default long getPageSize(int columnIndex) {
         throw new UnsupportedOperationException();
     }
 

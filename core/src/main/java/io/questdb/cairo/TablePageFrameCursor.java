@@ -272,7 +272,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getPageLength(int i) {
+        public long getPageSize(int i) {
             return columnFrameLengths.getQuick(i);
         }
     }
