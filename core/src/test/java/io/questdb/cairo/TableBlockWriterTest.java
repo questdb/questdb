@@ -677,12 +677,10 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         }
 
         try (TableReplicationRecordCursorFactory factory = createReplicatingRecordCursorFactory(sourceTableName, maxRowsPerFrame);
-                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), destTableName)) {
-
-            final int columnCount = writer.getMetadata().getColumnCount();
+            final int columnCount = factory.getMetadata().getColumnCount();
             int nFrames = 0;
-            int timestampColumnIndex = reader.getMetadata().getTimestampIndex();
+            int timestampColumnIndex = factory.getMetadata().getTimestampIndex();
             TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, timestampColumnIndex, nFirstRow);
             PageFrame frame;
             TableBlockWriter blockWriter = null;
