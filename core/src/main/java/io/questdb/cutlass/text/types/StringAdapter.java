@@ -52,7 +52,7 @@ public class StringAdapter extends AbstractTypeAdapter {
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         utf8Sink.clear();
-        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
+        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
         row.putStr(column, utf8Sink);
     }
 }

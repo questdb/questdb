@@ -55,6 +55,37 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testDoubleEscapedQuote() {
+        GenericLexer lex = new GenericLexer(64);
+
+        lex.defineSymbol("(");
+        lex.defineSymbol(";");
+        lex.defineSymbol(")");
+        lex.defineSymbol(",");
+        lex.defineSymbol("/*");
+        lex.defineSymbol("*/");
+        lex.defineSymbol("--");
+
+        lex.of("insert into data values ('{ title: \\\"Title\\\"}');");
+
+        CharSequence tok;
+        final StringSink sink = new StringSink();
+        while ((tok = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(tok).put('\n');
+        }
+        TestUtils.assertEquals("insert\n" +
+                        "into\n" +
+                        "data\n" +
+                        "values\n" +
+                        "(\n" +
+                        "'{ title: \\\"Title\\\"}'\n" +
+                        ")\n" +
+                        ";\n",
+                sink
+        );
+    }
+
+    @Test
     public void testEdgeSymbol() {
         GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol(" ");
