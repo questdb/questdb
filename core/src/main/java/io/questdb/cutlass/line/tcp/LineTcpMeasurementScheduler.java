@@ -423,7 +423,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     timestamp = timestampAdapter.getMicros(cache.get(timestampAddress));
                     timestampAddress = 0;
                 } catch (NumericException e) {
-                    LOG.info().$("invalid timestamp: ").$(cache.get(timestampAddress)).$();
+                    LOG.error().$("invalid timestamp: ").$(cache.get(timestampAddress)).$();
                     timestamp = Long.MIN_VALUE;
                     throw e;
                 }
@@ -635,8 +635,19 @@ class LineTcpMeasurementScheduler implements Closeable {
                         CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, columnIndex, event.getValue(i));
                     }
                     row.append();
-                } catch (NumericException | CairoException | BadCastException ignore) {
+                } catch (NumericException | BadCastException ex) {
                     // These exceptions are logged elsewhere
+                    if (null != row) {
+                        row.cancel();
+                    }
+                    return;
+                } catch (CairoException ex) {
+                    LOG.error()
+                            .$("could not insert measurement [jobName=").$(jobName)
+                            .$(", table=").$(event.getTableName())
+                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$(", errno=").$(ex.getErrno())
+                            .$(']').$();
                     if (null != row) {
                         row.cancel();
                     }
