@@ -471,7 +471,8 @@ public class TableBlockWriter implements Closeable {
     }
 
     private static class PartitionStruct {
-        private static int MAPPING_STRUCT_ENTRY_SIZE = 8;
+        private static int MAPPING_STRUCT_ENTRY_P2 = 3;
+        private static int MAPPING_STRUCT_ENTRY_SIZE = 1 << MAPPING_STRUCT_ENTRY_P2;
         private static int INITIAL_ADDITIONAL_MAPPINGS = 4;
         private long[] mappingData = null;
         private int columnCount;
@@ -567,7 +568,7 @@ public class TableBlockWriter implements Closeable {
         }
 
         private int getMappingDataIndex(int columnIndex, int fieldIndex) {
-            return columnIndex * MAPPING_STRUCT_ENTRY_SIZE + fieldIndex;
+            return (columnIndex << MAPPING_STRUCT_ENTRY_P2) + fieldIndex;
         }
     }
 
