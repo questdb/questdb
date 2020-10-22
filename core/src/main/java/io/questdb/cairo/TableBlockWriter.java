@@ -471,15 +471,20 @@ public class TableBlockWriter implements Closeable {
     }
 
     private static class PartitionStruct {
-        private static int MAPPING_STRUCT_ENTRY_SIZE = 7;
-        private final LongList mappingData = new LongList();
+        private static int MAPPING_STRUCT_ENTRY_SIZE = 8;
+        private static int INITIAL_ADDITIONAL_MAPPINGS = 4;
+        private long[] mappingData = null;
         private int columnCount;
         private int nAdditionalMappings;
 
         private void of(int columnCount) {
             this.columnCount = columnCount;
             nAdditionalMappings = 0;
-            mappingData.ensureCapacity(columnCount * MAPPING_STRUCT_ENTRY_SIZE);
+            int sz = columnCount * MAPPING_STRUCT_ENTRY_SIZE;
+            if (mappingData == null || mappingData.length < sz) {
+                sz += INITIAL_ADDITIONAL_MAPPINGS << 1;
+                mappingData = new long[sz];
+            }
         }
 
         private void clear() {
@@ -487,59 +492,64 @@ public class TableBlockWriter implements Closeable {
         }
 
         private void setColumnDataFd(int columnIndex, long fd) {
-            mappingData.setQuick(getMappingDataIndex(columnIndex, 0), fd);
+            mappingData[getMappingDataIndex(columnIndex, 0)] = fd;
         }
 
         private long getColumnDataFd(int columnIndex) {
-            return mappingData.getQuick(getMappingDataIndex(columnIndex, 0));
+            return mappingData[getMappingDataIndex(columnIndex, 0)];
         }
 
         private void setColumnIndexFd(int columnIndex, long fd) {
-            mappingData.setQuick(getMappingDataIndex(columnIndex, 1), fd);
+            mappingData[getMappingDataIndex(columnIndex, 1)] = fd;
         }
 
         private long getColumnIndexFd(int columnIndex) {
-            return mappingData.getQuick(getMappingDataIndex(columnIndex, 1));
+            return mappingData[getMappingDataIndex(columnIndex, 1)];
         }
 
         private void setColumnMappingStart(int columnIndex, long address) {
-            mappingData.setQuick(getMappingDataIndex(columnIndex, 2), address);
+            mappingData[getMappingDataIndex(columnIndex, 2)] = address;
         }
 
         private long getColumnMappingStart(int columnIndex) {
-            return mappingData.getQuick(getMappingDataIndex(columnIndex, 2));
+            return mappingData[getMappingDataIndex(columnIndex, 2)];
         }
 
         private void setColumnMappingSize(int columnIndex, long size) {
-            mappingData.setQuick(getMappingDataIndex(columnIndex, 3), size);
+            mappingData[getMappingDataIndex(columnIndex, 3)] = size;
         }
 
         private long getColumnMappingSize(int columnIndex) {
-            return mappingData.getQuick(getMappingDataIndex(columnIndex, 3));
+            return mappingData[getMappingDataIndex(columnIndex, 3)];
         }
 
         private void setColumnStartOffset(int columnIndex, long offset) {
-            mappingData.setQuick(getMappingDataIndex(columnIndex, 4), offset);
+            mappingData[getMappingDataIndex(columnIndex, 4)] = offset;
         }
 
         private long getColumnStartOffset(int columnIndex) {
-            return mappingData.getQuick(getMappingDataIndex(columnIndex, 4));
+            return mappingData[getMappingDataIndex(columnIndex, 4)];
         }
 
         private void setColumnAppendOffset(int columnIndex, long offset) {
-            mappingData.setQuick(getMappingDataIndex(columnIndex, 5), offset);
+            mappingData[getMappingDataIndex(columnIndex, 5)] = offset;
         }
 
         private long getColumnAppendOffset(int columnIndex) {
-            return mappingData.getQuick(getMappingDataIndex(columnIndex, 5));
+            return mappingData[getMappingDataIndex(columnIndex, 5)];
         }
 
         private void addAdditionalMapping(long start, long size) {
             int i = getMappingDataIndex(columnCount, nAdditionalMappings << 1);
             nAdditionalMappings++;
-            mappingData.ensureCapacity(i + (nAdditionalMappings << 1));
-            mappingData.setQuick(i++, start);
-            mappingData.setQuick(i, size);
+            int minSz = i + nAdditionalMappings << 1;
+            if (mappingData.length < minSz) {
+                long[] newMappingData = new long[minSz + (INITIAL_ADDITIONAL_MAPPINGS << 1)];
+                System.arraycopy(mappingData, 0, newMappingData, 0, mappingData.length);
+                mappingData = newMappingData;
+            }
+            mappingData[i++] = start;
+            mappingData[i] = size;
         }
 
         private int getnAdditionalMappings() {
@@ -548,12 +558,12 @@ public class TableBlockWriter implements Closeable {
 
         private long getAdditionalMappingStart(int nMapping) {
             int i = getMappingDataIndex(columnCount, nMapping << 1);
-            return mappingData.getQuick(i);
+            return mappingData[i];
         }
 
         private long getAdditionalMappingSize(int nMapping) {
             int i = getMappingDataIndex(columnCount, (nMapping << 1) + 1);
-            return mappingData.getQuick(i);
+            return mappingData[i];
         }
 
         private int getMappingDataIndex(int columnIndex, int fieldIndex) {
