@@ -186,7 +186,7 @@ mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-
 ```script
 # Create a database root directory and run QuestDB
 mkdir <root_directory>
-java -p core/target/questdb-5.0.4-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java -p core/target/questdb-5.0.5-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 ```
 
 ## Resources
