@@ -45,7 +45,9 @@ public class TextLoaderCompletedState {
         this.writtenLineCount = textLoader.getWrittenLineCount();
         this.parsedLineCount = textLoader.getParsedLineCount();
         this.errorLineCount = textLoader.getErrorLineCount();
-        this.metadata = GenericRecordMetadata.copyOf(textLoader.getMetadata());
+        this.metadata = textLoader.getMetadata() != null
+                ? GenericRecordMetadata.copyOf(textLoader.getMetadata())
+                : null;
         this.tableName = textLoader.getTableName();
         this.isForcedHeader = textLoader.isForceHeaders();
 
