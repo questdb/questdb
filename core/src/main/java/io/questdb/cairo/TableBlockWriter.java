@@ -230,6 +230,34 @@ public class TableBlockWriter implements Closeable {
         return partWriter;
     }
 
+    private static long mapFile(FilesFacade ff, long fd, final long mapOffset, final long mapSz) {
+        long alignedMapOffset = (mapOffset / ff.getPageSize()) * ff.getPageSize();
+        long addressOffsetDueToAlignment = mapOffset - alignedMapOffset;
+        long alignedMapSz = mapSz + addressOffsetDueToAlignment;
+        long fileSz = ff.length(fd);
+        long minFileSz = mapOffset + alignedMapSz;
+        if (fileSz < minFileSz) {
+            if (!ff.truncate(fd, minFileSz)) {
+                throw CairoException.instance(ff.errno()).put("Could not truncate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
+                        .put(mapSz);
+            }
+        }
+        long address = ff.mmap(fd, alignedMapSz, alignedMapOffset, Files.MAP_RW);
+        if (address == -1) {
+            int errno = ff.errno();
+            throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=").put(mapSz).put(", errno=")
+                    .put(errno);
+        }
+        assert (address / ff.getPageSize()) * ff.getPageSize() == address; // address MUST be page aligned
+        return address + addressOffsetDueToAlignment;
+    }
+
+    private static void unmapFile(FilesFacade ff, final long address, final long mapSz) {
+        long alignedAddress = (address / ff.getPageSize()) * ff.getPageSize();
+        long alignedMapSz = mapSz + address - alignedAddress;
+        ff.munmap(alignedAddress, alignedMapSz);
+    }
+
     private class PartitionBlockWriter {
         private final PartitionStruct partitionStruct = new PartitionStruct();
         private final LongList columnTops = new LongList();
@@ -311,7 +339,7 @@ public class TableBlockWriter implements Closeable {
                 if (columnStartAddress == 0) {
                     assert appendOffset == partitionStruct.getColumnStartOffset(columnIndex);
                     long mapSz = Math.max(pageFrameLength, ff.getMapPageSize());
-                    long address = mapFile(partitionStruct.getColumnDataFd(columnIndex), appendOffset, mapSz);
+                    long address = mapFile(ff, partitionStruct.getColumnDataFd(columnIndex), appendOffset, mapSz);
                     partitionStruct.setColumnMappingStart(columnIndex, address);
                     partitionStruct.setColumnMappingSize(columnIndex, mapSz);
                     columnStartAddress = address;
@@ -322,7 +350,7 @@ public class TableBlockWriter implements Closeable {
                     long minMapSz = nextAppendOffset - initialOffset;
                     if (minMapSz > partitionStruct.getColumnMappingSize(columnIndex)) {
                         partitionStruct.addAdditionalMapping(partitionStruct.getColumnMappingStart(columnIndex), partitionStruct.getColumnMappingSize(columnIndex));
-                        long address = mapFile(partitionStruct.getColumnDataFd(columnIndex), partitionStruct.getColumnStartOffset(columnIndex), minMapSz);
+                        long address = mapFile(ff, partitionStruct.getColumnDataFd(columnIndex), partitionStruct.getColumnStartOffset(columnIndex), minMapSz);
                         partitionStruct.setColumnMappingStart(columnIndex, address);
                         partitionStruct.setColumnMappingSize(columnIndex, minMapSz);
                     }
@@ -367,14 +395,11 @@ public class TableBlockWriter implements Closeable {
 
                             long indexFd = partitionStruct.getColumnIndexFd(columnIndex);
                             long indexOffsetLo = writer.getSecondaryAppendOffset(timestampLo, columnIndex);
-                            long indexMappingSz = Long.BYTES * colNRowsAdded;
-                            long indexMappingStart = mapFile(indexFd, indexOffsetLo, indexMappingSz);
-                            partitionStruct.addAdditionalMapping(indexMappingStart, indexMappingSz);
 
                             if (columnType == ColumnType.STRING) {
-                                task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexMappingStart, indexMappingStart + indexMappingSz);
+                                task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo);
                             } else {
-                                task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexMappingStart);
+                                task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo);
                             }
                             enqueueConcurrentTask(task);
                             break;
@@ -419,7 +444,7 @@ public class TableBlockWriter implements Closeable {
                     long address = partitionStruct.getColumnMappingStart(columnIndex);
                     if (address != 0) {
                         long sz = partitionStruct.getColumnMappingSize(columnIndex);
-                        unmapFile(address, sz);
+                        unmapFile(ff, address, sz);
                         partitionStruct.setColumnMappingStart(columnIndex, 0);
                     }
                 }
@@ -427,40 +452,12 @@ public class TableBlockWriter implements Closeable {
                 for (i = 0; i < nAdditionalMappings; i++) {
                     long address = partitionStruct.getAdditionalMappingStart(i);
                     long sz = partitionStruct.getAdditionalMappingSize(i);
-                    unmapFile(address, sz);
+                    unmapFile(ff, address, sz);
                 }
                 partitionStruct.clear();
             }
             columnTops.clear();
             opened = false;
-        }
-
-        private long mapFile(long fd, final long mapOffset, final long mapSz) {
-            long alignedMapOffset = (mapOffset / ff.getPageSize()) * ff.getPageSize();
-            long addressOffsetDueToAlignment = mapOffset - alignedMapOffset;
-            long alignedMapSz = mapSz + addressOffsetDueToAlignment;
-            long fileSz = ff.length(fd);
-            long minFileSz = mapOffset + alignedMapSz;
-            if (fileSz < minFileSz) {
-                if (!ff.truncate(fd, minFileSz)) {
-                    throw CairoException.instance(ff.errno()).put("Could not truncate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
-                            .put(mapSz);
-                }
-            }
-            long address = ff.mmap(fd, alignedMapSz, alignedMapOffset, Files.MAP_RW);
-            if (address == -1) {
-                int errno = ff.errno();
-                throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=").put(mapSz).put(", errno=")
-                        .put(errno);
-            }
-            assert (address / ff.getPageSize()) * ff.getPageSize() == address; // address MUST be page aligned
-            return address + addressOffsetDueToAlignment;
-        }
-
-        private void unmapFile(final long address, final long mapSz) {
-            long alignedAddress = (address / ff.getPageSize()) * ff.getPageSize();
-            long alignedMapSz = mapSz + address - alignedAddress;
-            ff.munmap(alignedAddress, alignedMapSz);
         }
 
         private void close() {
@@ -588,6 +585,8 @@ public class TableBlockWriter implements Closeable {
         private long destAddress;
         private long destAddressLimit;
         private long sourceInitialOffset;
+        private long indexFd;
+        private long indexOffsetLo;
 
         private boolean run() {
             if (ready.compareAndSet(true, false)) {
@@ -598,11 +597,11 @@ public class TableBlockWriter implements Closeable {
                             return true;
 
                         case GenerateStringIndex:
-                            completeUpdateStringIndex(sourceAddress, sourceSizeOrEnd, sourceInitialOffset, destAddress, destAddressLimit);
+                            completeUpdateStringIndex(sourceAddress, sourceSizeOrEnd, sourceInitialOffset, indexFd, indexOffsetLo);
                             return true;
 
                         case GenerateBinaryIndex:
-                            completeUpdateBinaryIndex(sourceAddress, sourceSizeOrEnd, sourceInitialOffset, destAddress);
+                            completeUpdateBinaryIndex(sourceAddress, sourceSizeOrEnd, sourceInitialOffset, indexFd, indexOffsetLo);
                             return true;
                     }
                 } finally {
@@ -626,21 +625,24 @@ public class TableBlockWriter implements Closeable {
             this.sourceAddress = sourceAddress;
         }
 
-        private void assignUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo, long columnIndexAddressLimit) {
+        private void assignUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long indexFd, long indexOffsetLo) {
             taskType = TaskType.GenerateStringIndex;
             this.sourceAddress = columnDataAddressLo;
-            this.destAddress = columnIndexAddressLo;
-            this.destAddressLimit = columnIndexAddressLimit;
             this.sourceSizeOrEnd = columnDataAddressHi;
             this.sourceInitialOffset = columnDataOffsetLo;
+            this.indexFd = indexFd;
+            this.indexOffsetLo = indexOffsetLo;
         }
 
-        private void completeUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo, long columnIndexAddressLimit) {
+        private void completeUpdateStringIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long indexFd, long indexOffsetLo) {
+            long indexMappingSz = (columnDataAddressHi - columnDataAddressLo) * 2;
+            long indexMappingStart = mapFile(ff, indexFd, indexOffsetLo, indexMappingSz);
+
             long offset = columnDataOffsetLo;
             long columnDataAddress = columnDataAddressLo;
-            long columnIndexAddress = columnIndexAddressLo;
+            long columnIndexAddress = indexMappingStart;
             while (columnDataAddress < columnDataAddressHi) {
-                assert columnIndexAddress + Long.BYTES <= columnIndexAddressLimit;
+                assert columnIndexAddress + Long.BYTES <= (indexMappingStart + indexMappingSz);
                 Unsafe.getUnsafe().putLong(columnIndexAddress, offset);
                 columnIndexAddress += Long.BYTES;
                 long strLen = Unsafe.getUnsafe().getInt(columnDataAddress);
@@ -653,21 +655,28 @@ public class TableBlockWriter implements Closeable {
                 columnDataAddress += sz;
                 offset += sz;
             }
+
+            unmapFile(ff, indexMappingStart, indexMappingSz);
         }
 
-        private void assignUpdateBinaryIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo) {
+        private void assignUpdateBinaryIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long indexFd, long indexOffsetLo) {
             taskType = TaskType.GenerateBinaryIndex;
             this.sourceAddress = columnDataAddressLo;
-            this.destAddress = columnIndexAddressLo;
             this.sourceSizeOrEnd = columnDataAddressHi;
             this.sourceInitialOffset = columnDataOffsetLo;
+            this.indexFd = indexFd;
+            this.indexOffsetLo = indexOffsetLo;
         }
 
-        private void completeUpdateBinaryIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long columnIndexAddressLo) {
+        private void completeUpdateBinaryIndex(long columnDataAddressLo, long columnDataAddressHi, long columnDataOffsetLo, long indexFd, long indexOffsetLo) {
+            long indexMappingSz = (columnDataAddressHi - columnDataAddressLo);
+            long indexMappingStart = mapFile(ff, indexFd, indexOffsetLo, indexMappingSz);
+
             long offset = columnDataOffsetLo;
             long columnDataAddress = columnDataAddressLo;
-            long columnIndexAddress = columnIndexAddressLo;
+            long columnIndexAddress = indexMappingStart;
             while (columnDataAddress < columnDataAddressHi) {
+                assert columnIndexAddress + Long.BYTES <= (indexMappingStart + indexMappingSz);
                 Unsafe.getUnsafe().putLong(columnIndexAddress, offset);
                 columnIndexAddress += Long.BYTES;
                 long binLen = Unsafe.getUnsafe().getLong(columnDataAddress);
@@ -680,6 +689,8 @@ public class TableBlockWriter implements Closeable {
                 columnDataAddress += sz;
                 offset += sz;
             }
+
+            unmapFile(ff, indexMappingStart, indexMappingSz);
         }
     }
 
