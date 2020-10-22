@@ -635,8 +635,19 @@ class LineTcpMeasurementScheduler implements Closeable {
                         CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, columnIndex, event.getValue(i));
                     }
                     row.append();
-                } catch (NumericException | CairoException | BadCastException ignore) {
+                } catch (NumericException | BadCastException ex) {
                     // These exceptions are logged elsewhere
+                    if (null != row) {
+                        row.cancel();
+                    }
+                    return;
+                } catch (CairoException ex) {
+                    LOG.error()
+                            .$("could not insert measurement [jobName=").$(jobName)
+                            .$(", table=").$(event.getTableName())
+                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$(", errno=").$(ex.getErrno())
+                            .$(']').$();
                     if (null != row) {
                         row.cancel();
                     }
