@@ -93,13 +93,10 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
                 throw RetryFailedOperationException.INSTANCE;
             }
 
-            try {
-                RetryHolder retryHolder = inQueue.get(cursor);
-                retryHolder.retry = retry;
-                return;
-            } finally {
-                inPubSequence.done(cursor);
-            }
+            RetryHolder retryHolder = inQueue.get(cursor);
+            retryHolder.retry = retry;
+            inPubSequence.done(cursor);
+            return;
         }
     }
 
@@ -131,14 +128,11 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
             return null;
         }
 
-        try {
-            RetryHolder retryHolder = outQueue.get(cursor);
-            Retry r = retryHolder.retry;
-            retryHolder.retry = null;
-            return r;
-        } finally {
-            outSubSequence.done(cursor);
-        }
+        RetryHolder retryHolder = outQueue.get(cursor);
+        Retry r = retryHolder.retry;
+        retryHolder.retry = null;
+        outSubSequence.done(cursor);
+        return r;
     }
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun
@@ -217,13 +211,10 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
                 return false;
             }
 
-            try {
-                RetryHolder retryHolderOut = outQueue.get(cursor);
-                retryHolderOut.retry = retry;
-                return true;
-            } finally {
-                outPubSequence.done(cursor);
-            }
+            RetryHolder retryHolderOut = outQueue.get(cursor);
+            retryHolderOut.retry = retry;
+            outPubSequence.done(cursor);
+            return true;
         }
     }
 
@@ -231,6 +222,6 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
         // r1, r2 are always not null, null retries are not queued
         RetryAttemptAttributes a1 = r1.getAttemptDetails();
         RetryAttemptAttributes a2 = r2.getAttemptDetails();
-        return a1.nextRunTimestamp > a2.nextRunTimestamp ? 1 : (a1.nextRunTimestamp < a2.nextRunTimestamp ? -1 : 0);
+        return Long.compare(a1.nextRunTimestamp, a2.nextRunTimestamp);
     }
 }
