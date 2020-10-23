@@ -25,10 +25,24 @@
 package io.questdb.cairo.sql;
 
 public interface PageFrame {
+    /**
+     * 
+     * Return the address of the start of the page frame or if this page represents a column top (a column that was added to the table when other columns already had data) then return 0
+     * 
+     * @param columnIndex
+     * @return
+     */
     long getPageAddress(int columnIndex);
 
     long getPageValueCount(int columnIndex);
 
+    /**
+     * 
+     * Return the size of the page frame or if the page represents a column top (a column that was added to the table when other columns already had data), then return the number of of empty rows at the top of a column
+     * 
+     * @param columnIndex
+     * @return
+     */
     default long getPageSize(int columnIndex) {
         throw new UnsupportedOperationException();
     }

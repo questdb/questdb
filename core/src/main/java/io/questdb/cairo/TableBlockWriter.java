@@ -65,20 +65,20 @@ public class TableBlockWriter implements Closeable {
         partWriter.startPageFrame(timestampLo);
     }
 
-    public void appendPageFrameColumn(int columnIndex, long pageFrameLength, long sourceAddress) {
-        LOG.info().$("appending data").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", pageFrameLength=").$(pageFrameLength).$(']').$();
+    public void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
+        LOG.info().$("appending data").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", pageFrameSize=").$(pageFrameSize).$(']').$();
         if (columnIndex == timestampColumnIndex) {
             long firstBlockTimestamp = Unsafe.getUnsafe().getLong(sourceAddress);
             if (firstBlockTimestamp < firstTimestamp) {
                 firstTimestamp = firstBlockTimestamp;
             }
-            long addr = sourceAddress + pageFrameLength - Long.BYTES;
+            long addr = sourceAddress + pageFrameSize - Long.BYTES;
             long lastBlockTimestamp = Unsafe.getUnsafe().getLong(addr);
             if (lastBlockTimestamp > lastTimestamp) {
                 lastTimestamp = lastBlockTimestamp;
             }
         }
-        partWriter.appendPageFrameColumn(columnIndex, pageFrameLength, sourceAddress);
+        partWriter.appendPageFrameColumn(columnIndex, pageFrameSize, sourceAddress);
     }
 
     private TableBlockWriterTask getConcurrentTask() {
@@ -323,17 +323,17 @@ public class TableBlockWriter implements Closeable {
             timestampLo = timestamp;
         }
 
-        private void appendPageFrameColumn(int columnIndex, long pageFrameLength, long sourceAddress) {
+        private void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
             if (sourceAddress != 0) {
                 long appendOffset = partitionStruct.getColumnAppendOffset(columnIndex);
-                long nextAppendOffset = appendOffset + pageFrameLength;
+                long nextAppendOffset = appendOffset + pageFrameSize;
                 partitionStruct.setColumnAppendOffset(columnIndex, nextAppendOffset);
 
                 long destAddress;
                 long columnStartAddress = partitionStruct.getColumnMappingStart(columnIndex);
                 if (columnStartAddress == 0) {
                     assert appendOffset == partitionStruct.getColumnStartOffset(columnIndex);
-                    long mapSz = Math.max(pageFrameLength, ff.getMapPageSize());
+                    long mapSz = Math.max(pageFrameSize, ff.getMapPageSize());
                     long address = mapFile(ff, partitionStruct.getColumnDataFd(columnIndex), appendOffset, mapSz);
                     partitionStruct.setColumnMappingStart(columnIndex, address);
                     partitionStruct.setColumnMappingSize(columnIndex, mapSz);
@@ -353,10 +353,10 @@ public class TableBlockWriter implements Closeable {
                 }
 
                 TableBlockWriterTask task = getConcurrentTask();
-                task.assignAppendPageFrameColumn(destAddress, pageFrameLength, sourceAddress);
+                task.assignAppendPageFrameColumn(destAddress, pageFrameSize, sourceAddress);
                 enqueueConcurrentTask(task);
             } else {
-                partWriter.setColumnTop(columnIndex, pageFrameLength);
+                partWriter.setColumnTop(columnIndex, pageFrameSize);
             }
         }
 
