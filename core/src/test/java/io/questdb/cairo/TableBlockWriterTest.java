@@ -700,8 +700,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     blockWriter.appendPageFrameColumn(
                             columnIndex,
                             frame.getPageSize(columnIndex),
-                            frame.getPageAddress(columnIndex),
-                            frame.getPageValueCount(columnIndex)
+                            frame.getPageAddress(columnIndex)
                     );
                 }
                 nFrames++;
