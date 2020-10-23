@@ -157,7 +157,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 }
             }
 
-            newRow(TelemetryEvent.UP);
+            newRow(Telemetry.SYSTEM_EVENT_UP);
         }
     }
 
@@ -165,7 +165,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     public void close() {
         if (enabled) {
             runSerially();
-            newRow(TelemetryEvent.DOWN);
+            newRow(Telemetry.SYSTEM_EVENT_DOWN);
             writer.commit();
             Misc.free(writer);
             Misc.free(writerConfig);
@@ -198,7 +198,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             try {
                 final TableWriter.Row row = writer.newRow(clock.getTicks());
                 row.putShort(1, event);
-                row.putShort(2, TelemetryOrigin.INTERNAL);
+                row.putShort(2, Telemetry.ORIGIN_INTERNAL);
                 row.append();
             } catch (CairoException e) {
                 LOG.error()
