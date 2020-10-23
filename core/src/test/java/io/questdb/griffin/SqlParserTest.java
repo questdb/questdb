@@ -82,6 +82,78 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinClauseAlignmentBug() throws SqlException {
+        assertQuery(
+                "",
+                "SELECT \n" +
+                        "     NULL AS TABLE_CAT, \n" +
+                        "     n.nspname AS TABLE_SCHEM, \n" +
+                        "     \n" +
+                        "     c.relname AS TABLE_NAME,  \n" +
+                        "     CASE n.nspname ~= '^pg_' OR n.nspname = 'information_schema'  \n" +
+                        "        WHEN true THEN \n" +
+                        "           CASE  \n" +
+                        "                WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN \n" +
+                        "                    CASE c.relkind   \n" +
+                        "                        WHEN 'r' THEN 'SYSTEM TABLE' \n" +
+                        "                        WHEN 'v' THEN 'SYSTEM VIEW'\n" +
+                        "                        WHEN 'i' THEN 'SYSTEM INDEX'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END\n" +
+                        "                WHEN n.nspname = 'pg_toast' THEN \n" +
+                        "                    CASE c.relkind   \n" +
+                        "                        WHEN 'r' THEN 'SYSTEM TOAST TABLE'\n" +
+                        "                        WHEN 'i' THEN 'SYSTEM TOAST INDEX'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END\n" +
+                        "                ELSE \n" +
+                        "                    CASE c.relkind\n" +
+                        "                        WHEN 'r' THEN 'TEMPORARY TABLE'\n" +
+                        "                        WHEN 'p' THEN 'TEMPORARY TABLE'\n" +
+                        "                        WHEN 'i' THEN 'TEMPORARY INDEX'\n" +
+                        "                        WHEN 'S' THEN 'TEMPORARY SEQUENCE'\n" +
+                        "                        WHEN 'v' THEN 'TEMPORARY VIEW'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END  \n" +
+                        "            END  \n" +
+                        "        WHEN false THEN \n" +
+                        "            CASE c.relkind  \n" +
+                        "                WHEN 'r' THEN 'TABLE'  \n" +
+                        "                WHEN 'p' THEN 'PARTITIONED TABLE'  \n" +
+                        "                WHEN 'i' THEN 'INDEX'  \n" +
+                        "                WHEN 'S' THEN 'SEQUENCE'  \n" +
+                        "                WHEN 'v' THEN 'VIEW'  \n" +
+                        "                WHEN 'c' THEN 'TYPE'  \n" +
+                        "                WHEN 'f' THEN 'FOREIGN TABLE'  \n" +
+                        "                WHEN 'm' THEN 'MATERIALIZED VIEW'  \n" +
+                        "                ELSE NULL  \n" +
+                        "            END  \n" +
+                        "        ELSE NULL  \n" +
+                        "    END AS TABLE_TYPE, \n" +
+                        "    d.description AS REMARKS,\n" +
+                        "    '' as TYPE_CAT,\n" +
+                        "    '' as TYPE_SCHEM,\n" +
+                        "    '' as TYPE_NAME,\n" +
+                        "    '' AS SELF_REFERENCING_COL_NAME,\n" +
+                        "    '' AS REF_GENERATION\n" +
+                        "FROM \n" +
+                        "    pg_catalog.pg_namespace n, \n" +
+                        "    pg_catalog.pg_class c  \n" +
+                        "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n" +
+                        "    LEFT JOIN pg_catalog.pg_class dc ON (d.classoid=dc.oid AND dc.relname='pg_class')\n" +
+                        "    LEFT JOIN pg_catalog.pg_namespace dn ON (dn.oid=dc.relnamespace AND dn.nspname='pg_catalog')\n" +
+                        "WHERE \n" +
+                        "    c.relnamespace = n.oid  \n" +
+                        "    AND c.relname LIKE 'quickstart-events2' \n" +
+                        "    AND (\n" +
+                        "        false  \n" +
+                        "        OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' ) \n" +
+                        "        ) \n" +
+                        "ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME"
+        );
+    }
+
+    @Test
     public void testAnalyticPartitionByMultiple() throws Exception {
         assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select [a, b, c] from xyz)",
