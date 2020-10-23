@@ -82,15 +82,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     private static void resumeJson(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final TextLoader textLoader = state.textLoader;
+        final TextLoaderCompletedState textLoader = state.completeState;
         final RecordMetadata metadata = textLoader.getMetadata();
         final LongList errors = textLoader.getColumnErrorCounts();
 
 
         switch (state.responseState) {
             case RESPONSE_PREFIX:
-                long totalRows = state.parsedCount;
-                long importedRows = state.writtenCount;
+                long totalRows = textLoader.getParsedLineCount();
+                long importedRows = textLoader.getWrittenLineCount();
                 socket.put('{')
                         .putQuoted("status").put(':').putQuoted("OK").put(',')
                         .putQuoted("location").put(':').encodeUtf8AndQuote(textLoader.getTableName()).put(',')

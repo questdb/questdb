@@ -3278,10 +3278,6 @@ public class IODispatcherTest {
                 final AtomicBoolean serverClosed = new AtomicBoolean(false);
                 HttpClientStateListener clientStateListener = new HttpClientStateListener() {
                     @Override
-                    public void onStartingRequest() {
-                    }
-
-                    @Override
                     public void onClosed() {
                         clientClosed.set(true);
 
