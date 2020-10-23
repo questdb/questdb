@@ -80,6 +80,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
@@ -945,6 +947,25 @@ public class TableWriter implements Closeable {
             path.trimTo(rootLen);
         }
     }
+
+    public void removePartition(Function function) {
+        try {
+            TimestampValueRecord rec = new TimestampValueRecord(); // remove allocation
+            long start = timestampFloorMethod.floor(maxTimestamp);
+            long end = timestampFloorMethod.floor(minTimestamp);
+            long timestampToRemove = start;
+            while (timestampToRemove >= end) {
+                rec.setTimestamp(timestampToRemove);
+                if (function.getBool(rec)) { //
+                    removePartition(timestampToRemove);
+                }
+                timestampToRemove = timestampAddMethod.calculate(timestampToRemove, -1);
+            }
+        } finally {
+//TODO or remove
+        }
+    }
+
 
     public void rollback() {
         checkDistressed();
@@ -3085,4 +3106,19 @@ public class TableWriter implements Closeable {
         IGNORED_FILES.add(TXN_FILE_NAME);
         IGNORED_FILES.add(TODO_FILE_NAME);
     }
+
+
+    static class TimestampValueRecord implements Record {
+        private long value;
+
+        public void setTimestamp(long value) {
+            this.value = value;
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return value;
+        }
+    }
+
 }

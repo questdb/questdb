@@ -45,15 +45,15 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropMalformedPartition() throws Exception {
         assertMemoryLeak(() -> {
-            createX("DAY", 72000000);
+                    createX("DAY", 72000000);
 
-            try {
-                compiler.compile("alter table x drop partition '2017-01'", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(29, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'YYYY-MM-DD' expected");
-            }
+                    try {
+                        compiler.compile("alter table x drop partition list '2017-01'", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        Assert.assertEquals(34, e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "'YYYY-MM-DD' expected");
+                    }
                 }
         );
     }
@@ -64,10 +64,10 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     createX("DAY", 72000000);
 
                     try {
-                        compiler.compile("alter table x drop partition '2017-01-05'", sqlExecutionContext);
+                        compiler.compile("alter table x drop partition list '2017-01-05'", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
-                        Assert.assertEquals(29, e.getPosition());
+                        Assert.assertEquals(34, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not remove partition");
                     }
                 }
@@ -75,13 +75,18 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropPartitionExpectListOrWhere() throws Exception {
+        assertFailure("alter table x drop partition", 28, "'list' or 'where' expected");
+    }
+
+    @Test
     public void testDropPartitionExpectName() throws Exception {
-        assertFailure("alter table x drop partition", 28, "partition name expected");
+        assertFailure("alter table x drop partition list", 33, "partition name expected");
     }
 
     @Test
     public void testDropPartitionNameMissing() throws Exception {
-        assertFailure("alter table x drop partition ,", 29, "partition name missing");
+        assertFailure("alter table x drop partition list ,", 34, "partition name missing");
     }
 
     @Test
@@ -93,14 +98,14 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     "120\n";
 
             assertPartitionResult(expectedBeforeDrop, "2018-01-07");
-                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+            assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-            Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+            Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+            String expectedAfterDrop = "count\n" +
+                    "0\n";
 
-                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
+            assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
                 }
         );
@@ -117,7 +122,29 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x DROP partition '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x DROP partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
+                    assertPartitionResult(expectedAfterDrop, "2018-01-07");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionListWithOneItem() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 720000000);
+
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
+
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x DROP partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -132,16 +159,16 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropTwoPartitionsByMonth() throws Exception {
         assertMemoryLeak(() -> {
-                    createX("MONTH", 3 * 7200000000L);
+            createX("MONTH", 3 * 7200000000L);
 
-                    assertPartitionResult("count\n" +
-                                    "112\n",
-                            "2018-02");
+            assertPartitionResult("count\n" +
+                            "112\n",
+                    "2018-02");
 
                     assertPartitionResult("count\n" +
                             "120\n", "2018-04");
 
-            Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition '2018-02', '2018-04'", sqlExecutionContext).getType());
+            Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-02', '2018-04'", sqlExecutionContext).getType());
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -164,13 +191,37 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "146\n", "2022");
 
-            Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition '2020', '2022'", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2020', '2022'", sqlExecutionContext).getType());
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
 
                     assertPartitionResult(expectedAfterDrop, "2020");
                     assertPartitionResult(expectedAfterDrop, "2022");
+                }
+        );
+    }
+
+    @Test
+    public void testSimpleWhere() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("YEAR", 3 * 72000000000L);
+
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
+
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp  < dateadd('y', -1, systimestamp()) ", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018");
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
                 }
         );
     }
