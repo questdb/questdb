@@ -29,7 +29,7 @@ import java.io.Closeable;
 import org.jetbrains.annotations.Nullable;
 
 import io.questdb.MessageBus;
-import io.questdb.TelemetryOrigin;
+import io.questdb.Telemetry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -241,7 +241,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             if (factory != null) {
                 try {
-                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP);
+                    sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_JSON);
                     executeCachedSelect(
                             state,
                             factory,
@@ -347,7 +347,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         final long nanos = nanosecondClock.getTicks();
         final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-        sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
+        sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_JSON);
         state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
         queryExecutors.getQuick(cc.getType()).execute(
                 state,

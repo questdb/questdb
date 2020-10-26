@@ -210,7 +210,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
-//                properties.setProperty("sslmode", "disable");
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 Statement statement = connection.createStatement();
@@ -1445,8 +1444,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 } catch (Exception e) {
                     LOG.error().$(e).$();
                 }
-                connection.commit();
-
                 //now transaction fail, we should rollback transaction
                 connection.rollback();
                 connection.setAutoCommit(true);
@@ -2117,22 +2114,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInferringBadParamenterWithoutExplicitParameterTypeHex2() throws Exception {
-        String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
-                "<520000000800000003\n" +
-                ">70000000076f6800\n" +
-                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
-                ">50000000300073656c65637420782c202024312c2024322066726f6d206c6f6e675f73657175656e63652832293b000000\n" +
-                ">4200000021000000010000000200000001000000000a353030303030303030300000\n" +
-                "<!!";
-
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
-                script,
-                getHexPgWireConfig());
-    }
-
-    @Test
     public void testIntAndLongParametersWithFormatCountGreaterThanValueCount() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -2313,6 +2294,123 @@ public class PGJobContextTest extends AbstractGriffinTest {
         );
     }
 
+    /*
+    nodejs code:
+    ------------------
+            const { Client } = require("pg")
+
+            const start = async () => {
+              try {
+                const client = new Client({
+                  database: "qdb",
+                  host: "127.0.0.1",
+                  password: "quest",
+                  port: 8812,
+                  user: "admin",
+                })
+                await client.connect()
+
+                const res = await client.query("INSERT INTO test VALUES($1, $2);", [
+                  "abc",
+                  "123"
+                ])
+
+                console.log(res)
+
+                await client.end()
+              } catch (e) {
+                console.log(e)
+              }
+            }
+
+            start()
+    ------------------
+     */
+    @Test
+    public void testInsertFomNodeJsWith2Parameters_TableDoesNotExist() throws Exception {
+        final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
+                "<520000000800000003\n" +
+                ">70000000076f6800\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">500000002800494e5345525420494e544f20746573742056414c5545532824312c202432293b000000\n" +
+                ">420000001a00000000000200000003616263000000033132330000\n" +
+                ">44000000065000\n" +
+                ">45000000090000000000\n" +
+                ">4800000004\n" +
+                "<310000000432000000046e00000004430000000b494e5345525400\n" +
+                ">4800000004\n" +
+                ">5300000004\n" +
+                "<5a0000000549\n" +
+                ">5800000004\n";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
+    }
+
+    /*
+nodejs code:
+------------------
+        const { Client } = require("pg")
+
+        const start = async () => {
+          try {
+            const client = new Client({
+              database: "qdb",
+              host: "127.0.0.1",
+              password: "quest",
+              port: 8812,
+              user: "admin",
+            })
+            await client.connect()
+
+            const res = await client.query("CREATE TABLE test (id string, number int);")
+
+            const res = await client.query("INSERT INTO test VALUES($1, $2);", [
+              "abc",
+              "123"
+            ])
+
+            console.log(res)
+
+            await client.end()
+          } catch (e) {
+            console.log(e)
+          }
+        }
+
+        start()
+------------------
+ */
+    @Test
+    public void testInsertFomNodeJsWith2Parameters_WithTableCreation() throws Exception {
+        final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
+                "<520000000800000003\n" +
+                ">70000000076f6800\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">510000002f435245415445205441424c4520746573742028696420737472696e672c206e756d62657220696e74293b00\n" +
+                "<43000000074f4b005a0000000549\n" +
+                ">500000002800494e5345525420494e544f20746573742056414c5545532824312c202432293b000000\n" +
+                ">420000001a00000000000200000003616263000000033132330000\n" +
+                ">44000000065000\n" +
+                ">45000000090000000000\n" +
+                ">4800000004\n" +
+                "<310000000432000000046e00000004430000000b494e5345525400\n" +
+                ">4800000004\n" +
+                ">5300000004\n" +
+                "<5a0000000549\n" +
+                ">5800000004\n";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
+    }
+
+
     @Test
     public void testPreparedStatementHex() throws Exception {
         assertPreparedStatementHex(NetworkFacadeImpl.INSTANCE, getHexPgWireConfig());
@@ -2467,6 +2565,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 }
                 switch (JDBCType.valueOf(metaData.getColumnType(i))) {
                     case VARCHAR:
+                    case NUMERIC:
                         String stringValue = rs.getString(i);
                         if (rs.wasNull()) {
                             sink.put("null");
@@ -2515,14 +2614,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                             sink.put("null");
                         } else {
                             sink.put(longValue);
-                        }
-                        break;
-                    case NUMERIC:
-                        String long256Value = rs.getString(i);
-                        if (rs.wasNull()) {
-                            sink.put("null");
-                        } else {
-                            sink.put(long256Value);
                         }
                         break;
                     case CHAR:

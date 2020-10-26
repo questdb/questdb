@@ -24,7 +24,18 @@
 
 package io.questdb;
 
-public final class TelemetryEvent {
-    public static final short UP = 100;
-    public static final short DOWN = 101;
+public final class Telemetry {
+
+    // These event types are in addition to those declared in
+    // io.questdb.griffin.CompiledQuery. We use them to identify start/stop events of the server
+
+    public static final short SYSTEM_EVENT_UP = 100;
+    public static final short SYSTEM_EVENT_DOWN = 101;
+    public static final short SYSTEM_ILP_RESERVE_WRITER = 102;
+
+    public static final short ORIGIN_INTERNAL = 1;
+    public static final short ORIGIN_HTTP_JSON = 2;
+    public static final short ORIGIN_POSTGRES = 3;
+    public static final short ORIGIN_HTTP_TEXT = 4;
+    public static final short ORIGIN_ILP_TCP = 5;
 }

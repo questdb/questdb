@@ -2,6 +2,9 @@
 # [key/user id] [key type] {key details} ...
 # Only elliptic curve (for curve P-256) are supported (key type ec-p-256-sha256), the key details for such a key are the base64url encoded x and y points that determine the public key as defined in the JSON web token standard (RFC 7519)
 #
+# The auth db file needs to be put somewhere in the questdbn server root and referenced in the line.tcp.auth.db.path setting of server conf, like:
+# line.tcp.auth.db.path=conf/authDb.txt
+#
 # Below is an elliptic curve (for curve P-256) JSON Web Key
 #{
 #  "kty": "EC",

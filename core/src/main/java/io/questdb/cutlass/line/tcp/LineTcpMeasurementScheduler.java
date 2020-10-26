@@ -24,11 +24,15 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.MessageBus;
+import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -36,6 +40,7 @@ import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -58,21 +63,37 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final double maxLoadRatio;
     private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
+    private final SqlExecutionContext sqlExecutionContext;
     private Sequence pubSeq;
     private long nextEventCursor = -1;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
 
-    LineTcpMeasurementScheduler(LineTcpReceiverConfiguration lineConfiguration, CairoEngine engine, WorkerPool writerWorkerPool) {
+    LineTcpMeasurementScheduler(
+            LineTcpReceiverConfiguration lineConfiguration,
+            CairoEngine engine,
+            WorkerPool writerWorkerPool,
+            @Nullable MessageBus messageBus
+    ) {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
         this.cairoConfiguration = engine.getConfiguration();
         this.milliClock = cairoConfiguration.getMillisecondClock();
+        // Worker count is set to 1 because we do not use this execution context
+        // in worker threads.
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, messageBus);
         tableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         loadByThread = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueSize();
-        queue = new RingQueue<>(() -> new LineTcpMeasurementEvent(maxMeasurementSize, lineConfiguration.getMicrosecondClock(), lineConfiguration.getTimestampAdapter()), queueSize);
+        queue = new RingQueue<>(
+                () -> new LineTcpMeasurementEvent(
+                        maxMeasurementSize,
+                        lineConfiguration.getMicrosecondClock(),
+                        lineConfiguration.getTimestampAdapter()
+                ),
+                queueSize
+        );
         pubSeq = new SPSequence(queueSize);
 
         int nWriterThreads = writerWorkerPool.getWorkerCount();
@@ -169,6 +190,14 @@ class LineTcpMeasurementScheduler implements Closeable {
         return loadByThread;
     }
 
+    int getNLoadCheckCycles() {
+        return nLoadCheckCycles;
+    }
+
+    int getNRebalances() {
+        return nRebalances;
+    }
+
     LineTcpMeasurementEvent getNewEvent() {
         assert isOpen();
         if (nextEventCursor != -1 || (nextEventCursor = pubSeq.next()) > -1) {
@@ -187,20 +216,12 @@ class LineTcpMeasurementScheduler implements Closeable {
         return queue.get(nextEventCursor);
     }
 
-    int getNLoadCheckCycles() {
-        return nLoadCheckCycles;
-    }
-
-    int getNRebalances() {
-        return nRebalances;
-    }
-
     private boolean isOpen() {
         return null != pubSeq;
     }
 
     private void loadRebalance() {
-        LOG.info().$("load check cycle ").$(++nLoadCheckCycles).$();
+        LOG.info().$("load check [cycle=").$(++nLoadCheckCycles).$(']').$();
         calcThreadLoad();
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         int fromThreadId = -1;
@@ -274,7 +295,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null == event) {
                 return;
             }
-            LOG.info().$("rebalance cycle ").$(++nRebalances).$(" moving ").$(tableNameToMove).$(" from ").$(fromThreadId).$(" to ").$(toThreadId).$();
+            LOG.info().$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances).$(", table=").$(tableNameToMove).$(", fromThreadId=").$(fromThreadId).$(", toThreadId=")
+                    .$(toThreadId).$(']').$();
             commitRebalanceEvent(event, fromThreadId, toThreadId, tableNameToMove);
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNameToMove);
             stats.threadId = toThreadId;
@@ -298,7 +320,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int rebalanceFromThreadId;
         private int rebalanceToThreadId;
         private String rebalanceTableName;
-        private boolean rebalanceReleasedByFromThread;
+        private volatile boolean rebalanceReleasedByFromThread;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             lexer = new TruncatedLineProtoLexer(maxMeasurementSize);
@@ -369,6 +391,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             rebalanceFromThreadId = fromThreadId;
             rebalanceToThreadId = toThreadId;
             rebalanceTableName = tableName;
+            rebalanceReleasedByFromThread = false;
         }
 
         int getErrorCode() {
@@ -401,7 +424,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     timestamp = timestampAdapter.getMicros(cache.get(timestampAddress));
                     timestampAddress = 0;
                 } catch (NumericException e) {
-                    LOG.info().$("invalid timestamp: ").$(cache.get(timestampAddress)).$();
+                    LOG.error().$("invalid timestamp: ").$(cache.get(timestampAddress)).$();
                     timestamp = Long.MIN_VALUE;
                     throw e;
                 }
@@ -503,8 +526,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             lastMaintenanceJobMillis = millis;
             ObjList<CharSequence> tableNames = parserCache.keys();
             for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-                Parser parser = parserCache.get(tableNames.get(n));
-                parser.doMaintenance();
+                parserCache.get(tableNames.get(n)).doMaintenance();
             }
         }
 
@@ -521,7 +543,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
                 if (event.threadId == id) {
-                    eventProcessed = processNextEvent(event);
+                    processNextEvent(event);
+                    eventProcessed = true;
                 } else {
                     if (event.isRebalanceEvent()) {
                         eventProcessed = processRebalance(event);
@@ -535,36 +558,45 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        private boolean processNextEvent(LineTcpMeasurementEvent event) {
+        private void handleEventException(LineTcpMeasurementEvent event, Parser parser, CairoException ex) {
+            LOG.error()
+                    .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
+                    .$(", table=").$(event.getTableName())
+                    .$(", ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .$(']').$();
+            Misc.free(parser);
+            parserCache.remove(event.getTableName());
+        }
+
+        private void processNextEvent(LineTcpMeasurementEvent event) {
             Parser parser = parserCache.get(event.getTableName());
-            if (null == parser) {
-                parser = new Parser();
-                try {
+            try {
+                if (null != parser) {
+                    parser.processEvent(event);
+                } else {
+                    parser = new Parser();
                     parser.processFirstEvent(engine, securityContext, event);
-                } catch (CairoException ex) {
-                    LOG.info()
-                            .$("could not create parser [jobName=").$(jobName)
-                            .$(" name=").$(event.getTableName())
-                            .$(", ex=").$(ex.getFlyweightMessage())
-                            .$(", errno=").$(ex.getErrno())
-                            .$(']').$();
-                    parser.close();
-                    return false;
+                    LOG.info().$("created parser [jobName=").$(jobName).$(" table=").$(event.getTableName()).$(']').$();
+                    parserCache.put(Chars.toString(event.getTableName()), parser);
                 }
-                LOG.info().$("created parser [jobName=").$(jobName).$(" name=").$(event.getTableName()).$(']').$();
-                parserCache.put(Chars.toString(event.getTableName()), parser);
-            } else {
-                parser.processEvent(event);
+            } catch (CairoException ex) {
+                handleEventException(event, parser, ex);
             }
-            return true;
         }
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
             if (event.rebalanceToThreadId == id) {
-                return event.rebalanceReleasedByFromThread;
+                if (event.rebalanceReleasedByFromThread) {
+                    LOG.info().$("rebalance cycle, new thread ready [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
+                    return true;
+                }
+
+                return false;
             }
 
             if (event.rebalanceFromThreadId == id) {
+                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
                 Parser parser = parserCache.get(event.rebalanceTableName);
                 parserCache.remove(event.rebalanceTableName);
                 parser.close();
@@ -593,6 +625,20 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
 
+            private int addColumn(LineTcpMeasurementEvent event, RecordMetadata metadata, int n, int colType) {
+                final int colIndex = metadata.getColumnCount();
+                CharSequence columnName = event.getName(n);
+                if (TableUtils.isValidColumnName(columnName)) {
+                    writer.addColumn(columnName, colType);
+                } else {
+                    LOG.error().$("invalid column name [table=").$(writer.getName())
+                            .$(", columnName=").$(columnName)
+                            .$(']').$();
+                    error = true;
+                }
+                return colIndex;
+            }
+
             private void addRow(LineTcpMeasurementEvent event) {
                 if (error) {
                     return;
@@ -607,8 +653,19 @@ class LineTcpMeasurementScheduler implements Closeable {
                         CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, columnIndex, event.getValue(i));
                     }
                     row.append();
-                } catch (NumericException | CairoException | BadCastException ignore) {
+                } catch (NumericException | BadCastException ex) {
                     // These exceptions are logged elsewhere
+                    if (null != row) {
+                        row.cancel();
+                    }
+                    return;
+                } catch (CairoException ex) {
+                    LOG.error()
+                            .$("could not insert measurement [jobName=").$(jobName)
+                            .$(", table=").$(event.getTableName())
+                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$(", errno=").$(ex.getErrno())
+                            .$(']').$();
                     if (null != row) {
                         row.cancel();
                     }
@@ -640,12 +697,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 RecordMetadata metadata = writer.getMetadata();
                 for (int n = 0; n < nMeasurementValues; n++) {
                     int colIndex = metadata.getColumnIndexQuiet(event.getName(n));
-                    int colType = colTypes.getQuick(n);
+                    final int colType = colTypes.getQuick(n);
                     if (colIndex == -1) {
-                        colIndex = metadata.getColumnCount();
-                        writer.addColumn(event.getName(n), colType);
+                        colIndex = addColumn(event, metadata, n, colType);
                     } else {
-                        int tableColType = metadata.getColumnType(colIndex);
+                        final int tableColType = metadata.getColumnType(colIndex);
                         if (tableColType != colType) {
                             if (colType == ColumnType.LONG && ALLOWED_LONG_CONVERSIONS.contains(tableColType)) {
                                 colTypes.setQuick(n, tableColType);
@@ -692,6 +748,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             private void processFirstEvent(CairoEngine engine, CairoSecurityContext securityContext, LineTcpMeasurementEvent event) {
+                sqlExecutionContext.storeTelemetry(Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
                 assert null == writer;
                 int status = engine.getStatus(securityContext, path, event.getTableName(), 0, event.getTableName().length());
                 if (status == TableUtils.TABLE_EXISTS) {
@@ -705,8 +762,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         securityContext,
                         appendMemory,
                         path,
-                        tableStructureAdapter.of(event, this)
-                );
+                        tableStructureAdapter.of(event, this));
                 int nValues = event.getNValues();
                 for (int n = 0; n < nValues; n++) {
                     colIndexMappings.add(n, n);
@@ -714,7 +770,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 writer = engine.getWriter(securityContext, event.getTableName());
                 addRow(event);
             }
-
         }
 
         private class TableStructureAdapter implements TableStructure {
@@ -733,7 +788,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 if (columnIndex == getTimestampIndex()) {
                     return "timestamp";
                 }
-                return event.getName(columnIndex);
+                CharSequence colName = event.getName(columnIndex);
+                if (TableUtils.isValidColumnName(colName)) {
+                    return colName;
+                }
+                throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
             }
 
             @Override

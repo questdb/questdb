@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -66,7 +67,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
         if (fd < 0) {
             int errno = nf.errno();
             LOG.error().$("cannot open UDP socket [errno=").$(errno).$(']').$();
-            throw CairoException.instance(errno).put("Cannot open UDP socket");
+            throw NetworkError.instance(errno, "Cannot open UDP socket");
         }
 
         try {
@@ -86,7 +87,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
                 workerPool.assign(this);
                 logStarted(configuration);
             }
-        } catch (CairoException e) {
+        } catch (CairoException | NetworkError e) {
             close();
             throw e;
         }
@@ -111,7 +112,7 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
         }
     }
 
-    public void halt() {
+    protected void halt() {
         if (running.compareAndSet(true, false)) {
             started.await();
             halted.await();
@@ -138,14 +139,15 @@ public abstract class AbstractLineProtoReceiver extends SynchronizedJob implemen
     private void bind(LineUdpReceiverConfiguration configuration) {
         if (nf.bindUdp(fd, configuration.isUnicast() ? configuration.getBindIPv4Address() : 0, configuration.getPort())) {
             if (!configuration.isUnicast() && !nf.join(fd, configuration.getBindIPv4Address(), configuration.getGroupIPv4Address())) {
-                int errno = nf.errno();
-                LOG.error().$("cannot join group [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(configuration.getBindIPv4Address()).$(", group=").$(configuration.getGroupIPv4Address()).$(']').$();
-                throw CairoException.instance(nf.errno()).put("Cannot join group ").put(configuration.getGroupIPv4Address()).put(" [bindTo=").put(configuration.getBindIPv4Address()).put(']');
+                throw NetworkError.instance(nf.errno())
+                        .put("cannot join group ")
+                        .put("[fd=").put(fd)
+                        .put(", bind=").put(configuration.getBindIPv4Address())
+                        .put(", group=").put(configuration.getGroupIPv4Address())
+                        .put(']');
             }
         } else {
-            int errno = nf.errno();
-            LOG.error().$("cannot bind socket [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(configuration.getBindIPv4Address()).$(", port=").$(configuration.getPort()).$(']').$();
-            throw CairoException.instance(nf.errno()).put("Cannot bind to ").put(configuration.getBindIPv4Address()).put(':').put(configuration.getPort());
+            throw NetworkError.instance(nf.errno()).couldNotBindSocket("udp-line-server", configuration.getBindIPv4Address(), configuration.getPort());
         }
     }
 

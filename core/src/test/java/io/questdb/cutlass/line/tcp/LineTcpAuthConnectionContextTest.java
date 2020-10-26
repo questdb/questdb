@@ -69,7 +69,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     private LineTcpAuthConnectionContext context;
     private LineTcpReceiverConfiguration lineTcpConfiguration;
     private LineTcpMeasurementScheduler scheduler;
-    private AtomicInteger netMsgBufferSize = new AtomicInteger(1024);
+    private final AtomicInteger netMsgBufferSize = new AtomicInteger(1024);
     private boolean disconnected;
     private String recvBuffer;
 
@@ -111,7 +111,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                     return maxSendBytes;
                 }
 
-                int nSent = bufferLen <= maxSendBytes ? bufferLen : maxSendBytes;
+                int nSent = Math.min(bufferLen, maxSendBytes);
                 sentBytes = new byte[nSent];
 
                 for (int n = 0; n < nSent; n++) {
@@ -173,7 +173,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -190,7 +190,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -207,7 +207,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -224,7 +224,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -241,7 +241,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -258,7 +258,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -275,7 +275,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -292,7 +292,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -309,7 +309,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
+            assertTable(expected);
         });
     }
 
@@ -519,8 +519,8 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         return challengeBytes;
     }
 
-    private void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
+    private void assertTable(CharSequence expected) {
+        try (TableReader reader = new TableReader(configuration, "weather")) {
             assertThat(expected, reader.getCursor(), reader.getMetadata(), true);
         }
     }
@@ -540,13 +540,9 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     }
 
     private void runInContext(Runnable r) throws Exception {
-        runInContext(r, null);
-    }
-
-    private void runInContext(Runnable r, Runnable onCommitNewEvent) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                setupContext(engine, onCommitNewEvent);
+                setupContext(engine);
                 try {
                     r.run();
                 } finally {
@@ -558,7 +554,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         });
     }
 
-    private void setupContext(CairoEngine engine, Runnable onCommitNewEvent) {
+    private void setupContext(CairoEngine engine) {
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             private final int workerCount;
             private final int[] affinityByThread;
@@ -584,15 +580,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                 Arrays.fill(affinityByThread, -1);
             }
         });
-        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool) {
-            @Override
-            void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
-                if (null != onCommitNewEvent) {
-                    onCommitNewEvent.run();
-                }
-                super.commitNewEvent(event, complete);
-            }
-        };
+        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool, null);
 
         AuthDb authDb = new AuthDb(lineTcpConfiguration);
         context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler);

@@ -34,9 +34,7 @@ import io.questdb.std.ObjList;
 public interface MultiArgFunction extends Function {
 
     static void init(ObjList<? extends Function> args, SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            args.getQuick(i).init(symbolTableSource, executionContext);
-        }
+        Function.init(args, symbolTableSource, executionContext);
     }
 
     @Override

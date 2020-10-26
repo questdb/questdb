@@ -870,5 +870,6 @@ final class WhereClauseParser implements Mutable {
         intrinsicOps.put("=", INTRINSIC_OP_EQUAL);
         intrinsicOps.put("!=", INTRINSIC_OP_NOT_EQ);
         intrinsicOps.put("not", INTRINSIC_OP_NOT);
+        intrinsicOps.put("between", INTRINSIC_OP_IN);
     }
 }

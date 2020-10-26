@@ -41,7 +41,7 @@ public abstract class AbstractLowerCaseAsciiCharSequenceHashSet implements Mutab
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
-        free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : initialCapacity;
+        free = this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
         this.loadFactor = loadFactor;
         keys = new CharSequence[Numbers.ceilPow2((int) (this.capacity / loadFactor))];
         mask = keys.length - 1;

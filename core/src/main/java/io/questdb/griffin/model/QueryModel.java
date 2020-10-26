@@ -619,7 +619,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         // pre-order traversal
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
-            if (n != null) {
+            if (n != null && n.token != null) {
                 if (isAndKeyword(n.token)) {
                     if (n.rhs != null) {
                         sqlNodeStack.push(n.rhs);

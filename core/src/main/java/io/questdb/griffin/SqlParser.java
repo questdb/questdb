@@ -83,6 +83,7 @@ public final class SqlParser {
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
         joinStartSet.put("lt", QueryModel.JOIN_LT);
+        joinStartSet.put(",", QueryModel.JOIN_CROSS);
         //
         setOperations.add("union");
         setOperations.add("except");
@@ -532,7 +533,7 @@ public final class SqlParser {
             final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));
             final int type = toColumnType(lexer, notTermTok(lexer));
 
-            if (SqlKeywords.isInvalidColumnName(name)) {
+            if (!TableUtils.isValidColumnName(name)) {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 
@@ -724,8 +725,10 @@ public final class SqlParser {
 
             tok = optTok(lexer);
 
-            if (tok != null && columnAliasStop.excludes(tok)) {
-
+            if (tok != null && Chars.equals(tok, ';')) {
+                alias = createColumnAlias(expr, model);
+                tok = optTok(lexer);
+            } else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
                 if (isAsKeyword(tok)) {
@@ -1124,7 +1127,7 @@ public final class SqlParser {
         joinModel.setJoinType(joinType);
         joinModel.setJoinKeywordPosition(lexer.lastTokenPosition());
 
-        if (!isJoinKeyword(tok)) {
+        if (!isJoinKeyword(tok) && !Chars.equals(tok, ',')) {
             expectTok(lexer, "join");
         }
 

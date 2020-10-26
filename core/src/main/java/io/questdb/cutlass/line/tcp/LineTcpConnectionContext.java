@@ -39,7 +39,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     enum IOContextResult {
         NEEDS_READ, NEEDS_WRITE, NEEDS_CPU, NEEDS_DISCONNECT
-    };
+    }
+
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;
@@ -114,6 +115,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
             if (peerDisconnected) {
                 // Peer disconnected, we have now finished disconnect our end
+                if (recvBufPos != recvBufStart) {
+                    LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+                } else {
+                    LOG.info().$('[').$(fd).$("] peer disconnected").$();
+                }
                 return IOContextResult.NEEDS_DISCONNECT;
             }
 
@@ -139,11 +145,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         while (len > 0 && !peerDisconnected) {
             int nRead = nf.recv(fd, recvBufPos, len);
             if (nRead < 0) {
-                if (recvBufPos != recvBufStart) {
-                    LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
-                } else {
-                    LOG.info().$('[').$(fd).$("] peer disconnected").$();
-                }
                 peerDisconnected = true;
             } else {
                 if (nRead > 0) {

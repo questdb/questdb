@@ -28,31 +28,30 @@ public class MemRemappedFileTest {
 
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    private Path path = new Path(1_000_000);
-    private long expectedTotal;
+    private final Path path = new Path(1_000_000);
 
     @Test
-    public void testReadOnlyMemory() throws Exception {
+    public void testReadOnlyMemory() {
         LOG.info().$("ReadOnlyMemory starting").$();
         double micros = test(new ReadOnlyMemory());
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     @Test
-    public void testExtendableOnePageMemory() throws Exception {
+    public void testExtendableOnePageMemory() {
         LOG.info().$("ExtendableOnePageMemory starting").$();
         double micros = test(new ExtendableOnePageMemory());
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 
-    private double test(ReadOnlyColumn readMem) throws Exception {
+    private double test(ReadOnlyColumn readMem) {
         long nanos = 0;
         try (AppendMemory appMem = new AppendMemory()) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).put(Files.SEPARATOR).concat("file" + nFile).$();
                 nFile++;
                 Random rand = new Random(0);
-                expectedTotal = 0;
+                long expectedTotal = 0;
 
                 nanos = System.nanoTime();
                 long actualTotal = 0;
@@ -94,7 +93,7 @@ public class MemRemappedFileTest {
     }
 
     @AfterClass
-    public static void afterClass() throws IOException {
+    public static void afterClass() {
         LOG.info().$("Finished").$();
     }
 }

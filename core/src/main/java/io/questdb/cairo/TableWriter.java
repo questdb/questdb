@@ -369,6 +369,7 @@ public class TableWriter implements Closeable {
 
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
+        assert TableUtils.isValidColumnName(name) : "invalid column name";
 
         checkDistressed();
 
@@ -984,6 +985,11 @@ public class TableWriter implements Closeable {
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     public final void truncate() {
+
+        // we do this before size check so that "old" corrupt symbol tables are brought back in line
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            denseSymbolMapWriters.getQuick(i).truncate();
+        }
 
         if (size() == 0) {
             return;

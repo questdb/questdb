@@ -37,6 +37,7 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
@@ -373,9 +374,17 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     .$(']').$();
             switchModeToSkipLine();
         } else {
-            columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
-            writer.addColumn(cache.get(columnName), valueType);
-            columnValues.add(value.getCacheAddress());
+            CharSequence colNameAsChars = cache.get(columnName);
+            if (TableUtils.isValidColumnName(colNameAsChars)) {
+                writer.addColumn(colNameAsChars, valueType);
+                columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
+                columnValues.add(value.getCacheAddress());
+            } else {
+                LOG.error().$("invalid column name [table=").$(writer.getName())
+                        .$(", columnName=").$(colNameAsChars)
+                        .$(']').$();
+                switchModeToSkipLine();
+            }
         }
     }
 
@@ -484,7 +493,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             if (columnIndex == getTimestampIndex()) {
                 return "timestamp";
             }
-            return cache.get(columnNameType.getQuick(columnIndex * 2));
+            CharSequence colName = cache.get(columnNameType.getQuick(columnIndex * 2));
+            if (TableUtils.isValidColumnName(colName)) {
+                return colName;
+            }
+            throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
         }
 
         @Override

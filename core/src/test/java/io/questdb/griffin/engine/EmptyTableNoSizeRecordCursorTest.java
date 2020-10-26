@@ -22,10 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine;
 
-public final class TelemetryOrigin {
-    public static final short INTERNAL = 1;
-    public static final short HTTP = 2;
-    public static final short PG_WIRE = 3;
+
+import org.junit.Assert;
+import org.junit.Test;
+
+public class EmptyTableNoSizeRecordCursorTest {
+
+    @Test
+    public void testImplementsSymbolTable() {
+        Assert.assertNull(EmptyTableNoSizeRecordCursor.INSTANCE.getSymbolTable(0));
+    }
 }

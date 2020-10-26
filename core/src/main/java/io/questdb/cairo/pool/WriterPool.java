@@ -141,9 +141,9 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                     notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
                     // this writer failed to allocate by this very thread
                     // ensure consistent response
+                    entries.remove(tableName);
                     throw e.ex;
                 }
-                return checkClosedAndGetWriter(tableName, e);
             }
             LOG.error().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;
@@ -271,6 +271,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, name, PoolListener.EV_UNLOCKED);
+            LOG.info().$("unlocked [table=`").utf8(name).$("`]").$();
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not lock owner of ").put(name);

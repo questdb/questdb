@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
@@ -347,6 +348,12 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("trader", ColumnType.SYMBOL)
                         .timestamp()
         );
+    }
+
+    @Test
+    public void testColumnsOfSimpleSelectWithSemicolon() throws SqlException {
+        assertColumnNames("select 1;", "1");
+        assertColumnNames("select 1, 1, 1;", "1", "11", "12");
     }
 
     @Test
@@ -1529,6 +1536,16 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT),
                 modelOf("c").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testCrossJoinToInnerJoin() throws SqlException {
+        assertQuery(
+                "select-choose tab1.x x, tab1.y y, tab2.x x1, tab2.z z from (select [x, y] from tab1 join select [x, z] from tab2 on tab2.x = tab1.x)",
+                "select * from tab1 cross join tab2  where tab1.x = tab2.x",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
     }
 
     @Test
@@ -4665,6 +4682,30 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTableListToCrossJoin() throws Exception {
+        assertQuery("select-choose a.x x from (select [x] from a a join select [x] from c on c.x = a.x)",
+                "select a.x from a a, c where a.x = c.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT),
+                modelOf("c").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testNullChecks() throws SqlException {
+        assertQuery(
+                "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z','2020-09-20T17:00:00.312334Z'))",
+                "SELECT \n" +
+                        "a\n" +
+                        "FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')\n" +
+                        "select *", // <-- dangling 'select *'
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("time")
+        );
+    }
+
+    @Test
     public void testTableNameAsArithmetic() throws Exception {
         assertSyntaxError(
                 "select x from 'tab' + 1",
@@ -5188,6 +5229,19 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
         assertSyntaxError(compiler, query, position, contains, tableModels);
+    }
+
+    private void assertColumnNames(SqlCompiler compiler, String query, String... columns) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        RecordMetadata metadata = cc.getRecordCursorFactory().getMetadata();
+
+        for (int idx = 0; idx < columns.length; idx++) {
+            TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
+        }
+    }
+
+    private void assertColumnNames(String query, String... columns) throws SqlException {
+        assertColumnNames(compiler, query, columns);
     }
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {

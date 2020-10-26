@@ -25,7 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.MessageBus;
-import io.questdb.TelemetryOrigin;
+import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -147,7 +147,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
     private static final int ROLLING_BACK_TRANSACTION = 4;
-    private final ObjHashSet<TableWriter> cachedTransactionInsertWriters = new ObjHashSet<>();
+    private final ObjHashSet<InsertMethod> cachedTransactionInsertWriters = new ObjHashSet<>();
     //    private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
     private final IntList parameterFormats = new IntList();
@@ -372,6 +372,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         } catch (SqlException e) {
             sendExecuteTail(TAIL_ERROR);
             clearRecvBuffer();
+            queryTag = TAG_OK;
         }
     }
 
@@ -560,7 +561,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             boolean foundCachedFactory = retrieveCachedFactory(factoryCache);
             if (!foundCachedFactory) {
                 final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-                sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
+                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
 
                 switch (cc.getType()) {
                     case CompiledQuery.SELECT:
@@ -583,14 +584,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                             transactionState = IN_TRANSACTION;
                         } else if (SqlKeywords.isCommit(queryText)) {
                             queryTag = TAG_COMMIT;
-                            switch (transactionState) {
-                                case ERROR_TRANSACTION:
-                                    transactionState = ERROR_TRANSACTION;
-                                    break;
-                                case IN_TRANSACTION:
-                                default:
-                                    transactionState = COMMIT_TRANSACTION;
-                                    break;
+                            if (transactionState != ERROR_TRANSACTION) {
+                                transactionState = COMMIT_TRANSACTION;
                             }
                         } else if (SqlKeywords.isRollback(queryText)) {
                             queryTag = TAG_ROLLBACK;
@@ -798,18 +793,25 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void executeInsert() {
         try {
-            if (transactionState != ERROR_TRANSACTION) {
-                final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext);
-                m.execute();
-                if (transactionState != IN_TRANSACTION) {
-                    m.commit();
-                    m.close();
-                } else {
-                    cachedTransactionInsertWriters.add(m.getWriter());
-                }
-                sendCurrentCursorTail = TAIL_SUCCESS;
-                prepareExecuteTail(false);
+            switch (transactionState) {
+                case IN_TRANSACTION:
+                    final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext);
+                    m.execute();
+                    cachedTransactionInsertWriters.add(m);
+                    break;
+                case ERROR_TRANSACTION:
+                    // when transaction is in error state, skip execution
+                    break;
+                default:
+                    // in any other case we will commit in place
+                    try (final InsertMethod m2 = currentInsertStatement.createMethod(sqlExecutionContext)) {
+                        m2.execute();
+                        m2.commit();
+                    }
+                    break;
             }
+            sendCurrentCursorTail = TAIL_SUCCESS;
+            prepareExecuteTail(false);
         } catch (CairoException e) {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;
@@ -955,7 +957,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 return typeOids.get(typeAdapter.getType());
             }
         }
-        return -1;
+        return PG_VARCHAR;
     }
 
     /**
@@ -1235,10 +1237,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         } else if (currentInsertStatement != null) {
             executeInsert();
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
-            if (!Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
+            if (queryTag != null && !Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
                 if (transactionState == COMMIT_TRANSACTION) {
                     for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-                        TableWriter m = cachedTransactionInsertWriters.get(i);
+                        final InsertMethod m = cachedTransactionInsertWriters.get(i);
                         m.commit();
                         Misc.free(m);
                     }
@@ -1246,7 +1248,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     transactionState = NO_TRANSACTION;
                 } else if (transactionState == ROLLING_BACK_TRANSACTION) {
                     for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-                        TableWriter m = cachedTransactionInsertWriters.get(i);
+                        InsertMethod m = cachedTransactionInsertWriters.get(i);
                         m.rollback();
                         Misc.free(m);
                     }
@@ -1560,7 +1562,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         final Object statement = factoryCache.peek(queryText);
         if (statement == null) {
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.PG_WIRE);
+            sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
 
             switch (cc.getType()) {
                 case CompiledQuery.SELECT:
@@ -1724,22 +1726,17 @@ public class PGConnectionContext implements IOContext, Mutable {
             sink.putNetworkInt(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
             sink.putNetworkInt(typeOids.get(columnType)); // type
-            if (columnType < 10) {
+            if (columnType < ColumnType.STRING) {
                 //type size
-                sink.putNetworkShort((short) 4);
-                //type modifier
-                sink.put('\uFFFF');
-                sink.put('\uFFFF');
-                sink.put('\uFFFF');
-                sink.put('\uFFFF');
+                sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
             } else {
                 // type size
-                sink.put('\uFFFF');
-                sink.put('\uFFFF');
-                // type modifier
-                sink.putNetworkInt(0);
+                sink.put((short) -1);
             }
+            //type modifier
+            sink.putNetworkInt(-1);
             // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+            // format code
             sink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
         }
         sink.putLen(addr);
