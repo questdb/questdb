@@ -36,7 +36,7 @@ import io.questdb.std.ObjList;
 public class MatchCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "~=(Sa)";
+        return "~(Sa)";
     }
 
     @Override
