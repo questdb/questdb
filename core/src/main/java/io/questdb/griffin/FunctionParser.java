@@ -56,16 +56,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private static final IntHashSet invalidFunctionNameChars = new IntHashSet();
     private static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
-
-    static {
-        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
-            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
-        }
-        invalidFunctionNameChars.add(' ');
-        invalidFunctionNameChars.add('\"');
-        invalidFunctionNameChars.add('\'');
-    }
-
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
@@ -183,60 +173,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return openBraceIndex;
     }
 
-    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put(message);
-        ex.put(": ");
-        ex.put(node.token);
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
-            }
-        }
-        ex.put(')');
-        return ex;
-    }
-
-    private static SqlException invalidArgument(ExpressionNode node, ObjList<Function> args, CharSequence expected, int offset, int count) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put("unexpected argument for function: ");
-        ex.put(node.token);
-        ex.put(". expected args: ");
-        ex.put('(');
-        if (expected != null) {
-            for (int i = 0; i < count; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                char c = expected.charAt(offset + i);
-                ex.put(ColumnType.nameOf(getArgType(c)));
-                if (Character.isLowerCase(c)) {
-                    ex.put(" constant");
-                }
-            }
-        }
-        ex.put("). actual args: ");
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                Function arg = args.getQuick(i);
-                ex.put(ColumnType.nameOf(arg.getType()));
-                if (arg.isConstant()) {
-                    ex.put(" constant");
-                }
-            }
-        }
-        ex.put(')');
-        return ex;
-    }
-
     public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
@@ -253,13 +189,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return new NamedParameterLinkFunction(Chars.toString(node.token), function.getType(), node.position);
     }
 
-    @NotNull
-    private BindVariableService getBindVariableService() throws SqlException {
-        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-        if (bindVariableService == null) {
-            throw SqlException.$(0, "bind variable service is not provided");
-        }
-        return bindVariableService;
+    public int getFunctionCount() {
+        return functionFactoryCache.getFunctionCount();
+    }
+
+    public boolean isGroupBy(CharSequence token) {
+        return functionFactoryCache.isGroupBy(token);
     }
 
     /**
@@ -363,6 +298,60 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
+    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put(message);
+        ex.put(": ");
+        ex.put(node.token);
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
+            }
+        }
+        ex.put(')');
+        return ex;
+    }
+
+    private static SqlException invalidArgument(ExpressionNode node, ObjList<Function> args, CharSequence expected, int offset, int count) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put("unexpected argument for function: ");
+        ex.put(node.token);
+        ex.put(". expected args: ");
+        ex.put('(');
+        if (expected != null) {
+            for (int i = 0; i < count; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                char c = expected.charAt(offset + i);
+                ex.put(ColumnType.nameOf(getArgType(c)));
+                if (Character.isLowerCase(c)) {
+                    ex.put(" constant");
+                }
+            }
+        }
+        ex.put("). actual args: ");
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                Function arg = args.getQuick(i);
+                ex.put(ColumnType.nameOf(arg.getType()));
+                if (arg.isConstant()) {
+                    ex.put(" constant");
+                }
+            }
+        }
+        ex.put(')');
+        return ex;
+    }
+
     private Function checkAndCreateFunction(
             FunctionFactory factory,
             @Transient ObjList<Function> args,
@@ -443,60 +432,69 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private Function createConstant(ExpressionNode node) throws SqlException {
 
-        if (isNullKeyword(node.token)) {
+        final int len = node.token.length();
+        final CharSequence tok = node.token;
+
+        if (isNullKeyword(tok)) {
             return new NullStrConstant(node.position);
         }
 
-        if (Chars.isQuoted(node.token)) {
-            if (node.token.length() == 3) {
+        if (Chars.isQuoted(tok)) {
+            if (len == 3) {
                 // this is 'x' - char
-                return new CharConstant(node.position, node.token.charAt(1));
+                return new CharConstant(node.position, tok.charAt(1));
             }
 
-            if (node.token.length() == 2) {
+            if (len == 2) {
                 // empty
                 return new CharConstant(node.position, (char) 0);
             }
-            return new StrConstant(node.position, node.token);
+            return new StrConstant(node.position, tok);
         }
 
-        if (SqlKeywords.isTrueKeyword(node.token)) {
+        // special case E'str'
+        // we treat it like normal string for now
+        if (len > 2 && tok.charAt(0) == 'E' && tok.charAt(1) == '\'') {
+            return new StrConstant(node.position, Chars.toString(tok, 2, len - 1));
+        }
+
+        if (SqlKeywords.isTrueKeyword(tok)) {
             return new BooleanConstant(node.position, true);
         }
 
-        if (SqlKeywords.isFalseKeyword(node.token)) {
+        if (SqlKeywords.isFalseKeyword(tok)) {
             return new BooleanConstant(node.position, false);
         }
 
         try {
-            return new IntConstant(node.position, Numbers.parseInt(node.token));
+            return new IntConstant(node.position, Numbers.parseInt(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new LongConstant(node.position, Numbers.parseLong(node.token));
+            return new LongConstant(node.position, Numbers.parseLong(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new DoubleConstant(node.position, Numbers.parseDouble(node.token));
+            return new DoubleConstant(node.position, Numbers.parseDouble(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new FloatConstant(node.position, Numbers.parseFloat(node.token));
+            return new FloatConstant(node.position, Numbers.parseFloat(tok));
         } catch (NumericException ignore) {
         }
 
         // type constant for 'CAST' operation
 
-        final int columnType = ColumnType.columnTypeOf(node.token);
+        final int columnType = ColumnType.columnTypeOf(tok);
 
         if (columnType > -1) {
             return Constants.getTypeConstant(columnType);
         }
 
-        throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
+        throw SqlException.position(node.position).put("invalid constant: ").put(tok);
     }
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
@@ -787,11 +785,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    public boolean isGroupBy(CharSequence token) {
-        return functionFactoryCache.isGroupBy(token);
+    @NotNull
+    private BindVariableService getBindVariableService() throws SqlException {
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        if (bindVariableService == null) {
+            throw SqlException.$(0, "bind variable service is not provided");
+        }
+        return bindVariableService;
     }
 
-    public int getFunctionCount() {
-        return functionFactoryCache.getFunctionCount();
+    static {
+        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
+            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
+        }
+        invalidFunctionNameChars.add(' ');
+        invalidFunctionNameChars.add('\"');
+        invalidFunctionNameChars.add('\'');
     }
 }

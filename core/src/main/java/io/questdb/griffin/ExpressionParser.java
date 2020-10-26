@@ -344,6 +344,13 @@ class ExpressionParser {
                     case '8':
                     case '9':
                     case '\'':
+                    case 'E':
+//                         check if this is E'str'
+                        if (thisChar == 'E' && (tok.length() < 3 || tok.charAt(1) != '\'')) {
+                            processDefaultBranch = true;
+                            break;
+                        }
+
                         thisBranch = BRANCH_CONSTANT;
                         if (prevBranch == BRANCH_DOT) {
                             final ExpressionNode en = opStack.peek();

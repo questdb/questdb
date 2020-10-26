@@ -1323,7 +1323,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void batchInsertWithTransaction() throws Exception {
+    public void testBatchInsertWithTransaction() throws Exception {
         assertMemoryLeak(() -> {
 
             final CountDownLatch haltLatch = new CountDownLatch(1);
@@ -1461,6 +1461,45 @@ public class PGJobContextTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    @Ignore
+    // this will exercise SQL that relies on ARRAY datatype. Uncomment when we have arrays.
+    public void testSchemasCall() throws Exception {
+        assertMemoryLeak(() -> {
+
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+
+            try {
+                startBasicServer(NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table test (id long,val int)");
+                    statement.executeUpdate("create table test2(id long,val int)");
+                }
+
+                DatabaseMetaData metaData = connection.getMetaData();
+                metaData.getSchemas();
+
+                //
+                connection.close();
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
 
     @Test
     public void testSimpleHex() throws Exception {

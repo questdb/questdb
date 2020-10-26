@@ -33,7 +33,19 @@ import io.questdb.cairo.sql.RecordMetadata;
 
 class DescriptionCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
-    private int row = 0;
+    private int row = -1;
+    private static final int[] objOids = {0};
+    private static final int[] classOids = {PgOIDs.PG_CLASS_OID};
+    private static final int[] objSubIds = {0};
+    private static final String[] descriptions = {"table"};
+    private static final  int objOidsLen = objOids.length;
+    private final DescriptionCatalogueRecord record = new DescriptionCatalogueRecord();
+    private static final int[][] intColumns = {
+            objOids,
+            classOids,
+            objSubIds,
+            null
+    };
 
     @Override
     public void close() {
@@ -42,17 +54,17 @@ class DescriptionCatalogueCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public Record getRecord() {
-        return DescriptionCatalogueRecord.INSTANCE;
+        return record;
     }
 
     @Override
     public boolean hasNext() {
-        return row++ == 0;
+        return ++row < objOidsLen;
     }
 
     @Override
     public void toTop() {
-        row = 0;
+        row = -1;
     }
 
     @Override
@@ -60,17 +72,16 @@ class DescriptionCatalogueCursor implements NoRandomAccessRecordCursor {
         return 1;
     }
 
-    private static class DescriptionCatalogueRecord implements Record {
-        private static final DescriptionCatalogueRecord INSTANCE = new DescriptionCatalogueRecord();
+    private class DescriptionCatalogueRecord implements Record {
 
         @Override
         public int getInt(int col) {
-            return 0;
+            return intColumns[col][row];
         }
 
         @Override
         public CharSequence getStr(int col) {
-            return "table";
+            return descriptions[row];
         }
     }
 
