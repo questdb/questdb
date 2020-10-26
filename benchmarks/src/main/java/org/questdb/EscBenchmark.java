@@ -22,22 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.columns;
+package org.questdb;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Rnd;
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.profile.GCProfiler;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-public class LongColumn extends LongFunction implements ScalarFunction {
-    private final int columnIndex;
+import java.util.concurrent.TimeUnit;
 
-    public LongColumn(int position, int columnIndex) {
-        super(position);
-        this.columnIndex = columnIndex;
+@State(Scope.Thread)
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+public class EscBenchmark {
+
+    Rnd rnd = new Rnd();
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(EscBenchmark.class.getSimpleName())
+                .warmupIterations(5)
+                .measurementIterations(5)
+                .forks(1)
+                .addProfiler(GCProfiler.class)
+                .build();
+
+        new Runner(opt).run();
     }
 
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(columnIndex);
+    @Benchmark
+    public int testEscapeAnalysis() {
+        int[] tuple = {0, 2};
+        return tuple[rnd.nextPositiveInt() % 2];
     }
 }

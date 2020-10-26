@@ -22,22 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.columns;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
-
-public class LongColumn extends LongFunction implements ScalarFunction {
-    private final int columnIndex;
-
-    public LongColumn(int position, int columnIndex) {
-        super(position);
-        this.columnIndex = columnIndex;
+public interface ScalarFunction extends Function {
+    @Override
+    default int getInt(Record record, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(columnIndex);
+    default int getArrayLength() {
+        throw new UnsupportedOperationException();
     }
 }

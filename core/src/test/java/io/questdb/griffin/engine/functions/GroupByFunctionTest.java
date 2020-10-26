@@ -169,6 +169,16 @@ public class GroupByFunctionTest {
         public int getType() {
             return 0;
         }
+
+        @Override
+        public int getArrayLength() {
+            return 0;
+        }
+
+        @Override
+        public int getInt(Record record, int arrayIndex) {
+            return 0;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

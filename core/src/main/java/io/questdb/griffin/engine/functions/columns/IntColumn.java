@@ -26,9 +26,10 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 
-public class IntColumn extends IntFunction implements Function {
+public class IntColumn extends IntFunction implements ScalarFunction {
     private final int columnIndex;
 
     public IntColumn(int position, int columnIndex) {
