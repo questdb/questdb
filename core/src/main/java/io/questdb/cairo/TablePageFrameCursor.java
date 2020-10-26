@@ -27,6 +27,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
     private int partitionCount;
     private int timestampColumnIndex;
     private long frameFirstRow;
+    private long nFrameRows;
     private long nPartitionRows;
     private long firstTimestamp = Long.MIN_VALUE;
     private int columnBase;
@@ -95,7 +96,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                     }
                 }
             }
-            long nFrameRows = nPartitionRows - frameFirstRow;
+            nFrameRows = nPartitionRows - frameFirstRow;
             if (nFrameRows > maxRowsPerFrame) {
                 nFrameRows = maxRowsPerFrame;
             }
@@ -258,7 +259,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
 
         @Override
         public long getPageValueCount(int i) {
-            throw new UnsupportedOperationException();
+            return nFrameRows;
         }
 
         @Override
