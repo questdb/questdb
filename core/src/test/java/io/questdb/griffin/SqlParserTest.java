@@ -591,6 +591,31 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableForKafka() throws SqlException {
+        assertCreateTable(
+                "create table quickstart-events4 (" +
+                        "flag BOOLEAN, " +
+                        "id8 SHORT, " +
+                        "id16 SHORT, " +
+                        "id32 INT, " +
+                        "id64 LONG, " +
+                        "idFloat FLOAT, " +
+                        "idDouble DOUBLE, " +
+                        "idBytes STRING, " +
+                        "msg STRING)",
+                "CREATE TABLE \"quickstart-events4\" (\n" +
+                        "\"flag\" BOOLEAN NOT NULL,\n" +
+                        "\"id8\" SMALLINT NOT NULL,\n" +
+                        "\"id16\" SMALLINT NOT NULL,\n" +
+                        "\"id32\" INT NOT NULL,\n" +
+                        "\"id64\" BIGINT NOT NULL,\n" +
+                        "\"idFloat\" REAL NOT NULL,\n" +
+                        "\"idDouble\" DOUBLE PRECISION NOT NULL,\n" +
+                        "\"idBytes\" BYTEA NOT NULL,\n" +
+                        "\"msg\" TEXT NULL)");
+    }
+
+    @Test
     public void testCreateTableAsSelect() throws SqlException {
         assertCreateTable(
                 "create table X as (select-choose a, b, c from (select [a, b, c] from tab))",

@@ -56,9 +56,92 @@ connection.url=jdbc:postgresql://127.0.0.1:8812/qdb?useSSL=false
 connection.user=admin
 connection.password=quest
 
-topics=quickstart-events2
+topics=quickstart-events
 insert.mode=insert
 dialect.name=PostgreSqlDatabaseDialect
 pk.mode=none
 auto.create=true
+```
+
+To publish a message
+
+```shell
+bin/windows/kafka-console-producer.bat --topic quickstart-events --bootstrap-server localhost:9092
+```
+
+Paste this message (as one line) to create a table. The table name will be topic used in the kafka-console-producer
+topic
+
+```json
+{    "schema": {        "type": "struct",        "fields": [            {                "type": "boolean",                "optional": false,               "field": "flag"            },            {                "type": "int8",                "optional": false,                "field": "id8"           },           {                "type": "int16",                "optional": false,                "field": "id16"            },            {                "type":"int32",                "optional": false,                "field": "id32"            },          {                  "type": "int64",               "optional": false,                "field": "id64"            },            {                "type": "float",                "optional": false,                "field": "idFloat"            },            {                "type": "double",                "optional": false,                "field": "idDouble"            },              {                "type": "bytes",                "optional": false,                "field": "idBytes"            }  ,              {                "type": "string",                "optional": true,                "field": "msg"            }      ],        "optional": false,        "name": "msgschema"    },    "payload": {        "flag": false,        "id8": 222,        "id16": 222,        "id32": 222,        "id64": 222,        "idFloat": 222.0,        "idDouble": 333.0,        "idBytes": "aGVsbG8=",        "msg": "hi"  }}
+```
+
+For reference purposes, this is the above message but formatted
+
+```json
+{
+    "schema": {
+        "type": "struct",
+        "fields": [
+            {
+                "type": "boolean",
+                "optional": false,
+                "field": "flag"
+            },
+            {
+                "type": "int8",
+                "optional": false,
+                "field": "id8"
+            },
+            {
+                "type": "int16",
+                "optional": false,
+                "field": "id16"
+            },
+            {
+                "type": "int32",
+                "optional": false,
+                "field": "id32"
+            },
+            {
+                "type": "int64",
+                "optional": false,
+                "field": "id64"
+            },
+            {
+                "type": "float",
+                "optional": false,
+                "field": "idFloat"
+            },
+            {
+                "type": "double",
+                "optional": false,
+                "field": "idDouble"
+            },
+            {
+                "type": "bytes",
+                "optional": false,
+                "field": "idBytes"
+            },
+            {
+                "type": "string",
+                "optional": true,
+                "field": "msg"
+            }
+        ],
+        "optional": false,
+        "name": "msgschema"
+    },
+    "payload": {
+        "flag": false,
+        "id8": 222,
+        "id16": 222,
+        "id32": 222,
+        "id64": 222,
+        "idFloat": 222.0,
+        "idDouble": 333.0,
+        "idBytes": "aGVsbG8=",
+        "msg": "hi"
+    }
+}
 ```

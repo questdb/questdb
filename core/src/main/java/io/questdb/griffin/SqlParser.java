@@ -576,6 +576,20 @@ public final class SqlParser {
                 tok = tok(lexer, "',' or ')'");
             }
 
+            //ignoring `PRECISION`
+            if (SqlKeywords.isPrecisionKeyword(tok)) {
+                tok = tok(lexer, "'NOT' or 'NULL' or ',' or ')'");
+            }
+
+            //ignoring `NULL` and `NOT NULL`
+            if (SqlKeywords.isNotKeyword(tok)) {
+                tok = tok(lexer, "'NULL'");
+            }
+
+            if (SqlKeywords.isNullKeyword(tok)) {
+                tok = tok(lexer, "','");
+            }
+
             if (Chars.equals(tok, ')')) {
                 break;
             }

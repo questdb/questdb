@@ -88,6 +88,11 @@ public final class ColumnType {
         nameTypeMap.put("timestamp", TIMESTAMP);
         nameTypeMap.put("cursor", TypeEx.CURSOR);
         nameTypeMap.put("long256", ColumnType.LONG256);
+        nameTypeMap.put("text", ColumnType.STRING);
+        nameTypeMap.put("smallint", ColumnType.SHORT);
+        nameTypeMap.put("bigint", ColumnType.LONG);
+        nameTypeMap.put("real", ColumnType.FLOAT);
+        nameTypeMap.put("bytea", ColumnType.STRING);
 
         TYPE_SIZE_POW2[ColumnType.BOOLEAN] = 0;
         TYPE_SIZE_POW2[ColumnType.BYTE] = 0;
