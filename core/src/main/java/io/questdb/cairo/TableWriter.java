@@ -974,13 +974,14 @@ public class TableWriter implements Closeable {
         int dropPartitionCount = partitionsToDrop.size();
         if (dropPartitionCount == 0) {
             return false;
-        }
-
-        if (dropPartitionCount == partitionCount) {
+        } else if (dropPartitionCount == partitionCount) {
             truncate();
             return true;
         } else if (droppingActivePartition) {
-            //LOG ??
+            LOG.error()
+                    .$("cannot remove active partition [path=").$(path)
+                    .$(", maxTimestamp=").$ts(maxTimestamp)
+                    .$(']').$();
             return false;
         } else {
             for (int i = 0; i < dropPartitionCount; i++) {
@@ -996,8 +997,7 @@ public class TableWriter implements Closeable {
             ff.iterateDir(path.$(), (file, type) -> {
                 nativeLPSZ.of(file);
                 if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
-                    long timestamp = partitionNameToTimestamp(nativeLPSZ);
-                    partitionListByTimestamp.add(timestamp);
+                    partitionListByTimestamp.add(partitionNameToTimestamp(nativeLPSZ));
                 }
             });
         } finally {
