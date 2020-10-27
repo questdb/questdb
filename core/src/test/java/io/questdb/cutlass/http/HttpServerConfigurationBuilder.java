@@ -46,6 +46,7 @@ public class HttpServerConfigurationBuilder {
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private int rerunProcessingQueueSize = 4096;
     private int receiveBufferSize = 1024 * 1024;
+    private long multipartIdleSpinCount = -1;
 
     public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
         this.nf = nf;
@@ -94,6 +95,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withReceiveBufferSize(int receiveBufferSize) {
         this.receiveBufferSize = receiveBufferSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withMultipartIdleSpinCount(long multipartIdleSpinCount) {
+        this.multipartIdleSpinCount = multipartIdleSpinCount;
         return this;
     }
 
@@ -198,6 +204,12 @@ public class HttpServerConfigurationBuilder {
                         return rerunProcessingQueueSize;
                     }
                 };
+            }
+
+            @Override
+            public long getMultipartIdleSpinCount() {
+                if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
+                return multipartIdleSpinCount;
             }
 
             @Override

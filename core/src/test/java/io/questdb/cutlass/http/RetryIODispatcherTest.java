@@ -170,18 +170,19 @@ public class RetryIODispatcherTest {
 
     @Test
     public void testImportWaitsWhenWriterLockedLoop() throws Exception {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 5; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
             testImportWaitsWhenWriterLocked(new HttpQueryTestBuilder()
                             .withTempFolder(temp)
-                            .withWorkerCount(1)
+                            .withWorkerCount(4)
                             .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
                                     .withNetwork(getSendDelayNetworkFacade(500))
+                                    .withMultipartIdleSpinCount(10)
                             ),
-                    0, ValidImportRequest, "HTTP/1.1 200 OK\r\n"// ValidImportResponse
-                    , true);
+                    500, ValidImportRequest, ValidImportResponse
+                    , true, false);
             temp.delete();
             temp.create();
         }
@@ -223,7 +224,7 @@ public class RetryIODispatcherTest {
                             .withHttpServerConfigBuilder(
                                     new HttpServerConfigurationBuilder().withNetwork(getSendDelayNetworkFacade(500))
                             ),
-                    0, ValidImportRequest, ValidImportResponse, true);
+                    0, ValidImportRequest, ValidImportResponse, true, true);
             temp.delete();
             temp.create();
         }
@@ -245,7 +246,7 @@ public class RetryIODispatcherTest {
                                     throw ServerDisconnectException.INSTANCE;
                                 }
                             })),
-                    0, ValidImportRequest, ValidImportResponse, false);
+                    0, ValidImportRequest, ValidImportResponse, false, true);
             temp.delete();
             temp.create();
         }
@@ -264,14 +265,14 @@ public class RetryIODispatcherTest {
                                     new HttpServerConfigurationBuilder()
                                             .withReceiveBufferSize(256)
                             ),
-                    200, ValidImportRequest, ValidImportResponse, false);
+                    200, ValidImportRequest, ValidImportResponse, false, true);
             temp.delete();
             temp.create();
         }
     }
 
     @Test
-    public void testImportsHeaderDoesNotReceiveBuffer() throws Exception {
+    public void testImportsHeaderIsNotFullyReceivedIntoReceiveBuffer() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(1)
@@ -279,16 +280,16 @@ public class RetryIODispatcherTest {
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
                 ).run((engine) -> new SendAndReceiveRequestBuilder().execute(ValidImportRequest,
-                        "HTTP/1.1 400 Bad request\r\n" +
-                                "Server: questDB/1.0\r\n" +
-                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                "Transfer-Encoding: chunked\r\n" +
-                                "Content-Type: text/plain; charset=utf-8\r\n" +
-                                "\r\n" +
-                                "58\r\n" +
-                                "cannot parse import because of receive buffer is not big enough to parse table structure\r\n" +
-                                "00\r\n"+
-                                "\r\n"));
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "58\r\n" +
+                        "cannot parse import because of receive buffer is not big enough to parse table structure\r\n" +
+                        "00\r\n" +
+                        "\r\n"));
     }
 
     @Test
@@ -524,9 +525,14 @@ public class RetryIODispatcherTest {
                 });
     }
 
-    public void testImportWaitsWhenWriterLocked(HttpQueryTestBuilder httpQueryTestBuilder,
-                                                int slowServerReceiveNetAfterSending, String importRequest, String importResponse, boolean failOnUnfinished) throws
-            Exception {
+    public void testImportWaitsWhenWriterLocked(
+            HttpQueryTestBuilder httpQueryTestBuilder,
+            int slowServerReceiveNetAfterSending,
+            String importRequest,
+            String importResponse,
+            boolean failOnUnfinished,
+            boolean allowFailures
+    ) throws Exception {
         final int parallelCount = httpQueryTestBuilder.getWorkerCount();
         httpQueryTestBuilder
                 .run((engine) -> {
@@ -573,6 +579,10 @@ public class RetryIODispatcherTest {
                     writer.close();
                     if (!countDownLatch.await(50000, TimeUnit.MILLISECONDS)) {
                         Assert.fail("Imports did not finish within reasonable time");
+                    }
+
+                    if (!allowFailures) {
+                        Assert.assertEquals(parallelCount, successRequests.get());
                     }
 
                     // check if we have parallelCount x insertCount  records
@@ -726,14 +736,15 @@ public class RetryIODispatcherTest {
 
     @NotNull
     private NetworkFacade getSendDelayNetworkFacade(int startDelayDelayAfter) {
-        if (startDelayDelayAfter == 0)
-            return NetworkFacadeImpl.INSTANCE;
-
         return new NetworkFacadeImpl() {
             final AtomicInteger totalSent = new AtomicInteger();
 
             @Override
             public int send(long fd, long buffer, int bufferLen) {
+                if (startDelayDelayAfter == 0) {
+                    return super.send(fd, buffer, bufferLen);
+                }
+
                 int sentNow = totalSent.get();
                 if (bufferLen > 0) {
                     if (sentNow >= startDelayDelayAfter) {

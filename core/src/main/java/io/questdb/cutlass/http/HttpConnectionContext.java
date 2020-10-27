@@ -271,9 +271,17 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return continueConsumeMultipart(fd, start, buf, bufRemaining, multipartListener, processor, rescheduleContext);
     }
 
-    private boolean continueConsumeMultipart(long fd, long start, long buf, int bufRemaining, HttpMultipartContentListener multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private boolean continueConsumeMultipart(
+            long fd,
+            long start,
+            long buf,
+            int bufRemaining,
+            HttpMultipartContentListener multipartListener,
+            HttpRequestProcessor processor,
+            RescheduleContext rescheduleContext
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         boolean keepGoing = false;
-        // do we have anything in the buffer?
+
         if (buf > start) {
             try {
                 if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
@@ -320,7 +328,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                         continue;
                     } catch (TooFewBytesReceivedException e) {
                         start = multipartContentParser.getResumePtr();
-                        shiftReceiveBufferUprocessedBytes(start,  (int) (buf - start));
+                        shiftReceiveBufferUnprocessedBytes(start, (int) (buf - start));
                         dispatcher.registerChannel(this, IOOperation.READ);
                         break;
                     }
@@ -355,7 +363,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                     // Shift to start
                     if (unprocessedSize < recvBufferSize) {
                         start = multipartContentParser.getResumePtr();
-                        shiftReceiveBufferUprocessedBytes(start,  unprocessedSize);
+                        shiftReceiveBufferUnprocessedBytes(start, unprocessedSize);
                         dispatcher.registerChannel(this, IOOperation.READ);
                         break;
                     } else {
@@ -369,14 +377,16 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return keepGoing;
     }
 
-    private void shiftReceiveBufferUprocessedBytes(long start, int receivedBytes) {
+    private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
         // Shift to start
         this.receivedBytes = receivedBytes;
         Unsafe.getUnsafe().copyMemory(start, recvBuffer, receivedBytes);
-        LOG.debug().$("peer is slow [multipart]").$();
+        LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
 
-    private boolean parseMultipartResult(long start, long buf, int bufRemaining, HttpMultipartContentListener multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, TooFewBytesReceivedException {
+    private boolean parseMultipartResult(long start, long buf, int bufRemaining, HttpMultipartContentListener
+            multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws
+            PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, TooFewBytesReceivedException {
         boolean parseResult;
         try {
             parseResult = multipartContentParser.parse(start, buf, multipartListener);
@@ -566,10 +576,23 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                 LOG.info().$("retrying query [fd=").$(fd).$(']').$();
                 processor.onRequestRetry(this);
                 if (multipartParserState.multipartRetry) {
-                    continueConsumeMultipart(fd, multipartParserState.start, multipartParserState.buf, multipartParserState.bufRemaining, (HttpMultipartContentListener) processor, processor, retryRescheduleContext);
+                    if (continueConsumeMultipart(
+                            fd,
+                            multipartParserState.start,
+                            multipartParserState.buf,
+                            multipartParserState.bufRemaining,
+                            (HttpMultipartContentListener) processor,
+                            processor,
+                            retryRescheduleContext
+                    )) {
+                        LOG.info().$("success retried multipart import [fd=").$(fd).$(']').$();
+                        keepGoing(selector, rescheduleContext);
+                    } else {
+                        LOG.info().$("retry success but import not finished [fd=").$(fd).$(']').$();
+                    }
+                } else {
+                    keepGoing(selector, rescheduleContext);
                 }
-                LOG.info().$("success retrying query [fd=").$(fd).$(']').$();
-                next(selector, rescheduleContext);
             } catch (RetryOperationException e2) {
                 pendingRetry = true;
                 return false;
@@ -589,13 +612,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return true;
     }
 
-    private void next(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+    private void keepGoing(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         clear();
-        boolean keepGoing;
         if (serverKeepAlive) {
-            do {
-                keepGoing = handleClientRecv(selector, rescheduleContext);
-            } while (keepGoing);
+            while (handleClientRecv(selector, rescheduleContext));
         } else {
             dispatcher.disconnect(this);
         }
@@ -630,7 +650,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         }
     }
 
-    private void doFail(HttpException e, HttpRequestProcessor processor) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+    private void doFail(HttpException e, HttpRequestProcessor processor) throws
+            PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         LOG.info().$("Failing client query with: ").$(e.getMessage()).$();
         processor.failRequest(this, e);
         clear();
