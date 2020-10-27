@@ -191,6 +191,9 @@ public class TableWriter implements Closeable {
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
     private final TableBlockWriter blockWriter;
+    private final LongList partitionListByTimestamp = new LongList();
+    private final LongList partitionsToDrop = new LongList();
+    private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -948,21 +951,57 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void removePartition(Function function) {
-        try {
-            TimestampValueRecord rec = new TimestampValueRecord(); // remove allocation
-            long start = timestampFloorMethod.floor(maxTimestamp);
-            long end = timestampFloorMethod.floor(minTimestamp);
-            long timestampToRemove = start;
-            while (timestampToRemove >= end) {
-                rec.setTimestamp(timestampToRemove);
-                if (function.getBool(rec)) { //
-                    removePartition(timestampToRemove);
+    public boolean removePartition(Function function) {
+        if (partitionBy == PartitionBy.NONE) {
+            return false;
+        }
+
+        long activePartition = timestampFloorMethod.floor(maxTimestamp);
+        findAllPartitions();
+        int partitionCount = partitionListByTimestamp.size();
+        boolean droppingActivePartition = false;
+        for (int i = 0; i < partitionCount; i++) {
+            long timestampToRemove = partitionListByTimestamp.get(i);
+            dropPartitionFunctionRec.setTimestamp(timestampToRemove);
+            if (function.getBool(dropPartitionFunctionRec)) {
+                partitionsToDrop.add(timestampToRemove);
+                if (activePartition == timestampToRemove) {
+                    droppingActivePartition = true;
                 }
-                timestampToRemove = timestampAddMethod.calculate(timestampToRemove, -1);
             }
+        }
+
+        int dropPartitionCount = partitionsToDrop.size();
+        if (dropPartitionCount == 0) {
+            return false;
+        }
+
+        if (dropPartitionCount == partitionCount) {
+            truncate();
+            return true;
+        } else if (droppingActivePartition) {
+            //LOG ??
+            return false;
+        } else {
+            for (int i = 0; i < dropPartitionCount; i++) {
+                removePartition(partitionsToDrop.get(i));
+            }
+            return true;
+        }
+    }
+
+    private void findAllPartitions() {
+        try {
+            partitionListByTimestamp.clear();
+            ff.iterateDir(path.$(), (file, type) -> {
+                nativeLPSZ.of(file);
+                if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
+                    long timestamp = partitionNameToTimestamp(nativeLPSZ);
+                    partitionListByTimestamp.add(timestamp);
+                }
+            });
         } finally {
-//TODO or remove
+            path.trimTo(rootLen);
         }
     }
 

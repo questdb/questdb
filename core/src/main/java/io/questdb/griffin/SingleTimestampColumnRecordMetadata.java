@@ -27,21 +27,22 @@ package io.questdb.griffin;
 import io.questdb.cairo.BaseRecordMetadata;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public final class SingleTimestampColumnRecordMetadata extends BaseRecordMetadata {
 
-    public static final SingleTimestampColumnRecordMetadata INSTANCE = new SingleTimestampColumnRecordMetadata();
+    //TODO remove?
+    public static final SingleTimestampColumnRecordMetadata INSTANCE = new SingleTimestampColumnRecordMetadata("timestamp");
 
-    private SingleTimestampColumnRecordMetadata() {
-        columnCount = 1;
+    public SingleTimestampColumnRecordMetadata(String columnName) {
         columnMetadata = new ObjList<>();
-        columnMetadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP));
-    }
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-        return 0;
+        this.columnNameIndexMap = new CharSequenceIntHashMap();
+        TableColumnMetadata meta = new TableColumnMetadata(columnName, ColumnType.TIMESTAMP);
+        int index = columnNameIndexMap.keyIndex(meta.getName());
+        columnNameIndexMap.putAt(index, meta.getName(), columnCount);
+        columnMetadata.add(meta);
+        columnCount++;
     }
 
     @Override

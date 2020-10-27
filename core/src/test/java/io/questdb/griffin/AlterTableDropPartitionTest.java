@@ -90,22 +90,32 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropPartitionWhereExpressionMissing() throws Exception {
+        assertFailure("alter table x drop partition where ", 34, "boolean expression expected");
+    }
+
+    @Test
+    public void testDropPartitionInvalidTimestampColumn() throws Exception {
+        assertFailure("alter table x drop partition where a > 1", 35, "Invalid column: a");
+    }
+
+    @Test
     public void testDropTwoPartitionsByDay() throws Exception {
         assertMemoryLeak(() -> {
-            createX("DAY", 720000000);
+                    createX("DAY", 720000000);
 
-            String expectedBeforeDrop = "count\n" +
-                    "120\n";
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
 
-            assertPartitionResult(expectedBeforeDrop, "2018-01-07");
-            assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-            Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
 
-            String expectedAfterDrop = "count\n" +
-                    "0\n";
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
 
-            assertPartitionResult(expectedAfterDrop, "2018-01-05");
+                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
                 }
         );
@@ -165,15 +175,15 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                             "112\n",
                     "2018-02");
 
-                    assertPartitionResult("count\n" +
-                            "120\n", "2018-04");
+            assertPartitionResult("count\n" +
+                    "120\n", "2018-04");
 
             Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-02', '2018-04'", sqlExecutionContext).getType());
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
+            String expectedAfterDrop = "count\n" +
+                    "0\n";
 
-                    assertPartitionResult(expectedAfterDrop, "2018-02");
+            assertPartitionResult(expectedAfterDrop, "2018-02");
                     assertPartitionResult(expectedAfterDrop, "2018-04");
                 }
         );
@@ -226,6 +236,146 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testDropPartitionWhereTimestampGreaterThanZero() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("YEAR", 3 * 72000000000L);
+
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
+
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp > 0", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018");
+                    assertPartitionResult(expectedAfterDrop, "2020");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionWhereTimestampEquals() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("YEAR", 3 * 72000000000L);
+
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
+
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp = to_timestamp('2020-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
+                    assertPartitionResult(expectedAfterDrop, "2020");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionWhereTimestampsIsNotActivePartition() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("YEAR", 3 * 72000000000L);
+
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
+
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp < dateadd('d', -1, now() ) AND timestamp < now()", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018");
+                    assertPartitionResult(expectedAfterDrop, "2020");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+                    createXWithDifferentTimestampName("YEAR", 3 * 72000000000L);
+
+                    assertPartitionResultForTimestampColumnNameTs("count\n" +
+                                    "145\n",
+                            "2018");
+
+                    assertPartitionResultForTimestampColumnNameTs("count\n" +
+                            "147\n", "2020");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where ts < dateadd('d', -1, now() ) AND ts < now()", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2018");
+                    assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2020");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionWhereTimestampsIsActivePartition() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("YEAR", 3 * 72000000000L);
+
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
+
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp = to_timestamp('2022-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')", sqlExecutionContext).getType());
+
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
+
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionsByDayUsingWhereClause() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 720000000);
+
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
+
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                }
+        );
+    }
+
     private void assertFailure(String sql, int position, String message) throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -241,6 +391,16 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile("select count() from x where timestamp = '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                sink.clear();
+                printer.print(cursor, factory.getMetadata(), true);
+                TestUtils.assertEquals(expectedBeforeDrop, sink);
+            }
+        }
+    }
+
+    private void assertPartitionResultForTimestampColumnNameTs(String expectedBeforeDrop, String intervalSearch) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile("select count() from x where ts = '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 sink.clear();
                 printer.print(cursor, factory.getMetadata(), true);
@@ -271,6 +431,33 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(1000)" +
                         ") timestamp (timestamp)" +
+                        "partition by " + partitionBy,
+                sqlExecutionContext
+        );
+    }
+
+    private void createXWithDifferentTimestampName(String partitionBy, long increment) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * " + increment + " ts," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(1000)" +
+                        ") timestamp (ts)" +
                         "partition by " + partitionBy,
                 sqlExecutionContext
         );

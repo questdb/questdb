@@ -1033,12 +1033,17 @@ public class SqlCompiler implements Closeable {
             alterTableDropPartitionByList(writer);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
-            Function function = functionParser.parseFunction(expr, SingleTimestampColumnRecordMetadata.INSTANCE, currentExecutionContext);
-            if (function.getType() == ColumnType.BOOLEAN) {
-                writer.removePartition(function);
-            } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
+            int timestampIndex = writer.getMetadata().getTimestampIndex();
+            if (timestampIndex != -1) {
+                String timestampColumnName = writer.getMetadata().getColumnName(timestampIndex);
+                Function function = functionParser.parseFunction(expr, new SingleTimestampColumnRecordMetadata(timestampColumnName), currentExecutionContext);
+                if (function != null && function.getType() == ColumnType.BOOLEAN) {
+                    writer.removePartition(function);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
+                }
             }
+
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "'list' or 'where' expected");
         }
