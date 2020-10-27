@@ -37,13 +37,83 @@ public class ExpressionParserTest extends AbstractCairoTest {
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
     @Test
+    public void testArrayDereferenceExpr() throws SqlException {
+        x("ai10+[]", "a[i+10]");
+    }
+
+    @Test
+    public void testArrayDereferenceMissingIndex() {
+        assertFail(
+                "a[]",
+                2,
+                "missing array index"
+        );
+    }
+
+    @Test
+    public void testArrayDereferenceNotClosedEndOfExpression() {
+        assertFail(
+                "a[",
+                1,
+                "unbalanced ]"
+        );
+    }
+
+    @Test
+    public void testArrayDereferenceNotClosedEndOfFunctionCall() {
+        assertFail(
+                "f(a[)",
+                3,
+                "unbalanced ]"
+        );
+    }
+
+    @Test
+    public void testArrayDereferenceNotClosedFunctionArg() {
+        assertFail(
+                "f(b,a[,c)",
+                5,
+                "unbalanced ]"
+        );
+    }
+
+    @Test
+    public void testArrayDereferencePriority() throws SqlException {
+        x(
+                "nspname'pg_toast'<>nspname'^pg_temp_'!~nspnametruepg_catalog.current_schemas1[]=orand",
+                "nspname <> 'pg_toast' AND (nspname !~ '^pg_temp_'  OR nspname = (pg_catalog.current_schemas(true))[1])"
+        );
+    }
+
+    @Test
     public void testBinaryMinus() throws Exception {
         x("4c-", "4-c");
     }
 
     @Test
+    public void testBug1() throws SqlException {
+        x("2022.yyyy", "'2022'.'yyyy'");
+    }
+
+    @Test
     public void testCannotConsumeArgumentOutsideOfBrace() {
         assertFail("a+(*b)", 3, "too few arguments for '*' [found=1,expected=2]");
+    }
+
+    @Test
+    public void testCaseAsArrayIndex() throws SqlException {
+        x(
+                "ab134case[]",
+                "a[case b when 1 then 3 else 4 end]"
+        );
+    }
+
+    @Test
+    public void testCaseAsArrayIndexAnotherArray() throws SqlException {
+        x(
+                "ab1b3[]4case[]",
+                "a[case b when 1 then b[3] else 4 end]"
+        );
     }
 
     @Test
@@ -389,6 +459,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDigitDigit() throws SqlException {
+        x("4", "4  5");
+    }
+
+    @Test
+    public void testDigitDotSpaceDigit() throws SqlException {
+        x("4.", "4. 5");
+    }
+
+    @Test
     public void testDotLiterals() throws SqlException {
         x("x.y", "\"x\".\"y\"");
     }
@@ -424,6 +504,20 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleArrayDereference() throws SqlException {
+        x("faj[][]", "f()[a[j]]");
+    }
+
+    @Test
+    public void testDoubleParenthesis() {
+        assertFail(
+                "a(i)(o)",
+                4,
+                "not a method call"
+        );
+    }
+
+    @Test
     public void testEqualPrecedence() throws Exception {
         x("abc^^", "a^b^c");
     }
@@ -444,6 +538,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFunctionArrayArg() throws SqlException {
+        x("abi[]ci[]funcj[]", "func(a,b[i],c[i])[j]");
+    }
+
+    @Test
+    public void testFunctionArrayDereference() throws SqlException {
+        x("funci[]", "func()[i]");
+    }
+
+    @Test
     public void testFunctionCallOnFloatingPointValues() throws SqlException {
         x("1.2.0921990.f", "f(1.2,.092,1990.)");
     }
@@ -454,23 +558,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBug1() throws SqlException {
-        x("2022.yyyy", "'2022'.'yyyy'");
-    }
-
-    @Test
     public void testFunctionStar() {
         assertFail("fun(*)", 4, "too few arguments");
     }
 
     @Test
-    public void testIn() throws Exception {
-        x("abcin", "a in (b,c)");
+    public void testFunctionWithArgsArrayDereference() throws SqlException {
+        x("1abfunci[]", "func(1,a,b)[i]");
     }
 
     @Test
-    public void testLambdaInOperator() throws SqlException {
-        x("1(select-choose a, b, c from (x))+", "1 + (select a,b,c from x)");
+    public void testIn() throws Exception {
+        x("abcin", "a in (b,c)");
     }
 
     @Test
@@ -481,6 +580,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testLambda() throws Exception {
         x("ablah blahinyand", "a in (`blah blah`) and y");
+    }
+
+    @Test
+    public void testLambdaInOperator() throws SqlException {
+        x("1(select-choose a, b, c from (x))+", "1 + (select a,b,c from x)");
     }
 
     @Test
@@ -508,6 +612,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testListOfValues() throws SqlException {
+        x("a.b", "a.b, c");
+    }
+
+    @Test
     public void testLiteralAndConstant() throws Exception {
         // expect that expression parser will stop after literal, because literal followed by constant does not
         // make sense
@@ -520,6 +629,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiteralExit() throws Exception {
+        x("abxybzc*+", "a + b * c(b(x,y),z) lit");
+    }
+
+    @Test
     public void testLiteralSpaceDot() throws SqlException {
         x("a", "a .b");
     }
@@ -527,11 +641,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testLiteralSpaceDotQuoted() throws SqlException {
         x("a", "a .\"b\"");
-    }
-
-    @Test
-    public void testLiteralExit() throws Exception {
-        x("abxybzc*+", "a + b * c(b(x,y),z) lit");
     }
 
     @Test
@@ -557,16 +666,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testNestedOperator() throws Exception {
         x("ac4*db+", "a + b( c * 4, d)");
-    }
-
-    @Test
-    public void testDigitDigit() throws SqlException {
-        x("4", "4  5");
-    }
-
-    @Test
-    public void testDigitDotSpaceDigit() throws SqlException {
-        x("4.", "4. 5");
     }
 
     @Test
@@ -609,6 +708,24 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOverlappedBraceBracket() {
+        assertFail(
+                "a([i)]",
+                2,
+                "unbalanced ]"
+        );
+    }
+
+    @Test
+    public void testOverlappedBracketBrace() {
+        assertFail(
+                "a[f(i])",
+                3,
+                "unbalanced ("
+        );
+    }
+
+    @Test
     @Ignore
     //todo: fix sql parser for PG OPERATOR
     public void testPGOperator() throws SqlException {
@@ -618,6 +735,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         x("abxyc*2/+", "a + b * c(x,y)/2");
+    }
+
+    @Test
+    public void testSimpleArrayDereference() throws SqlException {
+        x("ai[]", "a[i]");
     }
 
     @Test
@@ -633,11 +755,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testUnary() throws Exception {
         x("4c-*", "4 * -c");
-    }
-
-    @Test
-    public void testListOfValues() throws SqlException {
-        x("a.b", "a.b, c");
     }
 
     @Test

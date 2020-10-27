@@ -1464,7 +1464,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
     @Test
     @Ignore
-    // this will exercise SQL that relies on ARRAY datatype. Uncomment when we have arrays.
+//     this will exercise SQL that relies on ARRAY datatype. Uncomment when we have arrays.
     public void testSchemasCall() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -1499,7 +1499,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
             }
         });
     }
-
 
     @Test
     public void testSimpleHex() throws Exception {
