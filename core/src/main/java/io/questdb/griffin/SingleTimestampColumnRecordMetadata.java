@@ -32,9 +32,6 @@ import io.questdb.std.ObjList;
 
 public final class SingleTimestampColumnRecordMetadata extends BaseRecordMetadata {
 
-    //TODO remove?
-    public static final SingleTimestampColumnRecordMetadata INSTANCE = new SingleTimestampColumnRecordMetadata("timestamp");
-
     public SingleTimestampColumnRecordMetadata(String columnName) {
         columnMetadata = new ObjList<>();
         this.columnNameIndexMap = new CharSequenceIntHashMap();
