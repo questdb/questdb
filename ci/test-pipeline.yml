@@ -1,0 +1,47 @@
+trigger:
+  branches:
+    include:
+      - "*"
+    exclude:
+      - master
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+  QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
+  ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt).zip"
+
+stages:
+  - stage: RunTestsBranches
+    displayName: "Run tests (branches)"
+    jobs:
+      - job: RunOnLinux
+        displayName: "Run tests on Linux"
+        timeoutInMinutes: 20
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+          - task: Maven@3
+            displayName: "Run tests with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "--batch-mode --quiet -DquestdbLog=$(Build.SourcesDirectory)/ci/qlog.conf"
+              jdkVersionOption: "1.11"
+          - task: ArchiveFiles@2
+            displayName: "Tests failed -- Compress logs"
+            condition: failed()
+            inputs:
+              rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
+              includeRootFolder: false
+              archiveFile: $(ARCHIVED_LOGS)
+              quiet: true
+          - task: PublishBuildArtifacts@1
+            displayName: "Tests failed -- Upload logs"
+            condition: failed()
+            inputs:
+              pathToPublish: $(ARCHIVED_LOGS)
+              artifactName: MavenFailedTestsLogs
