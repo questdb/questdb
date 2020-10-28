@@ -497,7 +497,7 @@ public final class Chars {
     }
 
     public static char toLowerCaseAscii(char character) {
-        return character > 64 && character < 91 ? (char) (character + 32) : character;
+        return Character.toLowerCase(character);
     }
 
     public static String toUpperCaseAscii(@Nullable CharSequence value) {
@@ -517,7 +517,7 @@ public final class Chars {
     }
 
     public static char toUpperCaseAscii(char character) {
-        return character > 96 && character < 123 ? (char) (character - 32) : character;
+        return Character.toUpperCase(character);
     }
 
     public static void toSink(BinarySequence sequence, CharSink sink) {
