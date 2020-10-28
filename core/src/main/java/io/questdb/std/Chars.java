@@ -494,12 +494,30 @@ public final class Chars {
             b.put(toLowerCaseAscii(value.charAt(i)));
         }
         return b.toString();
-
-
     }
 
     public static char toLowerCaseAscii(char character) {
         return character > 64 && character < 91 ? (char) (character + 32) : character;
+    }
+
+    public static String toUpperCaseAscii(@Nullable CharSequence value) {
+        if (value == null) {
+            return null;
+        }
+        final int len = value.length();
+        if (len == 0) {
+            return "";
+        }
+
+        final CharSink b = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < len; i++) {
+            b.put(toUpperCaseAscii(value.charAt(i)));
+        }
+        return b.toString();
+    }
+
+    public static char toUpperCaseAscii(char character) {
+        return character > 96 && character < 123 ? (char) (character - 32) : character;
     }
 
     public static void toSink(BinarySequence sequence, CharSink sink) {

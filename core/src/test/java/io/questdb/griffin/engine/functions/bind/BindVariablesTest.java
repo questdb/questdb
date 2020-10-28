@@ -40,6 +40,8 @@ import io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.SubStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory;
 import io.questdb.std.*;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.time.DateFormatUtils;
@@ -598,6 +600,54 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         bindVariableService.setShort(0, (short) 33);
         Assert.assertEquals(55, func.getShort(builder.getRecord()));
+    }
+
+    @Test
+    public void testUppercaseStr() throws SqlException {
+        bindVariableService.setStr("str", "abcDEFghiJKLmnoPQRstuVXZ");
+        Function func = expr("to_uppercase(:str)")
+                .withFunction(new ToUppercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testLowercaseStr() throws SqlException {
+        bindVariableService.setStr("str", "abcDEFghiJKLmnoPQRstuVXZ");
+        Function func = expr("to_lowercase(:str)")
+                .withFunction(new ToLowercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testUppercaseIndexedStr() throws SqlException {
+        bindVariableService.setLong(2, 10000);
+        bindVariableService.setInt(0, 1);
+        bindVariableService.setStr(1, "abcDEFghiJKLmnoPQRstuVXZ");
+        Function func = expr("to_uppercase($2)")
+                .withFunction(new ToUppercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testLowercaseIndexedStr() throws SqlException {
+        bindVariableService.setLong(2, 10000);
+        bindVariableService.setInt(0, 1);
+        bindVariableService.setStr(1, "abcDEFghiJKLmnoPQRstuVXZ");
+        Function func = expr("to_lowercase($2)")
+                .withFunction(new ToLowercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
     }
 
     @Test
