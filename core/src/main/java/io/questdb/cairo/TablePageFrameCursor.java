@@ -47,7 +47,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int i) {
+    public SymbolMapReader getSymbolMapReader(int i) {
         return reader.getSymbolMapReader(columnIndexes.getQuick(i));
     }
 

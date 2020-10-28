@@ -35,7 +35,5 @@ public interface DataFrameCursor extends PageFrameCursor {
     boolean reload();
 
     @Override
-    StaticSymbolTable getSymbolTable(int columnIndex);
-
     @Nullable DataFrame next();
 }

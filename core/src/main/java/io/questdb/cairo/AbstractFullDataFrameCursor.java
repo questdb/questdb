@@ -43,7 +43,7 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public StaticSymbolTable getSymbolTable(int columnIndex) {
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);
     }
 

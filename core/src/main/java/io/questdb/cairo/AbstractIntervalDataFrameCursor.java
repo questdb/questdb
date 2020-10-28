@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.LongList;
 import io.questdb.std.Transient;
 
@@ -67,7 +66,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
-    public StaticSymbolTable getSymbolTable(int columnIndex) {
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);
     }
 

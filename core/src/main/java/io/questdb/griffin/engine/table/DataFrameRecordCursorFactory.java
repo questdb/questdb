@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.NullColumn;
 import io.questdb.cairo.ReadOnlyColumn;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
@@ -137,7 +138,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
+        public SymbolMapReader getSymbolMapReader(int columnIndex) {
             return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         }
 
