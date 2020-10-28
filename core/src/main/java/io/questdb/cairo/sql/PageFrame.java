@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ColumnType;
+
 public interface PageFrame {
     /**
      * 
@@ -49,5 +51,13 @@ public interface PageFrame {
 
     default long getFirstTimestamp() {
         throw new UnsupportedOperationException();
+    }
+
+    public static long getPageFrameNRows(PageFrame pageFrame, int columnIndex, int columnType) {
+        assert ColumnType.isFixedLength(columnType);
+        if (pageFrame.getPageAddress(columnIndex) != 0) {
+            return pageFrame.getPageSize(columnIndex) >> ColumnType.pow2SizeOf(columnType);
+        }
+        return pageFrame.getPageSize(columnIndex);
     }
 }

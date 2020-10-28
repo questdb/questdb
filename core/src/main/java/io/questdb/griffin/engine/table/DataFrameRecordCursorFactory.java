@@ -118,6 +118,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private final int columnCount;
         private final IntList columnIndexes;
         private final IntList columnSizes;
+        private final LongList pageNRowsRemaining = new LongList();
         private final LongList pageSizes = new LongList();
         private TableReader reader;
         private int partitionIndex;
@@ -167,7 +168,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         final int columnIndex = columnIndexes.getQuick(i);
                         topsRemaining.setQuick(i, reader.getColumnTop(base, columnIndex));
                         pages.setQuick(i, 0);
-                        pageSizes.setQuick(i, -1L);
+                        pageNRowsRemaining.setQuick(i, -1L);
                     }
 
                     // reduce
@@ -187,7 +188,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                             final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(base, columnIndexes.getQuick(i)));
                             if (col instanceof NullColumn) {
                                 columnPageNextAddress.setQuick(i, 0);
-                                pageSizes.setQuick(i, partitionSize - partitionLo);
+                                pageNRowsRemaining.setQuick(i, partitionSize - partitionLo);
                             } else {
                                 int page = pages.getQuick(i);
                                 while (true) {
@@ -196,7 +197,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                                         long addr = col.getPageAddress(page);
                                         addr += partitionLo << columnSizes.getQuick(i);
                                         columnPageNextAddress.setQuick(i, addr);
-                                        pageSizes.setQuick(i, pageSize - partitionLo);
+                                        pageNRowsRemaining.setQuick(i, pageSize - partitionLo);
                                         pages.setQuick(i, page);
                                         break;
                                     }
@@ -220,6 +221,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             topsRemaining.setAll(columnCount, 0);
             columnPageAddress.setAll(columnCount, 0);
             columnPageNextAddress.setAll(columnCount, 0);
+            pageNRowsRemaining.setAll(columnCount, -1L);
             pageSizes.setAll(columnCount, -1L);
             pageValueCount = 0;
         }
@@ -241,14 +243,22 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                 final int columnIndex = columnIndexes.getQuick(i);
                 final long top = topsRemaining.getQuick(i);
                 if (top > 0) {
+                    assert min <= top;
                     topsRemaining.setQuick(i, top - min);
                     columnPageAddress.setQuick(columnIndex, 0);
+                    pageSizes.setQuick(i, min);
                 } else {
                     long addr = columnPageNextAddress.getQuick(i);
-                    long psz = pageSizes.getQuick(i);
-                    pageSizes.setQuick(i, psz - min);
+                    long psz = pageNRowsRemaining.getQuick(i);
+                    pageNRowsRemaining.setQuick(i, psz - min);
                     columnPageAddress.setQuick(i, addr);
-                    columnPageNextAddress.setQuick(i, addr + (min << columnSizes.getQuick(i)));
+                    if (addr != 0) {
+                        long pageSize = min << columnSizes.getQuick(i);
+                        pageSizes.setQuick(i, pageSize);
+                        columnPageNextAddress.setQuick(i, addr + pageSize);
+                    } else {
+                        pageSizes.setQuick(i, min);
+                    }
                 }
             }
             pageValueCount = min;
@@ -266,7 +276,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         min = top;
                     }
                 } else {
-                    long psz = pageSizes.getQuick(i);
+                    long psz = pageNRowsRemaining.getQuick(i);
                     if (psz > 0) {
                         if (min > psz) {
                             min = psz;
@@ -280,7 +290,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         columnPageNextAddress.setQuick(i, col.getPageAddress(page));
                         psz = !(col instanceof NullColumn) ? col.getPageSize(page) >> columnSizes.getQuick(i) : partitionRemaining;
                         final long m = Math.min(psz, partitionRemaining);
-                        pageSizes.setQuick(i, m);
+                        pageNRowsRemaining.setQuick(i, m);
                         if (min > m) {
                             min = m;
                         }
@@ -300,6 +310,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Override
             public long getPageValueCount(int columnIndex) {
                 return pageValueCount;
+            }
+
+            @Override
+            public long getPageSize(int columnIndex) {
+                return pageSizes.getQuick(columnIndex);
             }
         }
     }

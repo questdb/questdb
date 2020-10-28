@@ -198,7 +198,9 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
         PageFrame frame;
         while ((frame = cursor.next()) != null) {
-            final long keyColumnSize = frame.getPageValueCount(keyColumnIndex);
+            final long keyColumnSize = PageFrame.getPageFrameNRows(frame, keyColumnIndex, base.getMetadata().getColumnType(keyColumnIndex));
+            // TODO: Remove the assert
+            assert frame.getPageValueCount(keyColumnIndex) == keyColumnSize;
             final long keyAddress = frame.getPageAddress(keyColumnIndex);
             for (int i = 0; i < vafCount; i++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
