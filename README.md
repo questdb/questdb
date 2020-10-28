@@ -60,7 +60,7 @@ away. Check our Web Console guide to get started:
   </a>
 </div>
 <div align="center">
-  <a href="https://questdb.io/docs/docs/reference/client/web-console/">
+  <a href="https://questdb.io/docs/reference/client/web-console/">
     Web Console guide
   </a>
 </div>
@@ -175,7 +175,9 @@ system.
 mvn clean test
 ```
 
-To release to Maven Central use the following command that activates deploy profile. Ensure that your `~/.m2/settings.xml` contains username/password for server `central` and `gnupg` is on hand to sign the artefacts.
+To release to Maven Central use the following command that activates deploy
+profile. Ensure that your `~/.m2/settings.xml` contains username/password for
+server `central` and `gnupg` is on hand to sign the artefacts.
 
 ```script
 mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-release
