@@ -3,6 +3,11 @@ trigger:
     include:
       - master
 
+pr:
+  branches:
+    include:
+      - master
+
 variables:
   MVN_VERSION: "3.6.3"
   MVN: "apache-maven-$(MVN_VERSION)"
