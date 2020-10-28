@@ -159,7 +159,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                         }
 
                         default: {
-                            int columnSizeBinaryPower = columnSizes.getQuick(columnIndex);
+                            int columnSizeBinaryPower = columnSizes.getQuick(i);
                             columnPageLength = colFrameLastRow << columnSizeBinaryPower;
                             if (colFrameFirstRow > 0) {
                                 long columnPageBegin = colFrameFirstRow << columnSizeBinaryPower;
