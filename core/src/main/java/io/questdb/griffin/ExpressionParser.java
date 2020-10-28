@@ -220,9 +220,6 @@ class ExpressionParser {
                         break;
 
                     case ']':
-//                        if (prevBranch == BRANCH_COMMA) {
-//                            throw missingArgs(position);
-//                        }
 
                         if (bracketCount == 0) {
                             lexer.unparse();
@@ -234,40 +231,12 @@ class ExpressionParser {
                             throw SqlException.$(position, "missing array index");
                         }
                         int localParamCount = paramCount + 1;
-//                        final boolean thisWasCast;
-//
-//                        if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == braceCount) {
-//                            if (castAsCount == 0) {
-//                                throw SqlException.$(position, "'as' missing");
-//                            }
-//
-//                            castAsCount--;
-//                            castBraceCountStack.pop();
-//                            thisWasCast = true;
-//                        } else {
-//                            thisWasCast = false;
-//                        }
 
                         bracketCount--;
 
                         // pop the array index from the stack, it could be an operator
                         while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
-                            // special case - (*) expression
-//                            if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
-//                                argStackDepth = onNode(listener, node, 2);
-//                            } else {
-//                                if (thisWasCast) {
-//                                    // validate type
-//                                    final int columnType = ColumnType.columnTypeOf(node.token);
-//
-//                                    if (columnType < 0 || columnType > ColumnType.LONG256) {
-//                                        throw SqlException.$(node.position, "invalid type");
-//                                    }
-//
-//                                    node.type = ExpressionNode.CONSTANT;
-//                                }
                             argStackDepth = onNode(listener, node, argStackDepth);
-//                            }
                         }
 
                         if (argStackDepthStack.notEmpty()) {
@@ -277,7 +246,6 @@ class ExpressionParser {
                         // enable operation or literal absorb parameters
                         if ((node = opStack.peek()) != null && (node.type == ExpressionNode.LITERAL || (node.type == ExpressionNode.SET_OPERATION))) {
                             node.paramCount = localParamCount + (node.paramCount == 2 ? 1 : 0);
-//                            node.type = ExpressionNode.ARRAY;
                             argStackDepth = onNode(listener, node, argStackDepth);
                             opStack.pop();
                         } else {

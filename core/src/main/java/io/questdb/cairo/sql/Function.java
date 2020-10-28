@@ -64,8 +64,6 @@ public interface Function extends Closeable {
 
     int getInt(Record rec);
 
-    int getInt(Record record, int arrayIndex);
-
     long getLong(Record rec);
 
     void getLong256(Record rec, CharSink sink);
@@ -84,11 +82,19 @@ public interface Function extends Closeable {
 
     CharSequence getStr(Record rec);
 
+    CharSequence getStr(Record rec, int arrayIndex);
+
     void getStr(Record rec, CharSink sink);
+
+    void getStr(Record rec, CharSink sink, int arrayIndex);
 
     CharSequence getStrB(Record rec);
 
+    CharSequence getStrB(Record rec, int arrayIndex);
+
     int getStrLen(Record rec);
+
+    int getStrLen(Record rec, int arrayIndex);
 
     CharSequence getSymbol(Record rec);
 

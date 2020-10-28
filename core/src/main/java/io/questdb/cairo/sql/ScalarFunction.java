@@ -24,14 +24,31 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.str.CharSink;
+
 public interface ScalarFunction extends Function {
     @Override
-    default int getInt(Record record, int arrayIndex) {
+    default int getArrayLength() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    default int getArrayLength() {
+    default CharSequence getStr(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default void getStr(Record rec, CharSink sink, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default int getStrLen(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 }
