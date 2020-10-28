@@ -480,43 +480,44 @@ public final class Chars {
         return b.toString();
     }
 
-    public static String toLowerCaseAscii(@Nullable CharSequence value) {
-        if (value == null) {
-            return null;
-        }
-        final int len = value.length();
-        if (len == 0) {
-            return "";
+    public static void toLowerCaseAscii(@Nullable final CharSequence value, final CharSink sink) {
+        if (value == null || value.length() == 0) {
+            return;
         }
 
-        final CharSink b = Misc.getThreadLocalBuilder();
-        for (int i = 0; i < len; i++) {
-            b.put(toLowerCaseAscii(value.charAt(i)));
+        for (int i = 0; i < value.length(); i++) {
+            sink.put(toLowerCaseAscii(value.charAt(i)));
         }
-        return b.toString();
+    }
+
+    public static String toLowerCaseAscii(@Nullable final CharSequence value) {
+        CharSink sink = Misc.getThreadLocalBuilder();
+        toLowerCaseAscii(value, sink);
+        return sink.toString();
     }
 
     public static char toLowerCaseAscii(char character) {
         return Character.toLowerCase(character);
     }
 
-    public static String toUpperCaseAscii(@Nullable CharSequence value) {
-        if (value == null) {
-            return null;
-        }
-        final int len = value.length();
-        if (len == 0) {
-            return "";
+    public static void toUpperCaseAscii(@Nullable final CharSequence value, final CharSink sink) {
+        if (value == null || value.length() == 0) {
+            return;
         }
 
-        final CharSink b = Misc.getThreadLocalBuilder();
-        for (int i = 0; i < len; i++) {
-            b.put(toUpperCaseAscii(value.charAt(i)));
+        for (int i = 0; i < value.length(); i++) {
+            sink.put(toUpperCaseAscii(value.charAt(i)));
         }
-        return b.toString();
     }
 
-    public static char toUpperCaseAscii(char character) {
+    public static String toUpperCaseAscii(@Nullable final CharSequence value) {
+        CharSink sink = Misc.getThreadLocalBuilder();
+        toUpperCaseAscii(value, sink);
+        return sink.toString();
+    }
+
+
+    public static char toUpperCaseAscii(final char character) {
         return Character.toUpperCase(character);
     }
 
