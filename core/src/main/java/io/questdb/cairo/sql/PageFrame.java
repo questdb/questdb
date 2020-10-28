@@ -36,8 +36,6 @@ public interface PageFrame {
      */
     long getPageAddress(int columnIndex);
 
-    long getPageValueCount(int columnIndex);
-
     /**
      * 
      * Return the size of the page frame or if the page represents a column top (a column that was added to the table when other columns already had data), then return the number of of empty rows at the top of a column

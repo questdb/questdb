@@ -101,10 +101,5 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         public long getPageAddress(int columnIndex) {
             return reader.getPageAddressAt(partitionIndex, rowLo, columnIndex);
         }
-
-        @Override
-        public long getPageValueCount(int columnIndex) {
-            return reader.getPageValueCount(partitionIndex, rowLo, rowHi, columnIndex);
-        }
     }
 }

@@ -122,7 +122,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private final LongList pageSizes = new LongList();
         private TableReader reader;
         private int partitionIndex;
-        private long pageValueCount;
         private long partitionRemaining = 0L;
         private DataFrameCursor dataFrameCursor;
 
@@ -223,7 +222,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             columnPageNextAddress.setAll(columnCount, 0);
             pageNRowsRemaining.setAll(columnCount, -1L);
             pageSizes.setAll(columnCount, -1L);
-            pageValueCount = 0;
         }
 
         @Override
@@ -261,7 +259,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                     }
                 }
             }
-            pageValueCount = min;
             partitionRemaining -= min;
             return frame;
         }
@@ -305,11 +302,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Override
             public long getPageAddress(int columnIndex) {
                 return columnPageAddress.getQuick(columnIndex);
-            }
-
-            @Override
-            public long getPageValueCount(int columnIndex) {
-                return pageValueCount;
             }
 
             @Override
