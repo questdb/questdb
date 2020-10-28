@@ -86,5 +86,10 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
         public Function getArg() {
             return arg;
         }
+
+        @Override
+        public int getStrLen(final Record rec) {
+            return arg.getStrLen(rec);
+        }
     }
 }
