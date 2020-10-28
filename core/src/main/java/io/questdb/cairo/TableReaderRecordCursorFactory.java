@@ -95,6 +95,6 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public boolean supportPageFrameCursor() {
-        return columnIndexes != null;
+        return framingSupported;
     }
 }
