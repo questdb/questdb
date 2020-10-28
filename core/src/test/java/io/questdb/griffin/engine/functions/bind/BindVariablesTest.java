@@ -614,6 +614,17 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testNonAsciiUpperCaseStr() throws SqlException {
+        bindVariableService.setStr("str", "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
+        Function func = expr("to_uppercase(:str)")
+                .withFunction(new ToUppercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStr(builder.getRecord()));
+    }
+
+    @Test
     public void testLowercaseStr() throws SqlException {
         bindVariableService.setStr("str", "abcDEFghiJKLmnoPQRstuVXZ");
         Function func = expr("to_lowercase(:str)")
@@ -622,6 +633,17 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testNonAsciiLowerCaseStr() throws SqlException {
+        bindVariableService.setStr("str", "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
+        Function func = expr("to_lowercase(:str)")
+                .withFunction(new ToLowercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStr(builder.getRecord()));
     }
 
     @Test
@@ -638,6 +660,19 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testNonAsciiUpperCaseIndexedStr() throws SqlException {
+        bindVariableService.setLong(2, 10000);
+        bindVariableService.setInt(0, 1);
+        bindVariableService.setStr(1, "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
+        Function func = expr("to_uppercase($2)")
+                .withFunction(new ToUppercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< %(='%') \"NOPQRSTUVXZ", func.getStr(builder.getRecord()));
+    }
+
+    @Test
     public void testLowercaseIndexedStr() throws SqlException {
         bindVariableService.setLong(2, 10000);
         bindVariableService.setInt(0, 1);
@@ -648,6 +683,19 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("abcdefghijklmnopqrstuvxz", func.getStr(builder.getRecord()));
+    }
+
+    @Test
+    public void testNonAsciiLowerCaseIndexedStr() throws SqlException {
+        bindVariableService.setLong(2, 10000);
+        bindVariableService.setInt(0, 1);
+        bindVariableService.setStr(1, "abcDEFghiJKLm...() { _; } >_[$($())] { <<< %(='%') \"noPQRstuVXZ");
+        Function func = expr("to_lowercase($2)")
+                .withFunction(new ToLowercaseFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("abcdefghijklm...() { _; } >_[$($())] { <<< %(='%') \"nopqrstuvxz", func.getStr(builder.getRecord()));
     }
 
     @Test

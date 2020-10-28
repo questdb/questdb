@@ -50,6 +50,12 @@ public class ToUppercaseFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call("ABCdefGHIjklMNOpqrSTUvxz").andAssert("ABCDEFGHIJKLMNOPQRSTUVXZ");
     }
 
+    @Test
+    public void testWithNonAsciiCharacters() throws SqlException {
+        call("abcDEFghiJKLm...() { _; } >_[$($())] { <<< (=) \noPQRstuVXZ")
+                .andAssert("ABCDEFGHIJKLM...() { _; } >_[$($())] { <<< (=) \nOPQRSTUVXZ");
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new ToUppercaseFunctionFactory();

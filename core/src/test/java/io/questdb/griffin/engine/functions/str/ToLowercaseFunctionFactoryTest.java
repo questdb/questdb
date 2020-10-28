@@ -51,6 +51,12 @@ public class ToLowercaseFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call("ABCdefGHIjklMNOpqrSTUvxz").andAssert("abcdefghijklmnopqrstuvxz");
     }
 
+    @Test
+    public void testWithNonAsciiCharacters() throws SqlException {
+        call("abcDEFghiJKLm...() { _; } >_[$($())] { <<< (=) \noPQRstuVXZ")
+                .andAssert("abcdefghijklm...() { _; } >_[$($())] { <<< (=) \nopqrstuvxz");
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new ToLowercaseFunctionFactory();
