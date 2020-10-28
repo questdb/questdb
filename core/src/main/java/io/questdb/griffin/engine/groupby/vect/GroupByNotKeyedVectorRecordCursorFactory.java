@@ -106,7 +106,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
                 final int columnIndex = vaf.getColumnIndex();
                 final long pageAddress = frame.getPageAddress(columnIndex);
-                final long pageValueCount = frame.getPageValueCount(columnIndex);
+                final long pageValueCount = PageFrame.getPageFrameNRows(frame, columnIndex, base.getMetadata().getColumnType(columnIndex));
+                // TODO: Remove this assert
+                assert pageValueCount == frame.getPageValueCount(columnIndex);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func
