@@ -350,7 +350,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPartitioned() throws Exception {
+    public void testPartitioned1() throws Exception {
         runTest("testPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                             "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
@@ -363,11 +363,37 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
+    public void testPartitioned2() throws Exception {
+        runTest("testPartitioned", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts) PARTITION BY DAY;",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 2);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testSimple1() throws Exception {
         runTest("testSimple", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                             "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                             ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testSimple2() throws Exception {
+        runTest("testSimple", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 2);
