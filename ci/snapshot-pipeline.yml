@@ -3,10 +3,7 @@ trigger:
     include:
       - master
 
-pr:
-  branches:
-    include:
-      - master
+pr: none
 
 variables:
   MVN_VERSION: "3.6.3"
