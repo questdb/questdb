@@ -5,6 +5,13 @@ trigger:
     exclude:
       - master
 
+pr:
+  branches:
+    include:
+      - "*"
+    exclude:
+      - master
+
 pool:
   vmImage: "ubuntu-latest"
 

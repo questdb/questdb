@@ -10,22 +10,24 @@
   <a href="https://www.codacy.com/app/bluestreak/nfsdb">
     <img src="https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754" />
   </a>
-  <a href="https://circleci.com/gh/questdb/questdb">
-    <img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099" />
+  <a href="https://dev.azure.com/questdb/questdb">
+    <img src="https://dev.azure.com/questdb/questdb/_apis/build/status/Build%20and%20upload%20snapshot%20(Linux)?branchName=master" />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
   </a>
-  <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" />
+  <a href="https://hub.docker.com/r/questdb/questdb">
+    <img src="https://img.shields.io/docker/pulls/questdb/questdb.svg" />
   </a>
 </p>
 
 <div align="center">
-
-<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-14-orange.svg)](#contributors)
-<!-- ALL-CONTRIBUTORS-BADGE:END -->
+  <a href="#contributors">
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" />
+  </a>
+  <a href="https://slack.questdb.io">
+    <img src="https://slack.questdb.io/badge.svg" />
+  </a>
 </div>
 
 ## What is QuestDB
@@ -259,8 +261,9 @@ Thanks to these wonderful people
   </tr>
 </table>
 
-<!-- markdownlint-enable -->
+<!-- markdownlint-restore -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the
