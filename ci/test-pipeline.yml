@@ -1,15 +1,8 @@
-trigger:
-  branches:
-    include:
-      - "*"
-    exclude:
-      - master
+trigger: none
 
 pr:
   branches:
     include:
-      - "*"
-    exclude:
       - master
 
 pool:
