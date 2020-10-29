@@ -522,7 +522,7 @@ public final class Chars {
         }
 
         for (int i = 0; i < str.length(); i++) {
-            sink.put(toUpperCase(str.charAt(i)));
+            sink.put(toLowerCase(str.charAt(i)));
         }
     }
 
