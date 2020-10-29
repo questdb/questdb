@@ -292,6 +292,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             actual = select("SELECT * FROM " + destTableName);
             Assert.assertEquals(expected, actual);
 
+            compiler.compile("DROP TABLE " + sourceTableName, sqlExecutionContext);
+            compiler.compile("DROP TABLE " + destTableName, sqlExecutionContext);
+
             engine.releaseInactive();
         });
     }
@@ -678,6 +681,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             nRowsWritten += nBatchRows;
             tsStart += nBatchRows * tsIncrement;
         }
+        
+        compiler.compile("DROP TABLE " + sourceTableName, sqlExecutionContext);
+        compiler.compile("DROP TABLE " + destTableName, sqlExecutionContext);
     }
 
     private void testSimpleResumeBlock(int nTest, long maxRowsPerFrame, boolean commitAllAtOnce, int nThreads, int nConsecutiveRows) throws Exception {
