@@ -658,6 +658,21 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testSimpleCopyAsATable() throws Exception {
+        runTest("testSimple", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            compiler.compile("CREATE TABLE dest AS (source)", sqlExecutionContext);
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
+            engine.releaseInactive();
+        });
+    }
+
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
         TestUtils.assertMemoryLeak(runnable);

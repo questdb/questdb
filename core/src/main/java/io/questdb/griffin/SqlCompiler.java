@@ -1345,17 +1345,52 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
+    private TableWriter copyTableData(CharSequence tableName, RecordCursorFactory factory, SqlExecutionContext executionContext) {
+        final RecordMetadata cursorMetadata = factory.getMetadata();
         TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE);
-        try {
-            RecordMetadata writerMetadata = writer.getMetadata();
-            entityColumnFilter.of(writerMetadata.getColumnCount());
-            RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
-            copyTableData(cursor, writer, writerMetadata, recordToRowCopier);
-            return writer;
-        } catch (CairoException e) {
-            writer.close();
-            throw e;
+        if (factory.supportPageFrameCursor()) {
+            TableBlockWriter blockWriter = writer.newBlock();
+            try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext)) {
+                final int columnCount = writer.getMetadata().getColumnCount();
+
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    int columnType = writer.getMetadata().getColumnType(columnIndex);
+                    if (columnType == ColumnType.SYMBOL) {
+                        SymbolMapReader symReader = cursor.getSymbolMapReader(columnIndex);
+                        writer.updateSymbols(columnIndex, symReader);
+                    }
+                }
+                PageFrame page;
+                while (null != (page = cursor.next())) {
+                    long firstTimestamp = page.getFirstTimestamp();
+                    blockWriter.startPageFrame(firstTimestamp);
+                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                        blockWriter.appendPageFrameColumn(
+                                columnIndex,
+                                page.getPageSize(columnIndex),
+                                page.getPageAddress(columnIndex));
+                    }
+                }
+                blockWriter.commit();
+                return writer;
+            } catch (CairoException e) {
+                blockWriter.cancel();
+                writer.close();
+                throw e;
+            } finally {
+                blockWriter.close();
+            }
+        } else {
+            try (final RecordCursor cursor = factory.getCursor(executionContext)) {
+                RecordMetadata writerMetadata = writer.getMetadata();
+                entityColumnFilter.of(writerMetadata.getColumnCount());
+                RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
+                copyTableData(cursor, writer, writerMetadata, recordToRowCopier);
+                return writer;
+            } catch (CairoException e) {
+                writer.close();
+                throw e;
+            }
         }
     }
 
@@ -1416,9 +1451,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
-        try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
-             final RecordCursor cursor = factory.getCursor(executionContext)
-        ) {
+        try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
@@ -1426,11 +1459,10 @@ public class SqlCompiler implements Closeable {
                     executionContext.getCairoSecurityContext(),
                     mem,
                     path,
-                    tableStructureAdapter.of(model, metadata, typeCast)
-            );
+                    tableStructureAdapter.of(model, metadata, typeCast));
 
             try {
-                return copyTableData(model.getName().token, cursor, metadata);
+                return copyTableData(model.getName().token, factory, executionContext);
             } catch (CairoException e) {
                 if (removeTableDirectory(model)) {
                     throw e;
