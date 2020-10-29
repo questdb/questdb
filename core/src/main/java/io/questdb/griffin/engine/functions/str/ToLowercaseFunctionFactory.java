@@ -66,7 +66,7 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
             }
 
             sinkA.clear();
-            Chars.toLowerCaseAscii(str, sinkA);
+            Chars.toLowerCase(str, sinkA);
             return sinkA;
         }
 
@@ -78,7 +78,7 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
             }
 
             sinkB.clear();
-            Chars.toLowerCaseAscii(str, sinkB);
+            Chars.toLowerCase(str, sinkB);
             return sinkB;
         }
 

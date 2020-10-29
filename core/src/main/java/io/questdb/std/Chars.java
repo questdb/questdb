@@ -480,45 +480,54 @@ public final class Chars {
         return b.toString();
     }
 
-    public static void toLowerCaseAscii(@Nullable final CharSequence value, final CharSink sink) {
-        if (value == null || value.length() == 0) {
-            return;
+    public static String toLowerCaseAscii(@Nullable CharSequence value) {
+        if (value == null) {
+            return null;
+        }
+        final int len = value.length();
+        if (len == 0) {
+            return "";
         }
 
-        for (int i = 0; i < value.length(); i++) {
-            sink.put(toLowerCaseAscii(value.charAt(i)));
+        final CharSink b = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < len; i++) {
+            b.put(toLowerCaseAscii(value.charAt(i)));
         }
-    }
+        return b.toString();
 
-    public static String toLowerCaseAscii(@Nullable final CharSequence value) {
-        CharSink sink = Misc.getThreadLocalBuilder();
-        toLowerCaseAscii(value, sink);
-        return sink.toString();
+
     }
 
     public static char toLowerCaseAscii(char character) {
-        return Character.toLowerCase(character);
+        return character > 64 && character < 91 ? (char) (character + 32) : character;
     }
 
-    public static void toUpperCaseAscii(@Nullable final CharSequence value, final CharSink sink) {
-        if (value == null || value.length() == 0) {
+    public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
+        if (str == null || str.length() == 0) {
             return;
         }
 
-        for (int i = 0; i < value.length(); i++) {
-            sink.put(toUpperCaseAscii(value.charAt(i)));
+        for (int i = 0; i < str.length(); i++) {
+            sink.put(toUpperCase(str.charAt(i)));
         }
     }
 
-    public static String toUpperCaseAscii(@Nullable final CharSequence value) {
-        CharSink sink = Misc.getThreadLocalBuilder();
-        toUpperCaseAscii(value, sink);
-        return sink.toString();
+    public static char toUpperCase(final char character) {
+        return Character.toUpperCase(character);
     }
 
+    public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
+        if (str == null || str.length() == 0) {
+            return;
+        }
 
-    public static char toUpperCaseAscii(final char character) {
-        return Character.toUpperCase(character);
+        for (int i = 0; i < str.length(); i++) {
+            sink.put(toUpperCase(str.charAt(i)));
+        }
+    }
+
+    public static char toLowerCase(final char character) {
+        return Character.toLowerCase(character);
     }
 
     public static void toSink(BinarySequence sequence, CharSink sink) {

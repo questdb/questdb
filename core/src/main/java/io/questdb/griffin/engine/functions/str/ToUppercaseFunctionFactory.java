@@ -66,7 +66,7 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
             }
 
             sinkA.clear();
-            Chars.toUpperCaseAscii(str, sinkA);
+            Chars.toUpperCase(str, sinkA);
             return sinkA;
         }
 
@@ -78,7 +78,7 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
             }
 
             sinkB.clear();
-            Chars.toUpperCaseAscii(str, sinkB);
+            Chars.toUpperCase(str, sinkB);
             return sinkB;
         }
 
