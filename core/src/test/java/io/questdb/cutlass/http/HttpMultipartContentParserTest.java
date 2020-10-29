@@ -31,6 +31,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class HttpMultipartContentParserTest {
@@ -202,6 +203,60 @@ public class HttpMultipartContentParserTest {
             }
         });
     }
+
+
+    @Test
+    @Ignore // TODO: fix HttpMultipartContentParser
+    public void testBreaksOnBoundary() throws Exception {
+        testBreaksCsvImportAt(17);
+    }
+
+    @Test
+    public void testNoBreaksOnBoundary() throws Exception {
+        testBreaksCsvImportAt(0);
+    }
+
+    private void testBreaksCsvImportAt(int breakAt) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
+                String boundaryToken = "--------------------------27d997ca93d2689d";
+                String boundary = "\r\n" + boundaryToken;
+                final String content = boundaryToken + "\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        boundary + "--";
+                final String expected =
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                                "\r\n" +
+                                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                                "\r\n" +
+                                "-----------------------------\r\n";
+
+                int len = content.length();
+                long p = TestUtils.toMemory(content);
+                try {
+                    long pBoundary = TestUtils.toMemory(boundary);
+                    DirectByteCharSequence boundaryCs = new DirectByteCharSequence().of(pBoundary, pBoundary + boundary.length());
+                    try {
+                        multipartContentParser.clear();
+                        multipartContentParser.of(boundaryCs);
+                        boolean result = multipartContentParser.parse(p, p + len - breakAt, LISTENER);
+                        if (breakAt > 0) {
+                            result = multipartContentParser.parse(p + len - breakAt + 1, p + len, LISTENER);
+                        }
+                        Assert.assertEquals(expected, sink.toString());
+                        Assert.assertTrue(result);
+                    } finally {
+                        Unsafe.free(pBoundary, boundary.length());
+                    }
+                } finally {
+                    Unsafe.free(p, len);
+                }
+            }
+        });
+    }
+
 
     private static class TestHttpMultipartContentListener implements HttpMultipartContentListener {
         @Override
