@@ -1033,17 +1033,19 @@ public class SqlCompiler implements Closeable {
             alterTableDropPartitionByList(writer);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
-            int timestampIndex = writer.getMetadata().getTimestampIndex();
-            if (timestampIndex != -1) {
-                String timestampColumnName = writer.getMetadata().getColumnName(timestampIndex);
-                Function function = functionParser.parseFunction(expr, new SingleTimestampColumnRecordMetadata(timestampColumnName), currentExecutionContext);
+            String designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+            if (designatedTimestampColumnName != null) {
+                GenericRecordMetadata metadata = new GenericRecordMetadata();
+                metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP));
+                Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && function.getType() == ColumnType.BOOLEAN) {
                     writer.removePartition(function);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "this table does not have a designated timestamp column");
             }
-
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "'list' or 'where' expected");
         }

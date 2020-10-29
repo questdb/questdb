@@ -194,6 +194,25 @@ public class TableWriter implements Closeable {
     private final LongList partitionListByTimestamp = new LongList();
     private final LongList partitionsToDrop = new LongList();
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
+    private String designatedTimestampColumnName;
+    private Function dropPartitionBasedOnFunction;
+    private boolean droppingActivePartition = false;
+    private long activePartition;
+
+    private final FindVisitor findVisitor = (file, type) -> {
+        nativeLPSZ.of(file);
+        if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
+            long partitionTimestamp = partitionNameToTimestamp(nativeLPSZ);
+            partitionListByTimestamp.add(partitionTimestamp);
+            dropPartitionFunctionRec.setTimestamp(partitionTimestamp);
+            if (dropPartitionBasedOnFunction.getBool(dropPartitionFunctionRec)) {
+                partitionsToDrop.add(partitionTimestamp);
+                if (activePartition == partitionTimestamp) {
+                    droppingActivePartition = true;
+                }
+            }
+        }
+    };
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -270,6 +289,9 @@ public class TableWriter implements Closeable {
                 }
             }
             this.columnCount = metadata.getColumnCount();
+            if (metadata.getTimestampIndex() > -1) {
+                this.designatedTimestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+            }
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txPendingPartitionSizes = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
             this.refs.extendAndSet(columnCount, 0);
@@ -827,6 +849,10 @@ public class TableWriter implements Closeable {
 
         metadata.renameColumn(currentName, newName);
 
+        if (index == metadata.getTimestampIndex()) {
+            designatedTimestampColumnName = Chars.toString(newName);
+        }
+
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
     }
 
@@ -956,21 +982,9 @@ public class TableWriter implements Closeable {
             return false;
         }
 
-        long activePartition = timestampFloorMethod.floor(maxTimestamp);
-        findAllPartitions();
-        int partitionCount = partitionListByTimestamp.size();
-        boolean droppingActivePartition = false;
-        for (int i = 0; i < partitionCount; i++) {
-            long timestampToRemove = partitionListByTimestamp.get(i);
-            dropPartitionFunctionRec.setTimestamp(timestampToRemove);
-            if (function.getBool(dropPartitionFunctionRec)) {
-                partitionsToDrop.add(timestampToRemove);
-                if (activePartition == timestampToRemove) {
-                    droppingActivePartition = true;
-                }
-            }
-        }
+        findAllPartitions(function);
 
+        int partitionCount = partitionListByTimestamp.size();
         int dropPartitionCount = partitionsToDrop.size();
         if (dropPartitionCount == 0) {
             return false;
@@ -991,15 +1005,12 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void findAllPartitions() {
+    private void findAllPartitions(Function function) {
         try {
+            activePartition = timestampFloorMethod.floor(maxTimestamp);
             partitionListByTimestamp.clear();
-            ff.iterateDir(path.$(), (file, type) -> {
-                nativeLPSZ.of(file);
-                if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
-                    partitionListByTimestamp.add(partitionNameToTimestamp(nativeLPSZ));
-                }
-            });
+            dropPartitionBasedOnFunction = function;
+            ff.iterateDir(path.$(), findVisitor);
         } finally {
             path.trimTo(rootLen);
         }
@@ -2929,6 +2940,10 @@ public class TableWriter implements Closeable {
 
         commit();
         setAppendPosition(transientRowCount);
+    }
+
+    public String getDesignatedTimestampColumnName() {
+        return designatedTimestampColumnName;
     }
 
     @FunctionalInterface
