@@ -417,6 +417,87 @@ public class TableBlockWriter implements Closeable {
             path.close();
         }
 
+        private void openPartition() {
+            assert !opened;
+            partitionStruct.of(columnCount);
+            path.of(root).concat(writer.getName());
+            timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo);
+            int plen = path.length();
+            try {
+                if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+                    throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
+                }
+
+                assert columnCount > 0;
+                columnTops.setAll(columnCount, -1);
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    final CharSequence name = metadata.getColumnName(columnIndex);
+                    final long appendOffset = writer.getPrimaryAppendOffset(timestampLo, columnIndex);
+                    partitionStruct.setColumnStartOffset(columnIndex, appendOffset);
+                    partitionStruct.setColumnAppendOffset(columnIndex, appendOffset);
+
+                    long fd = ff.openRW(TableUtils.dFile(path.trimTo(plen), name));
+                    if (fd == -1) {
+                        throw CairoException.instance(ff.errno()).put("Could not open ").put(name);
+                    }
+                    partitionStruct.setColumnDataFd(columnIndex, fd);
+                    int columnType = metadata.getColumnType(columnIndex);
+                    switch (columnType) {
+                        case ColumnType.STRING:
+                        case ColumnType.BINARY:
+                            fd = ff.openRW(iFile(path.trimTo(plen), name));
+                            if (fd == -1) {
+                                throw CairoException.instance(ff.errno()).put("Could not open ").put(name);
+                            }
+                            partitionStruct.setColumnIndexFd(columnIndex, fd);
+                            partitionStruct.setColumnFieldSizePow2(columnIndex, -1);
+                            break;
+                        default:
+                            partitionStruct.setColumnIndexFd(columnIndex, -1);
+                            partitionStruct.setColumnFieldSizePow2(columnIndex, ColumnType.pow2SizeOf(columnType));
+                            break;
+                    }
+                }
+
+                opened = true;
+                LOG.info().$("opened partition to '").$(path).$('\'').$();
+            } catch (CairoException ex) {
+                closePartition();
+                throw ex;
+            } finally {
+                path.trimTo(plen);
+            }
+        }
+
+        private void closePartition() {
+            try {
+                int i;
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    long fd = partitionStruct.getColumnDataFd(columnIndex);
+                    ff.close(fd);
+                    fd = partitionStruct.getColumnIndexFd(columnIndex);
+                    if (fd != -1) {
+                        ff.close(fd);
+                    }
+                    long address = partitionStruct.getColumnMappingStart(columnIndex);
+                    if (address != 0) {
+                        long sz = partitionStruct.getColumnMappingSize(columnIndex);
+                        unmapFile(ff, address, sz);
+                        partitionStruct.setColumnMappingStart(columnIndex, 0);
+                    }
+                }
+                int nAdditionalMappings = partitionStruct.getnAdditionalMappings();
+                for (i = 0; i < nAdditionalMappings; i++) {
+                    long address = partitionStruct.getAdditionalMappingStart(i);
+                    long sz = partitionStruct.getAdditionalMappingSize(i);
+                    unmapFile(ff, address, sz);
+                }
+            } finally {
+                partitionStruct.clear();
+                opened = false;
+            }
+        }
+
         private void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
             if (sourceAddress != 0) {
                 long appendOffset = partitionStruct.getColumnAppendOffset(columnIndex);
@@ -468,31 +549,9 @@ public class TableBlockWriter implements Closeable {
 
         private void clear() {
             if (opened) {
-                int i;
-                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    long fd = partitionStruct.getColumnDataFd(columnIndex);
-                    ff.close(fd);
-                    fd = partitionStruct.getColumnIndexFd(columnIndex);
-                    if (fd != -1) {
-                        ff.close(fd);
-                    }
-                    long address = partitionStruct.getColumnMappingStart(columnIndex);
-                    if (address != 0) {
-                        long sz = partitionStruct.getColumnMappingSize(columnIndex);
-                        unmapFile(ff, address, sz);
-                        partitionStruct.setColumnMappingStart(columnIndex, 0);
-                    }
-                }
-                int nAdditionalMappings = partitionStruct.getnAdditionalMappings();
-                for (i = 0; i < nAdditionalMappings; i++) {
-                    long address = partitionStruct.getAdditionalMappingStart(i);
-                    long sz = partitionStruct.getAdditionalMappingSize(i);
-                    unmapFile(ff, address, sz);
-                }
-                partitionStruct.clear();
+                closePartition();
             }
             columnTops.clear();
-            opened = false;
         }
 
         private long completeCommitAppendedBlock() {
@@ -522,7 +581,7 @@ public class TableBlockWriter implements Closeable {
 
         private void of(long timestampLo) {
             this.timestampLo = timestampLo;
-            opened = false;
+            openPartition();
             columnTops.ensureCapacity(columnCount);
         }
 
@@ -579,51 +638,7 @@ public class TableBlockWriter implements Closeable {
         }
 
         private void startPageFrame(long timestamp) {
-            if (!opened) {
-                // Open partition using the timestampLo initialised in the of(...) call
-                partitionStruct.of(columnCount);
-                path.of(root).concat(writer.getName());
-                timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo);
-                int plen = path.length();
-                if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
-                    throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
-                }
-
-                assert columnCount > 0;
-                columnTops.setAll(columnCount, -1);
-                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    final CharSequence name = metadata.getColumnName(columnIndex);
-                    final long appendOffset = writer.getPrimaryAppendOffset(timestampLo, columnIndex);
-                    partitionStruct.setColumnStartOffset(columnIndex, appendOffset);
-                    partitionStruct.setColumnAppendOffset(columnIndex, appendOffset);
-
-                    long fd = ff.openRW(TableUtils.dFile(path.trimTo(plen), name));
-                    if (fd == -1) {
-                        throw CairoException.instance(ff.errno()).put("Could not open ").put(name);
-                    }
-                    partitionStruct.setColumnDataFd(columnIndex, fd);
-                    int columnType = metadata.getColumnType(columnIndex);
-                    switch (columnType) {
-                        case ColumnType.STRING:
-                        case ColumnType.BINARY:
-                            fd = ff.openRW(iFile(path.trimTo(plen), name));
-                            if (fd == -1) {
-                                throw CairoException.instance(ff.errno()).put("Could not open ").put(name);
-                            }
-                            partitionStruct.setColumnIndexFd(columnIndex, fd);
-                            partitionStruct.setColumnFieldSizePow2(columnIndex, -1);
-                            break;
-                        default:
-                            partitionStruct.setColumnIndexFd(columnIndex, -1);
-                            partitionStruct.setColumnFieldSizePow2(columnIndex, ColumnType.pow2SizeOf(columnType));
-                            break;
-                    }
-                }
-
-                path.trimTo(plen);
-                opened = true;
-                LOG.info().$("opened partition to '").$(path).$('\'').$();
-            }
+            assert opened;
             assert timestamp == Long.MIN_VALUE || timestamp >= timestampLo;
             assert timestamp <= timestampHi;
             timestampLo = timestamp;

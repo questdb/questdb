@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -23,6 +24,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
 
@@ -30,6 +32,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(TableBlockWriterTest.class);
     private static int ONE_MEG_IN_PAGES = 1024 * 1024 / (int) Files.PAGE_SIZE;
     private static final AtomicInteger N_MAPPED_PAGES = new AtomicInteger(ONE_MEG_IN_PAGES);
+    private static Function<LPSZ, Long> FF_openRW_INTERCEPTOR;
 
     @BeforeClass
     public static void setUp() throws IOException {
@@ -39,7 +42,20 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             public long getMapPageSize() {
                 return N_MAPPED_PAGES.get() * getPageSize();
             }
+
+            @Override
+            public long openRW(LPSZ name) {
+                Long fd = FF_openRW_INTERCEPTOR.apply(name);
+                if (null != fd) {
+                    return fd;
+                }
+                return Files.openRW(name);
+            }
         };
+        FF_openRW_INTERCEPTOR = (name) -> {
+            return null;
+        };
+        
         configuration = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -450,6 +466,35 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testOpenFailure() throws Exception {
+        String failedFn = "dest" + Files.SEPARATOR + "1970-03" + Files.SEPARATOR + "l.d";
+        FF_openRW_INTERCEPTOR = (fn) -> {
+            if (fn.toString().endsWith(failedFn)) {
+                return -1L;
+            }
+            return null;
+        };
+        runTest("testPartitioned", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(5000000000000, 5000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts) PARTITION BY MONTH;",
+                    sqlExecutionContext);
+            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY MONTH",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source WHERE ts < '1970-03-01T00:00:00.000000Z'");
+            try {
+                replicateTable("source", "dest", 0, true, Long.MAX_VALUE, false, false, 0);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getFlyweightMessage().toString().contains("Could not open l"));
+            }
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
             engine.releaseInactive();
         });
     }
