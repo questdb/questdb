@@ -31,7 +31,6 @@ import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.griffin.CompiledQuery.ALTER;
@@ -377,9 +376,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         );
     }
 
-
     @Test
-    @Ignore
     public void testDropPartitionsUsingWhereClauseAfterRenamingColumn1() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);
@@ -403,7 +400,6 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testDropPartitionsUsingWhereClauseAfterRenamingColumn2() throws Exception {
         assertMemoryLeak(() -> {
                     createX("DAY", 720000000);

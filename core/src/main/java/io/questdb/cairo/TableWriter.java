@@ -925,7 +925,14 @@ public class TableWriter implements Closeable {
 
             setStateForTimestamp(timestamp, false);
 
-            if (ff.exists(path)) {
+            final int plen = path.length();
+            boolean exists;
+            try {
+                exists = ff.exists(path.$());
+            } finally {
+                path.trimTo(plen);
+            }
+            if (exists) {
 
                 // todo: when this fails - rescan partitions to calculate fixedRowCount
                 //     also write a _todo_ file, which will indicate which partition we wanted to delete
@@ -972,6 +979,7 @@ public class TableWriter implements Closeable {
                 LOG.error().$("cannot remove already missing partition [path=").$(path).$(']').$();
                 return false;
             }
+
         } finally {
             path.trimTo(rootLen);
         }
