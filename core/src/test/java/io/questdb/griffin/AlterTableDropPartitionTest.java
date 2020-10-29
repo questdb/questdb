@@ -31,6 +31,7 @@ import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.griffin.CompiledQuery.ALTER;
@@ -169,21 +170,21 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropTwoPartitionsByMonth() throws Exception {
         assertMemoryLeak(() -> {
-            createX("MONTH", 3 * 7200000000L);
+                    createX("MONTH", 3 * 7200000000L);
 
-            assertPartitionResult("count\n" +
-                            "112\n",
-                    "2018-02");
+                    assertPartitionResult("count\n" +
+                                    "112\n",
+                            "2018-02");
 
-            assertPartitionResult("count\n" +
-                    "120\n", "2018-04");
+                    assertPartitionResult("count\n" +
+                            "120\n", "2018-04");
 
-            Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-02', '2018-04'", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-02', '2018-04'", sqlExecutionContext).getType());
 
-            String expectedAfterDrop = "count\n" +
-                    "0\n";
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
 
-            assertPartitionResult(expectedAfterDrop, "2018-02");
+                    assertPartitionResult(expectedAfterDrop, "2018-02");
                     assertPartitionResult(expectedAfterDrop, "2018-04");
                 }
         );
@@ -376,6 +377,73 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         );
     }
 
+
+    @Test
+    @Ignore
+    public void testDropPartitionsUsingWhereClauseAfterRenamingColumn1() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 720000000);
+
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x rename column timestamp to ts ", sqlExecutionContext).getType());
+
+                    assertPartitionResultForTimestampColumnNameTs(expectedBeforeDrop, "2018-01-05");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where ts = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", sqlExecutionContext).getType());
+
+                    assertPartitionResultForTimestampColumnNameTs(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2018-01-05");
+                }
+        );
+    }
+
+    @Test
+    @Ignore
+    public void testDropPartitionsUsingWhereClauseAfterRenamingColumn2() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 720000000);
+
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x rename column b to bbb ", sqlExecutionContext).getType());
+
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-01-05' ", sqlExecutionContext).getType());
+
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionsUsingWhereClauseForTableWithoutDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+                    createXWithoutDesignatedColumn(720000000);
+
+                    try {
+                        compiler.compile("alter table x drop partition " +
+                                        "where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ",
+                                sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        Assert.assertEquals(105, e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "this table does not have a designated timestamp column");
+                    }
+                }
+        );
+    }
+
     private void assertFailure(String sql, int position, String message) throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -459,6 +527,32 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         " from long_sequence(1000)" +
                         ") timestamp (ts)" +
                         "partition by " + partitionBy,
+                sqlExecutionContext
+        );
+    }
+
+    private void createXWithoutDesignatedColumn(long increment) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * " + increment + " ts," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(1000)" +
+                        ")",
                 sqlExecutionContext
         );
     }

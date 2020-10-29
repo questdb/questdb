@@ -1033,8 +1033,9 @@ public class SqlCompiler implements Closeable {
             alterTableDropPartitionByList(writer);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
-            String designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
-            if (designatedTimestampColumnName != null) {
+            int timestampIndex = writer.getMetadata().getTimestampIndex();
+            if (timestampIndex != -1) {
+                String designatedTimestampColumnName = writer.getMetadata().getColumnName(timestampIndex);
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
