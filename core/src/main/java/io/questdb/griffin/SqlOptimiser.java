@@ -446,7 +446,7 @@ class SqlOptimiser {
                     } else if (lhi < rhi){
                         // we must align "a" nodes with slave index
                         // compiler will always be checking "a" columns
-                        // against metadat of the slave the context is assigned to
+                        // against metadata of the slave the context is assigned to
                         jc.aNodes.add(node.lhs);
                         jc.bNodes.add(node.rhs);
                         jc.aNames.add(literalCollectorANames.getQuick(0));
