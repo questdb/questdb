@@ -1922,8 +1922,6 @@ nodejs code:
         });
     }
 
-    // telemetry_users where ip = '213.86.169.0'AND where id = '0x05a9fffdcbe6130000000615a749ad';
-
     @Test
     public void testSchemasCall() throws Exception {
         assertMemoryLeak(() -> {
@@ -1938,6 +1936,8 @@ nodejs code:
                         running
                 );
 
+                sink.clear();
+
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
@@ -1949,7 +1949,16 @@ nodejs code:
                 }
 
                 final DatabaseMetaData metaData = connection.getMetaData();
+                try (ResultSet rs = metaData.getCatalogs()) {
+                    assertResultSet(
+                            "TABLE_CAT[VARCHAR]\n" +
+                                    "qdb\n",
+                            sink,
+                            rs);
+                }
+
                 sink.clear();
+
                 try (ResultSet rs = metaData.getSchemas()) {
                     assertResultSet(
                             "TABLE_SCHEM[VARCHAR],TABLE_CATALOG[VARCHAR]\n" +
@@ -1959,7 +1968,49 @@ nodejs code:
                             rs
                     );
                 }
-                //
+
+                sink.clear();
+
+                try (ResultSet rs = metaData.getTables(
+                        "qdb", null, null, null
+                )) {
+                    assertResultSet(
+                            "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[CHAR],TYPE_SCHEM[CHAR],TYPE_NAME[CHAR],SELF_REFERENCING_COL_NAME[CHAR],REF_GENERATION[CHAR]\n" +
+                                    "null,public,test,TABLE,table,\0,\0,\0,\0,\0\n" +
+                                    "null,public,test2,TABLE,table,\0,\0,\0,\0,\0\n",
+                            sink,
+                            rs
+                    );
+                }
+
+
+                // todo: this does not work, issues are:
+                //    1. analytic functions are not supported
+                //    2. nullif() not supported
+                //    3. pg_catalog.pg_type, pg_catalog.pg_attribute, pg_catalog.pg_attrdef not defined
+/*
+                sink.clear();
+                try (ResultSet rs = metaData.getColumns("qdb", null, "test", null)) {
+                    assertResultSet(
+                            "",
+                            sink,
+                            rs
+                    );
+                }
+*/
+
+                // todo:  does not work
+                //    trim() function syntax is not supported (https://w3resource.com/PostgreSQL/trim-function.php)
+/*
+                sink.clear();
+                try (ResultSet rs = metaData.getIndexInfo("qdb", "public", "test", true, false)) {
+                    assertResultSet(
+                            "",
+                            sink,
+                            rs
+                    );
+                }
+*/
                 connection.close();
             } finally {
                 running.set(false);

@@ -86,6 +86,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBetweenConstantAndSelect() {
+        assertFail(
+                "x between select and 10",
+                10,
+                "constant expected"
+        );
+    }
+
+    @Test
     public void testBinaryMinus() throws Exception {
         x("4c-", "4-c");
     }
@@ -459,6 +468,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDanglingExpression() {
+        assertFail(
+                "(.*10)",
+                3,
+                "dangling expression"
+        );
+    }
+
+    @Test
     public void testDigitDigit() throws SqlException {
         x("4", "4  5");
     }
@@ -466,6 +484,64 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testDigitDotSpaceDigit() throws SqlException {
         x("4.", "4. 5");
+    }
+
+    @Test
+    public void testDotDereference() throws SqlException {
+        x("a.bn.", "(a.b).n");
+    }
+
+    @Test
+    public void testDotDereferenceFunction() throws SqlException {
+        x("a.b123f.", "(a.b).f(1,2,3)");
+    }
+
+    @Test
+    public void testDotDereferenceLiteralCase() {
+        assertFail("(a.b).case",
+                6,
+                "'case' is not allowed here"
+        );
+    }
+
+    @Test
+    public void testDotDereferenceLiteralCast() {
+        assertFail("(a.b).cast(s as int)",
+                6,
+                "'cast' is not allowed here"
+        );
+    }
+
+    @Test
+    public void testDotDereferenceLiteralConst() {
+        assertFail("(a.b).true",
+                6,
+                "constant is not allowed here"
+        );
+    }
+
+    @Test
+    public void testDotDereferenceNumericConst() {
+        assertFail("(a.b).10.1",
+                6,
+                "constant is not allowed here"
+        );
+    }
+
+    @Test
+    public void testDotDereferenceStrConst() {
+        assertFail("(a.b).'ok'",
+                6,
+                "constant is not allowed here"
+        );
+    }
+
+    @Test
+    public void testDotDereferenceTooMany() {
+        assertFail("(a.b)..",
+                6,
+                "too many dots"
+        );
     }
 
     @Test
@@ -520,6 +596,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testEqualPrecedence() throws Exception {
         x("abc^^", "a^b^c");
+    }
+
+    @Test
+    public void testExpectQualifier() {
+        assertFail(".a",
+                1,
+                "qualifier expected"
+        );
     }
 
     @Test
@@ -750,6 +834,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testSimpleLiteralExit() throws Exception {
         x("a", "a lit");
+    }
+
+    @Test
+    public void testTooManyDots() {
+        assertFail("a..b",
+                2,
+                "too many dots"
+        );
     }
 
     @Test
