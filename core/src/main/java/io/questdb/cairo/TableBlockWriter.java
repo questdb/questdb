@@ -413,9 +413,8 @@ public class TableBlockWriter implements Closeable {
 
         @Override
         public void close() {
-            timestampLo = 0;
+            clear();
             path.close();
-            opened = false;
         }
 
         private void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
@@ -581,9 +580,9 @@ public class TableBlockWriter implements Closeable {
 
         private void startPageFrame(long timestamp) {
             if (!opened) {
+                // Open partition using the timestampLo initialised in the of(...) call
                 partitionStruct.of(columnCount);
                 path.of(root).concat(writer.getName());
-                // todo: timestamp is ignored when opening up partition
                 timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo);
                 int plen = path.length();
                 if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
@@ -715,7 +714,7 @@ public class TableBlockWriter implements Closeable {
                 nRowsAdded++;
                 Unsafe.getUnsafe().putLong(columnIndexAddress, offset);
                 columnIndexAddress += Long.BYTES;
-                // todo: remove branching similar to how this is done for strings
+                // TODO: remove branching similar to how this is done for strings
                 long binLen = Unsafe.getUnsafe().getLong(columnDataAddress);
                 long sz;
                 if (binLen == TableUtils.NULL_LEN) {

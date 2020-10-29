@@ -1,5 +1,14 @@
 package io.questdb.cairo;
 
+import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
+
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
@@ -11,23 +20,16 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
-
-import java.io.IOException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
 public class TableBlockWriterTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(TableBlockWriterTest.class);
-    private static final AtomicInteger N_MAPPED_PAGES = new AtomicInteger(256);
+    private static int ONE_MEG_IN_PAGES = 1024 * 1024 / (int) Files.PAGE_SIZE;
+    private static final AtomicInteger N_MAPPED_PAGES = new AtomicInteger(ONE_MEG_IN_PAGES);
 
     @BeforeClass
     public static void setUp() throws IOException {
@@ -182,26 +184,25 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testAllTypesResumeBlock() throws Exception {
         int nTest = 0;
         boolean[] bools = {true, false};
-        long[] maxRowsPerFrameList = {Long.MAX_VALUE, 3, 4};
-        int[] nMappedPagesList = {256, 2};
-        for (int nThreads = 0; nThreads <= 2; nThreads++) {
+        long[] maxRowsPerFrameList = { Long.MAX_VALUE, 3 };
+        int[] nMappedPagesList = { ONE_MEG_IN_PAGES, 2 };
+        for (int nThreads = 0; nThreads <= 1; nThreads++) {
             for (int nMappedPages : nMappedPagesList) {
                 N_MAPPED_PAGES.set(nMappedPages);
                 for (boolean retry : bools) {
                     for (boolean cancel : bools) {
                         for (boolean partitioned : bools) {
-                            for (boolean commitAllAtOnce : bools) {
+                            // for (boolean commitAllAtOnce : bools) {
                                 for (long maxRowsPerFrame : maxRowsPerFrameList) {
                                     if (!retry && cancel) {
                                         continue;
                                     }
-                                    testAllTypesResumeBlock(nTest++, maxRowsPerFrame, commitAllAtOnce, nThreads, partitioned, retry, cancel);
+                                    testAllTypesResumeBlock(nTest++, maxRowsPerFrame, true, nThreads, partitioned, retry, cancel);
                                 }
-                            }
+                                // }
                         }
                     }
                 }
@@ -561,7 +562,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
     private void runReplicationTests(String expected, String tableCreateFields, int nMaxThreads) throws SqlException {
         int nTest = 1;
-        int[] nMappedPagesList = {256, 1};
+        int[] nMappedPagesList = { ONE_MEG_IN_PAGES, 1 };
         for (int nThreads = 0; nThreads <= nMaxThreads; nThreads++) {
             for (int nMappedPages : nMappedPagesList) {
                 N_MAPPED_PAGES.set(nMappedPages);
