@@ -821,8 +821,8 @@ public class TableWriter implements Closeable {
             }
 
             setStateForTimestamp(timestamp, false);
-            path.$();
-            if (ff.exists(path)) {
+
+            if (ff.exists(path.$())) {
 
                 // todo: when this fails - rescan partitions to calculate fixedRowCount
                 //     also write a _todo_ file, which will indicate which partition we wanted to delete
