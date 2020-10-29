@@ -175,6 +175,28 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testDropPartitionsUsingWhereClauseAfterRenamingColumn2() throws Exception {
+        assertMemoryLeak(() -> {
+            createX("DAY", 720000000);
+
+            String expectedBeforeDrop = "count\n" +
+                    "120\n";
+
+            String expectedAfterDrop = "count\n" +
+                    "0\n";
+
+            Assert.assertEquals(ALTER, compiler.compile("alter table x rename column b to bbb ", sqlExecutionContext).getType());
+
+            assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+
+            Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition '2018-01-05' ", sqlExecutionContext).getType());
+
+            assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+            assertPartitionResult(expectedAfterDrop, "2018-01-05");
+        });
+    }
+
     private void assertFailure(String sql, int position, String message) throws Exception {
         assertMemoryLeak(() -> {
             try {
