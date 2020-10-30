@@ -240,10 +240,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 throw SqlException.$(args.getQuick(3).getPosition(), "duplicate branch");
             }
 
-//            if (elseBranch != null) {
-//                throw SqlException.$(elseBranch.getPosition(), "duplicate boolean values");
-//            }
-
             if (a) {
                 picker = record -> keyFunction.getBool(record) ? branchA : branchB;
             } else {
@@ -260,8 +256,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
     }
-
-//    private
 
     private Function getLongKeyedFunction(
             ObjList<Function> args,

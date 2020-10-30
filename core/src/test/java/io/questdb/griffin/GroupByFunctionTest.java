@@ -111,9 +111,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true
+                        ")"
         );
     }
 
@@ -193,9 +191,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " rnd_double(2) d" +
                         " from" +
                         " long_sequence(2000000)" +
-                        ")",
-                null,
-                true
+                        ")"
         );
     }
 
@@ -296,9 +292,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " cast(NaN as int) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true
+                        ")"
         );
     }
 
@@ -315,9 +309,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " rnd_int(0, 10000, 1) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true
+                        ")"
         );
     }
 
@@ -334,9 +326,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " cast(NaN as long) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true
+                        ")"
         );
     }
 
@@ -437,9 +427,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " cast(rnd_long(0, 10000, 1) as date) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true
+                        ")"
         );
     }
 
@@ -477,9 +465,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " cast(NaN as int) d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true
+                        ")"
         );
     }
 
@@ -622,9 +608,7 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
                         " NaN d" +
                         " from" +
                         " long_sequence(200)" +
-                        ")",
-                null,
-                true
+                        ")"
         );
     }
 

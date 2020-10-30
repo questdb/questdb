@@ -611,7 +611,7 @@ public class SqlCodeGenerator implements Mutable {
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
         final Function function = model.getTableNameFunction();
         assert function != null;
-        if (function.getType() != TypeEx.CURSOR) {
+        if (function.getType() != ColumnType.CURSOR) {
             throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
         }
         return function.getRecordCursorFactory();

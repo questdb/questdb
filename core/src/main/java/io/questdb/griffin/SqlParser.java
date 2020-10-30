@@ -730,7 +730,7 @@ public final class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "missing expression");
                 }
 
-                if (Chars.endsWith(expr.token, '.')) {
+                if (Chars.endsWith(expr.token, '.') && expr.type == ExpressionNode.LITERAL) {
                     throw SqlException.$(expr.position + expr.token.length(), "'*' or column name expected");
                 }
             }

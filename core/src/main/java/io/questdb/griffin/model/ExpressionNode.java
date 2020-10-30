@@ -37,6 +37,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int OPERATION = 1;
     public static final int CONSTANT = 2;
     public static final int LITERAL = 4;
+    public static final int MEMBER_ACCESS = 5;
     public static final int FUNCTION = 8;
     public static final int ARRAY_ACCESS = 9;
     public static final int CONTROL = 16;

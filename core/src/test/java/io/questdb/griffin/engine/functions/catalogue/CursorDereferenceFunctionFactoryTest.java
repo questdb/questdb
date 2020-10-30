@@ -22,9 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.functions.catalogue;
 
-public class TypeEx {
-    public static final int VAR_ARG = 100;
-    public static final int CURSOR = 101;
+import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Test;
+
+public class CursorDereferenceFunctionFactoryTest extends AbstractGriffinTest {
+    @Test
+    public void testCatalogue() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table pg_test(a int)", sqlExecutionContext);
+            assertQuery(
+                    "x\n" +
+                            "11\n" +
+                            "2200\n" +
+                            "NaN\n" +
+                            "NaN\n" +
+                            "NaN\n" +
+                            "NaN\n" +
+                            "NaN\n" +
+                            "NaN\n" +
+                            "NaN\n" +
+                            "NaN\n",
+                    "select (pg_catalog.pg_class()).relnamespace x from long_sequence(10);",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
 }

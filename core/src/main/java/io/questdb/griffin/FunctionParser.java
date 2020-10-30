@@ -180,6 +180,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         stack.push(createColumn(node));
                     }
                     break;
+                case ExpressionNode.MEMBER_ACCESS:
+                    stack.push(new StrConstant(node.position, node.token));
+                    break;
                 case ExpressionNode.CONSTANT:
                     stack.push(createConstant(node));
                     break;
@@ -442,7 +445,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (sigArgCount > 0) {
                 final int lastSigArgMask = descriptor.getArgTypeMask(sigArgCount - 1);
-                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgMask) == TypeEx.VAR_ARG;
+                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgMask) == ColumnType.VAR_ARG;
                 sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgMask);
             } else {
                 sigVarArg = false;

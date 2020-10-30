@@ -1915,7 +1915,7 @@ class SqlOptimiser {
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
         assert model.getTableNameFunction() == null;
         Function function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, executionContext);
-        if (function.getType() != TypeEx.CURSOR) {
+        if (function.getType() != ColumnType.CURSOR) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
         model.setTableNameFunction(function);

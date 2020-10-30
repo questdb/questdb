@@ -798,7 +798,7 @@ class ExpressionParser {
                             final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", DOT_PRECEDENCE, position);
                             dotDereference.paramCount = argStackDepth;
                             opStack.push(dotDereference);
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(tok), Integer.MIN_VALUE, position));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.unquote(tok), Integer.MIN_VALUE, position));
                         }
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator

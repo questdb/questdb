@@ -44,6 +44,10 @@ public interface Function extends Closeable {
     default void close() {
     }
 
+    default boolean supportsRandomAccess() {
+        return true;
+    }
+
     int getArrayLength();
 
     BinarySequence getBin(Record rec);

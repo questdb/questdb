@@ -130,10 +130,10 @@ public class FunctionFactoryDescriptor {
                 sigArgType = ColumnType.BINARY;
                 break;
             case 'v':
-                sigArgType = TypeEx.VAR_ARG;
+                sigArgType = ColumnType.VAR_ARG;
                 break;
             case 'c':
-                sigArgType = TypeEx.CURSOR;
+                sigArgType = ColumnType.CURSOR;
                 break;
             case 'h':
                 sigArgType = ColumnType.LONG256;

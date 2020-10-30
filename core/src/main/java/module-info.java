@@ -466,6 +466,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

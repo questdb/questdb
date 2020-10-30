@@ -447,6 +447,7 @@ io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedDescriptionCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
 
 # concat()
 io.questdb.griffin.engine.functions.str.ConcatFunctionFactory

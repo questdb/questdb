@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.TypeEx;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
@@ -48,7 +47,9 @@ public final class ColumnType {
     public static final int LONG256 = 12;
     public static final int BINARY = 13;
     public static final int PARAMETER = 14;
-    public static final int MAX = PARAMETER;
+    public static final int VAR_ARG = 16;
+    public static final int CURSOR = 15;
+    public static final int MAX = CURSOR;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
@@ -69,7 +70,7 @@ public final class ColumnType {
         typeNameMap.put(DATE, "DATE");
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
-        typeNameMap.put(TypeEx.CURSOR, "CURSOR");
+        typeNameMap.put(CURSOR, "CURSOR");
         typeNameMap.put(LONG256, "LONG256");
 
         nameTypeMap.put("boolean", BOOLEAN);
@@ -86,7 +87,7 @@ public final class ColumnType {
         nameTypeMap.put("date", DATE);
         nameTypeMap.put("parameter", PARAMETER);
         nameTypeMap.put("timestamp", TIMESTAMP);
-        nameTypeMap.put("cursor", TypeEx.CURSOR);
+        nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", ColumnType.LONG256);
         nameTypeMap.put("text", ColumnType.STRING);
         nameTypeMap.put("smallint", ColumnType.SHORT);
