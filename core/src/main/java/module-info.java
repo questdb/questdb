@@ -191,6 +191,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.SysdateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory,
             io.questdb.griffin.engine.functions.date.SystimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.date.NowFunctionFactory,
             io.questdb.griffin.engine.functions.date.HourOfDayFunctionFactory,
             io.questdb.griffin.engine.functions.date.DayOfMonthFunctionFactory,
             io.questdb.griffin.engine.functions.date.DayOfWeekFunctionFactory,
