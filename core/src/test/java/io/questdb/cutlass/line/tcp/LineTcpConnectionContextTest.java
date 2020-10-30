@@ -200,7 +200,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     @Test
     public void testAddToExistingTable() throws Exception {
-        addTable("weather");
+        addTable();
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -229,7 +229,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     @Test
     public void testBadCast() throws Exception {
-        addTable("weather");
+        addTable();
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -493,7 +493,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     @Test
     public void testColumnTypeChange() throws Exception {
-        addTable("weather");
+        addTable();
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -905,9 +905,9 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
-    private void addTable(String tableName) {
+    private void addTable() {
         try (
-                TableModel model = new TableModel(configuration, tableName,
+                TableModel model = new TableModel(configuration, "weather",
                         PartitionBy.NONE).col("location", ColumnType.SYMBOL).col("temperature", ColumnType.DOUBLE).timestamp()
         ) {
             CairoTestUtils.create(model);
@@ -920,17 +920,17 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         }
     }
 
-    private void assertTableCount(CharSequence tableName, int nExpectedRows, long initialTimestampNanos, long timestampIncrementInNanos, long maxExpectedTimestampNanos) {
+    private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
         try (TableReader reader = new TableReader(configuration, tableName)) {
             Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
             int timestampColIndex = reader.getMetadata().getTimestampIndex();
             TableReaderRecordCursor recordCursor = reader.getCursor();
             int nRows = 0;
-            long timestampinNanos = initialTimestampNanos;
+            long timestampinNanos = 1465839830100400200L;
             while (recordCursor.hasNext()) {
                 long actualTimestampInMicros = recordCursor.getRecord().getTimestamp(timestampColIndex);
                 Assert.assertEquals(timestampinNanos / 1000, actualTimestampInMicros);
-                timestampinNanos += timestampIncrementInNanos;
+                timestampinNanos += 1000;
                 nRows++;
             }
             Assert.assertEquals(nExpectedRows, nRows);
@@ -996,7 +996,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 Arrays.fill(affinityByThread, -1);
             }
         });
-        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool) {
+        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool, null) {
             @Override
             void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
                 if (null != onCommitNewEvent) {
@@ -1131,7 +1131,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             LOG.info().$("Completed ").$(nTotalUpdates).$(" measurements with ").$(nTables).$(" measurement types processed by ").$(nWriterThreads).$(" threads. ")
                     .$(rebalanceNLoadCheckCycles).$(" load checks lead to ").$(rebalanceNRebalances).$(" load rebalancing operations").$();
             for (int nTable = 0; nTable < nTables; nTable++) {
-                assertTableCount("weather" + nTable, countByTable[nTable], initialTimestampNanos, timestampIncrementInNanos, maxTimestampByTable[nTable] - timestampIncrementInNanos);
+                assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable] - timestampIncrementInNanos);
             }
         });
     }
@@ -1140,17 +1140,18 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         switch (context.handleIO()) {
             case NEEDS_READ:
                 context.getDispatcher().registerChannel(context, IOOperation.READ);
-                return;
+                break;
             case NEEDS_WRITE:
                 context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                return;
+                break;
             case NEEDS_CPU:
-                return;
+                break;
             case NEEDS_DISCONNECT:
                 context.getDispatcher().disconnect(context);
-                return;
+                break;
+            default:
+                break;
         }
-        return;
     }
 
     private void waitForIOCompletion() {

@@ -53,15 +53,8 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     int columnIndex;
     private boolean queryCacheable = false;
 
-    public TextQueryProcessorState(
-            HttpConnectionContext httpConnectionContext,
-            int connectionCheckFrequency
-    ) {
+    public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
-    }
-
-    void setQueryCacheable(boolean queryCacheable) {
-        this.queryCacheable = queryCacheable;
     }
 
     @Override
@@ -84,13 +77,17 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         countRows = false;
     }
 
-    public long getFd() {
-        return httpConnectionContext.getFd();
-    }
-
     @Override
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+    }
+
+    public long getFd() {
+        return httpConnectionContext.getFd();
+    }
+
+    void setQueryCacheable(boolean queryCacheable) {
+        this.queryCacheable = queryCacheable;
     }
 }

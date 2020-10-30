@@ -26,25 +26,20 @@ package io.questdb.griffin.engine.functions;
 
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public abstract class FloatFunction implements Function {
+public abstract class FloatFunction implements ScalarFunction {
 
     private final int position;
 
     public FloatFunction(int position) {
         this.position = position;
-    }
-
-    @Override
-    public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -68,6 +63,11 @@ public abstract class FloatFunction implements Function {
     }
 
     @Override
+    public char getChar(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -84,6 +84,21 @@ public abstract class FloatFunction implements Function {
 
     @Override
     public final long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -140,20 +155,5 @@ public abstract class FloatFunction implements Function {
     @Override
     public final int getType() {
         return ColumnType.FLOAT;
-    }
-
-    @Override
-    public Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
     }
 }

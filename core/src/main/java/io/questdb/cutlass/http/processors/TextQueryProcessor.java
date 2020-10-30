@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.MessageBus;
+import io.questdb.Telemetry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -89,12 +90,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.doubleScale = configuration.getDoubleScale();
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str != null) {
-            r.encodeUtf8AndQuote(str);
-        }
-    }
-
     @Override
     public void close() {
         Misc.free(compiler);
@@ -117,11 +112,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         $("`, skip: ").$(state.skip).
                         $(", stop: ").$(state.stop).
                         $(']').$();
+                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_TEXT);
             } else {
                 info(state).$("execute-cached [q=`").utf8(state.query).
                         $("`, skip: ").$(state.skip).
                         $(", stop: ").$(state.stop).
                         $(']').$();
+                sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_TEXT);
             }
 
             if (state.recordCursorFactory != null) {
@@ -156,11 +153,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new TextQueryProcessorState(
-                            context,
-                            configuration.getConnectionCheckFrequency()
-                    )
-            );
+            LV.set(context, state = new TextQueryProcessorState(context));
         }
         // new request clears random
         state.rnd = null;
@@ -289,6 +282,17 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         if (state != null) {
             state.rnd = sqlExecutionContext.getRandom();
         }
+    }
+
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str != null) {
+            r.encodeUtf8AndQuote(str);
+        }
+    }
+
+    private static void readyForNextRequest(HttpConnectionContext context) {
+        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
     private LogRecord error(TextQueryProcessorState state) {
@@ -446,11 +450,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             default:
                 assert false;
         }
-    }
-
-    private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
-                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {

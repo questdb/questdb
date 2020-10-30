@@ -41,7 +41,7 @@ import java.util.regex.PatternSyntaxException;
 public class MatchStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "~=(Ss)";
+        return "~(Ss)";
     }
 
     @Override

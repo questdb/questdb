@@ -33,6 +33,58 @@ import io.questdb.cairo.sql.RecordMetadata;
 
 class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
+    private static final String[] namespaces = {"pg_catalog", "public"};
+    private static final int[] oids = {PgOIDs.PG_CATALOG_OID, PgOIDs.PG_PUBLIC_OID};
+    private static final int rowCount = namespaces.length;
+    private final NamespaceCatalogueRecord record = new NamespaceCatalogueRecord();
+    private int row = -1;
+
+    @Override
+    public void close() {
+        row = -1;
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return ++row < rowCount;
+    }
+
+    @Override
+    public void toTop() {
+        row = -1;
+    }
+
+    @Override
+    public long size() {
+        return rowCount;
+    }
+
+    private class NamespaceCatalogueRecord implements Record {
+        @Override
+        public int getInt(int col) {
+            return oids[row];
+        }
+
+        @Override
+        public CharSequence getStr(int col) {
+            return namespaces[row];
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return getStr(col);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return getStr(col).length();
+        }
+    }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -40,46 +92,4 @@ class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
         metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
         METADATA = metadata;
     }
-
-    private int row = 0;
-
-    @Override
-    public void close() {
-        row = 0;
-    }
-
-    @Override
-    public Record getRecord() {
-        return NamespaceCatalogueRecord.INSTANCE;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return row++ == 0;
-    }
-
-    @Override
-    public void toTop() {
-        row = 0;
-    }
-
-    @Override
-    public long size() {
-        return 1;
-    }
-
-    private static class NamespaceCatalogueRecord implements Record {
-        private static final NamespaceCatalogueRecord INSTANCE = new NamespaceCatalogueRecord();
-
-        @Override
-        public int getInt(int col) {
-            return 1;
-        }
-
-        @Override
-        public CharSequence getStr(int col) {
-            return "public";
-        }
-    }
-
 }

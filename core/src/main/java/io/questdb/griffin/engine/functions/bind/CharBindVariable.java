@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.CharFunction;
 
-class CharBindVariable extends CharFunction implements Function {
+class CharBindVariable extends CharFunction implements ScalarFunction {
     char value;
 
     public CharBindVariable(char value) {

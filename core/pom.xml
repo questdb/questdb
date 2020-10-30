@@ -37,7 +37,7 @@
         <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED -Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>5.0.4</version>
+    <version>5.0.5-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -216,7 +216,7 @@
                     <plugin>
                         <groupId>org.sonatype.plugins</groupId>
                         <artifactId>nexus-staging-maven-plugin</artifactId>
-                        <version>1.5.1</version>
+                        <version>1.6.3</version>
                         <executions>
                             <execution>
                                 <id>default-deploy</id>
@@ -228,6 +228,7 @@
                         </executions>
                         <configuration>
                             <serverId>central</serverId>
+                            <nexusUrl>https://oss.sonatype.org</nexusUrl>
                         </configuration>
                     </plugin>
                 </plugins>

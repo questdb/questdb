@@ -611,7 +611,7 @@ public class SqlCodeGenerator implements Mutable {
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
         final Function function = model.getTableNameFunction();
         assert function != null;
-        if (function.getType() != TypeEx.CURSOR) {
+        if (function.getType() != ColumnType.CURSOR) {
             throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
         }
         return function.getRecordCursorFactory();
@@ -632,7 +632,7 @@ public class SqlCodeGenerator implements Mutable {
                 QueryModel slaveModel = joinModels.getQuick(index);
 
                 // compile
-                RecordCursorFactory slave = generateQuery(slaveModel, executionContext, i > 0);
+                RecordCursorFactory slave = generateQuery(slaveModel, executionContext, index > 0);
 
                 // check if this is the root of joins
                 if (master == null) {
@@ -2318,11 +2318,25 @@ public class SqlCodeGenerator implements Mutable {
     private void lookupColumnIndexes(
             ListColumnFilter filter,
             ObjList<ExpressionNode> columnNames,
-            RecordMetadata masterMetadata
-    ) {
+            RecordMetadata metadata
+    ) throws SqlException {
         filter.clear();
         for (int i = 0, n = columnNames.size(); i < n; i++) {
-            filter.add(masterMetadata.getColumnIndex(columnNames.getQuick(i).token));
+            final CharSequence columnName = columnNames.getQuick(i).token;
+            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex > -1) {
+                filter.add(columnIndex);
+            } else {
+                int dot = Chars.indexOf(columnName, '.');
+                if (dot > -1) {
+                    columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
+                    if (columnIndex > -1) {
+                        filter.add(columnIndex);
+                        return;
+                    }
+                }
+                throw SqlException.invalidColumn(columnNames.getQuick(i).position, columnName);
+            }
         }
     }
 
@@ -2337,7 +2351,12 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
-    private void processJoinContext(boolean vanillaMaster, JoinContext jc, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
+    private void processJoinContext(
+            boolean vanillaMaster,
+            JoinContext jc,
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata
+    ) throws SqlException {
         lookupColumnIndexesUsingVanillaNames(listColumnFilterA, jc.aNames, slaveMetadata);
         if (vanillaMaster) {
             lookupColumnIndexesUsingVanillaNames(listColumnFilterB, jc.bNames, masterMetadata);

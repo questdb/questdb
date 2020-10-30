@@ -31,6 +31,24 @@ import io.questdb.std.str.CharSink;
 public class TextUtil {
     public static void utf8Decode(long lo, long hi, CharSink sink) throws Utf8Exception {
         long p = lo;
+        while (p < hi) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+            if (b < 0) {
+                int n = Chars.utf8DecodeMultiByte(p, hi, b, sink);
+                if (n == -1) {
+                    // UTF8 error
+                    throw Utf8Exception.INSTANCE;
+                }
+                p += n;
+            } else {
+                sink.put((char) b);
+                ++p;
+            }
+        }
+    }
+
+    public static void utf8DecodeEscConsecutiveQuotes(long lo, long hi, CharSink sink) throws Utf8Exception {
+        long p = lo;
         int quoteCount = 0;
 
         while (p < hi) {

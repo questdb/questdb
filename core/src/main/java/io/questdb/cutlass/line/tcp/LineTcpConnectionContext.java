@@ -115,6 +115,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
             if (peerDisconnected) {
                 // Peer disconnected, we have now finished disconnect our end
+                if (recvBufPos != recvBufStart) {
+                    LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+                } else {
+                    LOG.info().$('[').$(fd).$("] peer disconnected").$();
+                }
                 return IOContextResult.NEEDS_DISCONNECT;
             }
 
@@ -140,11 +145,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         while (len > 0 && !peerDisconnected) {
             int nRead = nf.recv(fd, recvBufPos, len);
             if (nRead < 0) {
-                if (recvBufPos != recvBufStart) {
-                    LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
-                } else {
-                    LOG.info().$('[').$(fd).$("] peer disconnected").$();
-                }
                 peerDisconnected = true;
             } else {
                 if (nRead > 0) {

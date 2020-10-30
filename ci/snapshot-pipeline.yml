@@ -1,0 +1,111 @@
+trigger:
+  branches:
+    include:
+      - master
+
+pr: none
+
+variables:
+  MVN_VERSION: "3.6.3"
+  MVN: "apache-maven-$(MVN_VERSION)"
+
+stages:
+  - stage: BuildSnapshotMaster
+    displayName: "Build snapshot (master)"
+    jobs:
+      - job: BuildOnLinux
+        displayName: "Build on Linux"
+        container: adoptopenjdk/openjdk11:centos
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+          - bash: |
+              cd /tmp
+              curl -q -O http://apache.mirror.anlx.net/maven/maven-3/"$MVN_VERSION"/binaries/"$MVN"-bin.tar.gz
+              tar xf "$MVN"-bin.tar.gz
+
+              cd "$HOME"
+              curl -q https://raw.githubusercontent.com/nvm-sh/nvm/v0.36.0/install.sh | bash &>/dev/null
+              export NVM_DIR="$HOME/.nvm"
+              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+              nvm install --no-progress 12
+
+              cd "$(Build.SourcesDirectory)"/core
+              /tmp/"$MVN"/bin/mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
+
+              find target \( -name "*rt-linux*.tar.gz" -o -name "*no-jre*.tar.gz" \) -exec mv '{}' "$(Build.BinariesDirectory)"/ \;
+            displayName: "Build snapshot"
+          - task: PublishBuildArtifacts@1
+            displayName: "Upload build artifacts"
+            inputs:
+              artifactName: Snapshot
+              pathtoPublish: $(Build.BinariesDirectory)
+      - job: UploadToS3
+        dependsOn: BuildOnLinux
+        condition: succeeded()
+        displayName: "Upload snapshot to S3"
+        container: pypy:3.7-slim-buster
+        pool:
+          vmImage: "ubuntu-latest"
+        steps:
+          - checkout: none
+          - task: DownloadBuildArtifacts@0
+            displayName: "Download build artifacts"
+            inputs:
+              artifactName: Snapshot
+              downloadPath: $(Build.BinariesDirectory)
+          - bash: |
+              commitId=$(echo "$(Build.SourceVersion)" | cut -c1-7)
+              today=$(date +'%Y.%m.%d')
+
+              function toSnapshot {
+                local -n VAR=$1
+                VAR=$(echo "$2" | sed 's/SNAPSHOT-//' | sed 's/[0-9]\+.[0-9]\+.[0-9]\+/&-'$commitId'-'$today'/')
+              }
+
+              function toLatest {
+                local -n VAR=$1
+                VAR=$(echo "$2" | sed 's/SNAPSHOT-//' | sed 's/[0-9]\+.[0-9]\+.[0-9]\+/latest/')
+              }
+
+              cd "$(Build.BinariesDirectory)"/Snapshot
+
+              noJreBinOld=$(ls | grep no-jre)
+              rtLinuxBinOld=$(ls | grep rt-linux)
+
+              toSnapshot noJreBinSnapshot "$noJreBinOld"
+              toSnapshot rtLinuxBinSnapshot "$rtLinuxBinOld"
+
+              cp "$rtLinuxBinOld" "$rtLinuxBinSnapshot"
+              cp "$noJreBinOld" "$noJreBinSnapshot"
+
+              toLatest noJreBinLatest "$noJreBinOld"
+              toLatest rtLinuxBinLatest "$rtLinuxBinOld"
+
+              mv "$rtLinuxBinOld" "$rtLinuxBinLatest"
+              mv "$noJreBinOld" "$noJreBinLatest"
+
+              pip install awscli -q --user
+
+              export PATH=$PATH:~/.local/bin
+
+              echo "Uploading \"$rtLinuxBinLatest\""
+              aws s3 cp "$rtLinuxBinLatest" s3://questdb/snapshots/ --no-progress
+
+              echo "Uploading \"$noJreBinLatest\""
+              aws s3 cp "$noJreBinLatest" s3://questdb/snapshots/ --no-progress
+
+              echo "Uploading \"$rtLinuxBinSnapshot\""
+              aws s3 cp "$rtLinuxBinSnapshot" s3://questdb/snapshots/ --no-progress
+
+              echo "Uploading \"$noJreBinSnapshot\""
+              aws s3 cp "$noJreBinSnapshot" s3://questdb/snapshots/ --no-progress
+            displayName: "Normalize names and upload"
+            env:
+              AWS_ACCESS_KEY_ID: $(AwsAccessKeyId)
+              AWS_SECRET_ACCESS_KEY: $(AwsSecretAccessKey)
+              AWS_DEFAULT_REGION: "eu-west-1"

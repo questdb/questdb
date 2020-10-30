@@ -32,8 +32,10 @@ public final class OperatorExpression {
     public static final int UNARY = 1;
     public static final int BINARY = 2;
     public static final int SET = 3;
+    public static final int DOT_PRECEDENCE = 1;
+
     static final ObjList<OperatorExpression> operators = new ObjList<>() {{
-        add(new OperatorExpression(".", 1, false, BINARY));
+        add(new OperatorExpression(".", DOT_PRECEDENCE, false, BINARY));
         add(new OperatorExpression("^", 2, false, BINARY));
         add(new OperatorExpression("*", 3, true, BINARY));
         add(new OperatorExpression("/", 3, true, BINARY));
@@ -45,7 +47,7 @@ public final class OperatorExpression {
         add(new OperatorExpression(">", 6, true, BINARY));
         add(new OperatorExpression(">=", 6, true, BINARY));
         add(new OperatorExpression("=", 7, true, BINARY));
-        add(new OperatorExpression("~=", 7, true, BINARY));
+        add(new OperatorExpression("~", 7, true, BINARY));
         add(new OperatorExpression("!=", 7, true, BINARY));
         add(new OperatorExpression("<>", 7, true, BINARY));
         add(new OperatorExpression("!~", 7, true, BINARY));

@@ -10,22 +10,24 @@
   <a href="https://www.codacy.com/app/bluestreak/nfsdb">
     <img src="https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754" />
   </a>
-  <a href="https://circleci.com/gh/questdb/questdb">
-    <img src="https://img.shields.io/circleci/build/github/questdb/questdb/master?token=c019f9fac8d84c0fa4896447d6073504a830e099" />
+  <a href="https://dev.azure.com/questdb/questdb">
+    <img src="https://dev.azure.com/questdb/questdb/_apis/build/status/Build%20and%20upload%20snapshot%20(Linux)?branchName=master" />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" />
   </a>
-  <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" />
+  <a href="https://hub.docker.com/r/questdb/questdb">
+    <img src="https://img.shields.io/docker/pulls/questdb/questdb.svg" />
   </a>
 </p>
 
 <div align="center">
-
-<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-14-orange.svg)](#contributors)
-<!-- ALL-CONTRIBUTORS-BADGE:END -->
+  <a href="#contributors">
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" />
+  </a>
+  <a href="https://slack.questdb.io">
+    <img src="https://slack.questdb.io/badge.svg" />
+  </a>
 </div>
 
 ## What is QuestDB
@@ -60,7 +62,7 @@ away. Check our Web Console guide to get started:
   </a>
 </div>
 <div align="center">
-  <a href="https://questdb.io/docs/docs/reference/client/web-console/">
+  <a href="https://questdb.io/docs/reference/client/web-console/">
     Web Console guide
   </a>
 </div>
@@ -175,12 +177,20 @@ system.
 mvn clean test
 ```
 
+To release to Maven Central use the following command that activates deploy
+profile. Ensure that your `~/.m2/settings.xml` contains username/password for
+server `central` and `gnupg` is on hand to sign the artefacts.
+
+```script
+mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-release
+```
+
 #### (d) Run QuestDB
 
 ```script
 # Create a database root directory and run QuestDB
 mkdir <root_directory>
-java -p core/target/questdb-5.0.4-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java -p core/target/questdb-5.0.5-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 ```
 
 ## Resources
@@ -251,8 +261,9 @@ Thanks to these wonderful people
   </tr>
 </table>
 
-<!-- markdownlint-enable -->
+<!-- markdownlint-restore -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the

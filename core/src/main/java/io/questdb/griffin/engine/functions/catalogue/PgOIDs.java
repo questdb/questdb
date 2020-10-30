@@ -22,10 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin.engine.functions.catalogue;
 
-public final class TelemetryOrigin {
-    public static final short INTERNAL = 1;
-    public static final short HTTP = 2;
-    public static final short PG_WIRE = 3;
+public class PgOIDs {
+    public static final int PG_CATALOG_OID = 11;
+    public static final int PG_CLASS_OID = 1259;
+    public static final int PG_PUBLIC_OID = 2200;
 }

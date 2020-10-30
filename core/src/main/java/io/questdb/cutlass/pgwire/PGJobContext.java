@@ -70,6 +70,7 @@ public class PGJobContext implements Closeable {
     @Override
     public void close() {
         Misc.free(compiler);
+        Misc.free(factoryCache);
     }
 
     public void handleClientOperation(PGConnectionContext context)

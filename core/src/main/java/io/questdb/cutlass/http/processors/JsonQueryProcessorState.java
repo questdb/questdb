@@ -93,7 +93,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
-            int connectionCheckFrequency,
             NanosecondClock nanosecondClock,
             int floatScale,
             int doubleScale
@@ -122,6 +121,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         skewedValueWriters.extendAndSet(ColumnType.SYMBOL, this::putSkewedSymValue);
         skewedValueWriters.extendAndSet(ColumnType.BINARY, this::putSkewedBinValue);
         skewedValueWriters.extendAndSet(ColumnType.LONG256, this::putSkewedLong256Value);
+        skewedValueWriters.extendAndSet(ColumnType.CURSOR, JsonQueryProcessorState::putCursorValue);
 
         allValueWriters.extendAndSet(ColumnType.BOOLEAN, JsonQueryProcessorState::putBooleanValue);
         allValueWriters.extendAndSet(ColumnType.BYTE, JsonQueryProcessorState::putByteValue);
@@ -137,6 +137,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         allValueWriters.extendAndSet(ColumnType.SYMBOL, JsonQueryProcessorState::putSymValue);
         allValueWriters.extendAndSet(ColumnType.BINARY, JsonQueryProcessorState::putBinValue);
         allValueWriters.extendAndSet(ColumnType.LONG256, JsonQueryProcessorState::putLong256Value);
+        allValueWriters.extendAndSet(ColumnType.CURSOR, JsonQueryProcessorState::putCursorValue);
 
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;
@@ -710,6 +711,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void putSkewedStrValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putStrValue(socket, rec, columnSkewList.getQuick(col));
+    }
+
+    private static void putCursorValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        putStringOrNull(socket, null);
     }
 
     private void putSkewedSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
