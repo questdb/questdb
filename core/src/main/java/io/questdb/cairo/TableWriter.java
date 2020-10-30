@@ -925,20 +925,13 @@ public class TableWriter implements Closeable {
 
             setStateForTimestamp(timestamp, false);
 
-            final int plen = path.length();
-            boolean exists;
-            try {
-                exists = ff.exists(path.$());
-            } finally {
-                path.trimTo(plen);
-            }
-            if (exists) {
+            if (ff.exists(path.$())) {
 
                 // todo: when this fails - rescan partitions to calculate fixedRowCount
                 //     also write a _todo_ file, which will indicate which partition we wanted to delete
                 //     reconcile partitions we can read sizes of with partition table
                 //     add partitions we cannot read sizes of to partition table
-                final long partitionSize = readPartitionSize(ff, path, tempMem8b);
+                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
 
                 int symbolWriterCount = denseSymbolMapWriters.size();
                 int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
