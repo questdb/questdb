@@ -82,7 +82,7 @@ public final class TableUtils {
 
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
-    static final long META_OFFSET_COUNT = 0;
+    public static final long META_OFFSET_COUNT = 0;
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
