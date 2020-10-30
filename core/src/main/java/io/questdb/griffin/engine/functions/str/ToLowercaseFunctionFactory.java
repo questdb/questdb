@@ -46,7 +46,7 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
         return new ToUppercaseFunc(position, args.get(0));
     }
 
-    private static class ToUppercaseFunc extends StrFunction implements UnaryFunction {
+    private static class ToLowercaseFunc extends StrFunction implements UnaryFunction {
         private final Function arg;
 
         private final StringSink sinkA = new StringSink();
