@@ -25,24 +25,19 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.CharSink;
 
-public abstract class Long256Function implements Function {
+public abstract class Long256Function implements ScalarFunction {
 
     private final int position;
 
     public Long256Function(int position) {
         this.position = position;
-    }
-
-    @Override
-    public final char getChar(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -66,6 +61,11 @@ public abstract class Long256Function implements Function {
     }
 
     @Override
+    public final char getChar(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -83,6 +83,11 @@ public abstract class Long256Function implements Function {
     @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getLong(Record rec) {
+        return getLong256A(rec).getLong0();
     }
 
     @Override
@@ -133,11 +138,6 @@ public abstract class Long256Function implements Function {
     @Override
     public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getLong(Record rec) {
-        return getLong256A(rec).getLong0();
     }
 
     @Override

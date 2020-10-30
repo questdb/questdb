@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
 
-public class BinColumn extends BinFunction implements Function {
+public class BinColumn extends BinFunction implements ScalarFunction {
     private final int columnIndex;
 
     public BinColumn(int position, int columnIndex) {

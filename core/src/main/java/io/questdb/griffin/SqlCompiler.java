@@ -77,6 +77,8 @@ public class SqlCompiler implements Closeable {
         sqlControlSymbols.add("/*");
         sqlControlSymbols.add("*/");
         sqlControlSymbols.add("--");
+        sqlControlSymbols.add("[");
+        sqlControlSymbols.add("]");
     }
 
     private final SqlOptimiser optimiser;

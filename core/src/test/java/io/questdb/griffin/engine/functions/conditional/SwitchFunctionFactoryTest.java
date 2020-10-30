@@ -1106,8 +1106,29 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBooleanTooManyBranches() throws Exception {
-        assertFailure("select \n" +
+    public void testBooleanTooManyBranchesIgnoreElse() throws Exception {
+        assertQuery("x\ta\tb\tc\tk\n" +
+                        "false\tWCPS\tYRXPE\tRXG\tHELLO2\n" +
+                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tHELLO2\n" +
+                        "false\tLPD\tSBEOUOJS\tUED\tHELLO2\n" +
+                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
+                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
+                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
+                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tHELLO2\n" +
+                        "false\tTKVV\tOJIPHZ\tIHVL\tHELLO2\n" +
+                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
+                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
+                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
+                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
+                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
+                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
+                        "false\tUKL\tXSLUQD\tPHNIMYF\tHELLO2\n" +
+                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
+                        "false\tTNLE\tUHH\tGGLN\tHELLO2\n" +
+                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tHELLO2\n" +
+                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
+                        "false\tFNWG\tDGGI\tDVRVNGS\tHELLO2\n",
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1125,8 +1146,10 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " rnd_str() c" +
                         " from long_sequence(20)" +
                         ")",
-                124,
-                "duplicate boolean values"
+                null,
+                true,
+                false,
+                true
         );
     }
 

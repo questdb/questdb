@@ -473,11 +473,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static void assertQueryExpectSize(
             CharSequence expected,
             CharSequence query,
-            CharSequence ddl,
-            @Nullable CharSequence expectedTimestamp,
-            boolean supportsRandomAccess
+            CharSequence ddl
     ) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess, true, true, false);
+        assertQuery(expected, query, ddl, null, null, null, null, true, true, true, false);
     }
 
     protected static void assertQuery(
@@ -582,14 +580,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 engine.releaseAllWriters();
             }
         });
-    }
-
-    void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess) {
-        assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext);
-    }
-
-    void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) {
-        assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, true, false);
     }
 
     void assertFactoryCursor(
@@ -710,16 +700,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     ) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(expected, null, factory, true, sqlExecutionContext, true, true);
-        }
-    }
-
-    protected void assertQueryPlain(
-            String expected,
-            String query,
-            @NotNull String timestamp
-    ) throws SqlException {
-        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            assertFactoryCursor(expected, timestamp, factory, true, sqlExecutionContext, true, true);
         }
     }
 }

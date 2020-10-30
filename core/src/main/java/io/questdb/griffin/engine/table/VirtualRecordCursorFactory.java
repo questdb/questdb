@@ -37,6 +37,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final VirtualFunctionDirectSymbolRecordCursor cursor;
     private final ObjList<Function> functions;
     private final RecordCursorFactory baseFactory;
+    private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
             RecordMetadata metadata,
@@ -44,13 +45,21 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordCursorFactory baseFactory) {
         super(metadata);
         this.functions = functions;
-        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, baseFactory.recordCursorSupportsRandomAccess());
+        boolean supportsRandomAccess = baseFactory.recordCursorSupportsRandomAccess();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).supportsRandomAccess()) {
+                supportsRandomAccess = false;
+                break;
+            }
+        }
+        this.supportsRandomAccess = supportsRandomAccess;
+        this.cursor = new VirtualFunctionDirectSymbolRecordCursor(functions, supportsRandomAccess);
         this.baseFactory = baseFactory;
     }
 
     @Override
     public void close() {
-        Misc.free(functions);
+        Misc.freeObjList(functions);
         Misc.free(baseFactory);
     }
 
@@ -68,6 +77,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return baseFactory.recordCursorSupportsRandomAccess();
+        return supportsRandomAccess;
     }
 }

@@ -34,9 +34,21 @@ import java.io.Closeable;
 
 public interface Function extends Closeable {
 
+    static void init(ObjList<? extends Function> args, SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            args.getQuick(i).init(symbolTableSource, executionContext);
+        }
+    }
+
     @Override
     default void close() {
     }
+
+    default boolean supportsRandomAccess() {
+        return true;
+    }
+
+    int getArrayLength();
 
     BinarySequence getBin(Record rec);
 
@@ -45,6 +57,8 @@ public interface Function extends Closeable {
     boolean getBool(Record rec);
 
     byte getByte(Record rec);
+
+    char getChar(Record rec);
 
     long getDate(Record rec);
 
@@ -56,11 +70,11 @@ public interface Function extends Closeable {
 
     long getLong(Record rec);
 
+    void getLong256(Record rec, CharSink sink);
+
     Long256 getLong256A(Record rec);
 
     Long256 getLong256B(Record rec);
-
-    void getLong256(Record rec, CharSink sink);
 
     RecordMetadata getMetadata();
 
@@ -70,15 +84,21 @@ public interface Function extends Closeable {
 
     short getShort(Record rec);
 
-    char getChar(Record rec);
-
     CharSequence getStr(Record rec);
+
+    CharSequence getStr(Record rec, int arrayIndex);
 
     void getStr(Record rec, CharSink sink);
 
+    void getStr(Record rec, CharSink sink, int arrayIndex);
+
     CharSequence getStrB(Record rec);
 
+    CharSequence getStrB(Record rec, int arrayIndex);
+
     int getStrLen(Record rec);
+
+    int getStrLen(Record rec, int arrayIndex);
 
     CharSequence getSymbol(Record rec);
 
@@ -94,11 +114,5 @@ public interface Function extends Closeable {
     }
 
     default void toTop() {
-    }
-
-    static void init(ObjList<? extends Function> args, SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            args.getQuick(i).init(symbolTableSource, executionContext);
-        }
     }
 }

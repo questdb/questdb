@@ -24,13 +24,13 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-class StrBindVariable extends StrFunction implements Function {
+class StrBindVariable extends StrFunction implements ScalarFunction {
     private final StringSink sink = new StringSink();
     private boolean isNull = false;
 

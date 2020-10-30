@@ -90,12 +90,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.doubleScale = configuration.getDoubleScale();
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str != null) {
-            r.encodeUtf8AndQuote(str);
-        }
-    }
-
     @Override
     public void close() {
         Misc.free(compiler);
@@ -159,11 +153,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new TextQueryProcessorState(
-                            context,
-                            configuration.getConnectionCheckFrequency()
-                    )
-            );
+            LV.set(context, state = new TextQueryProcessorState(context));
         }
         // new request clears random
         state.rnd = null;
@@ -292,6 +282,17 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         if (state != null) {
             state.rnd = sqlExecutionContext.getRandom();
         }
+    }
+
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str != null) {
+            r.encodeUtf8AndQuote(str);
+        }
+    }
+
+    private static void readyForNextRequest(HttpConnectionContext context) {
+        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
+                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
     private LogRecord error(TextQueryProcessorState state) {
@@ -449,11 +450,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             default:
                 assert false;
         }
-    }
-
-    private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
-                .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {

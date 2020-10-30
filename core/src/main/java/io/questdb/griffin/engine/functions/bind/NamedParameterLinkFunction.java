@@ -32,7 +32,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
-public class NamedParameterLinkFunction implements Function {
+public class NamedParameterLinkFunction implements ScalarFunction {
     private final String variableName;
     private final int type;
     private final int position;
