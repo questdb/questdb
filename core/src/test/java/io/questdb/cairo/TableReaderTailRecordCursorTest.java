@@ -83,7 +83,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
     @Test
     public void testByDay() throws Exception {
         testBusyPoll(
-                10000000,
+                1000000,
                 300_000,
                 "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by DAY"
         );
