@@ -35,20 +35,30 @@ import io.questdb.std.Unsafe;
 import java.util.concurrent.atomic.LongAdder;
 
 public class CountVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
-    public static final VectorAggregateFunctionConstructor CONSTRUCTOR = CountVectorAggregateFunction::new;
     private final LongAdder count = new LongAdder();
-    private int valueOffset;
     private final CountFunc countFunc;
+    private final int sizeBits;
+    private int valueOffset;
 
-    public CountVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
+    public CountVectorAggregateFunction(int position, int keyKind, int sizeBits) {
         super(position);
+        this.sizeBits = sizeBits;
         countFunc = keyKind == SqlCodeGenerator.GKK_HOUR_INT ? Rosti::keyedHourCount : Rosti::keyedIntCount;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.LONG);
+    public void aggregate(long address, long addressSize, int workerId) {
+        this.count.add(addressSize >>> sizeBits);
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        countFunc.count(pRosti, keyAddress, valueAddressSize >>> sizeBits, valueOffset);
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return -1;
     }
 
     @Override
@@ -62,27 +72,18 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        countFunc.count(pRosti, keyAddress, count, valueOffset);
-    }
-
-    @Override
     public void merge(long pRostiA, long pRostiB) {
         Rosti.keyedIntCountMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
     public void wrapUp(long pRosti) {
-    }
-
-    @Override
-    public void aggregate(long address, long count, int workerId) {
-        this.count.add(count);
-    }
-
-    @Override
-    public int getColumnIndex() {
-        return 0;
     }
 
     @Override

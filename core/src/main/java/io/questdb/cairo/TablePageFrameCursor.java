@@ -1,14 +1,12 @@
 package io.questdb.cairo;
 
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 public class TablePageFrameCursor implements PageFrameCursor {
     private final LongList columnFrameAddresses = new LongList();

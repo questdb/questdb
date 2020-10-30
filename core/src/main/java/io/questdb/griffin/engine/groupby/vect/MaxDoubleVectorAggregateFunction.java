@@ -61,13 +61,32 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long address, long count, int workerId) {
+    public void aggregate(long address, long addressSize, int workerId) {
         if (address != 0) {
-            final double value = Vect.maxDouble(address, count);
+            final double value = Vect.maxDouble(address, addressSize / Double.BYTES);
             if (value == value) {
                 max.accumulate(value);
             }
         }
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize/Double.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize/Double.BYTES, valueOffset);
+        }
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
     }
 
     @Override
@@ -76,8 +95,19 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public int getColumnIndex() {
-        return columnIndex;
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMaxDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntMaxDoubleWrapUp(pRosti, valueOffset, max.get());
     }
 
     @Override
@@ -89,35 +119,5 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     public double getDouble(Record rec) {
         final double value = max.get();
         return Double.isInfinite(value) ? Double.NaN : value;
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE);
-    }
-
-    @Override
-    public int getValueOffset() {
-        return valueOffset;
-    }
-
-    @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
-    }
-
-    @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntMaxDoubleMerge(pRostiA, pRostiB, valueOffset);
-    }
-
-    @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMaxDoubleWrapUp(pRosti, valueOffset, max.get());
     }
 }

@@ -62,12 +62,13 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     public void close() {
         if (page != -1) {
             ff.munmap(page, size);
+            this.size = 0;
+            this.page = -1;
         }
         if (fd != -1) {
             ff.close(fd);
             LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
-            this.size = 0;
         }
     }
 

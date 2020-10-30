@@ -106,18 +106,18 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
                 final int columnIndex = vaf.getColumnIndex();
                 final long pageAddress = frame.getPageAddress(columnIndex);
-                final long pageValueCount = PageFrame.getPageFrameNRows(frame, columnIndex, base.getMetadata().getColumnType(columnIndex));
+                final long pageSize = frame.getPageSize(columnIndex);
                 long seq = pubSeq.next();
                 if (seq < 0) {
                     // diy the func
                     // vaf need to know which column it is hitting int he frame and will need to
                     // aggregate between frames until done
-                    vaf.aggregate(pageAddress, pageValueCount, workerId);
+                    vaf.aggregate(pageAddress, pageSize, workerId);
                     ownCount++;
                 } else {
                     final VectorAggregateEntry entry = entryPool.next();
                     // null pRosti means that we do not need keyed aggregation
-                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageValueCount, doneLatch);
+                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, doneLatch);
                     activeEntries.add(entry);
                     queue.get(seq).entry = entry;
                     pubSeq.done(seq);
@@ -132,14 +132,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         // To deal with that we need to have our own checklist.
 
         // start at the back to reduce chance of clashing
-        for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
-            if (activeEntries.getQuick(i).run(workerId)) {
-                reclaimed++;
-            }
-        }
+        reclaimed = getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
 
-        LOG.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
-        doneLatch.await(queuedCount);
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
         return this.cursor.of(cursor);
     }
@@ -152,6 +146,18 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    static int getRunWhatsLeft(int queuedCount, int reclaimed, int workerId, ObjList<VectorAggregateEntry> activeEntries, SOUnboundedCountDownLatch doneLatch, Log log) {
+        for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
+            if (activeEntries.getQuick(i).run(workerId)) {
+                reclaimed++;
+            }
+        }
+
+        log.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
+        doneLatch.await(queuedCount);
+        return reclaimed;
     }
 
     private static class GroupByNotKeyedVectorRecordCursor implements NoRandomAccessRecordCursor {

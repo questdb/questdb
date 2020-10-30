@@ -198,27 +198,37 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
         PageFrame frame;
         while ((frame = cursor.next()) != null) {
-            final long keyColumnSize = PageFrame.getPageFrameNRows(frame, keyColumnIndex, base.getMetadata().getColumnType(keyColumnIndex));
             final long keyAddress = frame.getPageAddress(keyColumnIndex);
             for (int i = 0; i < vafCount; i++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(i);
-                final long valueAddress = frame.getPageAddress(vaf.getColumnIndex());
-                final long valueCount = PageFrame.getPageFrameNRows(frame, vaf.getColumnIndex(), base.getMetadata().getColumnType(vaf.getColumnIndex()));
+                // when column index = -1 we assume that vector function does not have value
+                // argument and it can only derive count via memory size
+                final int columnIndex = vaf.getColumnIndex();
+                final long valueAddress;
+                final long valueAddressSize;
+
+                if (columnIndex > -1) {
+                    valueAddress = frame.getPageAddress(columnIndex);
+                    valueAddressSize = frame.getPageSize(columnIndex);
+                } else {
+                    valueAddress = 0;
+                    valueAddressSize = frame.getPageSize(keyColumnIndex);
+                }
                 long seq = pubSeq.next();
                 if (seq < 0) {
-                    if (keyColumnSize == 0) {
-                        vaf.aggregate(valueAddress, valueCount, workerId);
+                    if (keyAddress == 0) {
+                        vaf.aggregate(valueAddress, valueAddressSize, workerId);
                     } else {
-                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, keyColumnSize, workerId);
+                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, workerId);
                     }
                     ownCount++;
                 } else {
                     if (keyAddress != 0 || valueAddress != 0) {
                         final VectorAggregateEntry entry = entryPool.next();
                         if (keyAddress == 0) {
-                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueCount, doneLatch);
+                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, doneLatch);
                         } else {
-                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueCount, doneLatch);
+                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, doneLatch);
                         }
                         activeEntries.add(entry);
                         queue.get(seq).entry = entry;
@@ -235,14 +245,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         // To deal with that we need to have our own checklist.
 
         // start at the back to reduce chance of clashing
-        for (int i = activeEntries.size() - 1; i > -1 && doneLatch.getCount() > -queuedCount; i--) {
-            if (activeEntries.getQuick(i).run(workerId)) {
-                reclaimed++;
-            }
-        }
-
-        LOG.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
-        doneLatch.await(queuedCount);
+        reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
         long pRosti0 = pRosti[0];
 
         if (pRosti.length > 1) {

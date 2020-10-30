@@ -61,9 +61,24 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.LONG);
+    public void aggregate(long address, long addressSize, int workerId) {
+        if (address != 0) {
+            max.accumulate(Vect.maxLong(address, addressSize / Long.BYTES));
+        }
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
+        }
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -77,34 +92,19 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
-    }
-
-    @Override
     public void merge(long pRostiA, long pRostiB) {
         Rosti.keyedIntMaxLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
     public void wrapUp(long pRosti) {
         Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
-    }
-
-    @Override
-    public void aggregate(long address, long count, int workerId) {
-        if (address != 0) {
-            max.accumulate(Vect.maxLong(address, count));
-        }
-    }
-
-    @Override
-    public int getColumnIndex() {
-        return columnIndex;
     }
 
     @Override

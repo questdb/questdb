@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.StaticSymbolTable;
 
 public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     protected final FullTableDataFrame frame = new FullTableDataFrame();
@@ -95,11 +94,6 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         @Override
         public long getRowLo() {
             return rowLo;
-        }
-
-        @Override
-        public long getPageAddress(int columnIndex) {
-            return reader.getPageAddressAt(partitionIndex, rowLo, columnIndex);
         }
     }
 }
