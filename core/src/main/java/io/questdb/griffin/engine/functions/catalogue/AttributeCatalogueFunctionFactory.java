@@ -105,6 +105,10 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private long findFileStruct = 0;
         private int columnIndex = 0;
         private int dummyTableId = 1000;
+        private ReadOnlyColumn metaMem;
+        private boolean readNextFileFromDisk = true;
+        private int columnCount;
+        private boolean hasNextFile = true;
 
         public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path) {
             this.ff = configuration.getFilesFacade();
@@ -156,39 +160,54 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
         private boolean next0() {
             do {
-                final long pname = ff.findName(findFileStruct);
-                nativeLPSZ.of(pname);
-                if (
-                        ff.findType(findFileStruct) == Files.DT_DIR
-                                && !Chars.equals(nativeLPSZ, '.')
-                                && !Chars.equals(nativeLPSZ, "..")
-                ) {
-                    path.trimTo(plimit);
-                    path.concat(pname);
-                    if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
-                        ReadOnlyColumn metaMem = new OnePageMemory(ff, path, ff.length(path));
-                        int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-                        if (columnIndex == columnCount) {
-                            dummyTableId++;
-                            columnIndex = 0;
-                            continue;
-                        }
-                        long offset = TableUtils.getColumnNameOffset(columnCount);
-                        for (int i = 0; i < columnCount; i++) {
-                            CharSequence name = metaMem.getStr(offset);
-                            if (columnIndex == i) {
-                                diskReadingRecord.name = name;
-                                diskReadingRecord.columnNumber = (short) (i + 1);
-                                diskReadingRecord.tableId = dummyTableId;
-                                columnIndex++;
-                                return true;
+                if (readNextFileFromDisk) {
+                    final long pname = ff.findName(findFileStruct);
+                    if (hasNextFile) {
+                        nativeLPSZ.of(pname);
+                        if (
+                                ff.findType(findFileStruct) == Files.DT_DIR
+                                        && !Chars.equals(nativeLPSZ, '.')
+                                        && !Chars.equals(nativeLPSZ, "..")
+                        ) {
+                            path.trimTo(plimit);
+                            path.concat(pname);
+                            if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
+                                metaMem = new OnePageMemory(ff, path, ff.length(path));
+                                columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+                            } else {
+                                metaMem = null;
                             }
-                            offset += ReadOnlyMemory.getStorageLength(name);
+                        } else {
+                            metaMem = null;
                         }
+                        hasNextFile = ff.findNext(findFileStruct) > 0;
+                    } else {
+                        metaMem = null;
                     }
                 }
-            } while (ff.findNext(findFileStruct) > 0);
 
+                if (metaMem != null) {
+                    long offset = TableUtils.getColumnNameOffset(columnCount);
+                    for (int i = 0; i < columnCount; i++) {
+                        CharSequence name = metaMem.getStr(offset);
+                        if (columnIndex == i) {
+                            diskReadingRecord.name = name;
+                            diskReadingRecord.columnNumber = (short) (i + 1);
+                            diskReadingRecord.tableId = dummyTableId;
+                            columnIndex++;
+                            if (columnIndex == columnCount) {
+                                readNextFileFromDisk = true;
+                                dummyTableId++;
+                                columnIndex = 0;
+                            } else {
+                                readNextFileFromDisk = false;
+                            }
+                            return true;
+                        }
+                        offset += ReadOnlyMemory.getStorageLength(name);
+                    }
+                }
+            } while (hasNextFile);
 
             ff.findClose(findFileStruct);
             findFileStruct = 0;

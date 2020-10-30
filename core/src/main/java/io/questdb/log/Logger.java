@@ -90,6 +90,7 @@ class Logger implements LogRecord, Log {
         $(Misc.EOL);
         Holder h = tl.get();
         h.seq.done(h.cursor);
+        h.cursor = -1;
     }
 
     @Override
@@ -246,6 +247,7 @@ class Logger implements LogRecord, Log {
             return NullLogRecord.INSTANCE;
         }
         Holder h = tl.get();
+        assert h.cursor == -1;
         h.cursor = cursor;
         h.seq = seq;
         h.ring = ring;
@@ -265,7 +267,7 @@ class Logger implements LogRecord, Log {
     }
 
     private static class Holder {
-        private long cursor;
+        private long cursor = -1;
         private Sequence seq;
         private RingQueue<LogRecordSink> ring;
     }
