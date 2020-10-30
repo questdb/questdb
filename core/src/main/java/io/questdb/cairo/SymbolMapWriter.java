@@ -24,15 +24,21 @@
 
 package io.questdb.cairo;
 
+import java.io.Closeable;
+
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Hash;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
-
-import java.io.Closeable;
 
 public class SymbolMapWriter implements Closeable {
     public static final int HEADER_SIZE = 64;
@@ -44,6 +50,7 @@ public class SymbolMapWriter implements Closeable {
     private final ReadWriteMemory charMem;
     private final ReadWriteMemory offsetMem;
     private final CharSequenceIntHashMap cache;
+    private final DirectCharSequence tmpSymbol;
     private final int maxHash;
     private boolean nullValue = false;
 
@@ -94,6 +101,8 @@ public class SymbolMapWriter implements Closeable {
             } else {
                 this.cache = null;
             }
+
+            tmpSymbol = new DirectCharSequence();
             LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
         } catch (CairoException e) {
             close();
@@ -232,6 +241,43 @@ public class SymbolMapWriter implements Closeable {
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         return offsetToKey(offsetOffset);
+    }
+
+    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
+        long appendOffset = charMem.getAppendOffset();
+        try {
+            charMem.jumpTo(appendOffset);
+            charMem.putBlockOfBytes(sourceAddress, blockSize);
+        } finally {
+            charMem.jumpTo(appendOffset);
+        }
+    }
+
+    public void commitAppendedBlock(int nSymbolsAdded) {
+        long offset = charMem.getAppendOffset();
+        int symbolIndex = getSymbolCount();
+        int nSymbols = symbolIndex + nSymbolsAdded;
+        while (symbolIndex < nSymbols) {
+            long symCharsOffset = offset;
+            int symLen = charMem.getInt(offset);
+            offset += Integer.BYTES;
+            long symCharsOffsetHi = offset + symLen * Character.BYTES;
+            tmpSymbol.of(charMem.addressOf(offset), charMem.addressOf(symCharsOffsetHi));
+
+            long offsetOffset = offsetMem.getAppendOffset();
+            offsetMem.putLong(symCharsOffset);
+            int hash = Hash.boundedHash(tmpSymbol, maxHash);
+            indexWriter.add(hash, offsetOffset);
+
+            if (cache != null) {
+                cache.putAt(symbolIndex, tmpSymbol.toString(), offsetToKey(offsetOffset));
+            }
+
+            offset = symCharsOffsetHi;
+            charMem.jumpTo(offset);
+            symbolIndex++;
+        }
+        LOG.info().$("appended a block of ").$(nSymbolsAdded).$("symbols [fd=").$(this.offsetMem.getFd()).$(']').$();
     }
 
     void truncate() {

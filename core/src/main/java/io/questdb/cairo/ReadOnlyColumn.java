@@ -75,6 +75,8 @@ public interface ReadOnlyColumn extends Closeable {
 
     void grow(long size);
 
+    long getGrownLength();
+
     boolean isDeleted();
 
     int getPageCount();

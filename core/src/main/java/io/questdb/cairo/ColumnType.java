@@ -147,4 +147,8 @@ public final class ColumnType {
         }
         return TYPE_SIZE[columnType];
     }
+
+    public static boolean isFixedLength(int columnType) {
+        return columnType < STRING || columnType != BINARY;
+    };
 }

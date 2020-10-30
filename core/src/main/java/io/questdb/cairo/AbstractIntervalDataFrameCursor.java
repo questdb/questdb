@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.LongList;
 import io.questdb.std.Transient;
 
@@ -59,28 +58,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
-    public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
-    }
-
-    @Override
-    public StaticSymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
-    }
-
-    @Override
-    public void toTop() {
-        intervalsLo = initialIntervalsLo;
-        intervalsHi = initialIntervalsHi;
-        partitionLo = initialPartitionLo;
-        partitionHi = initialPartitionHi;
-        sizeSoFar = 0;
-    }
-
-    @Override
     public TableReader getTableReader() {
         return reader;
     }
@@ -95,8 +72,30 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
+    public void close() {
+        if (reader != null) {
+            reader.close();
+            reader = null;
+        }
+    }
+
+    @Override
+    public void toTop() {
+        intervalsLo = initialIntervalsLo;
+        intervalsHi = initialIntervalsHi;
+        partitionLo = initialPartitionLo;
+        partitionHi = initialPartitionHi;
+        sizeSoFar = 0;
+    }
+
+    @Override
     public long size() {
         return size > -1 ? size : computeSize();
+    }
+
+    @Override
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
     }
 
     public void of(TableReader reader) {
@@ -294,16 +293,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         @Override
         public long getRowLo() {
             return rowLo;
-        }
-
-        @Override
-        public long getPageAddress(int columnIndex) {
-            return reader.getPageAddressAt(partitionIndex, rowLo, columnIndex);
-        }
-
-        @Override
-        public long getPageValueCount(int columnIndex) {
-            return reader.getPageValueCount(partitionIndex, rowLo, rowHi, columnIndex);
         }
     }
 }

@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpServer;
 import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
@@ -74,6 +75,11 @@ public class ServerMain {
     }
 
     public static void main(String[] args) throws Exception {
+        new ServerMain(args);
+    }
+
+    protected PropServerConfiguration configuration;
+    public ServerMain(String[] args) throws Exception {
         System.err.printf("QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n", getVersion(), Dates.getYear(System.currentTimeMillis()));
         if (args.length < 1) {
             System.err.println("Root directory name expected");
@@ -102,8 +108,7 @@ public class ServerMain {
         try (InputStream is = new FileInputStream(configurationFile)) {
             properties.load(is);
         }
-
-        final PropServerConfiguration configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log);
+        readServerConfiguration(rootDirectory, properties, log);
 
         // create database directory
         try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
@@ -159,13 +164,8 @@ public class ServerMain {
         }
 
         try {
-            final HttpServer httpServer = HttpServer.create(
-                    configuration.getHttpServerConfiguration(),
-                    workerPool,
-                    log,
-                    cairoEngine,
-                    functionFactoryCache
-            );
+            initQuestDb(workerPool, cairoEngine, log);
+            final HttpServer httpServer = createHttpServer(workerPool, log, cairoEngine, functionFactoryCache);
 
             final PGWireServer pgWireServer;
 
@@ -207,7 +207,7 @@ public class ServerMain {
                     log,
                     cairoEngine
             );
-            startQuestDb(workerPool, lineUdpServer, log);
+            startQuestDb(workerPool, cairoEngine, lineUdpServer, log);
             logWebConsoleUrls(log, configuration);
 
             System.gc();
@@ -256,6 +256,19 @@ public class ServerMain {
         } else {
             record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n').$();
         }
+    }
+
+    protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+        return HttpServer.create(
+                configuration.getHttpServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine,
+                functionFactoryCache);
+    }
+
+    protected void readServerConfiguration(final String rootDirectory, final Properties properties, Log log) throws ServerConfigurationException, JsonException {
+        configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log);
     }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
@@ -437,8 +450,17 @@ public class ServerMain {
         Misc.free(lineTcpServer);
     }
 
-    protected static void startQuestDb(
+    protected void initQuestDb(
             final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
+            final Log log
+    ) {
+        // For extension
+    }
+
+    protected void startQuestDb(
+            final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
             @Nullable final AbstractLineProtoReceiver lineProtocolReceiver,
             final Log log
     ) {

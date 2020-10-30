@@ -618,7 +618,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return result;
     }
 
-    private boolean getBoolean(Properties properties, @Nullable Map<String, String> env, String key, boolean defaultValue) {
+    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, String key, boolean defaultValue) {
         final String value = overrideWithEnv(properties, env, key);
         return value == null ? defaultValue : Boolean.parseBoolean(value);
     }
@@ -655,7 +655,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private int getIPv4Address(Properties properties, Map<String, String> env, String key, String defaultValue) throws ServerConfigurationException {
+    protected int getIPv4Address(Properties properties, Map<String, String> env, String key, String defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, defaultValue);
         try {
             return Net.parseIPv4(value);
@@ -673,7 +673,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private int getIntSize(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
+    protected int getIntSize(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
         final String value = overrideWithEnv(properties, env, key);
         try {
             return value != null ? Numbers.parseIntSize(value) : defaultValue;
@@ -745,7 +745,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return properties.getProperty(key);
     }
 
-    private void parseBindTo(
+    protected void parseBindTo(
             Properties properties,
             Map<String, String> env,
             String key,
@@ -779,7 +779,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @FunctionalInterface
-    private interface BindToParser {
+    protected interface BindToParser {
         void onReady(int address, int port);
     }
 
@@ -1473,6 +1473,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getAppendPageSize() {
             return sqlAppendPageSize;
+        }
+
+        @Override
+        public int getTableBlockWriterQueueSize() {
+            return 1024;
         }
     }
 

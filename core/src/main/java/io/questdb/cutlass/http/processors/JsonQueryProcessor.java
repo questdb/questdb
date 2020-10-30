@@ -24,6 +24,10 @@
 
 package io.questdb.cutlass.http.processors;
 
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.Telemetry;
 import io.questdb.cairo.CairoEngine;
@@ -35,20 +39,31 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponseSocket;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectByteCharSequence;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
+import io.questdb.std.str.Path;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -56,7 +71,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
+    private final Path path = new Path();
+    protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final NanosecondClock nanosecondClock;
 
     public JsonQueryProcessor(
@@ -75,8 +91,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             int workerCount,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) {
+        this(configuration, engine, messageBus, workerCount, null, new SqlCompiler(engine, messageBus, functionFactoryCache));
+    }
+
+    public JsonQueryProcessor(
+            JsonQueryProcessorConfiguration configuration,
+            CairoEngine engine,
+            @Nullable MessageBus messageBus,
+            int workerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            SqlCompiler sqlCompiler
+    ) {
         this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
+        this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = JsonQueryProcessor::sendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
@@ -150,7 +177,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
-    private static void sendConfirmation(
+    protected static void sendConfirmation(
             JsonQueryProcessorState state,
             CompiledQuery cq,
             CharSequence keepAliveHeader
@@ -202,6 +229,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void close() {
         Misc.free(compiler);
+        Misc.free(path);
     }
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
@@ -446,7 +474,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @FunctionalInterface
-    private interface QueryExecutor {
+    public interface QueryExecutor {
         void execute(
                 JsonQueryProcessorState state,
                 CompiledQuery cc,
