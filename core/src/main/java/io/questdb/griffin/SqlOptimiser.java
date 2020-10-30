@@ -443,18 +443,30 @@ class SqlOptimiser {
                         // single table reference
                         jc.slaveIndex = lhi;
                         addWhereNode(parent, lhi, node);
-                    } else {
+                    } else if (lhi < rhi){
+                        // we must align "a" nodes with slave index
+                        // compiler will always be checking "a" columns
+                        // against metadata of the slave the context is assigned to
                         jc.aNodes.add(node.lhs);
                         jc.bNodes.add(node.rhs);
                         jc.aNames.add(literalCollectorANames.getQuick(0));
                         jc.bNames.add(literalCollectorBNames.getQuick(0));
                         jc.aIndexes.add(lhi);
                         jc.bIndexes.add(rhi);
-                        int max = Math.max(lhi, rhi);
-                        int min = Math.min(lhi, rhi);
-                        jc.slaveIndex = max;
-                        jc.parents.add(min);
-                        linkDependencies(parent, min, max);
+                        jc.slaveIndex = rhi;
+                        jc.parents.add(lhi);
+                        linkDependencies(parent, lhi, rhi);
+                    } else {
+                        jc.aNodes.add(node.rhs);
+                        jc.bNodes.add(node.lhs);
+                        jc.aNames.add(literalCollectorBNames.getQuick(0));
+                        jc.bNames.add(literalCollectorANames.getQuick(0));
+                        jc.aIndexes.add(rhi);
+                        jc.bIndexes.add(lhi);
+                        jc.slaveIndex = lhi;
+                        jc.parents.add(rhi);
+                        linkDependencies(parent, rhi, lhi);
+
                     }
                     addJoinContext(parent, jc);
                 } else if (bSize == 0
@@ -1903,7 +1915,7 @@ class SqlOptimiser {
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
         assert model.getTableNameFunction() == null;
         Function function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, executionContext);
-        if (function.getType() != TypeEx.CURSOR) {
+        if (function.getType() != ColumnType.CURSOR) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
         model.setTableNameFunction(function);

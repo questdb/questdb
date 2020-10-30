@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 
-public class DoubleColumn extends DoubleFunction implements Function {
+public class DoubleColumn extends DoubleFunction implements ScalarFunction {
     private final int columnIndex;
 
     public DoubleColumn(int position, int columnIndex) {

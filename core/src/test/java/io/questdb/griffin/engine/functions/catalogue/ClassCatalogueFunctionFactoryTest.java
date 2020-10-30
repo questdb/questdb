@@ -37,19 +37,114 @@ import org.junit.Test;
 public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testJoinReorderNoStackOverflow() throws Exception {
+        assertQuery(
+                "nspname\toid\trelname\trelnamespace\trelkind\trelowner\toid1\tobjoid\tclassoid\tobjsubid\tdescription\n" +
+                        "pg_catalog\t11\tbeta\t2200\tr\t0\t0\t0\t1259\t0\ttable\n" +
+                        "public\t2200\tbeta\t2200\tr\t0\t0\t0\t1259\t0\ttable\n",
+                "    pg_catalog.pg_namespace n, \n" +
+                        "    pg_catalog.pg_class c  \n" +
+                        "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n",
+                "create table beta(a int)",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testKafkaJdbcTableQuery() throws Exception {
+        assertQuery(
+                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n" +
+                        "\tpublic\talpha\tTABLE\ttable\t\t\t\t\t\n",
+                "SELECT \n" +
+                        "     NULL AS TABLE_CAT, \n" +
+                        "     n.nspname AS TABLE_SCHEM, \n" +
+                        "     \n" +
+                        "     c.relname AS TABLE_NAME,  \n" +
+                        "     CASE n.nspname ~ '^pg_' OR n.nspname = 'information_schema'  \n" +
+                        "        WHEN true THEN \n" +
+                        "           CASE  \n" +
+                        "                WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN \n" +
+                        "                    CASE c.relkind   \n" +
+                        "                        WHEN 'r' THEN 'SYSTEM TABLE' \n" +
+                        "                        WHEN 'v' THEN 'SYSTEM VIEW'\n" +
+                        "                        WHEN 'i' THEN 'SYSTEM INDEX'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END\n" +
+                        "                WHEN n.nspname = 'pg_toast' THEN \n" +
+                        "                    CASE c.relkind   \n" +
+                        "                        WHEN 'r' THEN 'SYSTEM TOAST TABLE'\n" +
+                        "                        WHEN 'i' THEN 'SYSTEM TOAST INDEX'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END\n" +
+                        "                ELSE \n" +
+                        "                    CASE c.relkind\n" +
+                        "                        WHEN 'r' THEN 'TEMPORARY TABLE'\n" +
+                        "                        WHEN 'p' THEN 'TEMPORARY TABLE'\n" +
+                        "                        WHEN 'i' THEN 'TEMPORARY INDEX'\n" +
+                        "                        WHEN 'S' THEN 'TEMPORARY SEQUENCE'\n" +
+                        "                        WHEN 'v' THEN 'TEMPORARY VIEW'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END  \n" +
+                        "            END  \n" +
+                        "        WHEN false THEN \n" +
+                        "            CASE c.relkind  \n" +
+                        "                WHEN 'r' THEN 'TABLE'  \n" +
+                        "                WHEN 'p' THEN 'PARTITIONED TABLE'  \n" +
+                        "                WHEN 'i' THEN 'INDEX'  \n" +
+                        "                WHEN 'S' THEN 'SEQUENCE'  \n" +
+                        "                WHEN 'v' THEN 'VIEW'  \n" +
+                        "                WHEN 'c' THEN 'TYPE'  \n" +
+                        "                WHEN 'f' THEN 'FOREIGN TABLE'  \n" +
+                        "                WHEN 'm' THEN 'MATERIALIZED VIEW'  \n" +
+                        "                ELSE NULL  \n" +
+                        "            END  \n" +
+                        "        ELSE NULL  \n" +
+                        "    END AS TABLE_TYPE, \n" +
+                        "    d.description AS REMARKS,\n" +
+                        "    '' as TYPE_CAT,\n" +
+                        "    '' as TYPE_SCHEM,\n" +
+                        "    '' as TYPE_NAME,\n" +
+                        "    '' AS SELF_REFERENCING_COL_NAME,\n" +
+                        "    '' AS REF_GENERATION\n" +
+                        "FROM \n" +
+                        "    pg_catalog.pg_namespace n, \n" +
+                        "    pg_catalog.pg_class c  \n" +
+                        "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n" +
+                        "    LEFT JOIN pg_catalog.pg_class dc ON (d.classoid=dc.oid AND dc.relname='pg_class')\n" +
+                        "    LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\n" +
+                        "WHERE \n" +
+                        "    c.relnamespace = n.oid  \n" +
+                        "    AND c.relname LIKE E'alpha' \n" +
+                        "    AND (\n" +
+                        "        false  \n" +
+                        "        OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' ) \n" +
+                        "        ) \n" +
+                        "ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME;\n",
+                "create table alpha(col string)",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLeakAfterIncompleteFetch() throws Exception {
         assertMemoryLeak(() -> {
             sink.clear();
             try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n", sink);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
+                            "pg_class\t11\tr\t0\t1259\n", sink);
 
                     compiler.compile("create table xyz (a int)", sqlExecutionContext);
                     engine.releaseAllReaders();
                     engine.releaseAllWriters();
 
                     cursor.toTop();
+                    Assert.assertTrue(cursor.hasNext());
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertFalse(cursor.hasNext());
 
@@ -74,75 +169,6 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
-        assertMemoryLeak(() -> {
-            sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname", sqlExecutionContext).getRecordCursorFactory()) {
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext);
-                try {
-                    printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n", sink);
-
-                    compiler.compile("create table xyz (a int)", sqlExecutionContext);
-
-                    cursor.close();
-                    cursor = factory.getCursor(sqlExecutionContext);
-
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "xyz\t1\tr\t0\t0\n", sink);
-
-                    try (Path path = new Path()) {
-                        path.of(configuration.getRoot());
-                        path.concat("test").$();
-                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
-                    }
-
-                    compiler.compile("create table автомобилей (b double)", sqlExecutionContext);
-
-                    cursor.close();
-                    cursor = factory.getCursor(sqlExecutionContext);
-
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
-
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                                    "xyz\t1\tr\t0\t0\n" +
-                                    "автомобилей\t1\tr\t0\t0\n"
-                            , sink);
-
-                    compiler.compile("drop table автомобилей;", sqlExecutionContext);
-
-                    cursor.close();
-                    cursor = factory.getCursor(sqlExecutionContext);
-
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
-
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "xyz\t1\tr\t0\t0\n", sink);
-
-                } finally {
-                    cursor.close();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testPythonInitialSql() throws SqlException {
-        assertQuery(
-                "oid\ttyparray\n",
-                "SELECT t.oid, typarray\n" +
-                        "FROM pg_type t JOIN pg_namespace ns\n" +
-                        "    ON typnamespace = ns.oid\n" +
-                        "WHERE typname = 'hstore';",
-                null, false
-        );
-    }
-
-    @Test
     public void testPSQLTableList() throws Exception {
         assertQuery(
                 "Schema\tName\tType\tOwner\n" +
@@ -162,6 +188,18 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x(a int)",
                 null,
                 true
+        );
+    }
+
+    @Test
+    public void testPythonInitialSql() throws SqlException {
+        assertQuery(
+                "oid\ttyparray\n",
+                "SELECT t.oid, typarray\n" +
+                        "FROM pg_type t JOIN pg_namespace ns\n" +
+                        "    ON typnamespace = ns.oid\n" +
+                        "WHERE typname = 'hstore';",
+                null, false
         );
     }
 
@@ -197,6 +235,67 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testShowTransactionIsolationLevelErr4() throws Exception {
         assertFailure("show transaction isolation oops", null, 27, "expected 'level'");
+    }
+
+    @Test
+    public void testSimple() throws Exception {
+        assertMemoryLeak(() -> {
+            sink.clear();
+            try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class() order by relname", sqlExecutionContext).getRecordCursorFactory()) {
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+                try {
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
+                            "pg_class\t11\tr\t0\t1259\n", sink);
+
+                    compiler.compile("create table xyz (a int)", sqlExecutionContext);
+
+                    cursor.close();
+                    cursor = factory.getCursor(sqlExecutionContext);
+
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
+                            "pg_class\t11\tr\t0\t1259\n" +
+                            "xyz\t2200\tr\t0\t0\n", sink);
+
+                    try (Path path = new Path()) {
+                        path.of(configuration.getRoot());
+                        path.concat("test").$();
+                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
+                    }
+
+                    compiler.compile("create table автомобилей (b double)", sqlExecutionContext);
+
+                    cursor.close();
+                    cursor = factory.getCursor(sqlExecutionContext);
+
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
+                                    "pg_class\t11\tr\t0\t1259\n" +
+                                    "xyz\t2200\tr\t0\t0\n" +
+                                    "автомобилей\t2200\tr\t0\t0\n"
+                            , sink);
+
+                    compiler.compile("drop table автомобилей;", sqlExecutionContext);
+
+                    cursor.close();
+                    cursor = factory.getCursor(sqlExecutionContext);
+
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
+                            "pg_class\t11\tr\t0\t1259\n" +
+                            "xyz\t2200\tr\t0\t0\n", sink);
+
+                } finally {
+                    cursor.close();
+                }
+            }
+        });
     }
 
     @Test

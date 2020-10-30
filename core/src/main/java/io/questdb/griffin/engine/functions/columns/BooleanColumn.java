@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 
-public class BooleanColumn extends BooleanFunction implements Function {
+public class BooleanColumn extends BooleanFunction implements ScalarFunction {
     private final int columnIndex;
 
     public BooleanColumn(int position, int columnIndex) {

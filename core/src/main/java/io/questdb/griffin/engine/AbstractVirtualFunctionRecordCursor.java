@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -33,15 +34,18 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     private final VirtualRecord recordB;
     protected RecordCursor baseCursor;
     private final ObjList<Function> functions;
+    private final boolean supportsRandomAccess;
 
     public AbstractVirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
         this.functions = functions;
-        this.recordA = new VirtualRecord(functions);
         if (supportsRandomAccess) {
+            this.recordA = new VirtualRecord(functions);
             this.recordB = new VirtualRecord(functions);
         } else {
+            this.recordA = new VirtualRecordNoRowid(functions);
             this.recordB = null;
         }
+        this.supportsRandomAccess = supportsRandomAccess;
     }
 
     @Override
@@ -74,7 +78,11 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        baseCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+        if (supportsRandomAccess) {
+            baseCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+        } else {
+            throw new UnsupportedOperationException();
+        }
     }
 
     @Override
@@ -85,6 +93,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     @Override
     public void toTop() {
         baseCursor.toTop();
+        GroupByUtils.toTop(functions);
     }
 
     public void of(RecordCursor cursor) {
