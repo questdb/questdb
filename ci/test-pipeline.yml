@@ -25,6 +25,13 @@ stages:
             lfs: false
             submodules: false
           - task: Maven@3
+            displayName: "Compile with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "-Xmx3072m"
+              options: "compile -DskipTests"
+              jdkVersionOption: "1.11"
+          - task: Maven@3
             displayName: "Run tests with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
