@@ -33,10 +33,7 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -57,6 +54,9 @@ public class CairoEngine implements Closeable {
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
+    private final long tableIndexFd;
+    private final long tableIndexMem;
+    private final long tableIndexMemSize;
 
     public CairoEngine(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -68,12 +68,36 @@ public class CairoEngine implements Closeable {
         this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
         this.telemetrySubSeq = new SCSequence();
         telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path().of(configuration.getRoot()).concat("_tab_index.d").$()) {
+            this.tableIndexMemSize = Files.PAGE_SIZE;
+            tableIndexFd = ff.openRW(path);
+            if (tableIndexFd == -1) {
+                throw CairoException.instance(ff.errno()).put("Could open [file=").put(path).put(']');
+            }
+            final long fileSize = ff.length(tableIndexFd);
+            if (fileSize < Long.BYTES) {
+                if (!ff.truncate(tableIndexFd, Files.PAGE_SIZE)) {
+                    ff.close(tableIndexFd);
+                    throw CairoException.instance(ff.errno()).put("Could not truncate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
+                }
+            }
+
+            this.tableIndexMem = ff.mmap(tableIndexFd, tableIndexMemSize, 0, Files.MAP_RW);
+            if (tableIndexMem == -1) {
+                ff.close(tableIndexFd);
+                throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+            }
+        }
     }
 
     @Override
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
+        configuration.getFilesFacade().munmap(tableIndexMem, tableIndexMemSize);
+        configuration.getFilesFacade().close(tableIndexFd);
     }
 
     public void creatTable(
@@ -117,6 +141,17 @@ public class CairoEngine implements Closeable {
 
     public MessageBus getMessageBus() {
         return messageBus;
+    }
+
+    public long getNextTableId() {
+        long next;
+        long x = Unsafe.getUnsafe().getLong(tableIndexMem);
+        do {
+            next = x;
+            x = Os.cas(tableIndexMem, next, next + 1);
+            System.out.println(x);
+        } while (next == x);
+        return next + 1;
     }
 
     public PoolListener getPoolListener() {

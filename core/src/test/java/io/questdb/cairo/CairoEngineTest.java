@@ -28,12 +28,19 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.mp.Job;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class CairoEngineTest extends AbstractCairoTest {
     private final static Path path = new Path();
@@ -71,6 +78,52 @@ public class CairoEngineTest extends AbstractCairoTest {
                 Assert.assertEquals(configuration, engine.getConfiguration());
             }
         });
+    }
+
+    @Test
+    @Ignore
+    public void testNextTableId() throws BrokenBarrierException, InterruptedException {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+
+            final LongList listA = new LongList();
+            final LongList listB = new LongList();
+            final CyclicBarrier startBarrier = new CyclicBarrier(3);
+            final SOCountDownLatch haltLatch = new SOCountDownLatch();
+            final AtomicInteger errors = new AtomicInteger();
+
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+                    for (int i = 0; i < 100; i++) {
+                        listA.add(engine.getNextTableId());
+                    }
+                    haltLatch.countDown();
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                }
+            }).start();
+
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+                    for (int i = 0; i < 100; i++) {
+                        listB.add(engine.getNextTableId());
+                    }
+                    haltLatch.countDown();
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                }
+            }).start();
+
+            startBarrier.await();
+
+            haltLatch.await(1000_000_000L);
+
+            System.out.println(listA);
+            System.out.println(listB);
+        }
     }
 
     @Test
