@@ -47,9 +47,9 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
             try {
-                compiler.compile("select * from x where name ~= null", sqlExecutionContext);
+                compiler.compile("select * from x where name ~ null", sqlExecutionContext);
             } catch (SqlException e) {
-                Assert.assertEquals(30, e.getPosition());
+                Assert.assertEquals(29, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
             }
         });
@@ -60,9 +60,9 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
             try {
-                compiler.compile("select * from x where name ~= 'XJ**'", sqlExecutionContext);
+                compiler.compile("select * from x where name ~ 'XJ**'", sqlExecutionContext);
             } catch (SqlException e) {
-                Assert.assertEquals(34, e.getPosition());
+                Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
             }
         });
@@ -92,7 +92,7 @@ public class MatchStrFunctionFactoryTest extends AbstractGriffinTest {
                     "XJN\n";
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("select * from x where name ~= 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursorFactory factory = compiler.compile("select * from x where name ~ 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);

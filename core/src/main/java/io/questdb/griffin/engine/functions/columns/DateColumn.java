@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.DateFunction;
 
-public class DateColumn extends DateFunction implements Function {
+public class DateColumn extends DateFunction implements ScalarFunction {
     private final int columnIndex;
 
     public DateColumn(int position, int columnIndex) {

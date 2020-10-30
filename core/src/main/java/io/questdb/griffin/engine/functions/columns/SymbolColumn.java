@@ -29,7 +29,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import org.jetbrains.annotations.Nullable;
 
-public class SymbolColumn extends SymbolFunction implements Function {
+public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     private final int columnIndex;
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
@@ -55,11 +55,6 @@ public class SymbolColumn extends SymbolFunction implements Function {
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbolTable.valueOf(symbolKey);
-    }
-
-    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
     }
@@ -72,5 +67,10 @@ public class SymbolColumn extends SymbolFunction implements Function {
     @Override
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
+    }
+
+    @Override
+    public CharSequence valueOf(int symbolKey) {
+        return symbolTable.valueOf(symbolKey);
     }
 }

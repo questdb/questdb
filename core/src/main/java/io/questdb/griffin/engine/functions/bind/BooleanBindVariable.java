@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 
-public class BooleanBindVariable extends BooleanFunction implements Function {
+public class BooleanBindVariable extends BooleanFunction implements ScalarFunction {
     boolean value;
 
     public BooleanBindVariable(boolean value) {

@@ -26,9 +26,10 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 
-class ShortBindVariable extends ShortFunction implements Function {
+class ShortBindVariable extends ShortFunction implements ScalarFunction {
     short value;
 
     public ShortBindVariable(short value) {

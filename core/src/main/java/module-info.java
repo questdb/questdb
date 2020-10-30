@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -86,7 +85,7 @@ open module io.questdb {
             // test functions
             io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory,
-            TestSumXDoubleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestNPEFactory,
             io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory,
@@ -94,6 +93,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.AndFunctionFactory,
             io.questdb.griffin.engine.functions.bool.NotFunctionFactory,
 
+            // [] operators
+            io.questdb.griffin.engine.functions.array.StrArrayDereferenceFunctionFactory,
+            // '=' operators
             io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
@@ -454,6 +456,7 @@ open module io.questdb {
 //                  PostgeSQL catalogue functions
             io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedNamespaceCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedDescriptionCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory,
@@ -462,8 +465,12 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.CurrentDatabaseFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
+            // replace()
+            io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory,
 //                  avg()
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
 //                  ^

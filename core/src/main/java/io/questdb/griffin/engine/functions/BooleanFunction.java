@@ -25,40 +25,20 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public abstract class BooleanFunction implements Function {
+public abstract class BooleanFunction implements ScalarFunction {
 
     private final int position;
 
     public BooleanFunction(int position) {
         this.position = position;
-    }
-
-    @Override
-    public final Long256 getLong256A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getLong256(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final char getChar(Record rec) {
-        return getBool(rec) ? 'T' : 'F';
     }
 
     @Override
@@ -74,6 +54,11 @@ public abstract class BooleanFunction implements Function {
     @Override
     public final byte getByte(Record rec) {
         return (byte) (getBool(rec) ? 0 : 1);
+    }
+
+    @Override
+    public final char getChar(Record rec) {
+        return getBool(rec) ? 'T' : 'F';
     }
 
     @Override
@@ -99,6 +84,21 @@ public abstract class BooleanFunction implements Function {
     @Override
     public final long getLong(Record rec) {
         return getBool(rec) ? 0 : 1;
+    }
+
+    @Override
+    public final void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final Long256 getLong256A(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final Long256 getLong256B(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -136,10 +136,6 @@ public abstract class BooleanFunction implements Function {
         return getStr0(rec);
     }
 
-    private String getStr0(Record rec) {
-        return getBool(rec) ? "true" : "false";
-    }
-
     @Override
     public final int getStrLen(Record rec) {
         return getBool(rec) ? "true".length() : "false".length();
@@ -158,5 +154,9 @@ public abstract class BooleanFunction implements Function {
     @Override
     public final int getType() {
         return ColumnType.BOOLEAN;
+    }
+
+    private String getStr0(Record rec) {
+        return getBool(rec) ? "true" : "false";
     }
 }

@@ -24,15 +24,15 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
-class Long256BindVariable extends Long256Function implements Function {
+class Long256BindVariable extends Long256Function implements ScalarFunction {
     final Long256Impl value = new Long256Impl();
 
     public Long256BindVariable(Long256 value) {
