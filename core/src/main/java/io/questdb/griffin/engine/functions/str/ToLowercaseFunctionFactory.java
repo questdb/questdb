@@ -43,7 +43,7 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(final ObjList<Function> args, final int position, final CairoConfiguration configuration) throws SqlException {
-        return new ToUppercaseFunc(position, args.get(0));
+        return new ToLowercaseFunc(position, args.get(0));
     }
 
     private static class ToLowercaseFunc extends StrFunction implements UnaryFunction {
@@ -53,7 +53,7 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
 
         private final StringSink sinkB = new StringSink();
 
-        public ToUppercaseFunc(final int position, final Function arg) {
+        public ToLowercaseFunc(final int position, final Function arg) {
             super(position);
             this.arg = arg;
         }
