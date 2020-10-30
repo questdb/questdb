@@ -1028,6 +1028,30 @@ public class SqlCompiler implements Closeable {
     }
 
     private void alterTableDropPartition(TableWriter writer) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'list' or 'where'");
+        if (SqlKeywords.isListKeyword(tok)) {
+            alterTableDropPartitionByList(writer);
+        } else if (SqlKeywords.isWhereKeyword(tok)) {
+            ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
+            String designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+            if (designatedTimestampColumnName != null) {
+                GenericRecordMetadata metadata = new GenericRecordMetadata();
+                metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP));
+                Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
+                if (function != null && function.getType() == ColumnType.BOOLEAN) {
+                    writer.removePartition(function);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "this table does not have a designated timestamp column");
+            }
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'list' or 'where' expected");
+        }
+    }
+
+    private void alterTableDropPartitionByList(TableWriter writer) throws SqlException {
         do {
             CharSequence tok = expectToken(lexer, "partition name");
             if (Chars.equals(tok, ',')) {
