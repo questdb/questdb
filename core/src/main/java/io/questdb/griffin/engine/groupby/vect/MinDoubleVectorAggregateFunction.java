@@ -61,9 +61,9 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long address, long count, int workerId) {
+    public void aggregate(long address, long addressSize, int workerId) {
         if (address != 0) {
-            final double value = Vect.minDouble(address, count);
+            final double value = Vect.minDouble(address, addressSize / Double.BYTES);
             if (value == value) {
                 min.accumulate(value);
             }
@@ -71,8 +71,45 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            // no values? no problem :)
+            // create list of distinct key values so that we can show NULL against them
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
+        }
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.POSITIVE_INFINITY);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntMinDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
     }
 
     @Override
@@ -87,42 +124,5 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
             return Double.NaN;
         }
         return min;
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE);
-    }
-
-    @Override
-    public int getValueOffset() {
-        return valueOffset;
-    }
-
-    @Override
-    public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.POSITIVE_INFINITY);
-    }
-
-    @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            // no values? no problem :)
-            // create list of distinct key values so that we can show NULL against them
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
-    }
-
-    @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntMinDoubleMerge(pRostiA, pRostiB, valueOffset);
-    }
-
-    @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
     }
 }

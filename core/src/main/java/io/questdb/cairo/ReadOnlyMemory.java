@@ -130,6 +130,11 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
+    public long getGrownLength() {
+        return userSize;
+    }
+
+    @Override
     public boolean isDeleted() {
         return !ff.exists(fd);
     }

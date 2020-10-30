@@ -68,4 +68,9 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     public boolean containsNullValue() {
         return false;
     }
+
+    @Override
+    public long symbolCharsAddressOf(int symbolIndex) {
+        return -1;
+    }
 }

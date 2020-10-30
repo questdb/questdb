@@ -43,9 +43,9 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     private final double[] sum;
     private final long[] count;
     private final int workerCount;
-    private int valueOffset;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
 
     public SumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
@@ -64,9 +64,9 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long address, long count, int workerId) {
+    public void aggregate(long address, long addressSize, int workerId) {
         if (address != 0) {
-            final double value = Vect.sumDouble(address, count);
+            final double value = Vect.sumDouble(address, addressSize / Double.BYTES);
             if (value == value) {
                 final int offset = workerId * Misc.CACHE_LINE_SIZE;
                 this.sum[offset] += value;
@@ -76,21 +76,19 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            // no values? no problem :)
+            // create list of distinct key values so that we can show NULL against them
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize/Double.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize/Double.BYTES, valueOffset);
+        }
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
-    }
-
-    @Override
-    public void clear() {
-        Arrays.fill(sum, 0);
-        Arrays.fill(count, 0);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE);
-        types.add(ColumnType.LONG);
     }
 
     @Override
@@ -105,19 +103,15 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            // no values? no problem :)
-            // create list of distinct key values so that we can show NULL against them
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.LONG);
     }
 
     @Override
@@ -130,6 +124,12 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
             count += this.count[offset];
         }
         Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
+    }
+
+    @Override
+    public void clear() {
+        Arrays.fill(sum, 0);
+        Arrays.fill(count, 0);
     }
 
     @Override

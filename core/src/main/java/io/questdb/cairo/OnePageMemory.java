@@ -62,12 +62,13 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     public void close() {
         if (page != -1) {
             ff.munmap(page, size);
+            this.size = 0;
+            this.page = -1;
         }
         if (fd != -1) {
             ff.close(fd);
             LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
-            this.size = 0;
         }
     }
 
@@ -211,6 +212,11 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     }
 
     @Override
+    public long getGrownLength() {
+        return size;
+    }
+
+    @Override
     public boolean isDeleted() {
         return !ff.exists(fd);
     }
@@ -239,15 +245,12 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
 
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
-        if (offset + len + Integer.BYTES < size) {
-            if (len == TableUtils.NULL_LEN) {
-                return null;
-            }
-
-            if (len == 0) {
-                return "";
-            }
+        if (len > -1 && offset + len * Character.BYTES + Integer.BYTES <= size) {
             return view.of(offset + VirtualMemory.STRING_LENGTH_BYTES, len);
+        }
+
+        if (len == TableUtils.NULL_LEN) {
+            return null;
         }
         throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(']');
     }

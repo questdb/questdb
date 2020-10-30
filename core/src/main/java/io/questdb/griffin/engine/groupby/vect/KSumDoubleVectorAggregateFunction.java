@@ -43,9 +43,9 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final double[] sum;
     private final long[] count;
     private final int workerCount;
-    private int valueOffset;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
 
     public KSumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
@@ -63,11 +63,34 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE); // sum
-        types.add(ColumnType.DOUBLE); // c
-        types.add(ColumnType.LONG); // count
+    public void aggregate(long address, long addressSize, int workerId) {
+        if (address != 0) {
+            // Kahan compensated summation
+            final double x = Vect.sumDoubleKahan(address, addressSize / Double.BYTES);
+            if (x == x) {
+                final int offset = workerId * Misc.CACHE_LINE_SIZE;
+                final double sum = this.sum[offset];
+                final double y = x - this.sum[offset + 1]; // y = x - c
+                final double t = sum + y; // t = sum + y
+                this.sum[offset + 1] = t - sum - y; // c = t - sum - y
+                this.sum[offset] = t; // sum = t
+                this.count[offset]++;
+            }
+        }
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
+        }
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -83,17 +106,16 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE); // sum
+        types.add(ColumnType.DOUBLE); // c
+        types.add(ColumnType.LONG); // count
     }
 
     @Override
@@ -110,28 +132,6 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
             count += this.count[offset];
         }
         Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
-    }
-
-    @Override
-    public void aggregate(long address, long count, int workerId) {
-        if (address != 0) {
-            // Kahan compensated summation
-            final double x = Vect.sumDoubleKahan(address, count);
-            if (x == x) {
-                final int offset = workerId * Misc.CACHE_LINE_SIZE;
-                final double sum = this.sum[offset];
-                final double y = x - this.sum[offset + 1]; // y = x - c
-                final double t = sum + y; // t = sum + y
-                this.sum[offset + 1] = t - sum - y; // c = t - sum - y
-                this.sum[offset] = t; // sum = t
-                this.count[offset]++;
-            }
-        }
-    }
-
-    @Override
-    public int getColumnIndex() {
-        return columnIndex;
     }
 
     @Override

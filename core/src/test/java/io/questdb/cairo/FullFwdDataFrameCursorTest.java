@@ -59,7 +59,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private static void assertRowsMatchSymbol0(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount, int indexDirection) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = cursor.getSymbolMapReader(columnIndex);
 
         long rowCount = 0;
         DataFrame frame;
@@ -1042,7 +1042,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private void assertSymbolFoundInIndex(FullFwdDataFrameCursor cursor, TableReaderRecord record, int columnIndex, int M) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = cursor.getSymbolMapReader(columnIndex);
 
         long count = 0;
         DataFrame frame;

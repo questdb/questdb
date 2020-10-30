@@ -26,8 +26,27 @@ package io.questdb.cairo.sql;
 
 public interface PageFrame {
 
+    // todo: implement for TablePageFrameCursor
+    default long getFirstTimestamp() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Return the address of the start of the page frame or if this page represents
+     * a column top (a column that was added to the table when other columns already had data) then return 0
+     *
+     * @param columnIndex index of column
+     * @return address of column or 0 if column is empty
+     */
     long getPageAddress(int columnIndex);
 
-    long getPageValueCount(int columnIndex);
-
+    /**
+     * Return the size of the page frame or if the page represents a column top
+     * (a column that was added to the table when other columns already had data),
+     * then return the number of of empty rows at the top of a column
+     *
+     * @param columnIndex index of column
+     * @return size of page in bytes
+     */
+    long getPageSize(int columnIndex);
 }

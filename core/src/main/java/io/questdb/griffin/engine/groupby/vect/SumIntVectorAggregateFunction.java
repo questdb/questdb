@@ -59,10 +59,28 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.LONG);
-        types.add(ColumnType.LONG);
+    public void aggregate(long address, long addressSize, int workerId) {
+        if (address != 0) {
+            final long value = Vect.sumInt(address, addressSize / Integer.BYTES);
+            if (value != Numbers.LONG_NaN) {
+                this.sum.add(value);
+                this.count.increment();
+            }
+        }
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Integer.BYTES, valueOffset);
+        }
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -77,38 +95,20 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
-    }
-
-    @Override
     public void merge(long pRostiA, long pRostiB) {
         Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.LONG);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
     public void wrapUp(long pRosti) {
         Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
-    }
-
-    @Override
-    public void aggregate(long address, long count, int workerId) {
-        if (address != 0) {
-            final long value = Vect.sumInt(address, count);
-            if (value != Numbers.LONG_NaN) {
-                this.sum.add(value);
-                this.count.increment();
-            }
-        }
-    }
-
-    @Override
-    public int getColumnIndex() {
-        return columnIndex;
     }
 
     @Override

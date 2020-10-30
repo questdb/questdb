@@ -40,7 +40,7 @@ public class SOUnboundedCountDownLatchTest {
 
     @Test
     public void testUnboundedLatch() throws BrokenBarrierException, InterruptedException {
-        SPSequence pubSeq = new SPSequence(64);
+        SPSequence pubSeq = new SPSequence(1024);
         SCSequence subSeq = new SCSequence();
 
         // this latch does not require initial count. Instead it is able to wait
@@ -100,6 +100,8 @@ public class SOUnboundedCountDownLatchTest {
                             latch.countDown();
                             Assert.assertEquals(last + 1, c);
                             last = c;
+                        } else if (c == -1) {
+                            Thread.yield();
                         }
                         if (System.currentTimeMillis() - time > Dates.MINUTE_MILLIS) {
                             LOG.error()
@@ -128,6 +130,8 @@ public class SOUnboundedCountDownLatchTest {
             if (c > -1) {
                 i++;
                 pubSeq.done(c);
+            } else if (c == -1) {
+                Thread.yield();
             }
         }
         LOG.info().$("all published").$();

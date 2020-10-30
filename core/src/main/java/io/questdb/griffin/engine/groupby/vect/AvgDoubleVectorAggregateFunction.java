@@ -60,10 +60,28 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE);
-        types.add(ColumnType.LONG);
+    public void aggregate(long address, long addressSize, int workerId) {
+        if (address != 0) {
+            double value = Vect.avgDouble(address, addressSize / Double.BYTES);
+            if (value == value) {
+                sum.add(value);
+                this.count.increment();
+            }
+        }
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
+        }
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -78,38 +96,20 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
-    }
-
-    @Override
     public void merge(long pRostiA, long pRostiB) {
         Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
     public void wrapUp(long pRosti) {
         Rosti.keyedIntAvgDoubleWrapUp(pRosti, valueOffset, this.sum.sum(), this.count.sum());
-    }
-
-    @Override
-    public void aggregate(long address, long count, int workerId) {
-        if (address != 0) {
-            double value = Vect.avgDouble(address, count);
-            if (value == value) {
-                sum.add(value);
-                this.count.increment();
-            }
-        }
-    }
-
-    @Override
-    public int getColumnIndex() {
-        return columnIndex;
     }
 
     @Override

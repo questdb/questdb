@@ -115,6 +115,11 @@ public class NullColumn implements ReadOnlyColumn {
     }
 
     @Override
+    public long getGrownLength() {
+        return -1;
+    }
+
+    @Override
     public void getLong256(long offset, CharSink sink) {
     }
 

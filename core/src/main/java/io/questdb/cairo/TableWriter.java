@@ -24,6 +24,61 @@
 
 package io.questdb.cairo;
 
+import static io.questdb.cairo.TableUtils.ARCHIVE_FILE_NAME;
+import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
+import static io.questdb.cairo.TableUtils.META_COLUMN_DATA_RESERVED;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_INDEXED;
+import static io.questdb.cairo.TableUtils.META_FLAG_BIT_SEQUENTIAL;
+import static io.questdb.cairo.TableUtils.META_OFFSET_COLUMN_TYPES;
+import static io.questdb.cairo.TableUtils.META_OFFSET_COUNT;
+import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
+import static io.questdb.cairo.TableUtils.META_OFFSET_TIMESTAMP_INDEX;
+import static io.questdb.cairo.TableUtils.META_PREV_FILE_NAME;
+import static io.questdb.cairo.TableUtils.META_SWAP_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TODO_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TODO_RESTORE_META;
+import static io.questdb.cairo.TableUtils.TODO_TRUNCATE;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_DATA_VERSION;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_FIXED_ROW_COUNT;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_MAP_WRITER_COUNT;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_MAX_TIMESTAMP;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_MIN_TIMESTAMP;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_STRUCT_VERSION;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_TXN;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_TXN_CHECK;
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.fmtDay;
+import static io.questdb.cairo.TableUtils.fmtMonth;
+import static io.questdb.cairo.TableUtils.fmtYear;
+import static io.questdb.cairo.TableUtils.getColumnNameOffset;
+import static io.questdb.cairo.TableUtils.getColumnType;
+import static io.questdb.cairo.TableUtils.getIndexBlockCapacity;
+import static io.questdb.cairo.TableUtils.getPartitionTableIndexOffset;
+import static io.questdb.cairo.TableUtils.getPartitionTableSizeOffset;
+import static io.questdb.cairo.TableUtils.getSymbolWriterIndexOffset;
+import static io.questdb.cairo.TableUtils.getTodoText;
+import static io.questdb.cairo.TableUtils.getTxMemSize;
+import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.cairo.TableUtils.isColumnIndexed;
+import static io.questdb.cairo.TableUtils.isSequential;
+import static io.questdb.cairo.TableUtils.lockName;
+import static io.questdb.cairo.TableUtils.openMetaSwapFile;
+import static io.questdb.cairo.TableUtils.readColumnTop;
+import static io.questdb.cairo.TableUtils.readPartitionSize;
+import static io.questdb.cairo.TableUtils.resetTxn;
+import static io.questdb.cairo.TableUtils.topFile;
+import static io.questdb.cairo.TableUtils.validate;
+
+import java.io.Closeable;
+import java.util.function.LongConsumer;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
@@ -32,7 +87,23 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.Long256;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
@@ -40,13 +111,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnIndexerTask;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
-import java.util.function.LongConsumer;
-
-import static io.questdb.cairo.TableUtils.*;
 
 public class TableWriter implements Closeable {
 
@@ -124,6 +188,7 @@ public class TableWriter implements Closeable {
     private boolean performRecovery;
     private boolean distressed = false;
     private LifecycleManager lifecycleManager;
+    private final TableBlockWriter blockWriter;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -164,6 +229,11 @@ public class TableWriter implements Closeable {
         this.other = new Path().of(root).concat(name);
         this.name = Chars.toString(name);
         this.rootLen = path.length();
+        if (null == messageBus) {
+            this.blockWriter = null;
+        } else {
+            this.blockWriter = new TableBlockWriter(configuration, messageBus);
+        }
         try {
             if (lock) {
                 lock();
@@ -498,6 +568,9 @@ public class TableWriter implements Closeable {
 
     @Override
     public void close() {
+        if (null != blockWriter) {
+            blockWriter.clear();
+        }
         if (isOpen() && lifecycleManager.close()) {
             doClose(true);
         }
@@ -705,7 +778,6 @@ public class TableWriter implements Closeable {
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
-
 
     public void renameColumn(CharSequence currentName, CharSequence newName) {
 
@@ -1201,7 +1273,7 @@ public class TableWriter implements Closeable {
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
     }
 
-    private void cancelRow() {
+    void cancelRow() {
 
         if ((masterRef & 1) == 0) {
             return;
@@ -1565,6 +1637,9 @@ public class TableWriter implements Closeable {
         try {
             freeTxMem();
         } finally {
+            if (null != blockWriter) {
+                blockWriter.close();
+            }
             Misc.free(metaMem);
             Misc.free(txPendingPartitionSizes);
             Misc.free(ddlMem);
@@ -1630,6 +1705,30 @@ public class TableWriter implements Closeable {
         }
     }
 
+    long getPrimaryAppendOffset(long timestamp, int columnIndex) {
+        if (txPartitionCount == 0) {
+            openFirstPartition(timestamp);
+        }
+
+        if (timestamp > partitionHi) {
+            return 0;
+        }
+
+        return columns.get(getPrimaryColumnIndex(columnIndex)).getAppendOffset();
+    }
+
+    long getSecondaryAppendOffset(long timestamp, int columnIndex) {
+        if (txPartitionCount == 0) {
+            openFirstPartition(timestamp);
+        }
+
+        if (timestamp > partitionHi) {
+            return 0;
+        }
+
+        return columns.get(getSecondaryColumnIndex(columnIndex)).getAppendOffset();
+    }
+
     private long getNextMinTimestamp(
             Timestamps.TimestampFloorMethod timestampFloorMethod,
             Timestamps.TimestampAddMethod timestampAddMethod
@@ -1680,6 +1779,18 @@ public class TableWriter implements Closeable {
     private AppendMemory getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
+    }
+
+    public void updateSymbols(int columnIndex, SymbolMapReader symReader) {
+        int nSourceSymbols = symReader.size();
+        SymbolMapWriter symWriter = getSymbolMapWriter(columnIndex);
+        int nDestinationSymbols = symWriter.getSymbolCount();
+
+        if (nSourceSymbols > nDestinationSymbols) {
+            long address = symReader.symbolCharsAddressOf(nDestinationSymbols);
+            long addressHi = symReader.symbolCharsAddressOf(nSourceSymbols);
+            symWriter.appendSymbolCharsBlock(addressHi - address, address);
+        }
     }
 
     SymbolMapWriter getSymbolMapWriter(int columnIndex) {
@@ -1921,7 +2032,7 @@ public class TableWriter implements Closeable {
         indexCount = denseIndexers.size();
     }
 
-    private void purgeUnusedPartitions() {
+    void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirsNewerThan(maxTimestamp);
         }
@@ -2457,55 +2568,9 @@ public class TableWriter implements Closeable {
      *                                partitionHi have to be updated as well.
      */
     private void setStateForTimestamp(long timestamp, boolean updatePartitionInterval) {
-        int y, m, d;
-        boolean leap;
-        path.put(Files.SEPARATOR);
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
-                TimestampFormatUtils.append000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-                path.put('-');
-                TimestampFormatUtils.append0(path, d);
-
-                if (updatePartitionInterval) {
-                    partitionHi =
-                            Timestamps.yearMicros(y, leap)
-                                    + Timestamps.monthOfYearMicros(m, leap)
-                                    + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
-                }
-                break;
-            case PartitionBy.MONTH:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                TimestampFormatUtils.append000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-
-                if (updatePartitionInterval) {
-                    partitionHi =
-                            Timestamps.yearMicros(y, leap)
-                                    + Timestamps.monthOfYearMicros(m, leap)
-                                    + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
-                }
-                break;
-            case PartitionBy.YEAR:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                TimestampFormatUtils.append000(path, y);
-                if (updatePartitionInterval) {
-                    partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
-                }
-                break;
-            default:
-                path.put(DEFAULT_PARTITION_NAME);
-                partitionHi = Long.MAX_VALUE;
-                break;
+        long partitionHi = TableUtils.setPathForPartition(path, partitionBy, timestamp);
+        if (updatePartitionInterval) {
+            this.partitionHi = partitionHi;
         }
     }
 
@@ -2698,9 +2763,13 @@ public class TableWriter implements Closeable {
     }
 
     private void writeColumnTop(CharSequence name) {
+        writeColumnTop(name, transientRowCount);
+    }
+
+    private void writeColumnTop(CharSequence name, long columnTop) {
         long fd = openAppend(path.concat(name).put(".top").$());
         try {
-            Unsafe.getUnsafe().putLong(tempMem8b, transientRowCount);
+            Unsafe.getUnsafe().putLong(tempMem8b, columnTop);
             if (ff.append(fd, tempMem8b, 8) != 8) {
                 throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
             }
@@ -2731,6 +2800,75 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    public TableBlockWriter newBlock() {
+        bumpMasterRef();
+        this.prevMaxTimestamp = maxTimestamp;
+        blockWriter.open(this);
+        return blockWriter;
+    }
+
+    void startAppendedBlock(long timestampLo, long timestampHi, long nRowsAdded, LongList blockColumnTops) {
+        if (timestampLo < maxTimestamp) {
+            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+        }
+
+        if (txPartitionCount == 0) {
+            openFirstPartition(timestampLo);
+        }
+
+        if (partitionBy != PartitionBy.NONE && timestampLo > partitionHi) {
+            // Need close memory without truncating
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                AppendMemory mem1 = getPrimaryColumn(columnIndex);
+                mem1.close(false);
+                AppendMemory mem2 = getSecondaryColumn(columnIndex);
+                if (null != mem2) {
+                    mem2.close(false);
+                }
+            }
+            switchPartition(timestampLo);
+        }
+        transientRowCount += nRowsAdded;
+        this.maxTimestamp = timestampHi;
+
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            // Handle column tops
+            long blockColumnTop = blockColumnTops.getQuick(columnIndex);
+            if (blockColumnTop != -1) {
+                long columnTop = columnTops.getQuick(columnIndex);
+                if (blockColumnTop != columnTop) {
+                    try {
+                        assert columnTop == 0;
+                        assert blockColumnTop > 0;
+                        TableUtils.setPathForPartition(path, partitionBy, timestampLo);
+                        columnTops.setQuick(columnIndex, blockColumnTop);
+                        writeColumnTop(getMetadata().getColumnName(columnIndex), blockColumnTop);
+                    } finally {
+                        path.trimTo(rootLen);
+                    }
+                }
+            }
+        }
+    }
+
+    void commitBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
+        if (minTimestamp == Long.MAX_VALUE) {
+            minTimestamp = firstTimestamp;
+        }
+
+        for (int i = 0; i < columnCount; i++) {
+            refs.setQuick(i, masterRef);
+        }
+
+        masterRef++;
+        if (prevMinTimestamp == Long.MAX_VALUE) {
+            prevMinTimestamp = minTimestamp;
+        }
+
+        commit();
+        setAppendPosition(transientRowCount);
     }
 
     @FunctionalInterface

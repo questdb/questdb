@@ -43,12 +43,12 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final double[] sum;
     private final long[] count;
     private final int workerCount;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
     private int valueOffset;
     private double transientSum;
     private double transientC;
     private long transientCount;
-    private final DistinctFunc distinctFunc;
-    private final KeyValueFunc keyValueFunc;
 
     public NSumDoubleVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
@@ -66,50 +66,10 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE);
-        types.add(ColumnType.DOUBLE);
-        types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
-    }
-
-    @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
-    }
-
-    @Override
-    public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntNSumDoubleMerge(pRostiA, pRostiB, valueOffset);
-    }
-
-    @Override
-    public void wrapUp(long pRosti) {
-        computeSum();
-        Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
-    }
-
-    @Override
-    public int getValueOffset() {
-        return valueOffset;
-    }
-
-    @Override
-    public void aggregate(long address, long count, int workerId) {
+    public void aggregate(long address, long addressSize, int workerId) {
         if (address != 0) {
             // Neumaier compensated summation
-            final double x = Vect.sumDoubleNeumaier(address, count);
+            final double x = Vect.sumDoubleNeumaier(address, addressSize / Double.BYTES);
             if (x == x) {
                 final int offset = workerId * Misc.CACHE_LINE_SIZE;
                 final double sum = this.sum[offset];
@@ -128,8 +88,48 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Double.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Double.BYTES, valueOffset);
+        }
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
+    }
+
+    @Override
+    public void merge(long pRostiA, long pRostiB) {
+        Rosti.keyedIntNSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void wrapUp(long pRosti) {
+        computeSum();
+        Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
     }
 
     @Override

@@ -186,4 +186,6 @@ public interface CairoConfiguration {
     TelemetryConfiguration getTelemetryConfiguration();
 
     long getAppendPageSize();
+
+    int getTableBlockWriterQueueSize();
 }

@@ -30,9 +30,9 @@ import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
 
-    void aggregate(long address, long count, int workerId);
+    void aggregate(long address, long addressSize, int workerId);
 
-    void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId);
+    void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId);
 
     int getColumnIndex();
 
