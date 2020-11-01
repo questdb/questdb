@@ -36,7 +36,8 @@ public class CairoTestUtils {
                 model.getPath(),
                 model.getCairoCfg().getRoot(),
                 model,
-                model.getCairoCfg().getMkDirMode()
+                model.getCairoCfg().getMkDirMode(),
+                0
         );
     }
 

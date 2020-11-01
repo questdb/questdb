@@ -113,7 +113,8 @@ public class CairoEngine implements Closeable {
                 path,
                 configuration.getRoot(),
                 struct,
-                configuration.getMkDirMode()
+                configuration.getMkDirMode(),
+                (int) getNextTableId()
         );
     }
 
@@ -148,9 +149,8 @@ public class CairoEngine implements Closeable {
         long x = Unsafe.getUnsafe().getLong(tableIndexMem);
         do {
             next = x;
-            x = Os.cas(tableIndexMem, next, next + 1);
-            System.out.println(x);
-        } while (next == x);
+            x = Os.compareAndSwap(tableIndexMem, next, next + 1);
+        } while (next != x);
         return next + 1;
     }
 

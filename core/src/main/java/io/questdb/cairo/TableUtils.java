@@ -117,9 +117,10 @@ public final class TableUtils {
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
-            int mkDirMode
+            int mkDirMode,
+            int tableId
     ) {
-        createTable(ff, memory, path, root, structure, mkDirMode, ColumnType.VERSION);
+        createTable(ff, memory, path, root, structure, mkDirMode, ColumnType.VERSION, tableId);
     }
 
     public static void createTable(
@@ -129,7 +130,8 @@ public final class TableUtils {
             @Transient CharSequence root,
             TableStructure structure,
             int mkDirMode,
-            int tableVersion
+            int tableVersion,
+            int tableId
     ) {
         path.of(root).concat(structure.getTableName());
 
@@ -146,6 +148,7 @@ public final class TableUtils {
             mem.putInt(structure.getPartitionBy());
             mem.putInt(structure.getTimestampIndex());
             mem.putInt(tableVersion);
+            mem.putInt(tableId);
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
