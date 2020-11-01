@@ -50,7 +50,8 @@ public class CairoTestUtils {
                 model.getCairoCfg().getRoot(),
                 model,
                 model.getCairoCfg().getMkDirMode(),
-                version
+                version,
+                0
         );
     }
 

@@ -49,6 +49,24 @@ public class CursorDereferenceFunctionFactoryTest extends AbstractGriffinTest {
                     false,
                     true
             );
+
+//            assertQuery(
+//                    "x\n" +
+//                            "11\n" +
+//                            "2200\n" +
+//                            "NaN\n" +
+//                            "NaN\n" +
+//                            "NaN\n" +
+//                            "NaN\n" +
+//                            "NaN\n" +
+//                            "NaN\n" +
+//                            "NaN\n" +
+//                            "NaN\n",
+//                    "pg_catalog.pg_class()",
+//                    null,
+//                    false,
+//                    true
+//            );
         });
     }
 }
