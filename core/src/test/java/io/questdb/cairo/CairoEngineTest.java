@@ -148,7 +148,10 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testNextTableId() {
-        try (CairoEngine engine = new CairoEngine(configuration)) {
+        try (
+                CairoEngine engine = new CairoEngine(configuration);
+                CairoEngine engineB = new CairoEngine(configuration)
+        ) {
 
             final LongList listA = new LongList();
             final LongList listB = new LongList();
@@ -173,7 +176,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try {
                 startBarrier.await();
                 for (int i = 0; i < 100; i++) {
-                    listB.add(engine.getNextTableId());
+                    listB.add(engineB.getNextTableId());
                 }
             } catch (InterruptedException | BrokenBarrierException e) {
                 e.printStackTrace();

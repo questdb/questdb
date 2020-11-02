@@ -95,6 +95,7 @@ public final class TableUtils {
     static final long META_OFFSET_PARTITION_BY = 4;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
+    public static final long META_OFFSET_TABLE_ID = 16;
     static final long META_COLUMN_DATA_SIZE = 16;
     static final long META_COLUMN_DATA_RESERVED = 3;
     static final long META_OFFSET_COLUMN_TYPES = 128;

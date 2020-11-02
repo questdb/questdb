@@ -35,6 +35,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private final FilesFacade ff;
     private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
     private ReadOnlyMemory transitionMeta;
+    private final int id;
 
     public TableReaderMetadata(FilesFacade ff, Path path) {
         this.ff = ff;
@@ -45,6 +46,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.columnMetadata = new ObjList<>(columnCount);
             long offset = TableUtils.getColumnNameOffset(columnCount);
 

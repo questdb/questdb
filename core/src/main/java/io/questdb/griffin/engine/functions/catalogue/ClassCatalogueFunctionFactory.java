@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -38,9 +40,8 @@ import static io.questdb.griffin.engine.functions.catalogue.PgOIDs.PG_CATALOG_OI
 import static io.questdb.griffin.engine.functions.catalogue.PgOIDs.PG_PUBLIC_OID;
 
 public class ClassCatalogueFunctionFactory implements FunctionFactory {
-
+    private static final Log LOG = LogFactory.getLog(ClassCatalogueFunctionFactory.class);
     private static final RecordMetadata METADATA;
-
     private static final String[] relNames = {"pg_class"};
     private static final int[] relNamespaces = {PG_CATALOG_OID};
     private static final int[] oids = {PgOIDs.PG_CLASS_OID};
@@ -110,6 +111,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
         private final int plimit;
         private long findFileStruct = 0;
         private int fixedRelPos = -1;
+        private final int[] intValues = new int[5];
 
         public ClassCatalogueCursor(CairoConfiguration configuration, Path path) {
             this.ff = configuration.getFilesFacade();
@@ -117,6 +119,9 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
             this.record.setDelegate(staticReadingRecord);
+            this.intValues[1] = PG_PUBLIC_OID; // relnamespace
+            this.intValues[3] = 0; // relowner
+            this.intValues[4] = 0; // OID
         }
 
         @Override
@@ -179,9 +184,15 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
                                 && !Chars.equals(nativeLPSZ, '.')
                                 && !Chars.equals(nativeLPSZ, "..")
                 ) {
-
                     path.trimTo(plimit);
-                    if (ff.exists(path.concat(pname).concat(TableUtils.TXN_FILE_NAME).$())) {
+                    if (ff.exists(path.concat(pname).concat(TableUtils.META_FILE_NAME).$())) {
+                        // open metadata file and read id
+                        long fd = ff.openRO(path);
+                        if (fd == -1) {
+                            intValues[4] = -1;
+                            LOG.error().$("could not read metadata [file=").$(path).$(']').$();
+                        }
+
                         return true;
                     }
                 }
@@ -267,7 +278,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public int getInt(int col) {
-                return col == 1 ? PG_PUBLIC_OID : 0;
+                return intValues[col];
             }
 
             @Override
