@@ -34,8 +34,8 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private final Path path;
     private final FilesFacade ff;
     private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
-    private ReadOnlyMemory transitionMeta;
     private final int id;
+    private ReadOnlyMemory transitionMeta;
 
     public TableReaderMetadata(FilesFacade ff, Path path) {
         this.ff = ff;
@@ -165,6 +165,13 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
     }
 
+    public void cloneTo(AppendMemory mem) {
+        long len = ff.length(metaMem.getFd());
+        for (long p = 0; p < len; p++) {
+            mem.putByte(metaMem.getByte(p));
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(metaMem);
@@ -227,6 +234,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return columnCount;
     }
 
+    public int getId() {
+        return id;
+    }
+
     public int getPartitionBy() {
         return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
     }
@@ -255,11 +266,4 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 true
         );
     }
-
-	public void cloneTo(AppendMemory mem) {
-		long len = ff.length(metaMem.getFd());
-		for (long p = 0; p < len; p++) {
-			mem.putByte(metaMem.getByte(p));
-		}
-	}
 }

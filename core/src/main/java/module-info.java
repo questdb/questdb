@@ -457,7 +457,6 @@ open module io.questdb {
 //                  PostgeSQL catalogue functions
             io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedNamespaceCatalogueFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.PrefixedDescriptionCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory,
@@ -468,6 +467,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()
