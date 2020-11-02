@@ -503,31 +503,21 @@ public final class Chars {
     }
 
     public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
-        if (str == null || str.length() == 0) {
-            return;
+        if(str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toUpperCase(str.charAt(i)));
+            }
         }
-
-        for (int i = 0; i < str.length(); i++) {
-            sink.put(toUpperCase(str.charAt(i)));
-        }
-    }
-
-    public static char toUpperCase(final char character) {
-        return Character.toUpperCase(character);
     }
 
     public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
-        if (str == null || str.length() == 0) {
-            return;
+        if(str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toLowerCase(str.charAt(i)));
+            }
         }
-
-        for (int i = 0; i < str.length(); i++) {
-            sink.put(toLowerCase(str.charAt(i)));
-        }
-    }
-
-    public static char toLowerCase(final char character) {
-        return Character.toLowerCase(character);
     }
 
     public static void toSink(BinarySequence sequence, CharSink sink) {
