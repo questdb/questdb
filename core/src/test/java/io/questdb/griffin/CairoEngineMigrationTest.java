@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -59,6 +60,11 @@ public class CairoEngineMigrationTest extends AbstractGriffinTest {
                         (int) engine.getNextTableId()
                 );
             }
+
+            // we need to remove "upgrade" file for the engine to upgrade tables
+            // remember, this is the second instance of the engine
+            assertRemoveUpgradeFile();
+
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 // check if constructor upgrades test
                 try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
@@ -92,6 +98,11 @@ public class CairoEngineMigrationTest extends AbstractGriffinTest {
                 }
             };
 
+            // we need to remove "upgrade" file for the engine to upgrade tables
+            // remember, this is the second instance of the engine
+
+            assertRemoveUpgradeFile();
+
             try {
                 new CairoEngine(new DefaultCairoConfiguration(root) {
                     @Override
@@ -103,6 +114,13 @@ public class CairoEngineMigrationTest extends AbstractGriffinTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Could not update table");
             }
-        });
+        });// /tmp/junit16870455038409769219/dbRoot/_upgrade.d
+    }
+
+    private static void assertRemoveUpgradeFile() {
+        try (Path path = new Path()) {
+            path.of(configuration.getRoot()).concat(TableUtils.UPGRADE_FILE_NAME).$();
+            Assert.assertTrue(!FilesFacadeImpl.INSTANCE.exists(path) || FilesFacadeImpl.INSTANCE.remove(path));
+        }
     }
 }
