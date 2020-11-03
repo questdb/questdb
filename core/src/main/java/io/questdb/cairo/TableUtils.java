@@ -28,13 +28,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Numbers;
-import io.questdb.std.Os;
-import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampFormatUtils;
@@ -48,6 +42,7 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
+    public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_VERSION = -1;
@@ -95,6 +90,7 @@ public final class TableUtils {
     static final long META_OFFSET_PARTITION_BY = 4;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
+    public static final long META_OFFSET_TABLE_ID = 16;
     static final long META_COLUMN_DATA_SIZE = 16;
     static final long META_COLUMN_DATA_RESERVED = 3;
     static final long META_OFFSET_COLUMN_TYPES = 128;
@@ -117,9 +113,10 @@ public final class TableUtils {
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
-            int mkDirMode
+            int mkDirMode,
+            int tableId
     ) {
-        createTable(ff, memory, path, root, structure, mkDirMode, ColumnType.VERSION);
+        createTable(ff, memory, path, root, structure, mkDirMode, ColumnType.VERSION, tableId);
     }
 
     public static void createTable(
@@ -129,7 +126,8 @@ public final class TableUtils {
             @Transient CharSequence root,
             TableStructure structure,
             int mkDirMode,
-            int tableVersion
+            int tableVersion,
+            int tableId
     ) {
         path.of(root).concat(structure.getTableName());
 
@@ -146,6 +144,7 @@ public final class TableUtils {
             mem.putInt(structure.getPartitionBy());
             mem.putInt(structure.getTimestampIndex());
             mem.putInt(tableVersion);
+            mem.putInt(tableId);
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
@@ -592,26 +591,6 @@ public final class TableUtils {
         }
     }
 
-    static void writePartitionSize(FilesFacade ff, Path path, long tempMem8b, long nRows) {
-        int plen = path.length();
-        try {
-            long fd = ff.openRW(path);
-            if (fd == -1) {
-                throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
-            }
-            Unsafe.getUnsafe().putLong(tempMem8b, nRows);
-            try {
-                if (ff.write(fd, tempMem8b, 8, 0) != 8) {
-                    throw CairoException.instance(Os.errno()).put("Cannot write: ").put(path);
-                }
-            } finally {
-                ff.close(fd);
-            }
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     static {
         DateFormatCompiler compiler = new DateFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");
@@ -647,5 +626,15 @@ public final class TableUtils {
             }
         }
         return true;
+    }
+
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
+        long fd = ff.openRW(path);
+        if (fd > 0) {
+            return fd;
+        }
+
+        throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
+
     }
 }

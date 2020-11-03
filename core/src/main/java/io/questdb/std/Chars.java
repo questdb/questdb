@@ -191,6 +191,18 @@ public final class Chars {
         return l.length() == 1 && l.charAt(0) == r;
     }
 
+
+    public static boolean notDots(CharSequence value) {
+        final int len = value.length();
+        if (len > 2) {
+            return true;
+        }
+        if (value.charAt(0) != '.') {
+            return true;
+        }
+        return len == 1 || len == 2 && value.charAt(1) != '.';
+    }
+
     /**
      * Compares two char sequences on assumption and right value is always lower case.
      * Methods converts every char of right sequence before comparing to left sequence.

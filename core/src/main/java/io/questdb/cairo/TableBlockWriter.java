@@ -436,20 +436,12 @@ public class TableBlockWriter implements Closeable {
                     partitionStruct.setColumnStartOffset(columnIndex, appendOffset);
                     partitionStruct.setColumnAppendOffset(columnIndex, appendOffset);
 
-                    long fd = ff.openRW(TableUtils.dFile(path.trimTo(plen), name));
-                    if (fd == -1) {
-                        throw CairoException.instance(ff.errno()).put("Could not open ").put(name);
-                    }
-                    partitionStruct.setColumnDataFd(columnIndex, fd);
+                    partitionStruct.setColumnDataFd(columnIndex, TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(plen), name)));
                     int columnType = metadata.getColumnType(columnIndex);
                     switch (columnType) {
                         case ColumnType.STRING:
                         case ColumnType.BINARY:
-                            fd = ff.openRW(iFile(path.trimTo(plen), name));
-                            if (fd == -1) {
-                                throw CairoException.instance(ff.errno()).put("Could not open ").put(name);
-                            }
-                            partitionStruct.setColumnIndexFd(columnIndex, fd);
+                            partitionStruct.setColumnIndexFd(columnIndex, TableUtils.openFileRWOrFail(ff, iFile(path.trimTo(plen), name)));
                             partitionStruct.setColumnFieldSizePow2(columnIndex, -1);
                             break;
                         default:

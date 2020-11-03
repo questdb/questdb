@@ -30,6 +30,7 @@ set(
         src/main/c/share/zip.c
         src/main/c/share/os.h
         src/main/c/share/vec_agg_vanilla.h
+        src/main/c/share/util.cpp
 )
 
 # JNI includes

@@ -40,8 +40,8 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testJoinReorderNoStackOverflow() throws Exception {
         assertQuery(
                 "nspname\toid\trelname\trelnamespace\trelkind\trelowner\toid1\tobjoid\tclassoid\tobjsubid\tdescription\n" +
-                        "pg_catalog\t11\tbeta\t2200\tr\t0\t0\t0\t1259\t0\ttable\n" +
-                        "public\t2200\tbeta\t2200\tr\t0\t0\t0\t1259\t0\ttable\n",
+                        "pg_catalog\t11\tbeta\t2200\tr\t0\t1\t1\t1259\t0\ttable\n" +
+                        "public\t2200\tbeta\t2200\tr\t0\t1\t1\t1259\t0\ttable\n",
                 "    pg_catalog.pg_namespace n, \n" +
                         "    pg_catalog.pg_class c  \n" +
                         "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n",
@@ -257,7 +257,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                     printer.print(cursor, factory.getMetadata(), true);
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
                             "pg_class\t11\tr\t0\t1259\n" +
-                            "xyz\t2200\tr\t0\t0\n", sink);
+                            "xyz\t2200\tr\t0\t1\n", sink);
 
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot());
@@ -275,8 +275,8 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
                                     "pg_class\t11\tr\t0\t1259\n" +
-                                    "xyz\t2200\tr\t0\t0\n" +
-                                    "автомобилей\t2200\tr\t0\t0\n"
+                                    "xyz\t2200\tr\t0\t1\n" +
+                                    "автомобилей\t2200\tr\t0\t2\n"
                             , sink);
 
                     compiler.compile("drop table автомобилей;", sqlExecutionContext);
@@ -289,7 +289,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
                     TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
                             "pg_class\t11\tr\t0\t1259\n" +
-                            "xyz\t2200\tr\t0\t0\n", sink);
+                            "xyz\t2200\tr\t0\t1\n", sink);
 
                 } finally {
                     cursor.close();

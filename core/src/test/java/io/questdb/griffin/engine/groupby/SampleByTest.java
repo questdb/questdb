@@ -417,7 +417,7 @@ public class SampleByTest extends AbstractGriffinTest {
             engine.releaseAllReaders();
 
             final FilesFacade ff = new FilesFacadeImpl() {
-                int count = 5;
+                int count = 6;
 
                 @Override
                 public long mmap(long fd, long len, long offset, int mode) {
@@ -443,7 +443,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         }
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not mmap");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Could not mmap");
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -1438,7 +1438,7 @@ public class SampleByTest extends AbstractGriffinTest {
             );
 
             FilesFacade ff = new FilesFacadeImpl() {
-                int count = 2;
+                int count = 3;
 
                 @Override
                 public long mmap(long fd, long len, long offset, int mode) {
@@ -1487,7 +1487,7 @@ public class SampleByTest extends AbstractGriffinTest {
             );
 
             FilesFacade ff = new FilesFacadeImpl() {
-                int count = 5;
+                int count = 6;
 
                 @Override
                 public long mmap(long fd, long len, long offset, int mode) {
