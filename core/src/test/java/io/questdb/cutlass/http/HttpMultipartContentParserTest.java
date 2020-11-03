@@ -24,6 +24,10 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cutlass.http.ex.RetryOperationException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -31,7 +35,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class HttpMultipartContentParserTest {
@@ -204,34 +207,45 @@ public class HttpMultipartContentParserTest {
         });
     }
 
-
     @Test
-    @Ignore // TODO: fix HttpMultipartContentParser
-    public void testBreaksOnBoundary() throws Exception {
-        testBreaksCsvImportAt(17);
+    public void testBreaksNearFinalBoundary() throws Exception {
+        for (int i = 0; i < 500; i++) {
+            try {
+                sink.clear();
+                testBreaksCsvImportAt(i, null);
+            } catch (Exception e) {
+                System.out.println("i=" + i);
+                throw e;
+            }
+        }
     }
 
     @Test
-    public void testNoBreaksOnBoundary() throws Exception {
-        testBreaksCsvImportAt(0);
+    public void testRetriesNearFinalBoundary() throws Exception {
+        for (int i = 0; i < 500; i++) {
+                sink.clear();
+                testBreaksCsvImportAt(i, RetryOperationException.INSTANCE);
+        }
     }
 
-    private void testBreaksCsvImportAt(int breakAt) throws Exception {
+    private void testBreaksCsvImportAt(int breakAt, RuntimeException onChunkException) throws Exception {
+        TestHttpMultipartContentListener listener = new TestHttpMultipartContentListener(onChunkException);
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
-                String boundaryToken = "--------------------------27d997ca93d2689d";
-                String boundary = "\r\n" + boundaryToken;
-                final String content = boundaryToken + "\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                String boundaryToken = "------------------------27d997ca93d2689d";
+                String boundary = "\r\n--" + boundaryToken;
+                final String content = "--" + boundaryToken + "\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"02.csv\"\r\n" +
                         "\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        boundary + "--";
+                        "B00014,,,\r\n" +
+                        "--" + boundaryToken + "--";
                 final String expected =
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"02.csv\"\r\n" +
                                 "\r\n" +
-                                "B00014,2017-02-01 00:45:00,,,\r\n" +
-                                "\r\n" +
+                                "B00014,,,\r\n" +
                                 "-----------------------------\r\n";
+
+                if (breakAt >= content.length()) return;
 
                 int len = content.length();
                 long p = TestUtils.toMemory(content);
@@ -241,12 +255,14 @@ public class HttpMultipartContentParserTest {
                     try {
                         multipartContentParser.clear();
                         multipartContentParser.of(boundaryCs);
-                        boolean result = multipartContentParser.parse(p, p + len - breakAt, LISTENER);
-                        if (breakAt > 0) {
-                            result = multipartContentParser.parse(p + len - breakAt + 1, p + len, LISTENER);
+                        long breakPoint = p + len - breakAt;
+                        long hi = p + len;
+                        boolean result = parseWithRetry(listener, multipartContentParser, p, breakPoint);
+                        if (hi > breakPoint) {
+                            result = parseWithRetry(listener, multipartContentParser, breakPoint, hi);
                         }
-                        Assert.assertEquals(expected, sink.toString());
-                        Assert.assertTrue(result);
+                        Assert.assertEquals("Break at " + breakAt, expected, sink.toString());
+                        Assert.assertTrue("Break at " + breakAt, result);
                     } finally {
                         Unsafe.free(pBoundary, boundary.length());
                     }
@@ -257,15 +273,38 @@ public class HttpMultipartContentParserTest {
         });
     }
 
+    private boolean parseWithRetry(TestHttpMultipartContentListener listener, HttpMultipartContentParser multipartContentParser, long breakPoint, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        boolean result;
+        try {
+            result = multipartContentParser.parse(breakPoint, hi, listener);
+        } catch (RetryOperationException e) {
+            result = multipartContentParser.parse(multipartContentParser.getResumePtr(), hi, listener);
+        }
+        return result;
+    }
 
     private static class TestHttpMultipartContentListener implements HttpMultipartContentListener {
+        private final RuntimeException firstChunkException;
+        private int onChunkCount;
+
+        public TestHttpMultipartContentListener() {
+            this(null);
+        }
+
+        public TestHttpMultipartContentListener(RuntimeException firstChunkException) {
+            this.firstChunkException = firstChunkException;
+        }
+
         @Override
         public void onChunk(long lo, long hi) {
+            onChunkCount++;
             for (long p = lo; p < hi; p++) {
                 sink.put((char) Unsafe.getUnsafe().getByte(p));
             }
+            if (firstChunkException != null && onChunkCount == 1) {
+                throw firstChunkException;
+            }
         }
-
 
         @Override
         public void onPartBegin(HttpRequestHeader partHeader) {

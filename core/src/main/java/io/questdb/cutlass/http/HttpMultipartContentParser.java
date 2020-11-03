@@ -182,7 +182,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         boundaryPtr = 1;
                         switch (matchBoundary(ptr, hi)) {
                             case BOUNDARY_INCOMPLETE:
-                                onChunkWithRetryHandle(listener, _lo, ptr - 1, POTENTIAL_BOUNDARY, ptr, true);
+                                onChunkWithRetryHandle(listener, _lo, ptr - 1, POTENTIAL_BOUNDARY, hi, true);
                                 return false;
                             case BOUNDARY_MATCH:
                                 ptr = onChunkWithRetryHandle(listener, _lo, ptr - 1, PRE_HEADERS, ptr + consumedBoundaryLen, false);
@@ -226,11 +226,6 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         try {
             listener.onChunk(lo, hi);
         } catch (RetryOperationException e) {
-            if (handleIncomplete) {
-                // Don't start re-trying until read to the boundary. Request to read more instead.
-                this.resumePtr = lo;
-                throw TooFewBytesReceivedException.INSTANCE;
-            }
             // Request re-try
             needsRetry = e;
         } catch (NotEnoughLinesException e) {

@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import java.io.Closeable;
 
+import io.questdb.cutlass.http.*;
 import org.jetbrains.annotations.Nullable;
 
 import io.questdb.MessageBus;
@@ -39,11 +40,6 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.http.HttpChunkedResponseSocket;
-import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactoryCache;
