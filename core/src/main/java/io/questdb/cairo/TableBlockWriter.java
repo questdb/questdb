@@ -97,7 +97,7 @@ public class TableBlockWriter implements Closeable {
         for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
             nTotalRowsAdded += partitionBlockWriters.getQuick(n).completeCommitAppendedBlock();
         }
-        writer.commitBlock(firstTimestamp, lastTimestamp, nTotalRowsAdded);
+        writer.commitBlock(firstTimestamp);
         LOG.info().$("committed new block [table=").$(writer.getName()).$(']').$();
         clear();
     }

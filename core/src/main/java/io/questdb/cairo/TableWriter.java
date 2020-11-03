@@ -3790,67 +3790,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void prepareAppendColumn(AppendMemory mem, long[] mergeStruct, int columnIndex, long indexMergeSize) {
-        final long fd = -mem.getFd();
-        final long offset = mem.getAppendOffset();
-        MergeStruct.setDestFixedFd(mergeStruct, columnIndex, fd);
-        long indexMergeAddr = mapReadWriteOrFail(ff, null, -fd, indexMergeSize + offset);
-        MergeStruct.setDestFixedAddress(mergeStruct, columnIndex, indexMergeAddr);
-        MergeStruct.setDestFixedAddressSize(mergeStruct, columnIndex, indexMergeSize + offset);
-        MergeStruct.setDestFixedAppendOffset(mergeStruct, columnIndex, offset);
-    }
-
-    private long[] prepareAppendMemory(long indexLo, long indexHi, long indexMax) {
-        long[] mergeStruct = new long[columnCount * MergeStruct.MERGE_STRUCT_ENTRY_SIZE];
-
-        for (int i = 0; i < columnCount; i++) {
-            ContiguousVirtualMemory mem = oooColumns.getQuick(getPrimaryColumnIndex(i));
-            ContiguousVirtualMemory mem2;
-            final int columnType = metadata.getColumnType(i);
-
-            long lo;
-            long hi;
-            switch (columnType) {
-                case ColumnType.BINARY:
-                case ColumnType.STRING:
-                    mem2 = oooColumns.getQuick(getSecondaryColumnIndex(i));
-                    lo = mem2.getLong(indexLo * Long.BYTES);
-                    if (indexHi == indexMax - 1) {
-                        hi = mem.getAppendOffset();
-                    } else {
-                        hi = mem2.getLong((indexHi + 1) * Long.BYTES);
-                    }
-
-                    final long dataSize = (hi - lo);
-                    prepareAppendColumn(
-                            columns.getQuick(getSecondaryColumnIndex(i)),
-                            mergeStruct,
-                            i,
-                            (indexHi - indexLo + 1) << ColumnType.pow2SizeOf(ColumnType.LONG)
-                    );
-
-                    final AppendMemory dataMem = columns.getQuick(getPrimaryColumnIndex(i));
-                    final long dataMergeFd = -dataMem.getFd();
-                    final long dataOffset = dataMem.getAppendOffset();
-                    MergeStruct.setDestVarFd(mergeStruct, i, dataMergeFd);
-                    final long dataMergeAddr = mapReadWriteOrFail(ff, null, -dataMergeFd, dataSize + dataOffset);
-                    MergeStruct.setDestVarAddress(mergeStruct, i, dataMergeAddr);
-                    MergeStruct.setDestVarAddressSize(mergeStruct, i, dataSize + dataOffset);
-                    MergeStruct.setDestVarAppendOffset(mergeStruct, i, dataOffset);
-                    break;
-                default:
-                    prepareAppendColumn(
-                            columns.getQuick(getPrimaryColumnIndex(i)),
-                            mergeStruct,
-                            i,
-                            (indexHi - indexLo + 1) << ColumnType.pow2SizeOf(columnType)
-                    );
-                    break;
-            }
-        }
-        return mergeStruct;
-    }
-
     private long readTodoTaskCode() {
         try {
             if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
@@ -4757,7 +4696,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void commitBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
+    void commitBlock(long firstTimestamp) {
         if (minTimestamp == Long.MAX_VALUE) {
             minTimestamp = firstTimestamp;
         }
