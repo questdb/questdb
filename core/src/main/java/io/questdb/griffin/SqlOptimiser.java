@@ -2838,9 +2838,6 @@ class SqlOptimiser {
                     final int dot = Chars.indexOf(node.token, 0, len, '.');
                     int index = nameTypeMap.keyIndex(node.token, dot + 1, len);
                     // these columns are pre-validated
-                    if (index > -1) {
-                        System.out.println("fook");
-                    }
                     assert index < 0;
                     if (nameTypeMap.valueAt(index).getAst().type != ExpressionNode.LITERAL) {
                         throw NonLiteralException.INSTANCE;
