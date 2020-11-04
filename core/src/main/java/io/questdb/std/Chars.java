@@ -502,6 +502,24 @@ public final class Chars {
         return character > 64 && character < 91 ? (char) (character + 32) : character;
     }
 
+    public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
+        if(str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toUpperCase(str.charAt(i)));
+            }
+        }
+    }
+
+    public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
+        if(str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toLowerCase(str.charAt(i)));
+            }
+        }
+    }
+
     public static void toSink(BinarySequence sequence, CharSink sink) {
         if (sequence == null) {
             return;
