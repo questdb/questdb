@@ -42,7 +42,7 @@ public class FirstTimestampGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new FirstTimestampGroupByFunction(position, args.getQuick(0));
     }
 }
