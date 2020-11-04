@@ -406,7 +406,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
         clear();
         LOG.error().$(userMessage).$();
-        simpleResponse().sendStatus(400, userMessage);
+        simpleResponse().sendStatus(404, userMessage);
         dispatcher.registerChannel(this, IOOperation.READ);
         return false;
     }
