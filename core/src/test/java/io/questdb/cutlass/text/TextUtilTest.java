@@ -38,7 +38,17 @@ public class TextUtilTest {
         StringSink query = new StringSink();
 
         String text = "select count(*) from \"file.csv\" abcd";
-        copyToSinkWithTextUtil(query, text);
+        copyToSinkWithTextUtil(query, text, false);
+
+        Assert.assertEquals(text, query.toString());
+    }
+
+    @Test
+    public void testDoubleQuotedTextBySingleQuoteParsing() throws Utf8Exception {
+        StringSink query = new StringSink();
+
+        String text = "select count(*) from \"\"file.csv\"\" abcd";
+        copyToSinkWithTextUtil(query, text, false);
 
         Assert.assertEquals(text, query.toString());
     }
@@ -48,19 +58,23 @@ public class TextUtilTest {
         StringSink query = new StringSink();
 
         String text = "select count(*) from \"\"file.csv\"\" abcd";
-        copyToSinkWithTextUtil(query, text);
+        copyToSinkWithTextUtil(query, text, true);
 
         Assert.assertEquals(text.replace("\"\"", "\""), query.toString());
     }
 
-    private void copyToSinkWithTextUtil(StringSink query, String text) throws Utf8Exception {
+    private void copyToSinkWithTextUtil(StringSink query, String text, boolean doubleQuoteParse) throws Utf8Exception {
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         long ptr = Unsafe.malloc(bytes.length);
-        for(int i = 0; i < bytes.length; i++) {
+        for (int i = 0; i < bytes.length; i++) {
             Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
         }
 
-        TextUtil.utf8Decode(ptr, ptr + bytes.length, query);
+        if (doubleQuoteParse) {
+            TextUtil.utf8DecodeEscConsecutiveQuotes(ptr, ptr + bytes.length, query);
+        } else {
+            TextUtil.utf8Decode(ptr, ptr + bytes.length, query);
+        }
         Unsafe.free(ptr, bytes.length);
     }
 }
