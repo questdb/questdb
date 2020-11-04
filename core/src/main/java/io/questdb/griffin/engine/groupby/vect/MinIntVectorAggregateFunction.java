@@ -62,9 +62,9 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void aggregate(long address, long count, int workerId) {
+    public void aggregate(long address, long addressSize, int workerId) {
         if (address != 0) {
-            final int value = Vect.minInt(address, count);
+            final int value = Vect.minInt(address, addressSize / Integer.BYTES);
             if (value != Numbers.INT_NaN) {
                 accumulator.accumulate(value);
             }
@@ -72,9 +72,17 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        valueOffset = types.getColumnCount();
-        types.add(ColumnType.INT);
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Integer.BYTES, valueOffset);
+        }
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -88,27 +96,19 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
-    }
-
-    @Override
     public void merge(long pRostiA, long pRostiB) {
         Rosti.keyedIntMinIntMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMinIntWrapUp(pRosti, valueOffset, accumulator.intValue());
+    public void pushValueTypes(ArrayColumnTypes types) {
+        valueOffset = types.getColumnCount();
+        types.add(ColumnType.INT);
     }
 
     @Override
-    public int getColumnIndex() {
-        return columnIndex;
+    public void wrapUp(long pRosti) {
+        Rosti.keyedIntMinIntWrapUp(pRosti, valueOffset, accumulator.intValue());
     }
 
     @Override

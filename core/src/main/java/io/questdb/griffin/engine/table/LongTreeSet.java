@@ -39,10 +39,10 @@ public class LongTreeSet extends AbstractRedBlackTree {
         return cursor;
     }
 
-    public void put(long value) {
+    public boolean put(long value) {
         if (root == -1) {
             putParent(value);
-            return;
+            return true;
         }
 
         long p = root;
@@ -57,7 +57,7 @@ public class LongTreeSet extends AbstractRedBlackTree {
                 p = rightOf(p);
             } else {
                 // duplicate
-                return;
+                return false;
             }
         } while (p > -1);
 
@@ -71,6 +71,7 @@ public class LongTreeSet extends AbstractRedBlackTree {
             setRight(parent, p);
         }
         fix(p);
+        return true;
     }
 
     public class TreeCursor {

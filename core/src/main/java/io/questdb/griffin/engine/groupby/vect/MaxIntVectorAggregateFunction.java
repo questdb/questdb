@@ -44,9 +44,9 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
             MAX, Integer.MIN_VALUE
     );
     private final int columnIndex;
-    private int valueOffset;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private int valueOffset;
 
     public MaxIntVectorAggregateFunction(int position, int keyKind, int columnIndex, int workerCount) {
         super(position);
@@ -61,9 +61,24 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.INT);
+    public void aggregate(long address, long addressSize, int workerId) {
+        if (address != 0) {
+            max.accumulate(Vect.maxInt(address, addressSize / Integer.BYTES));
+        }
+    }
+
+    @Override
+    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int workerId) {
+        if (valueAddress == 0) {
+            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);
+        } else {
+            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Integer.BYTES, valueOffset);
+        }
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -77,34 +92,19 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long count, int workerId) {
-        if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, count);
-        } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, count, valueOffset);
-        }
-    }
-
-    @Override
     public void merge(long pRostiA, long pRostiB) {
         Rosti.keyedIntMaxIntMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.INT);
+    }
+
+    @Override
     public void wrapUp(long pRosti) {
         Rosti.keyedIntMaxIntWrapUp(pRosti, valueOffset, max.intValue());
-    }
-
-    @Override
-    public void aggregate(long address, long count, int workerId) {
-        if (address != 0) {
-            max.accumulate(Vect.maxInt(address, count));
-        }
-    }
-
-    @Override
-    public int getColumnIndex() {
-        return columnIndex;
     }
 
     @Override

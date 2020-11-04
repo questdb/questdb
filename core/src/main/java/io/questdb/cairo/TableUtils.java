@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.microtime.DateFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -41,6 +42,7 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
+    public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_VERSION = -1;
@@ -54,14 +56,14 @@ public final class TableUtils {
     static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
-    static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
+    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
+    public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
     static final long TX_OFFSET_MIN_TIMESTAMP = 24;
     static final long TX_OFFSET_MAX_TIMESTAMP = 32;
-    static final long TX_OFFSET_STRUCT_VERSION = 40;
+    public static final long TX_OFFSET_STRUCT_VERSION = 40;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
-    static final long TX_OFFSET_TXN_CHECK = 64;
+    public static final long TX_OFFSET_TXN_CHECK = 64;
     static final long TX_OFFSET_MAP_WRITER_COUNT = 72;
     /**
      * TXN file structure
@@ -86,8 +88,9 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    static final long META_OFFSET_VERSION = 12;
+    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    public static final long META_OFFSET_VERSION = 12;
+    public static final long META_OFFSET_TABLE_ID = 16;
     static final long META_COLUMN_DATA_SIZE = 16;
     static final long META_COLUMN_DATA_RESERVED = 3;
     static final long META_OFFSET_COLUMN_TYPES = 128;
@@ -110,9 +113,10 @@ public final class TableUtils {
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
-            int mkDirMode
+            int mkDirMode,
+            int tableId
     ) {
-        createTable(ff, memory, path, root, structure, mkDirMode, ColumnType.VERSION);
+        createTable(ff, memory, path, root, structure, mkDirMode, ColumnType.VERSION, tableId);
     }
 
     public static void createTable(
@@ -122,7 +126,8 @@ public final class TableUtils {
             @Transient CharSequence root,
             TableStructure structure,
             int mkDirMode,
-            int tableVersion
+            int tableVersion,
+            int tableId
     ) {
         path.of(root).concat(structure.getTableName());
 
@@ -139,6 +144,7 @@ public final class TableUtils {
             mem.putInt(structure.getPartitionBy());
             mem.putInt(structure.getTimestampIndex());
             mem.putInt(tableVersion);
+            mem.putInt(tableId);
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
@@ -275,6 +281,63 @@ public final class TableUtils {
 
     public static int toIndexKey(int symbolKey) {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
+    }
+
+    /**
+     * 
+     * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
+     * 
+     * @param path  Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp A timestamp in the partition
+     * @return  The last timestamp in the partition
+     */
+    public static long setPathForPartition(Path path, int partitionBy, long timestamp) {
+        int y, m, d;
+        boolean leap;
+        path.put(Files.SEPARATOR);
+        final long partitionHi;
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
+                m = Timestamps.getMonthOfYear(timestamp, y, leap);
+                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
+                TimestampFormatUtils.append000(path, y);
+                path.put('-');
+                TimestampFormatUtils.append0(path, m);
+                path.put('-');
+                TimestampFormatUtils.append0(path, d);
+
+                partitionHi = Timestamps.yearMicros(y, leap)
+                        + Timestamps.monthOfYearMicros(m, leap)
+                        + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
+                break;
+            case PartitionBy.MONTH:
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
+                m = Timestamps.getMonthOfYear(timestamp, y, leap);
+                TimestampFormatUtils.append000(path, y);
+                path.put('-');
+                TimestampFormatUtils.append0(path, m);
+
+                partitionHi = Timestamps.yearMicros(y, leap)
+                        + Timestamps.monthOfYearMicros(m, leap)
+                        + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
+                break;
+            case PartitionBy.YEAR:
+                y = Timestamps.getYear(timestamp);
+                leap = Timestamps.isLeapYear(y);
+                TimestampFormatUtils.append000(path, y);
+                partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
+                break;
+            default:
+                path.put(DEFAULT_PARTITION_NAME);
+                partitionHi = Long.MAX_VALUE;
+                break;
+        }
+
+        return partitionHi;
     }
 
     public static void validate(FilesFacade ff, ReadOnlyColumn metaMem, CharSequenceIntHashMap nameIndex) {
@@ -417,7 +480,7 @@ public final class TableUtils {
         return path.concat(columnName).put(".i").$();
     }
 
-    static int getColumnType(ReadOnlyColumn metaMem, int columnIndex) {
+    public static int getColumnType(ReadOnlyColumn metaMem, int columnIndex) {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
@@ -563,5 +626,15 @@ public final class TableUtils {
             }
         }
         return true;
+    }
+
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
+        long fd = ff.openRW(path);
+        if (fd > 0) {
+            return fd;
+        }
+
+        throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
+
     }
 }

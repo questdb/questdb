@@ -29,6 +29,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 public class ExtendableOnePageMemory extends OnePageMemory {
+    private long grownLength;
+
     public ExtendableOnePageMemory(FilesFacade ff, LPSZ name, long size) {
         super(ff, name, size);
     }
@@ -45,6 +47,9 @@ public class ExtendableOnePageMemory extends OnePageMemory {
 
     @Override
     public void grow(long newSize) {
+        if (newSize > grownLength) {
+            grownLength = newSize;
+        }
         final long fileSize = ff.length(fd);
         newSize = Math.max(newSize, fileSize);
         if (newSize <= size) {
@@ -60,10 +65,22 @@ public class ExtendableOnePageMemory extends OnePageMemory {
             page = ff.mmap(fd, newSize, 0, Files.MAP_RO);
         }
         if (page == FilesFacade.MAP_FAILED) {
+            long fd = this.fd;
             close();
             throw CairoException.instance(ff.errno()).put("Could not remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
         }
         size = newSize;
         absolutePointer = page + offset;
+    }
+
+    @Override
+    public long getGrownLength() {
+        return grownLength;
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        grownLength = 0;
     }
 }

@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -43,10 +42,10 @@ public class TableReader implements Closeable {
     private static final PartitionPathGenerator MONTH_GEN = TableReader::pathGenMonth;
     private static final PartitionPathGenerator DAY_GEN = TableReader::pathGenDay;
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.pathGenDefault();
-    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
+    private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
-    private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
+    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
     private static final Timestamps.TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
@@ -240,8 +239,16 @@ public class TableReader implements Closeable {
         return reader == null ? createBitmapIndexReaderAt(index, columnBase, columnIndex, direction) : reader;
     }
 
+    public ReadOnlyColumn getColumn(int absoluteIndex) {
+        return columns.getQuick(absoluteIndex);
+    }
+
     public int getColumnBase(int partitionIndex) {
         return partitionIndex << columnCountBits;
+    }
+
+    public long getColumnTop(int base, int columnIndex) {
+        return this.columnTops.getQuick(base / 2 + columnIndex);
     }
 
     public TableReaderRecordCursor getCursor() {
@@ -257,7 +264,7 @@ public class TableReader implements Closeable {
         return maxTimestamp;
     }
 
-    public RecordMetadata getMetadata() {
+    public TableReaderMetadata getMetadata() {
         return metadata;
     }
 
@@ -351,6 +358,14 @@ public class TableReader implements Closeable {
             }
         }
         return min;
+    }
+
+    public long openPartition(int partitionIndex) {
+        final long size = getPartitionRowCount(partitionIndex);
+        if (size != -1) {
+            return size;
+        }
+        return openPartition0(partitionIndex);
     }
 
     public boolean reload() {
@@ -742,16 +757,8 @@ public class TableReader implements Closeable {
         }
     }
 
-    public ReadOnlyColumn getColumn(int absoluteIndex) {
-        return columns.getQuick(absoluteIndex);
-    }
-
     int getColumnCount() {
         return columnCount;
-    }
-
-    public long getColumnTop(int base, int columnIndex) {
-        return this.columnTops.getQuick(base / 2 + columnIndex);
     }
 
     int getPartitionIndex(int columnBase) {
@@ -808,12 +815,19 @@ public class TableReader implements Closeable {
         }
     }
 
-    public long openPartition(int partitionIndex) {
-        final long size = getPartitionRowCount(partitionIndex);
-        if (size != -1) {
-            return size;
+    @NotNull
+    private ReadOnlyColumn openOrCreateMemory(Path path, ObjList<ReadOnlyColumn> columns, boolean lastPartition, int primaryIndex, ReadOnlyColumn mem) {
+        if (mem != null && mem != NullColumn.INSTANCE) {
+            mem.of(ff, path, ff.getMapPageSize(), ff.length(path));
+        } else {
+            if (lastPartition) {
+                mem = new ExtendableOnePageMemory(ff, path, ff.getMapPageSize());
+            } else {
+                mem = new OnePageMemory(ff, path, ff.length(path));
+            }
+            columns.setQuick(primaryIndex, mem);
         }
-        return openPartition0(partitionIndex);
+        return mem;
     }
 
     private long openPartition0(int partitionIndex) {
@@ -1086,21 +1100,6 @@ public class TableReader implements Closeable {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    @NotNull
-    private ReadOnlyColumn openOrCreateMemory(Path path, ObjList<ReadOnlyColumn> columns, boolean lastPartition, int primaryIndex, ReadOnlyColumn mem) {
-        if (mem != null && mem != NullColumn.INSTANCE) {
-            mem.of(ff, path, ff.getMapPageSize(), ff.length(path));
-        } else {
-            if (lastPartition) {
-                mem = new ExtendableOnePageMemory(ff, path, ff.getMapPageSize());
-            } else {
-                mem = new OnePageMemory(ff, path, ff.length(path));
-            }
-            columns.setQuick(primaryIndex, mem);
-        }
-        return mem;
     }
 
     private void reloadColumnChanges() {

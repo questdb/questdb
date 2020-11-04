@@ -191,6 +191,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.SysdateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory,
             io.questdb.griffin.engine.functions.date.SystimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.date.NowFunctionFactory,
             io.questdb.griffin.engine.functions.date.HourOfDayFunctionFactory,
             io.questdb.griffin.engine.functions.date.DayOfMonthFunctionFactory,
             io.questdb.griffin.engine.functions.date.DayOfWeekFunctionFactory,
@@ -458,7 +459,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IndexCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedNamespaceCatalogueFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.PrefixedDescriptionCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory,
@@ -469,6 +469,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

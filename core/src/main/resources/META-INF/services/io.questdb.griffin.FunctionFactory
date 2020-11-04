@@ -176,6 +176,7 @@ io.questdb.griffin.engine.functions.date.SysdateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory
 io.questdb.griffin.engine.functions.date.SystimestampFunctionFactory
+io.questdb.griffin.engine.functions.date.NowFunctionFactory
 io.questdb.griffin.engine.functions.date.HourOfDayFunctionFactory
 io.questdb.griffin.engine.functions.date.DayOfMonthFunctionFactory
 io.questdb.griffin.engine.functions.date.DayOfWeekFunctionFactory
@@ -470,10 +471,10 @@ io.questdb.griffin.engine.functions.catalogue.PrefixedNamespaceCatalogueFunction
 io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedDescriptionCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory
 
 # concat()
 io.questdb.griffin.engine.functions.str.ConcatFunctionFactory

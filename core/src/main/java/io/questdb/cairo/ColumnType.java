@@ -30,7 +30,8 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 
 public final class ColumnType {
     // column type version as written to the metadata file
-    public static final int VERSION = 416;
+    public static final int VERSION = 417;
+    public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
     public static final int BOOLEAN = 0;
     public static final int BYTE = 1;
@@ -54,6 +55,32 @@ public final class ColumnType {
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
     private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
+
+    private ColumnType() {
+    }
+
+    public static int columnTypeOf(CharSequence name) {
+        return nameTypeMap.get(name);
+    }
+
+    public static String nameOf(int columnType) {
+        final int index = typeNameMap.keyIndex(columnType);
+        if (index > -1) {
+            return "unknown";
+        }
+        return typeNameMap.valueAtQuick(index);
+    }
+
+    public static int pow2SizeOf(int columnType) {
+        return TYPE_SIZE_POW2[columnType];
+    }
+
+    public static int sizeOf(int columnType) {
+        if (columnType < 0 || columnType > ColumnType.PARAMETER) {
+            return -1;
+        }
+        return TYPE_SIZE[columnType];
+    }
 
     static {
         typeNameMap.put(BOOLEAN, "BOOLEAN");
@@ -120,31 +147,5 @@ public final class ColumnType {
         TYPE_SIZE[ColumnType.DATE] = Long.BYTES;
         TYPE_SIZE[ColumnType.TIMESTAMP] = Long.BYTES;
         TYPE_SIZE[ColumnType.LONG256] = Long256.BYTES;
-    }
-
-    private ColumnType() {
-    }
-
-    public static int columnTypeOf(CharSequence name) {
-        return nameTypeMap.get(name);
-    }
-
-    public static String nameOf(int columnType) {
-        final int index = typeNameMap.keyIndex(columnType);
-        if (index > -1) {
-            return "unknown";
-        }
-        return typeNameMap.valueAtQuick(index);
-    }
-
-    public static int pow2SizeOf(int columnType) {
-        return TYPE_SIZE_POW2[columnType];
-    }
-
-    public static int sizeOf(int columnType) {
-        if (columnType < 0 || columnType > ColumnType.PARAMETER) {
-            return -1;
-        }
-        return TYPE_SIZE[columnType];
     }
 }

@@ -34,33 +34,14 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
-import static io.questdb.griffin.engine.functions.catalogue.PgOIDs.PG_CATALOG_OID;
-import static io.questdb.griffin.engine.functions.catalogue.PgOIDs.PG_PUBLIC_OID;
-
-public class ClassCatalogueFunctionFactory implements FunctionFactory {
-    private static final Log LOG = LogFactory.getLog(ClassCatalogueFunctionFactory.class);
+public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
+    private static final Log LOG = LogFactory.getLog(DescriptionCatalogueFunctionFactory.class);
     private static final RecordMetadata METADATA;
-    private static final String[] relNames = {"pg_class"};
-    private static final int[] relNamespaces = {PG_CATALOG_OID};
-    private static final int[] oids = {PgOIDs.PG_CLASS_OID};
-    private static final char[] relkinds = {'r'};
-    private static final int[] relOwners = {0};
-
-    private static final int fixedClassLen = relNames.length;
-
-    private static final int[][] intColumns = {
-            null,
-            relNamespaces,
-            null,
-            relOwners,
-            oids
-    };
 
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_class()";
+        return "pg_catalog.pg_description()";
     }
 
     @Override
@@ -107,25 +88,20 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
     private static class ClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final Path path;
         private final FilesFacade ff;
-        private final DelegatingRecord record = new DelegatingRecord();
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
-        private final int[] intValues = new int[5];
+        private final int[] intValues = new int[4];
         private final long tempMem;
         private long findFileStruct = 0;
-        private int fixedRelPos = -1;
 
         public ClassCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
-            this.record.setDelegate(staticReadingRecord);
-            this.intValues[1] = PG_PUBLIC_OID; // relnamespace
-            this.intValues[3] = 0; // relowner
-            this.intValues[4] = 0; // OID
+            this.intValues[1] = PgOIDs.PG_CLASS_OID; // classoid
+            this.intValues[2] = 0; // objsubid
             this.tempMem = tempMem;
         }
 
@@ -139,16 +115,11 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public Record getRecord() {
-            return record;
+            return diskReadingRecord;
         }
 
         @Override
         public boolean hasNext() {
-            if (++fixedRelPos < fixedClassLen) {
-                return true;
-            }
-
-            record.setDelegate(diskReadingRecord);
             if (findFileStruct == 0) {
                 findFileStruct = ff.findFirst(path.trimTo(plimit).$());
                 if (findFileStruct > 0) {
@@ -171,8 +142,6 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
                 ff.findClose(findFileStruct);
                 findFileStruct = 0;
             }
-            fixedRelPos = -1;
-            record.setDelegate(staticReadingRecord);
         }
 
         @Override
@@ -191,7 +160,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
                         long fd = ff.openRO(path);
                         if (fd > -1) {
                             if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                intValues[4] = Unsafe.getUnsafe().getInt(tempMem);
+                                intValues[0] = Unsafe.getUnsafe().getInt(tempMem);
                                 ff.close(fd);
                                 return true;
                             }
@@ -200,7 +169,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
                         } else {
                             LOG.error().$("could not read metadata [file=").$(path).$(']').$();
                         }
-                        intValues[4] = -1;
+                        intValues[0] = -1;
                         return true;
                     }
                 }
@@ -211,78 +180,8 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private final static class DelegatingRecord implements Record {
-            private Record delegate;
-
-            @Override
-            public char getChar(int col) {
-                return delegate.getChar(col);
-            }
-
-            @Override
-            public int getInt(int col) {
-                return delegate.getInt(col);
-            }
-
-            @Override
-            public CharSequence getStr(int col) {
-                return delegate.getStr(col);
-            }
-
-            @Override
-            public CharSequence getStrB(int col) {
-                return delegate.getStr(col);
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                return delegate.getStrLen(col);
-            }
-
-            public Record getDelegate() {
-                return delegate;
-            }
-
-            public void setDelegate(Record delegate) {
-                this.delegate = delegate;
-            }
-        }
-
-        private class StaticReadingRecord implements Record {
-            @Override
-            public char getChar(int col) {
-                return relkinds[fixedRelPos];
-            }
-
-            @Override
-            public int getInt(int col) {
-                return intColumns[col][fixedRelPos];
-            }
-
-            @Override
-            public CharSequence getStr(int col) {
-                return relNames[fixedRelPos];
-            }
-
-            @Override
-            public CharSequence getStrB(int col) {
-                return relNames[fixedRelPos];
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                return getStr(col).length();
-            }
-        }
-
         private class DiskReadingRecord implements Record {
-            private final StringSink utf8SinkA = new StringSink();
-            private final StringSink utf8SinkB = new StringSink();
 
-            @Override
-            public char getChar(int col) {
-                return 'r';
-            }
 
             @Override
             public int getInt(int col) {
@@ -291,22 +190,12 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStr(int col) {
-                utf8SinkA.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkA)) {
-                    return utf8SinkA;
-                } else {
-                    return null;
-                }
+                return "table";
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                utf8SinkB.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkB)) {
-                    return utf8SinkB;
-                } else {
-                    return null;
-                }
+                return getStr(col);
             }
 
             @Override
@@ -318,11 +207,10 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("relname", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("relnamespace", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("relowner", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("objsubid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("description", ColumnType.STRING));
         METADATA = metadata;
     }
 }

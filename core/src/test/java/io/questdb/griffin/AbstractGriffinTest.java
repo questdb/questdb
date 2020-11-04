@@ -117,6 +117,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     @After
     public void tearDownAfterTest() {
+        engine.resetTableId();
         engine.releaseAllReaders();
         engine.releaseAllWriters();
     }

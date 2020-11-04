@@ -75,6 +75,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         private final int columnIndex;
         private RecordCursor cursor;
         private Record record;
+        private boolean cursorEnded = false;
 
         public IntColumnFunction(
                 int position,
@@ -102,15 +103,20 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
+            if (cursorEnded) {
+                return Numbers.INT_NaN;
+            }
             if (cursor.hasNext()) {
                 return record.getInt(columnIndex);
             }
+            cursorEnded = true;
             return Numbers.INT_NaN;
         }
 
         @Override
         public void toTop() {
             cursor.toTop();
+            cursorEnded = false;
         }
 
         @Override
@@ -123,6 +129,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
             super.init(symbolTableSource, executionContext);
             cursor = factory.getCursor(executionContext);
             record = cursor.getRecord();
+            cursorEnded = false;
         }
 
         @Override

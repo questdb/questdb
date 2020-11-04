@@ -75,6 +75,8 @@ public final class Os {
         }
     }
 
+    public static native long compareAndSwap(long mem, long oldValue, long newValue);
+
     public static int forkExecPid(long forkExecT) {
         return Unsafe.getUnsafe().getInt(forkExecT + 8);
     }

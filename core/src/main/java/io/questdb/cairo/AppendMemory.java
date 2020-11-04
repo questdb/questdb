@@ -35,6 +35,7 @@ public class AppendMemory extends VirtualMemory {
     private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
+    private int mappedPage;
 
     public AppendMemory(FilesFacade ff, LPSZ name, long pageSize) {
         of(ff, name, pageSize);
@@ -111,11 +112,9 @@ public class AppendMemory extends VirtualMemory {
     public final void of(FilesFacade ff, LPSZ name, long pageSize) {
         close();
         this.ff = ff;
+        mappedPage = -1;
         setPageSize(pageSize);
-        fd = ff.openRW(name);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
-        }
+        fd = TableUtils.openFileRWOrFail(ff, name);
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(']').$();
     }
 
@@ -150,6 +149,14 @@ public class AppendMemory extends VirtualMemory {
         }
     }
 
+    @Override
+    protected long getPageAddress(int page) {
+        if (page == mappedPage) {
+            return pageAddress;
+        }
+        return -1;
+    }
+
     private long mapPage(int page) {
         long target = pageOffset(page + 1);
         if (ff.length(fd) < target && !ff.truncate(fd, target)) {
@@ -158,8 +165,10 @@ public class AppendMemory extends VirtualMemory {
         long offset = pageOffset(page);
         long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
         if (address != -1) {
+            mappedPage = page;
             return address;
         }
+        mappedPage = -1;
         throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
     }
 }
