@@ -33,11 +33,9 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
@@ -57,6 +55,9 @@ public class CairoEngine implements Closeable {
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
+    private final long tableIndexFd;
+    private final long tableIndexMem;
+    private final long tableIndexMemSize;
 
     public CairoEngine(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -68,12 +69,39 @@ public class CairoEngine implements Closeable {
         this.telemetryPubSeq = new MPSequence(telemetryQueue.getCapacity());
         this.telemetrySubSeq = new SCSequence();
         telemetryPubSeq.then(telemetrySubSeq).then(telemetryPubSeq);
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path().of(configuration.getRoot()).concat("_tab_index.d").$()) {
+            this.tableIndexMemSize = Files.PAGE_SIZE;
+            tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
+            final long fileSize = ff.length(tableIndexFd);
+            if (fileSize < Long.BYTES) {
+                if (!ff.truncate(tableIndexFd, Files.PAGE_SIZE)) {
+                    ff.close(tableIndexFd);
+                    throw CairoException.instance(ff.errno()).put("Could not truncate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
+                }
+            }
+
+            this.tableIndexMem = ff.mmap(tableIndexFd, tableIndexMemSize, 0, Files.MAP_RW);
+            if (tableIndexMem == -1) {
+                ff.close(tableIndexFd);
+                throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
+            }
+            try {
+                upgradeTableId();
+            } catch (CairoException e) {
+                close();
+                throw e;
+            }
+        }
     }
 
     @Override
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
+        configuration.getFilesFacade().munmap(tableIndexMem, tableIndexMemSize);
+        configuration.getFilesFacade().close(tableIndexFd);
     }
 
     public void createTable(
@@ -89,7 +117,8 @@ public class CairoEngine implements Closeable {
                 path,
                 configuration.getRoot(),
                 struct,
-                configuration.getMkDirMode()
+                configuration.getMkDirMode(),
+                (int) getNextTableId()
         );
     }
 
@@ -117,6 +146,16 @@ public class CairoEngine implements Closeable {
 
     public MessageBus getMessageBus() {
         return messageBus;
+    }
+
+    public long getNextTableId() {
+        long next;
+        long x = Unsafe.getUnsafe().getLong(tableIndexMem);
+        do {
+            next = x;
+            x = Os.compareAndSwap(tableIndexMem, next, next + 1);
+        } while (next != x);
+        return next + 1;
     }
 
     public PoolListener getPoolListener() {
@@ -218,7 +257,7 @@ public class CairoEngine implements Closeable {
                 TableWriter writer = getWriter(cairoSecurityContext, tableName);
                 TableReader reader = getReader(cairoSecurityContext, tableName)
         ) {
-            TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();
+            TableReaderMetadata readerMetadata = reader.getMetadata();
             if (readerMetadata.getVersion() < 416) {
                 LOG.info().$("migrating null flag for symbols [table=").utf8(tableName).$(']').$();
                 for (int i = 0, count = reader.getColumnCount(); i < count; i++) {
@@ -297,6 +336,12 @@ public class CairoEngine implements Closeable {
         }
     }
 
+    // This is not thread safe way to reset table ID back to 0
+    // It is useful for testing only
+    public void resetTableId() {
+        Unsafe.getUnsafe().putLong(tableIndexMem, 0);
+    }
+
     public void unlock(
             CairoSecurityContext securityContext,
             CharSequence tableName,
@@ -312,6 +357,90 @@ public class CairoEngine implements Closeable {
 
     public void unlockWriter(CharSequence tableName) {
         writerPool.unlock(tableName);
+    }
+
+    public void upgradeTableId() {
+        final FilesFacade ff = configuration.getFilesFacade();
+        long mem = Unsafe.malloc(8);
+        try {
+            try (Path path = new Path()) {
+                path.of(configuration.getRoot());
+                final int rootLen = path.length();
+
+                // check if all tables have been upgraded already
+                path.concat(TableUtils.UPGRADE_FILE_NAME).$();
+                final boolean existed = ff.exists(path);
+                long upgradeFd = TableUtils.openFileRWOrFail(ff, path);
+                LOG.debug()
+                        .$("open [fd=").$(upgradeFd)
+                        .$(", path=").$(path)
+                        .$(']').$();
+                if (existed) {
+                    long readLen = ff.read(upgradeFd, mem, Integer.BYTES, 0);
+                    if (readLen == Integer.BYTES) {
+                        if (Unsafe.getUnsafe().getInt(mem) >= ColumnType.VERSION_THAT_ADDED_TABLE_ID) {
+                            LOG.info().$("table IDs are up to date").$();
+                            ff.close(upgradeFd);
+                            upgradeFd = -1;
+                        }
+                    } else {
+                        ff.close(upgradeFd);
+                        throw CairoException.instance(ff.errno()).put("could not read [fd=").put(upgradeFd).put(", path=").put(path).put(']');
+                    }
+                }
+
+                if (upgradeFd != -1) {
+                    try {
+                        LOG.info().$("upgrading table IDs").$();
+                        final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+                        ff.iterateDir(path.trimTo(rootLen).$(), (name, type) -> {
+                            if (type == Files.DT_DIR) {
+                                nativeLPSZ.of(name);
+                                if (Chars.notDots(nativeLPSZ)) {
+                                    final int plen = path.length();
+                                    path.chopZ().concat(nativeLPSZ).concat(TableUtils.META_FILE_NAME).$();
+                                    if (ff.exists(path)) {
+                                        assignTableId(ff, path, mem);
+                                    }
+                                    path.trimTo(plen);
+                                }
+                            }
+                        });
+                        LOG.info().$("upgraded table IDs").$();
+
+                        Unsafe.getUnsafe().putInt(mem, ColumnType.VERSION);
+                        long writeLen = ff.write(upgradeFd, mem, Integer.BYTES, 0);
+                        if (writeLen < Integer.BYTES) {
+                            throw CairoException.instance(ff.errno()).put("Could not write to [fd=").put(upgradeFd).put(']');
+                        }
+                    } finally {
+                        ff.close(upgradeFd);
+                    }
+                }
+            }
+        } finally {
+            Unsafe.free(mem, 8);
+        }
+    }
+
+    // path is to the metadata file of table
+    private void assignTableId(FilesFacade ff, Path path, long mem) {
+        final long fd = TableUtils.openFileRWOrFail(ff, path);
+        if (ff.read(fd, mem, 8, TableUtils.META_OFFSET_VERSION) == 8) {
+            if (Unsafe.getUnsafe().getInt(mem) < ColumnType.VERSION_THAT_ADDED_TABLE_ID) {
+                LOG.info().$("upgrading [path=").$(path).$(']').$();
+                Unsafe.getUnsafe().putInt(mem, ColumnType.VERSION);
+                Unsafe.getUnsafe().putInt(mem + Integer.BYTES, (int) getNextTableId());
+                if (ff.write(fd, mem, 8, TableUtils.META_OFFSET_VERSION) == 8) {
+                    ff.close(fd);
+                    return;
+                }
+            }
+            ff.close(fd);
+            return;
+        }
+        ff.close(fd);
+        throw CairoException.instance(ff.errno()).put("Could not update table id [path=").put(path).put(']');
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {

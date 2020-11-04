@@ -30,7 +30,7 @@ import io.questdb.test.tools.TestUtils.LeakProneCode;
 
 public class TableBlockWriterTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(TableBlockWriterTest.class);
-    private static int ONE_MEG_IN_PAGES = 1024 * 1024 / (int) Files.PAGE_SIZE;
+    private static final int ONE_MEG_IN_PAGES = 1024 * 1024 / (int) Files.PAGE_SIZE;
     private static final AtomicInteger N_MAPPED_PAGES = new AtomicInteger(ONE_MEG_IN_PAGES);
     private static Function<LPSZ, Long> FF_openRW_INTERCEPTOR;
 
@@ -52,9 +52,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 return Files.openRW(name);
             }
         };
-        FF_openRW_INTERCEPTOR = (name) -> {
-            return null;
-        };
+        FF_openRW_INTERCEPTOR = (name) -> null;
         
         configuration = new DefaultCairoConfiguration(root) {
             @Override
@@ -491,7 +489,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 replicateTable("source", "dest", 0, true, Long.MAX_VALUE, false, false, 0);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getFlyweightMessage().toString().contains("Could not open l"));
+                Assert.assertTrue(ex.getFlyweightMessage().toString().contains("Could not open"));
             }
             String actual = select("SELECT * FROM dest");
             Assert.assertEquals(expected, actual);

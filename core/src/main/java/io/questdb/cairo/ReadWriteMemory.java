@@ -93,11 +93,8 @@ public class ReadWriteMemory extends VirtualMemory {
     public final void of(FilesFacade ff, LPSZ name, long pageSize) {
         close();
         this.ff = ff;
-        fd = ff.openRW(name);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
-        }
-        long size = ff.length(fd);
+        fd = TableUtils.openFileRWOrFail(ff, name);
+        final long size = ff.length(fd);
         setPageSize(pageSize);
         ensurePagesListCapacity(size);
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();

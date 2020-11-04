@@ -114,10 +114,7 @@ public class AppendMemory extends VirtualMemory {
         this.ff = ff;
         mappedPage = -1;
         setPageSize(pageSize);
-        fd = ff.openRW(name);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
-        }
+        fd = TableUtils.openFileRWOrFail(ff, name);
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(']').$();
     }
 
