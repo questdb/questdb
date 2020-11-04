@@ -30,7 +30,7 @@ import java.util.Arrays;
 public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAsciiCharSequenceHashSet {
     private static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;
-    private int[] values;
+    protected int[] values;
 
     public LowerCaseAsciiCharSequenceIntHashMap() {
         this(8);
@@ -47,7 +47,7 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         clear();
     }
 
-    public final void clear() {
+    public void clear() {
         super.clear();
         Arrays.fill(values, noEntryValue);
     }
@@ -97,7 +97,7 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         erase(from);
     }
 
-    private void putAt0(int index, CharSequence key, int value) {
+    protected void putAt0(int index, CharSequence key, int value) {
         keys[index] = key;
         values[index] = value;
         if (--free == 0) {

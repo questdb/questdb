@@ -49,7 +49,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         clear();
     }
 
-    public final void clear() {
+    public void clear() {
         super.clear();
         list.clear();
         Arrays.fill(values, noEntryValue);

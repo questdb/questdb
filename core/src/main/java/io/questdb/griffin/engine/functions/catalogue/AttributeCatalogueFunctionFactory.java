@@ -33,25 +33,9 @@ import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.griffin.engine.functions.catalogue.PgOIDs.PG_CATALOG_OID;
-
 public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
     private static final RecordMetadata METADATA;
-
-    private static final String[] relNames = {"pg_attribute"};
-    private static final int[] relNamespaces = {PG_CATALOG_OID};
-    private static final int[] oids = {PgOIDs.PG_CLASS_OID};
-    private static final char[] relkinds = {'r'};
-    private static final int[] relOwners = {0};
-
-    private static final int[][] intColumns = {
-            null,
-            relNamespaces,
-            null,
-            relOwners,
-            oids
-    };
 
     @Override
     public String getSignature() {
@@ -104,7 +88,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private final int plimit;
         private long findFileStruct = 0;
         private int columnIndex = 0;
-        private int dummyTableId = 1000;
+        private int tableId = 1000;
         private ReadOnlyColumn metaMem;
         private boolean readNextFileFromDisk = true;
         private int columnCount;
@@ -174,6 +158,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 metaMem = new OnePageMemory(ff, path, ff.length(path));
                                 columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+                                tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                             } else {
                                 metaMem = null;
                             }
@@ -193,11 +178,10 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                         if (columnIndex == i) {
                             diskReadingRecord.name = name;
                             diskReadingRecord.columnNumber = (short) (i + 1);
-                            diskReadingRecord.tableId = dummyTableId;
+                            diskReadingRecord.tableId = tableId;
                             columnIndex++;
                             if (columnIndex == columnCount) {
                                 readNextFileFromDisk = true;
-                                dummyTableId++;
                                 columnIndex = 0;
                             } else {
                                 readNextFileFromDisk = false;
@@ -211,6 +195,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
             ff.findClose(findFileStruct);
             findFileStruct = 0;
+            hasNextFile = true;
             return false;
         }
 

@@ -494,8 +494,6 @@ public final class Chars {
             b.put(toLowerCaseAscii(value.charAt(i)));
         }
         return b.toString();
-
-
     }
 
     public static char toLowerCaseAscii(char character) {
@@ -742,5 +740,16 @@ public final class Chars {
 
         sink.put((char) (b1 << 6 ^ b2 ^ 3968));
         return 2;
+    }
+
+    public static CharSequence toLowerCase(CharSequence str) {
+        final CharSink sink = Misc.getThreadLocalBuilder();
+        if (str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toLowerCase(str.charAt(i)));
+            }
+        }
+        return sink.toString();
     }
 }
