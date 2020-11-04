@@ -310,8 +310,12 @@ public final class Chars {
     }
 
     public static int indexOf(CharSequence s, final int lo, char c) {
+        return indexOf(s, lo, s.length(), c);
+    }
+
+    public static int indexOf(CharSequence s, final int lo, int hi, char c) {
         int i = lo;
-        for (int n = s.length(); i < n; i++) {
+        for (; i < hi; i++) {
             if (s.charAt(i) == c) {
                 return i;
             }
