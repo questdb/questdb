@@ -477,7 +477,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     public class SimpleResponseImpl {
 
         public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            final String std = headerImpl.status(httpVersion, code, "text/html; charset=utf-8", -1L);
+            final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
             sink.put(message == null ? std : message).put(Misc.EOL);
             prepareHeaderSink();
             resumeSend(CHUNK_HEAD);
