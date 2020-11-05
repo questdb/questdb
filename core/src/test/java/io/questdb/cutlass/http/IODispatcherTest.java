@@ -177,7 +177,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -403,12 +403,14 @@ public class IODispatcherTest {
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration);
                 HttpServer ignored = HttpServer.create(
-                        new DefaultHttpServerConfiguration() {
-                            @Override
-                            public MillisecondClock getClock() {
-                                return StationaryMillisClock.INSTANCE;
-                            }
-                        },
+                        new DefaultHttpServerConfiguration(
+                                new DefaultHttpContextConfiguration() {
+                                    @Override
+                                    public MillisecondClock getClock() {
+                                        return StationaryMillisClock.INSTANCE;
+                                    }
+                                }
+                        ),
                         null,
                         LOG,
                         cairoEngine
@@ -469,12 +471,12 @@ public class IODispatcherTest {
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration);
                 HttpServer ignored = HttpServer.create(
-                        new DefaultHttpServerConfiguration() {
+                        new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
                             public MillisecondClock getClock() {
                                 return StationaryMillisClock.INSTANCE;
                             }
-                        },
+                        }),
                         null,
                         LOG,
                         cairoEngine
@@ -3568,7 +3570,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     closeCount.incrementAndGet();
@@ -4423,7 +4425,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -4570,12 +4572,14 @@ public class IODispatcherTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration() {
-                @Override
-                public MillisecondClock getClock() {
-                    return () -> 0;
-                }
-            };
+            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+                    new DefaultHttpContextConfiguration() {
+                        @Override
+                        public MillisecondClock getClock() {
+                            return () -> 0;
+                        }
+                    }
+            );
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -4587,7 +4591,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -4747,7 +4751,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -4974,7 +4978,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()).of(fd, dispatcher1)
             )) {
 
                 // server will publish status of each request to this queue
@@ -5213,7 +5217,39 @@ public class IODispatcherTest {
             }
         };
 
-        return new DefaultHttpServerConfiguration() {
+        return new DefaultHttpServerConfiguration(
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public int getSendBufferSize() {
+                        return sendBufferSize;
+                    }
+
+                    @Override
+                    public boolean getDumpNetworkTraffic() {
+                        return dumpTraffic;
+                    }
+
+                    @Override
+                    public boolean allowDeflateBeforeSend() {
+                        return allowDeflateBeforeSend;
+                    }
+
+                    @Override
+                    public boolean getServerKeepAlive() {
+                        return serverKeepAlive;
+                    }
+
+                    @Override
+                    public String getHttpVersion() {
+                        return httpProtocolVersion;
+                    }
+
+                    @Override
+                    public MillisecondClock getClock() {
+                        return () -> 0;
+                    }
+                }
+        ) {
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -5279,11 +5315,6 @@ public class IODispatcherTest {
             };
 
             @Override
-            public MillisecondClock getClock() {
-                return () -> 0;
-            }
-
-            @Override
             public IODispatcherConfiguration getDispatcherConfiguration() {
                 return ioDispatcherConfiguration;
             }
@@ -5296,31 +5327,6 @@ public class IODispatcherTest {
             @Override
             public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
                 return jsonQueryProcessorConfiguration;
-            }
-
-            @Override
-            public int getSendBufferSize() {
-                return sendBufferSize;
-            }
-
-            @Override
-            public boolean getDumpNetworkTraffic() {
-                return dumpTraffic;
-            }
-
-            @Override
-            public boolean allowDeflateBeforeSend() {
-                return allowDeflateBeforeSend;
-            }
-
-            @Override
-            public boolean getServerKeepAlive() {
-                return serverKeepAlive;
-            }
-
-            @Override
-            public String getHttpVersion() {
-                return httpProtocolVersion;
             }
         };
     }
@@ -5564,6 +5570,8 @@ public class IODispatcherTest {
                         return "/chk";
                     }
                 });
+
+                QueryCache.configure(httpConfiguration);
 
                 workerPool.start(LOG);
 

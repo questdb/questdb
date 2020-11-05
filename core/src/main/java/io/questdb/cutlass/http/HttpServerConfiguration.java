@@ -27,56 +27,20 @@ package io.questdb.cutlass.http;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.std.time.MillisecondClock;
 
-public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration {
+public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, HttpMinServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
 
-    int getConnectionPoolInitialCapacity();
+    HttpContextConfiguration getHttpContextConfiguration();
 
-    int getConnectionStringPoolCapacity();
-
-    int getMultipartHeaderBufferSize();
-
-    long getMultipartIdleSpinCount();
-
-    int getRecvBufferSize();
-
-    int getRequestHeaderBufferSize();
-
-    int getResponseHeaderBufferSize();
+    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
     int getQueryCacheBlocks();
 
     int getQueryCacheRows();
 
-    MillisecondClock getClock();
-
-    IODispatcherConfiguration getDispatcherConfiguration();
-
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
-
-    int getSendBufferSize();
 
     @Override
     boolean isEnabled();
-
-    boolean getDumpNetworkTraffic();
-
-    boolean allowDeflateBeforeSend();
-
-    boolean readOnlySecurityContext();
-
-    boolean isInterruptOnClosedConnection();
-
-    int getInterruptorNIterationsPerCheck();
-
-    int getInterruptorBufferSize();
-
-    boolean getServerKeepAlive();
-
-    String getHttpVersion();
 }

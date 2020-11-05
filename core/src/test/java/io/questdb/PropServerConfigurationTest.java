@@ -72,22 +72,22 @@ public class PropServerConfigurationTest {
     public void testAllDefaults() throws ServerConfigurationException, JsonException {
         Properties properties = new Properties();
         PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, null, LOG);
-        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getConnectionPoolInitialCapacity());
-        Assert.assertEquals(128, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
-        Assert.assertEquals(512, configuration.getHttpServerConfiguration().getMultipartHeaderBufferSize());
-        Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getMultipartIdleSpinCount());
-        Assert.assertEquals(1048576, configuration.getHttpServerConfiguration().getRecvBufferSize());
-        Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getRequestHeaderBufferSize());
-        Assert.assertEquals(32768, configuration.getHttpServerConfiguration().getResponseHeaderBufferSize());
+        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+        Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
+        Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
+        Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
+        Assert.assertEquals(1048576, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRecvBufferSize());
+        Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
+        Assert.assertEquals(32768, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getResponseHeaderBufferSize());
         Assert.assertEquals(0, configuration.getHttpServerConfiguration().getWorkerCount());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
         Assert.assertArrayEquals(new int[]{}, configuration.getHttpServerConfiguration().getWorkerAffinity());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
-        Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getSendBufferSize());
+        Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
         Assert.assertTrue(configuration.getHttpServerConfiguration().isEnabled());
-        Assert.assertFalse(configuration.getHttpServerConfiguration().getDumpNetworkTraffic());
-        Assert.assertFalse(configuration.getHttpServerConfiguration().allowDeflateBeforeSend());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getDumpNetworkTraffic());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
         Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRows());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
 
@@ -127,11 +127,11 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(12, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
-        Assert.assertFalse(configuration.getHttpServerConfiguration().readOnlySecurityContext());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
-        Assert.assertTrue(configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
-        Assert.assertEquals(2_000_000, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
-        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
+        Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().isInterruptOnClosedConnection());
+        Assert.assertEquals(2_000_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getInterruptorNIterationsPerCheck());
+        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getInterruptorBufferSize());
 
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
@@ -203,7 +203,7 @@ public class PropServerConfigurationTest {
         // statics
         Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getFilesFacade());
         Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getClock());
-        Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getHttpServerConfiguration().getClock());
+        Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getClock());
         Assert.assertSame(NetworkFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getNetworkFacade());
         Assert.assertSame(EpollFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getEpollFacade());
         Assert.assertSame(SelectFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSelectFacade());
@@ -243,8 +243,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(250, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
 
-        Assert.assertTrue(configuration.getHttpServerConfiguration().getServerKeepAlive());
-        Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpVersion());
+        Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
+        Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getAppendPageSize());
     }
 
@@ -289,13 +289,13 @@ public class PropServerConfigurationTest {
 
         PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, env, LOG);
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
-        Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
-        Assert.assertEquals("2.0 ", configuration.getHttpServerConfiguration().getHttpVersion());
+        Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
+        Assert.assertEquals("2.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
         Assert.assertEquals(3, configuration.getWorkerPoolConfiguration().getWorkerCount());
         Assert.assertArrayEquals(new int[]{5, 6, 7}, configuration.getWorkerPoolConfiguration().getWorkerAffinity());
-        Assert.assertEquals(12288, configuration.getHttpServerConfiguration().getSendBufferSize());
-        Assert.assertEquals(900, configuration.getHttpServerConfiguration().getMultipartIdleSpinCount());
-        Assert.assertFalse(configuration.getHttpServerConfiguration().readOnlySecurityContext());
+        Assert.assertEquals(12288, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
+        Assert.assertEquals(900, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getAppendPageSize());
     }
 
@@ -405,32 +405,32 @@ public class PropServerConfigurationTest {
             properties.load(is);
 
             PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, null, LOG);
-            Assert.assertEquals(64, configuration.getHttpServerConfiguration().getConnectionPoolInitialCapacity());
-            Assert.assertEquals(512, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
-            Assert.assertEquals(256, configuration.getHttpServerConfiguration().getMultipartHeaderBufferSize());
-            Assert.assertEquals(100_000, configuration.getHttpServerConfiguration().getMultipartIdleSpinCount());
-            Assert.assertEquals(4096, configuration.getHttpServerConfiguration().getRecvBufferSize());
-            Assert.assertEquals(2048, configuration.getHttpServerConfiguration().getRequestHeaderBufferSize());
-            Assert.assertEquals(9012, configuration.getHttpServerConfiguration().getResponseHeaderBufferSize());
+            Assert.assertEquals(64, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
+            Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
+            Assert.assertEquals(256, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
+            Assert.assertEquals(100_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
+            Assert.assertEquals(4096, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRecvBufferSize());
+            Assert.assertEquals(2048, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
+            Assert.assertEquals(9012, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getResponseHeaderBufferSize());
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{1, 2, 3, 4, 5, 6}, configuration.getHttpServerConfiguration().getWorkerAffinity());
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
-            Assert.assertEquals(128, configuration.getHttpServerConfiguration().getSendBufferSize());
+            Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheRows());
             Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
 
-            Assert.assertTrue(configuration.getHttpServerConfiguration().readOnlySecurityContext());
+            Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
-            Assert.assertFalse(configuration.getHttpServerConfiguration().isInterruptOnClosedConnection());
-            Assert.assertEquals(500, configuration.getHttpServerConfiguration().getInterruptorNIterationsPerCheck());
-            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getInterruptorBufferSize());
+            Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().isInterruptOnClosedConnection());
+            Assert.assertEquals(500, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getInterruptorNIterationsPerCheck());
+            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getInterruptorBufferSize());
 
             Assert.assertEquals(new File(configPath, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
 
             Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
-            Assert.assertTrue(configuration.getHttpServerConfiguration().allowDeflateBeforeSend());
+            Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
 
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getActiveConnectionLimit());
             Assert.assertEquals(2048, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getEventCapacity());
@@ -553,8 +553,8 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled());
             Assert.assertEquals(512, configuration.getCairoConfiguration().getTelemetryConfiguration().getQueueCapacity());
 
-            Assert.assertFalse(configuration.getHttpServerConfiguration().getServerKeepAlive());
-            Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpVersion());
+            Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
+            Assert.assertEquals("HTTP/1.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
             Assert.assertEquals(33554432L, configuration.getCairoConfiguration().getAppendPageSize());
         }
     }

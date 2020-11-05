@@ -22,29 +22,46 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.http;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.time.MillisecondClock;
 
-public interface ServerConfiguration {
+public interface HttpContextConfiguration {
 
-    CairoConfiguration getCairoConfiguration();
+    NetworkFacade getNetworkFacade();
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    boolean allowDeflateBeforeSend();
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
+    MillisecondClock getClock();
 
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
+    int getConnectionPoolInitialCapacity();
 
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
+    int getConnectionStringPoolCapacity();
 
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
+    boolean getDumpNetworkTraffic();
 
-    PGWireConfiguration getPGWireConfiguration();
+    String getHttpVersion();
+
+    int getInterruptorBufferSize();
+
+    int getInterruptorNIterationsPerCheck();
+
+    int getMultipartHeaderBufferSize();
+
+    long getMultipartIdleSpinCount();
+
+    int getRecvBufferSize();
+
+    int getRequestHeaderBufferSize();
+
+    int getResponseHeaderBufferSize();
+
+    int getSendBufferSize();
+
+    boolean getServerKeepAlive();
+
+    boolean isInterruptOnClosedConnection();
+
+    boolean readOnlySecurityContext();
 }

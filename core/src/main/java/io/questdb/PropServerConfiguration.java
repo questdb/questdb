@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
@@ -57,7 +59,7 @@ import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
-    private final IODispatcherConfiguration httpIODispatcherConfiguration = new HttpIODispatcherConfiguration();
+    private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
@@ -157,8 +159,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
     private final boolean lineTcpEnabled;
     private final WorkerPoolAwareConfiguration lineTcpWorkerPoolConfiguration = new PropLineTcpWorkerPoolConfiguration();
+    private final Log log;
+    private final PropHttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
+    private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
+    private final boolean httpMinServerEnabled;
+    private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
+    private int[] httpMinWorkerAffinity;
     private int connectionPoolInitialCapacity;
     private int connectionStringPoolCapacity;
     private int multipartHeaderBufferSize;
@@ -172,14 +180,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sendBufferSize;
     private CharSequence indexFileName;
     private String publicDirectory;
-    private int activeConnectionLimit;
-    private int eventCapacity;
-    private int ioQueueCapacity;
-    private long idleConnectionTimeout;
-    private int interestQueueCapacity;
-    private int listenBacklog;
-    private int sndBufSize;
-    private int rcvBufSize;
+    private int httpActiveConnectionLimit;
+    private int httpEventCapacity;
+    private int httpIOQueueCapacity;
+    private long httpIdleConnectionTimeout;
+    private int httpInterestQueueCapacity;
+    private int httpListenBacklog;
+    private int httpSndBufSize;
+    private int httpRcvBufSize;
     private int dateAdapterPoolCapacity;
     private int jsonCacheLimit;
     private int jsonCacheSize;
@@ -195,8 +203,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private MimeTypesCache mimeTypesCache;
     private String databaseRoot;
     private String keepAliveHeader;
-    private int bindIPv4Address;
-    private int bindPort;
+    private int httpBindIPv4Address;
+    private int httpBindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
     private int jsonQueryFloatScale;
@@ -259,7 +267,17 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceJobHysteresisInMs;
     private String lineTcpAuthDbPath;
     private String httpVersion;
-    private final Log log;
+    private int httpMinWorkerCount;
+    private boolean httpMinWorkerHaltOnError;
+    private int httpMinBindIPv4Address;
+    private int httpMinBindPort;
+    private int httpMinEventCapacity;
+    private int httpMinIOQueueCapacity;
+    private long httpMinIdleConnectionTimeout;
+    private int httpMinInterestQueueCapacity;
+    private int httpMinListenBacklog;
+    private int httpMinRcvBufSize;
+    private int httpMinSndBufSize;
 
     public PropServerConfiguration(
             String root,
@@ -271,6 +289,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
         this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
+        this.httpMinServerEnabled = getBoolean(properties, env, "http.min.enabled", true);
+        if (httpMinServerEnabled) {
+            this.httpMinWorkerAffinity = getAffinity(properties, env, "http.min.worker.affinity", httpWorkerCount);
+            this.httpMinWorkerHaltOnError = getBoolean(properties, env, "http.min.worker.haltOnError", false);
+            this.httpMinWorkerCount = getInt(properties, env, "http.min.worker.count", 0);
+
+            parseBindTo(properties, env, "http.min.bind.to", "0.0.0.0:9003", (a, p) -> {
+                httpMinBindIPv4Address = a;
+                httpMinBindPort = p;
+            });
+
+            this.httpMinEventCapacity = getInt(properties, env, "http.min.net.event.capacity", 16);
+            this.httpMinIOQueueCapacity = getInt(properties, env, "http.min.net.io.queue.capacity", 16);
+            this.httpMinIdleConnectionTimeout = getLong(properties, env, "http.min.net.idle.connection.timeout", 5 * 60 * 1000L);
+            this.httpMinInterestQueueCapacity = getInt(properties, env, "http.min.net.interest.queue.capacity", 16);
+            this.httpMinListenBacklog = getInt(properties, env, "http.min.net.listen.backlog", 64);
+            this.httpMinSndBufSize = getIntSize(properties, env, "http.min.net.snd.buf.size", 1024);
+            this.httpMinRcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 1024);
+        }
+
         this.httpServerEnabled = getBoolean(properties, env, "http.enabled", true);
         if (httpServerEnabled) {
             this.connectionPoolInitialCapacity = getInt(properties, env, "http.connection.pool.initial.capacity", 16);
@@ -318,14 +356,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
             }
 
-            this.activeConnectionLimit = getInt(properties, env, "http.net.active.connection.limit", 256);
-            this.eventCapacity = getInt(properties, env, "http.net.event.capacity", 1024);
-            this.ioQueueCapacity = getInt(properties, env, "http.net.io.queue.capacity", 1024);
-            this.idleConnectionTimeout = getLong(properties, env, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
-            this.interestQueueCapacity = getInt(properties, env, "http.net.interest.queue.capacity", 1024);
-            this.listenBacklog = getInt(properties, env, "http.net.listen.backlog", 256);
-            this.sndBufSize = getIntSize(properties, env, "http.net.snd.buf.size", 2 * 1024 * 1024);
-            this.rcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 2 * 1024 * 1024);
+            this.httpActiveConnectionLimit = getInt(properties, env, "http.net.active.connection.limit", 256);
+            this.httpEventCapacity = getInt(properties, env, "http.net.event.capacity", 1024);
+            this.httpIOQueueCapacity = getInt(properties, env, "http.net.io.queue.capacity", 1024);
+            this.httpIdleConnectionTimeout = getLong(properties, env, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
+            this.httpInterestQueueCapacity = getInt(properties, env, "http.net.interest.queue.capacity", 1024);
+            this.httpListenBacklog = getInt(properties, env, "http.net.listen.backlog", 256);
+            this.httpSndBufSize = getIntSize(properties, env, "http.net.snd.buf.size", 2 * 1024 * 1024);
+            this.httpRcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 2 * 1024 * 1024);
             this.dateAdapterPoolCapacity = getInt(properties, env, "http.text.date.adapter.pool.capacity", 16);
             this.jsonCacheLimit = getIntSize(properties, env, "http.text.json.cache.limit", 16384);
             this.jsonCacheSize = getIntSize(properties, env, "http.text.json.cache.size", 8192);
@@ -350,8 +388,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.interruptorBufferSize = getInt(properties, env, "http.security.interruptor.buffer.size", 64);
 
             parseBindTo(properties, env, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
-                bindIPv4Address = a;
-                bindPort = p;
+                httpBindIPv4Address = a;
+                httpBindPort = p;
             });
 
             // load mime types
@@ -564,6 +602,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public HttpServerConfiguration getHttpServerConfiguration() {
         return httpServerConfiguration;
+    }
+
+    @Override
+    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+        return httpMinServerConfiguration;
     }
 
     @Override
@@ -804,20 +847,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class HttpIODispatcherConfiguration implements IODispatcherConfiguration {
+    private class PropHttpIODispatcherConfiguration implements IODispatcherConfiguration {
         @Override
         public int getActiveConnectionLimit() {
-            return activeConnectionLimit;
+            return httpActiveConnectionLimit;
         }
 
         @Override
         public int getBindIPv4Address() {
-            return bindIPv4Address;
+            return httpBindIPv4Address;
         }
 
         @Override
         public int getBindPort() {
-            return bindPort;
+            return httpBindPort;
         }
 
         @Override
@@ -837,17 +880,17 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getEventCapacity() {
-            return eventCapacity;
+            return httpEventCapacity;
         }
 
         @Override
         public int getIOQueueCapacity() {
-            return ioQueueCapacity;
+            return httpIOQueueCapacity;
         }
 
         @Override
         public long getIdleConnectionTimeout() {
-            return idleConnectionTimeout;
+            return httpIdleConnectionTimeout;
         }
 
         @Override
@@ -857,12 +900,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getInterestQueueCapacity() {
-            return interestQueueCapacity;
+            return httpInterestQueueCapacity;
         }
 
         @Override
         public int getListenBacklog() {
-            return listenBacklog;
+            return httpListenBacklog;
         }
 
         @Override
@@ -872,7 +915,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getRcvBufSize() {
-            return rcvBufSize;
+            return httpRcvBufSize;
         }
 
         @Override
@@ -882,7 +925,89 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getSndBufSize() {
-            return sndBufSize;
+            return httpSndBufSize;
+        }
+    }
+
+    private class PropHttpMinIODispatcherConfiguration implements IODispatcherConfiguration {
+        @Override
+        public int getActiveConnectionLimit() {
+            return httpActiveConnectionLimit;
+        }
+
+        @Override
+        public int getBindIPv4Address() {
+            return httpMinBindIPv4Address;
+        }
+
+        @Override
+        public int getBindPort() {
+            return httpMinBindPort;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+            return "http-min-server";
+        }
+
+        @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getEventCapacity() {
+            return httpMinEventCapacity;
+        }
+
+        @Override
+        public int getIOQueueCapacity() {
+            return httpMinIOQueueCapacity;
+        }
+
+        @Override
+        public long getIdleConnectionTimeout() {
+            return httpMinIdleConnectionTimeout;
+        }
+
+        @Override
+        public int getInitialBias() {
+            return IOOperation.READ;
+        }
+
+        @Override
+        public int getInterestQueueCapacity() {
+            return httpMinInterestQueueCapacity;
+        }
+
+        @Override
+        public int getListenBacklog() {
+            return httpMinListenBacklog;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getRcvBufSize() {
+            return httpMinRcvBufSize;
+        }
+
+        @Override
+        public SelectFacade getSelectFacade() {
+            return SelectFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getSndBufSize() {
+            return httpMinSndBufSize;
         }
     }
 
@@ -964,7 +1089,22 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropHttpServerConfiguration implements HttpServerConfiguration {
+    private class PropHttpContextConfiguration implements HttpContextConfiguration {
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public boolean allowDeflateBeforeSend() {
+            return httpAllowDeflateBeforeSend;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
+        }
 
         @Override
         public int getConnectionPoolInitialCapacity() {
@@ -974,6 +1114,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getConnectionStringPoolCapacity() {
             return connectionStringPoolCapacity;
+        }
+
+        @Override
+        public boolean getDumpNetworkTraffic() {
+            return false;
+        }
+
+        @Override
+        public String getHttpVersion() {
+            return httpVersion;
+        }
+
+        @Override
+        public int getInterruptorBufferSize() {
+            return interruptorBufferSize;
+        }
+
+        @Override
+        public int getInterruptorNIterationsPerCheck() {
+            return interruptorNIterationsPerCheck;
         }
 
         @Override
@@ -1002,6 +1162,34 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSendBufferSize() {
+            return sendBufferSize;
+        }
+
+        @Override
+        public boolean getServerKeepAlive() {
+            return httpServerKeepAlive;
+        }
+
+        @Override
+        public boolean isInterruptOnClosedConnection() {
+            return interruptOnClosedConnection;
+        }
+
+        @Override
+        public boolean readOnlySecurityContext() {
+            return readOnlySecurityContext;
+        }
+    }
+
+    private class PropHttpServerConfiguration implements HttpServerConfiguration {
+
+        @Override
+        public IODispatcherConfiguration getDispatcherConfiguration() {
+            return httpIODispatcherConfiguration;
+        }
+
+        @Override
         public int getQueryCacheBlocks() {
             return sqlCacheBlocks;
         }
@@ -1009,16 +1197,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryCacheRows() {
             return sqlCacheRows;
-        }
-
-        @Override
-        public MillisecondClock getClock() {
-            return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
-        }
-
-        @Override
-        public IODispatcherConfiguration getDispatcherConfiguration() {
-            return httpIODispatcherConfiguration;
         }
 
         @Override
@@ -1032,53 +1210,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSendBufferSize() {
-            return sendBufferSize;
-        }
-
-        @Override
         public boolean isEnabled() {
             return httpServerEnabled;
         }
 
         @Override
-        public boolean getDumpNetworkTraffic() {
-            return false;
-        }
-
-        @Override
-        public boolean allowDeflateBeforeSend() {
-            return httpAllowDeflateBeforeSend;
-        }
-
-        @Override
-        public boolean readOnlySecurityContext() {
-            return readOnlySecurityContext;
-        }
-
-        @Override
-        public boolean isInterruptOnClosedConnection() {
-            return interruptOnClosedConnection;
-        }
-
-        @Override
-        public int getInterruptorNIterationsPerCheck() {
-            return interruptorNIterationsPerCheck;
-        }
-
-        @Override
-        public int getInterruptorBufferSize() {
-            return interruptorBufferSize;
-        }
-
-        @Override
-        public boolean getServerKeepAlive() {
-            return httpServerKeepAlive;
-        }
-
-        @Override
-        public String getHttpVersion() {
-            return httpVersion;
+        public HttpContextConfiguration getHttpContextConfiguration() {
+            return httpContextConfiguration;
         }
 
         @Override
@@ -1623,7 +1761,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getSndBufSize() {
             return -1;
         }
-
     }
 
     private class PropLineTcpWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
@@ -2000,6 +2137,39 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueueCapacity() {
             return telemetryQueueCapacity;
+        }
+    }
+
+    private class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
+
+        @Override
+        public IODispatcherConfiguration getDispatcherConfiguration() {
+            return httpMinIODispatcherConfiguration;
+        }
+
+        @Override
+        public HttpContextConfiguration getHttpContextConfiguration() {
+            return httpContextConfiguration;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return httpMinWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return httpMinWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return httpMinWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return httpMinServerEnabled;
         }
     }
 }
