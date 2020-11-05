@@ -29,8 +29,6 @@ import io.questdb.std.time.MillisecondClock;
 
 public interface HttpContextConfiguration {
 
-    NetworkFacade getNetworkFacade();
-
     boolean allowDeflateBeforeSend();
 
     MillisecondClock getClock();
@@ -43,13 +41,11 @@ public interface HttpContextConfiguration {
 
     String getHttpVersion();
 
-    int getInterruptorBufferSize();
-
-    int getInterruptorNIterationsPerCheck();
-
     int getMultipartHeaderBufferSize();
 
     long getMultipartIdleSpinCount();
+
+    NetworkFacade getNetworkFacade();
 
     int getRecvBufferSize();
 
@@ -60,8 +56,6 @@ public interface HttpContextConfiguration {
     int getSendBufferSize();
 
     boolean getServerKeepAlive();
-
-    boolean isInterruptOnClosedConnection();
 
     boolean readOnlySecurityContext();
 }

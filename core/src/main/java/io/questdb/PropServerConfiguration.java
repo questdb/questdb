@@ -42,6 +42,7 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
@@ -164,6 +165,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
     private final boolean httpMinServerEnabled;
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
+    private final PropSqlInterruptorConfiguration interruptorConfiguration = new PropSqlInterruptorConfiguration();
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -1089,12 +1091,29 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropHttpContextConfiguration implements HttpContextConfiguration {
+    private class PropSqlInterruptorConfiguration implements SqlInterruptorConfiguration {
+        @Override
+        public int getBufferSize() {
+            return interruptorBufferSize;
+        }
+
+        @Override
+        public int getCountOfIterationsPerCheck() {
+            return interruptorNIterationsPerCheck;
+        }
 
         @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }
+
+        @Override
+        public boolean isEnabled() {
+            return interruptOnClosedConnection;
+        }
+    }
+
+    private class PropHttpContextConfiguration implements HttpContextConfiguration {
 
         @Override
         public boolean allowDeflateBeforeSend() {
@@ -1127,16 +1146,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getInterruptorBufferSize() {
-            return interruptorBufferSize;
-        }
-
-        @Override
-        public int getInterruptorNIterationsPerCheck() {
-            return interruptorNIterationsPerCheck;
-        }
-
-        @Override
         public int getMultipartHeaderBufferSize() {
             return multipartHeaderBufferSize;
         }
@@ -1144,6 +1153,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMultipartIdleSpinCount() {
             return multipartIdleSpinCount;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -1172,11 +1186,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isInterruptOnClosedConnection() {
-            return interruptOnClosedConnection;
-        }
-
-        @Override
         public boolean readOnlySecurityContext() {
             return readOnlySecurityContext;
         }
@@ -1187,6 +1196,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return httpIODispatcherConfiguration;
+        }
+
+        @Override
+        public HttpContextConfiguration getHttpContextConfiguration() {
+            return httpContextConfiguration;
+        }
+
+        @Override
+        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+            return jsonQueryProcessorConfiguration;
         }
 
         @Override
@@ -1205,18 +1224,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-            return jsonQueryProcessorConfiguration;
-        }
-
-        @Override
         public boolean isEnabled() {
             return httpServerEnabled;
-        }
-
-        @Override
-        public HttpContextConfiguration getHttpContextConfiguration() {
-            return httpContextConfiguration;
         }
 
         @Override
@@ -1906,6 +1915,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return maxHttpQueryResponseRowLimit;
+        }
+
+        @Override
+        public SqlInterruptorConfiguration getInterruptorConfiguration() {
+            return interruptorConfiguration;
         }
     }
 

@@ -22,27 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.griffin;
 
-import io.questdb.griffin.SqlInterruptorConfiguration;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 
-public interface JsonQueryProcessorConfiguration {
+public class DefaultSqlInterruptorConfiguration implements SqlInterruptorConfiguration {
+    @Override
+    public int getBufferSize() {
+        return 64;
+    }
 
-    MillisecondClock getClock();
+    @Override
+    public int getCountOfIterationsPerCheck() {
+        return 5;
+    }
 
-    int getConnectionCheckFrequency();
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
 
-    FilesFacade getFilesFacade();
-
-    int getFloatScale();
-
-    int getDoubleScale();
-
-    CharSequence getKeepAliveHeader();
-
-    long getMaxQueryResponseRowLimit();
-
-    SqlInterruptorConfiguration getInterruptorConfiguration();
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
 }

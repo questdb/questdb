@@ -31,6 +31,16 @@ import io.questdb.std.time.MillisecondClockImpl;
 
 public class DefaultHttpContextConfiguration implements HttpContextConfiguration {
     @Override
+    public boolean allowDeflateBeforeSend() {
+        return false;
+    }
+
+    @Override
+    public MillisecondClock getClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
+
+    @Override
     public int getConnectionPoolInitialCapacity() {
         return 16;
     }
@@ -41,6 +51,17 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public boolean getDumpNetworkTraffic() {
+        return false;
+    }
+
+    @Override
+    public String getHttpVersion() {
+        // trailing space is important
+        return "HTTP/1.1 ";
+    }
+
+    @Override
     public int getMultipartHeaderBufferSize() {
         return 512;
     }
@@ -48,6 +69,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     @Override
     public long getMultipartIdleSpinCount() {
         return 10_000;
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
     }
 
     @Override
@@ -71,53 +97,12 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
-    public boolean getDumpNetworkTraffic() {
-        return false;
-    }
-
-    @Override
-    public boolean allowDeflateBeforeSend() {
-        return false;
-    }
-
-    @Override
-    public boolean readOnlySecurityContext() {
-        return false;
-    }
-
-    @Override
-    public boolean isInterruptOnClosedConnection() {
-        return true;
-    }
-
-    @Override
-    public int getInterruptorNIterationsPerCheck() {
-        return 5;
-    }
-
-    @Override
-    public int getInterruptorBufferSize() {
-        return 64;
-    }
-
-    @Override
     public boolean getServerKeepAlive() {
         return true;
     }
 
     @Override
-    public String getHttpVersion() {
-        // trailing space is important
-        return "HTTP/1.1 ";
-    }
-
-    @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public MillisecondClock getClock() {
-        return MillisecondClockImpl.INSTANCE;
+    public boolean readOnlySecurityContext() {
+        return false;
     }
 }

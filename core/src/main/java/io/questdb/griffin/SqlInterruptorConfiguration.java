@@ -22,27 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.griffin;
 
-import io.questdb.griffin.SqlInterruptorConfiguration;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.network.NetworkFacade;
 
-public interface JsonQueryProcessorConfiguration {
+public interface SqlInterruptorConfiguration {
+    int getBufferSize();
 
-    MillisecondClock getClock();
+    int getCountOfIterationsPerCheck();
 
-    int getConnectionCheckFrequency();
+    NetworkFacade getNetworkFacade();
 
-    FilesFacade getFilesFacade();
-
-    int getFloatScale();
-
-    int getDoubleScale();
-
-    CharSequence getKeepAliveHeader();
-
-    long getMaxQueryResponseRowLimit();
-
-    SqlInterruptorConfiguration getInterruptorConfiguration();
+    boolean isEnabled();
 }

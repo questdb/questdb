@@ -26,6 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
+import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
@@ -39,6 +41,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration = new DefaultIODispatcherConfiguration();
     private final HttpContextConfiguration httpContextConfiguration;
+    private final SqlInterruptorConfiguration interruptorConfiguration;
+
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
         @Override
         public FilesFacade getFilesFacade() {
@@ -100,6 +104,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
         }
+
+        @Override
+        public SqlInterruptorConfiguration getInterruptorConfiguration() {
+            return interruptorConfiguration;
+        }
     };
 
     public DefaultHttpServerConfiguration() {
@@ -117,11 +126,22 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
         }
         this.httpContextConfiguration = httpContextConfiguration;
+        this.interruptorConfiguration = new DefaultSqlInterruptorConfiguration();
     }
 
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {
         return dispatcherConfiguration;
+    }
+
+    @Override
+    public HttpContextConfiguration getHttpContextConfiguration() {
+        return httpContextConfiguration;
+    }
+
+    @Override
+    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+        return jsonQueryProcessorConfiguration;
     }
 
     @Override
@@ -140,18 +160,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-        return jsonQueryProcessorConfiguration;
-    }
-
-    @Override
     public boolean isEnabled() {
         return true;
-    }
-
-    @Override
-    public HttpContextConfiguration getHttpContextConfiguration() {
-        return httpContextConfiguration;
     }
 
     @Override

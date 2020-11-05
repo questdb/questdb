@@ -32,6 +32,8 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
+import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -5220,8 +5222,13 @@ public class IODispatcherTest {
         return new DefaultHttpServerConfiguration(
                 new DefaultHttpContextConfiguration() {
                     @Override
-                    public int getSendBufferSize() {
-                        return sendBufferSize;
+                    public boolean allowDeflateBeforeSend() {
+                        return allowDeflateBeforeSend;
+                    }
+
+                    @Override
+                    public MillisecondClock getClock() {
+                        return () -> 0;
                     }
 
                     @Override
@@ -5230,23 +5237,18 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public boolean allowDeflateBeforeSend() {
-                        return allowDeflateBeforeSend;
-                    }
-
-                    @Override
-                    public boolean getServerKeepAlive() {
-                        return serverKeepAlive;
-                    }
-
-                    @Override
                     public String getHttpVersion() {
                         return httpProtocolVersion;
                     }
 
                     @Override
-                    public MillisecondClock getClock() {
-                        return () -> 0;
+                    public int getSendBufferSize() {
+                        return sendBufferSize;
+                    }
+
+                    @Override
+                    public boolean getServerKeepAlive() {
+                        return serverKeepAlive;
                     }
                 }
         ) {
@@ -5278,6 +5280,9 @@ public class IODispatcherTest {
             };
 
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
+
+                private final DefaultSqlInterruptorConfiguration sqlInterruptorConfiguration = new DefaultSqlInterruptorConfiguration();
+
                 @Override
                 public MillisecondClock getClock() {
                     return () -> 0;
@@ -5312,6 +5317,11 @@ public class IODispatcherTest {
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
                 }
+
+                @Override
+                public SqlInterruptorConfiguration getInterruptorConfiguration() {
+                    return sqlInterruptorConfiguration;
+                }
             };
 
             @Override
@@ -5320,13 +5330,13 @@ public class IODispatcherTest {
             }
 
             @Override
-            public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
-                return staticContentProcessorConfiguration;
+            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+                return jsonQueryProcessorConfiguration;
             }
 
             @Override
-            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-                return jsonQueryProcessorConfiguration;
+            public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
+                return staticContentProcessorConfiguration;
             }
         };
     }

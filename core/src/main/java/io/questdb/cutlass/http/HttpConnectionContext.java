@@ -26,12 +26,13 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
-import io.questdb.griffin.HttpSqlExecutionInterruptor;
-import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 
@@ -52,13 +53,12 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final CairoSecurityContext cairoSecurityContext;
     private final boolean dumpNetworkTraffic;
     private final boolean allowDeflateBeforeSend;
-    private final HttpSqlExecutionInterruptor execInterruptor;
+    private final boolean serverKeepAlive;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
-    private final boolean serverKeepAlive;
 
     public HttpConnectionContext(HttpContextConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
@@ -75,9 +75,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
         cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
-        execInterruptor = configuration.isInterruptOnClosedConnection()
-                ? new HttpSqlExecutionInterruptor(this.nf, configuration.getInterruptorNIterationsPerCheck(), configuration.getInterruptorBufferSize())
-                : null;
         this.serverKeepAlive = configuration.getServerKeepAlive();
     }
 
@@ -98,7 +95,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     @Override
     public void close() {
         this.fd = -1;
-        Misc.free(execInterruptor);
         nCompletedRequests = 0;
         totalBytesSent = 0;
         csPool.clear();
@@ -135,9 +131,17 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getChunkedSocket();
     }
 
+    public long getLastRequestBytesSent() {
+        return responseSink.getTotalBytesSent();
+    }
+
     @Override
     public LocalValueMap getMap() {
         return localValueMap;
+    }
+
+    public int getNCompletedRequests() {
+        return nCompletedRequests;
     }
 
     public HttpRawSocket getRawResponseSocket() {
@@ -150,6 +154,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
     public HttpResponseHeader getResponseHeader() {
         return responseSink.getHeader();
+    }
+
+    public long getTotalBytesSent() {
+        return totalBytesSent;
     }
 
     public void handleClientOperation(int operation, HttpRequestProcessorSelector selector) {
@@ -182,9 +190,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.fd = fd;
         this.dispatcher = dispatcher;
         this.responseSink.of(fd);
-        if (null != execInterruptor) {
-            this.execInterruptor.of(fd);
-        }
         return this;
     }
 
@@ -403,14 +408,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return keepGoing;
     }
 
-    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        clear();
-        LOG.error().$(userMessage).$();
-        simpleResponse().sendStatus(404, userMessage);
-        dispatcher.registerChannel(this, IOOperation.READ);
-        return false;
-    }
-
     private boolean handleClientSend() {
         assert resumeProcessor != null;
         try {
@@ -431,19 +428,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return false;
     }
 
-    public int getNCompletedRequests() {
-        return nCompletedRequests;
-    }
-
-    public long getTotalBytesSent() {
-        return totalBytesSent;
-    }
-
-    public long getLastRequestBytesSent() {
-        return responseSink.getTotalBytesSent();
-    }
-
-    public SqlExecutionInterruptor getSqlExecutionInterruptor() {
-        return execInterruptor;
+    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        clear();
+        LOG.error().$(userMessage).$();
+        simpleResponse().sendStatus(404, userMessage);
+        dispatcher.registerChannel(this, IOOperation.READ);
+        return false;
     }
 }
