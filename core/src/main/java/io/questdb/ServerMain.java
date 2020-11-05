@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpServer;
-import io.questdb.cutlass.line.udp.AbstractLineProtoReceiver;
 import io.questdb.cutlass.line.udp.LineProtoReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineProtoReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
@@ -41,7 +40,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.time.Dates;
-import org.jetbrains.annotations.Nullable;
 import sun.misc.Signal;
 
 import java.io.*;
@@ -55,30 +53,8 @@ import java.util.zip.ZipInputStream;
 
 public class ServerMain {
     private static final String VERSION_TXT = "version.txt";
-
-    public static void deleteOrException(File file) {
-        if (!file.exists()) {
-            return;
-        }
-        deleteDirContentsOrException(file);
-
-        int retryCount = 3;
-        boolean deleted = false;
-        while (retryCount > 0 && !(deleted = file.delete())) {
-            retryCount--;
-            Thread.yield();
-        }
-
-        if (!deleted) {
-            throw new RuntimeException("Cannot delete file " + file);
-        }
-    }
-
-    public static void main(String[] args) throws Exception {
-        new ServerMain(args);
-    }
-
     protected PropServerConfiguration configuration;
+
     public ServerMain(String[] args) throws Exception {
         System.err.printf("QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n", getVersion(), Dates.getYear(System.currentTimeMillis()));
         if (args.length < 1) {
@@ -151,13 +127,17 @@ public class ServerMain {
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
+        final ObjList<Closeable> instancesToClean = new ObjList<>();
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
         workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        instancesToClean.add(cairoEngine);
+
         // The TelemetryJob is always needed (even when telemetry is off) because it is responsible for
         // updating the telemetry_config table.
         final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
+        instancesToClean.add(telemetryJob);
 
         if (configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled()) {
             workerPool.assign(telemetryJob);
@@ -165,49 +145,44 @@ public class ServerMain {
 
         try {
             initQuestDb(workerPool, cairoEngine, log);
-            final HttpServer httpServer = createHttpServer(workerPool, log, cairoEngine, functionFactoryCache);
 
-            final PGWireServer pgWireServer;
+            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache));
+            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache));
 
             if (configuration.getPGWireConfiguration().isEnabled()) {
-                pgWireServer = PGWireServer.create(
+                instancesToClean.add(PGWireServer.create(
                         configuration.getPGWireConfiguration(),
                         workerPool,
                         log,
                         cairoEngine,
                         functionFactoryCache
-                );
-            } else {
-                pgWireServer = null;
+                ));
             }
-
-            final AbstractLineProtoReceiver lineUdpServer;
 
             if (configuration.getLineUdpReceiverConfiguration().isEnabled()) {
                 if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
-                    lineUdpServer = new LinuxMMLineProtoReceiver(
+                    instancesToClean.add(new LinuxMMLineProtoReceiver(
                             configuration.getLineUdpReceiverConfiguration(),
                             cairoEngine,
                             workerPool
-                    );
+                    ));
                 } else {
-                    lineUdpServer = new LineProtoReceiver(
+                    instancesToClean.add(new LineProtoReceiver(
                             configuration.getLineUdpReceiverConfiguration(),
                             cairoEngine,
                             workerPool
-                    );
+                    ));
                 }
-            } else {
-                lineUdpServer = null;
             }
 
-            LineTcpServer lineTcpServer = LineTcpServer.create(
+            instancesToClean.add(LineTcpServer.create(
                     configuration.getLineTcpReceiverConfiguration(),
                     workerPool,
                     log,
                     cairoEngine
-            );
-            startQuestDb(workerPool, cairoEngine, lineUdpServer, log);
+            ));
+
+            startQuestDb(workerPool, cairoEngine, log);
             logWebConsoleUrls(log, configuration);
 
             System.gc();
@@ -220,15 +195,7 @@ public class ServerMain {
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.err.println(new Date() + " QuestDB is shutting down");
-                shutdownQuestDb(
-                        workerPool,
-                        cairoEngine,
-                        httpServer,
-                        pgWireServer,
-                        lineUdpServer,
-                        telemetryJob,
-                        lineTcpServer
-                );
+                shutdownQuestDb(workerPool, instancesToClean);
                 System.err.println(new Date() + " QuestDB is down");
             }));
         } catch (NetworkError e) {
@@ -238,14 +205,36 @@ public class ServerMain {
         }
     }
 
+    public static void deleteOrException(File file) {
+        if (!file.exists()) {
+            return;
+        }
+        deleteDirContentsOrException(file);
+
+        int retryCount = 3;
+        boolean deleted = false;
+        while (retryCount > 0 && !(deleted = file.delete())) {
+            retryCount--;
+            Thread.yield();
+        }
+
+        if (!deleted) {
+            throw new RuntimeException("Cannot delete file " + file);
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        new ServerMain(args);
+    }
+
     private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
         final LogRecord record = log.info().$("web console URL(s):").$('\n').$('\n');
         final int httpBindIP = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address();
         final int httpBindPort = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
         if (httpBindIP == 0) {
             Enumeration<NetworkInterface> nets = NetworkInterface.getNetworkInterfaces();
-            for (NetworkInterface netint : Collections.list(nets)) {
-                Enumeration<InetAddress> inetAddresses = netint.getInetAddresses();
+            for (NetworkInterface networkInterface : Collections.list(nets)) {
+                Enumeration<InetAddress> inetAddresses = networkInterface.getInetAddresses();
                 for (InetAddress inetAddress : Collections.list(inetAddresses)) {
                     if (inetAddress instanceof Inet4Address) {
                         record.$('\t').$("http:/").$(inetAddress).$(':').$(httpBindPort).$('\n');
@@ -256,19 +245,6 @@ public class ServerMain {
         } else {
             record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n').$();
         }
-    }
-
-    protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
-        return HttpServer.create(
-                configuration.getHttpServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                functionFactoryCache);
-    }
-
-    protected void readServerConfiguration(final String rootDirectory, final Properties properties, Log log) throws ServerConfigurationException, JsonException {
-        configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log);
     }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
@@ -431,23 +407,29 @@ public class ServerMain {
         return "[DEVELOPMENT]";
     }
 
-    protected static void shutdownQuestDb(
-            final WorkerPool workerPool,
-            final CairoEngine cairoEngine,
-            final HttpServer httpServer,
-            final PGWireServer pgWireServer,
-            @Nullable final AbstractLineProtoReceiver lineProtocolReceiver,
-            final TelemetryJob telemetryJob,
-            final LineTcpServer lineTcpServer
-    ) {
-        Misc.free(lineProtocolReceiver);
-        Misc.free(telemetryJob);
+    protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
         workerPool.halt();
-        Misc.free(pgWireServer);
-        Misc.free(httpServer);
-        Misc.free(cairoEngine);
-        Misc.free(lineProtocolReceiver);
-        Misc.free(lineTcpServer);
+        Misc.freeObjList(instancesToClean);
+    }
+
+    protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+        return HttpServer.create(
+                configuration.getHttpServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine,
+                functionFactoryCache
+        );
+    }
+
+    protected HttpServer createMinHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
+        return HttpServer.createMin(
+                configuration.getHttpMinServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine,
+                functionFactoryCache
+        );
     }
 
     protected void initQuestDb(
@@ -458,15 +440,15 @@ public class ServerMain {
         // For extension
     }
 
+    protected void readServerConfiguration(final String rootDirectory, final Properties properties, Log log) throws ServerConfigurationException, JsonException {
+        configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log);
+    }
+
     protected void startQuestDb(
             final WorkerPool workerPool,
             final CairoEngine cairoEngine,
-            @Nullable final AbstractLineProtoReceiver lineProtocolReceiver,
             final Log log
     ) {
         workerPool.start(log);
-        if (lineProtocolReceiver != null) {
-            lineProtocolReceiver.start();
-        }
     }
 }

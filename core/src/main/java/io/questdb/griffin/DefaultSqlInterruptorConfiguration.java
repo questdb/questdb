@@ -22,29 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 
-public interface ServerConfiguration {
+public class DefaultSqlInterruptorConfiguration implements SqlInterruptorConfiguration {
+    @Override
+    public int getBufferSize() {
+        return 64;
+    }
 
-    CairoConfiguration getCairoConfiguration();
+    @Override
+    public int getCountOfIterationsPerCheck() {
+        return 5;
+    }
 
-    HttpServerConfiguration getHttpServerConfiguration();
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
 
-    HttpMinServerConfiguration getHttpMinServerConfiguration();
-
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
-
-    PGWireConfiguration getPGWireConfiguration();
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
 }

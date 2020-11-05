@@ -189,7 +189,7 @@ public class LineTcpServer implements Closeable {
             } else {
                 context.of(-1, null);
                 contextPool.get().push(context);
-                LOG.info().$("pushed").$();
+                LOG.debug().$("pushed").$();
             }
         }
 
