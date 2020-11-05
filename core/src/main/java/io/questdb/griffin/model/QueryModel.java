@@ -137,10 +137,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         final CharSequence alias = column.getAlias();
         final ExpressionNode ast = column.getAst();
         assert alias != null;
-        aliasToColumnNameMap.put(alias, ast.token);
-        columnNameToAliasMap.put(ast.token, alias);
+        CharSequence lowerCaseAlias = Chars.toLowerCase(alias);
+        CharSequence lowerCaseToken = Chars.toLowerCase(ast.token);
+        aliasToColumnNameMap.put(lowerCaseAlias, lowerCaseToken);
+        columnNameToAliasMap.put(lowerCaseToken, lowerCaseAlias);
         bottomUpColumnNames.add(alias);
-        aliasToColumnMap.put(alias, column);
+        aliasToColumnMap.put(lowerCaseAlias, column);
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -258,7 +260,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.bottomUpColumnNames.addAll(columnNames);
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence name = columnNames.getQuick(i);
-            this.aliasToColumnNameMap.put(name, name);
+            this.aliasToColumnNameMap.put(Chars.toLowerCase(name), Chars.toLowerCase(name));
         }
     }
 

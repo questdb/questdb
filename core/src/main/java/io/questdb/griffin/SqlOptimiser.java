@@ -201,7 +201,7 @@ class SqlOptimiser {
             QueryModel validatingModel
     ) throws SqlException {
         if (validatingModel != null) {
-            CharSequence refColumn = column.getAst().token;
+            CharSequence refColumn = Chars.toLowerCase(column.getAst().token);
             final int dot = Chars.indexOf(refColumn, '.');
             getIndexOfTableForColumn(validatingModel, refColumn, dot, column.getAst().position);
             // when we have only one model, e.g. this is not a join
@@ -1168,6 +1168,7 @@ class SqlOptimiser {
     }
 
     private int getIndexOfTableForColumn(QueryModel model, CharSequence column, int dot, int position) throws SqlException {
+        column = Chars.toLowerCase(column);
         ObjList<QueryModel> joinModels = model.getJoinModels();
         int index = -1;
         if (dot == -1) {
