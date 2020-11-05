@@ -813,6 +813,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             sendCurrentCursorTail = TAIL_SUCCESS;
             prepareExecuteTail(false);
         } catch (CairoException e) {
+            LOG.error().$(e.getFlyweightMessage()).$();
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;
             }
