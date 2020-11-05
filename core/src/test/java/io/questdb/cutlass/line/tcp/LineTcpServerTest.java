@@ -250,8 +250,8 @@ public class LineTcpServerTest extends AbstractCairoTest {
                 } while (nRowsWritten < nRows);
                 LOG.info().$(nRowsWritten).$(" rows written").$();
             } finally {
-                Misc.free(tcpServer);
                 sharedWorkerPool.halt();
+                Misc.free(tcpServer);
             }
         }
 
