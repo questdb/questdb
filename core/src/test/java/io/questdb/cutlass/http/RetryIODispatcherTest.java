@@ -280,7 +280,7 @@ public class RetryIODispatcherTest {
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
                 ).run((engine) -> new SendAndReceiveRequestBuilder().execute(ValidImportRequest,
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -692,13 +692,8 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        // Check that status is 200.
-                                        // Do not check full response. Sometimes TextImport reports dirty insert count
-                                        // e.g. inserts from another transaction visible in the count.
-                                        String response = "HTTP/1.1 200 OK\r\n";
                                         new SendAndReceiveRequestBuilder()
-                                                .withCompareLength(response.length())
-                                                .execute(ValidImportRequest, response);
+                                                .execute(ValidImportRequest,ValidImportResponse);
                                     } catch (AssertionError e) {
                                         LOG.error().$(e).$();
                                         failedImports.incrementAndGet();

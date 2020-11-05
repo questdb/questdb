@@ -46,6 +46,14 @@ public final class TableUtils {
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_VERSION = -1;
+    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
+    public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
+    public static final long TX_OFFSET_STRUCT_VERSION = 40;
+    public static final long TX_OFFSET_TXN_CHECK = 64;
+    public static final long META_OFFSET_COUNT = 0;
+    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    public static final long META_OFFSET_VERSION = 12;
+    public static final long META_OFFSET_TABLE_ID = 16;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -56,14 +64,10 @@ public final class TableUtils {
     static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
-    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
     static final long TX_OFFSET_MIN_TIMESTAMP = 24;
     static final long TX_OFFSET_MAX_TIMESTAMP = 32;
-    public static final long TX_OFFSET_STRUCT_VERSION = 40;
     static final long TX_OFFSET_DATA_VERSION = 48;
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
-    public static final long TX_OFFSET_TXN_CHECK = 64;
     static final long TX_OFFSET_MAP_WRITER_COUNT = 72;
     /**
      * TXN file structure
@@ -84,13 +88,9 @@ public final class TableUtils {
 
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
-    public static final long META_OFFSET_COUNT = 0;
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    public static final long META_OFFSET_VERSION = 12;
-    public static final long META_OFFSET_TABLE_ID = 16;
     static final long META_COLUMN_DATA_SIZE = 16;
     static final long META_COLUMN_DATA_RESERVED = 3;
     static final long META_OFFSET_COLUMN_TYPES = 128;
@@ -208,6 +208,10 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
+    public static int getColumnType(ReadOnlyColumn metaMem, int columnIndex) {
+        return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
+    }
+
     public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
         return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8;
     }
@@ -222,6 +226,36 @@ public final class TableUtils {
 
     public static long getTxMemSize(int symbolWriterCount, int removedPartitionsCount) {
         return getPartitionTableIndexOffset(symbolWriterCount, removedPartitionsCount);
+    }
+
+    public static boolean isValidColumnName(CharSequence seq) {
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case ' ':
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case '\0':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                default:
+                    break;
+            }
+        }
+        return true;
     }
 
     public static long lock(FilesFacade ff, Path path) {
@@ -242,6 +276,16 @@ public final class TableUtils {
 
     public static void lockName(Path path) {
         path.put(".lock").$();
+    }
+
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
+        long fd = ff.openRW(path);
+        if (fd > 0) {
+            return fd;
+        }
+
+        throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
+
     }
 
     public static void resetTxn(VirtualMemory txMem, int symbolMapCount, long txn, long dataVersion) {
@@ -279,18 +323,13 @@ public final class TableUtils {
         txMem.jumpTo(getPartitionTableIndexOffset(symbolMapCount, 0));
     }
 
-    public static int toIndexKey(int symbolKey) {
-        return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
-    }
-
     /**
-     * 
      * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
-     * 
-     * @param path  Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param partitionBy   Partitioning scheme
-     * @param timestamp A timestamp in the partition
-     * @return  The last timestamp in the partition
+     *
+     * @param path        Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @return The last timestamp in the partition
      */
     public static long setPathForPartition(Path path, int partitionBy, long timestamp) {
         int y, m, d;
@@ -338,6 +377,10 @@ public final class TableUtils {
         }
 
         return partitionHi;
+    }
+
+    public static int toIndexKey(int symbolKey) {
+        return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
     public static void validate(FilesFacade ff, ReadOnlyColumn metaMem, CharSequenceIntHashMap nameIndex) {
@@ -392,11 +435,11 @@ public final class TableUtils {
                     throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
                 }
 
-                String s = name.toString();
-                if (!nameIndex.put(s, i)) {
-                    throw validationException(metaMem).put("Duplicate column: ").put(s).put(" at [").put(i).put(']');
+                if (nameIndex.put(name, i)) {
+                    offset += ReadOnlyMemory.getStorageLength(name);
+                } else {
+                    throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
                 }
-                offset += ReadOnlyMemory.getStorageLength(name);
             }
         } catch (CairoException e) {
             nameIndex.clear();
@@ -478,10 +521,6 @@ public final class TableUtils {
 
     static LPSZ iFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".i").$();
-    }
-
-    public static int getColumnType(ReadOnlyColumn metaMem, int columnIndex) {
-        return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
     static long getColumnFlags(ReadOnlyColumn metaMem, int columnIndex) {
@@ -596,45 +635,5 @@ public final class TableUtils {
         fmtDay = compiler.compile("yyyy-MM-dd");
         fmtMonth = compiler.compile("yyyy-MM");
         fmtYear = compiler.compile("yyyy");
-    }
-
-    public static boolean isValidColumnName(CharSequence seq) {
-        for (int i = 0, l = seq.length(); i < l; i++) {
-            char c = seq.charAt(i);
-            switch (c) {
-                case ' ':
-                case '?':
-                case '.':
-                case ',':
-                case '\'':
-                case '\"':
-                case '\\':
-                case '/':
-                case '\0':
-                case ':':
-                case ')':
-                case '(':
-                case '+':
-                case '-':
-                case '*':
-                case '%':
-                case '~':
-                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
-                    return false;
-                default:
-                    break;
-            }
-        }
-        return true;
-    }
-
-    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
-        long fd = ff.openRW(path);
-        if (fd > 0) {
-            return fd;
-        }
-
-        throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
-
     }
 }

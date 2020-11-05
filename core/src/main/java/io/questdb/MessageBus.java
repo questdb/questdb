@@ -54,7 +54,7 @@ public interface MessageBus {
 
     default Sequence getTableBlockWriterSubSequence() {
         return null;
-    };
+    }
 
     CairoConfiguration getConfiguration();
 }

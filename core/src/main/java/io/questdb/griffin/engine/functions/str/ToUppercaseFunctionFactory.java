@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
@@ -42,7 +41,7 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final ObjList<Function> args, final int position, final CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(final ObjList<Function> args, final int position, final CairoConfiguration configuration) {
         return new ToUppercaseFunc(position, args.get(0));
     }
 
@@ -56,6 +55,11 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
         public ToUppercaseFunc(final int position, final Function arg) {
             super(position);
             this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
@@ -80,11 +84,6 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
             sinkB.clear();
             Chars.toUpperCase(str, sinkB);
             return sinkB;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
         @Override

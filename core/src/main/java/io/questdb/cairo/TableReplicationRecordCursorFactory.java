@@ -16,7 +16,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     private final IntList columnIndexes;
     private final IntList columnSizes;
 
-    private static final RecordMetadata createMetadata(CairoEngine engine, CharSequence tableName) {
+    private static RecordMetadata createMetadata(CairoEngine engine, CharSequence tableName) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName, -1)) {
             return GenericRecordMetadata.copyOf(reader.getMetadata());
         }
