@@ -24,83 +24,61 @@
 
 package io.questdb.std;
 
+
 import java.util.Arrays;
 
 
-public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashSet {
-    private static final int NO_ENTRY_VALUE = -1;
-    private final int noEntryValue;
-    protected int[] values;
+public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSequenceHashSet {
     private final ObjList<CharSequence> list;
+    private T[] values;
 
-    public LowerCaseCharSequenceIntHashMap() {
+    public LowerCaseCharSequenceObjHashMap() {
         this(8);
     }
 
-    public LowerCaseCharSequenceIntHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5, NO_ENTRY_VALUE);
+    public LowerCaseCharSequenceObjHashMap(int initialCapacity) {
+        this(initialCapacity, 0.5);
     }
 
-    public LowerCaseCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
+    @SuppressWarnings("unchecked")
+    public LowerCaseCharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
-        this.noEntryValue = noEntryValue;
+        values = (T[]) new Object[keys.length];
         this.list = new ObjList<>(capacity);
-        values = new int[keys.length];
         clear();
     }
 
-    public void clear() {
+    public final void clear() {
         super.clear();
         list.clear();
-        Arrays.fill(values, noEntryValue);
+        Arrays.fill(values, null);
+    }
+
+    public ObjList<CharSequence> keys() {
+        return list;
     }
 
     @Override
     protected void erase(int index) {
         keys[index] = noEntryKey;
-        values[index] = noEntryValue;
+        values[index] = null;
     }
 
+    @Override
     public void removeAt(int index) {
         if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
+            CharSequence key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
         }
-    }
-
-    public int valueAt(int index) {
-        return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
     public boolean contains(CharSequence key) {
         return keyIndex(key) < 0;
     }
 
-    public int get(CharSequence key) {
+    public T get(CharSequence key) {
         return valueAt(keyIndex(key));
-    }
-
-    public boolean put(CharSequence key, int value) {
-        return putAt(keyIndex(key), key, value);
-    }
-
-    public boolean putAt(int index, CharSequence key, int value) {
-        if (index < 0) {
-            values[-index - 1] = value;
-            return false;
-        }
-        putAt0(index, Chars.toLowerCaseAscii(key), value);
-        list.add(key);
-        return true;
-    }
-
-    public void putIfAbsent(CharSequence key, int value) {
-        int index = keyIndex(key);
-        if (index > -1) {
-            putAt0(index, Chars.toLowerCaseAscii(key), value);
-        }
     }
 
     @Override
@@ -110,7 +88,34 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         erase(from);
     }
 
-    protected void putAt0(int index, CharSequence key, int value) {
+    public boolean put(CharSequence key, T value) {
+        return putAt(keyIndex(key), key, value);
+    }
+
+    public boolean putAt(int index, CharSequence key, T value) {
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
+        }
+
+        final String lcKey = Chars.toLowerCaseAscii(key);
+        putAt0(index, lcKey, value);
+        list.add(lcKey);
+        return true;
+    }
+
+    public void putIfAbsent(CharSequence key, T value) {
+        int index = keyIndex(key);
+        if (index > -1) {
+            putAt0(index, Chars.toLowerCaseAscii(key), value);
+        }
+    }
+
+    public T valueAt(int index) {
+        return index < 0 ? values[-index - 1] : null;
+    }
+
+    private void putAt0(int index, CharSequence key, T value) {
         keys[index] = key;
         values[index] = value;
         if (--free == 0) {
@@ -118,18 +123,18 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         }
     }
 
+    @SuppressWarnings("unchecked")
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
-        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
-
-        int[] oldValues = values;
+        int arrayCapacity = Numbers.ceilPow2((int) (newCapacity / loadFactor));
+        T[] oldValues = values;
         CharSequence[] oldKeys = keys;
-        this.keys = new CharSequence[len];
-        this.values = new int[len];
+        this.keys = new CharSequence[arrayCapacity];
+        this.values = (T[]) new Object[arrayCapacity];
         Arrays.fill(keys, null);
-        mask = len - 1;
+        mask = arrayCapacity - 1;
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
@@ -142,7 +147,13 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         }
     }
 
-    public ObjList<CharSequence> keys() {
-        return list;
+    public void putAll(LowerCaseCharSequenceObjHashMap<T> other) {
+        CharSequence[] otherKeys = other.keys;
+        T[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
     }
 }

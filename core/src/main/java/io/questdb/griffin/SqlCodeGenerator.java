@@ -1050,7 +1050,7 @@ public class SqlCodeGenerator implements Mutable {
             return recordCursorFactory;
         }
         try {
-            final CharSequenceIntHashMap orderBy = model.getOrderHash();
+            final LowerCaseCharSequenceIntHashMap orderBy = model.getOrderHash();
             final ObjList<CharSequence> columnNames = orderBy.keys();
             final int size = columnNames.size();
 
@@ -1488,7 +1488,7 @@ public class SqlCodeGenerator implements Mutable {
             CharSequence tableName = tableNameEn.token;
             try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
                 CharSequence columnName = model.getBottomUpColumnNames().get(0);
-                TableReaderMetadata readerMetadata = (TableReaderMetadata) reader.getMetadata();
+                TableReaderMetadata readerMetadata = reader.getMetadata();
                 int columnIndex = readerMetadata.getColumnIndex(columnName);
                 int columnType = readerMetadata.getColumnType(columnIndex);
                 if (readerMetadata.getVersion() >= 416 && columnType == ColumnType.SYMBOL) {

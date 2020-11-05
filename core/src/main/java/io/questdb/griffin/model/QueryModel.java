@@ -56,11 +56,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SET_OPERATION_INTERSECT = 3;
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
-    private final CharSequenceHashSet topDownNameSet = new CharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
-    private final CharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new CharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<CharSequence> bottomUpColumnNames = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> orderBy = new ObjList<>();
@@ -69,7 +69,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
-    private final CharSequenceIntHashMap aliasIndexes = new CharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap aliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
@@ -79,7 +79,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-    private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
+    private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
@@ -137,12 +137,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         final CharSequence alias = column.getAlias();
         final ExpressionNode ast = column.getAst();
         assert alias != null;
-        CharSequence lowerCaseAlias = Chars.toLowerCase(alias);
-        CharSequence lowerCaseToken = Chars.toLowerCase(ast.token);
-        aliasToColumnNameMap.put(lowerCaseAlias, lowerCaseToken);
-        columnNameToAliasMap.put(lowerCaseToken, lowerCaseAlias);
+        aliasToColumnNameMap.put(alias, ast.token);
+        columnNameToAliasMap.put(ast.token, alias);
         bottomUpColumnNames.add(alias);
-        aliasToColumnMap.put(lowerCaseAlias, column);
+        aliasToColumnMap.put(alias, column);
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -290,11 +288,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return -1;
     }
 
-    public CharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
+    public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
         return aliasToColumnMap;
     }
 
-    public CharSequenceObjHashMap<CharSequence> getAliasToColumnNameMap() {
+    public LowerCaseCharSequenceObjHashMap<CharSequence> getAliasToColumnNameMap() {
         return aliasToColumnNameMap;
     }
 
@@ -306,7 +304,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return bottomUpColumns;
     }
 
-    public CharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
+    public LowerCaseCharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
         return columnNameToAliasMap;
     }
 
@@ -443,7 +441,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderByDirectionAdvice;
     }
 
-    public CharSequenceIntHashMap getOrderHash() {
+    public LowerCaseCharSequenceIntHashMap getOrderHash() {
         return orderHash;
     }
 

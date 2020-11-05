@@ -230,6 +230,39 @@ public final class Chars {
         return l != null && equalsIgnoreCase(l, r);
     }
 
+    public static boolean equalsLowerCase(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll = lHi - lLo;
+        if (ll != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (Character.toLowerCase(l.charAt(i + lLo)) != r.charAt(i + rLo)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equalsLowerCase(@NotNull CharSequence l, CharSequence r) {
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != r.charAt(i)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public static boolean equalsLowerCaseAscii(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
@@ -381,6 +414,19 @@ public final class Chars {
         int h = 0;
         for (int p = 0; p < len; p++) {
             h = 31 * h + toLowerCaseAscii(value.charAt(p));
+        }
+        return h;
+    }
+
+    public static int lowerCaseHashCode(CharSequence value) {
+        int len = value.length();
+        if (len == 0) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = 0; p < len; p++) {
+            h = 31 * h + Character.toLowerCase(value.charAt(p));
         }
         return h;
     }
