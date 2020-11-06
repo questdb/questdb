@@ -109,6 +109,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                 ff.findClose(findFileStruct);
                 findFileStruct = 0;
             }
+            metaMem.close();
         }
 
         @Override
@@ -216,6 +217,16 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             @Override
             public CharSequence getStr(int col) {
                 return name;
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return name;
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return getStr(col).length();
             }
         }
     }

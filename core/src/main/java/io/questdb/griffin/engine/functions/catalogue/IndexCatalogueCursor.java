@@ -33,15 +33,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 
 class IndexCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
-    private static final String[] namespaces = {"pg_catalog", "public"};
-    private static final int[] oids = {PgOIDs.PG_CATALOG_OID, PgOIDs.PG_PUBLIC_OID};
-    private static final int rowCount = namespaces.length;
     private final IndexCatalogueRecord record = new IndexCatalogueRecord();
-    private int row = -1;
 
     @Override
     public void close() {
-        row = -1;
+
     }
 
     @Override
@@ -56,34 +52,15 @@ class IndexCatalogueCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
-        row = -1;
+
     }
 
     @Override
     public long size() {
-        return rowCount;
+        return 0;
     }
 
-    private class IndexCatalogueRecord implements Record {
-        @Override
-        public int getInt(int col) {
-            return oids[row];
-        }
-
-        @Override
-        public CharSequence getStr(int col) {
-            return namespaces[row];
-        }
-
-        @Override
-        public CharSequence getStrB(int col) {
-            return getStr(col);
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return getStr(col).length();
-        }
+    private static class IndexCatalogueRecord implements Record {
     }
 
     static {
