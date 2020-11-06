@@ -59,7 +59,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "attrelid\tattname\tattnum\n" +
                         "1\ta\t1\n",
-                "pg_catalog.pg_attribute;",
+                "pg_catalog.pg_attribute order by 1;",
                 "create table x(a int)",
                 null,
                 "create table y(a double, b string)",
@@ -67,7 +67,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                         "1\ta\t1\n" +
                         "2\ta\t1\n" +
                         "2\tb\t2\n",
-                false,
+                true,
                 false,
                 false
         );
