@@ -26,6 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
+import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
@@ -39,6 +41,9 @@ import io.questdb.std.time.MillisecondClockImpl;
 public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration = new DefaultIODispatcherConfiguration();
+    private final HttpContextConfiguration httpContextConfiguration;
+    private final SqlInterruptorConfiguration interruptorConfiguration;
+
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
         @Override
         public FilesFacade getFilesFacade() {
@@ -65,11 +70,10 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             return null;
         }
     };
-
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
         @Override
         public MillisecondClock getClock() {
-            return DefaultHttpServerConfiguration.this.getClock();
+            return httpContextConfiguration.getClock();
         }
 
         @Override
@@ -101,9 +105,18 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
         }
+
+        @Override
+        public SqlInterruptorConfiguration getInterruptorConfiguration() {
+            return interruptorConfiguration;
+        }
     };
 
     public DefaultHttpServerConfiguration() {
+        this(new DefaultHttpContextConfiguration());
+    }
+
+    public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration) {
         String defaultFilePath = this.getClass().getResource("/site/conf/mime.types").getFile();
         if (Os.type == Os.WINDOWS) {
             // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
@@ -113,46 +126,23 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         try (Path path = new Path().of(defaultFilePath).$()) {
             this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
         }
+        this.httpContextConfiguration = httpContextConfiguration;
+        this.interruptorConfiguration = new DefaultSqlInterruptorConfiguration();
     }
 
     @Override
-    public int getConnectionPoolInitialCapacity() {
-        return 16;
+    public IODispatcherConfiguration getDispatcherConfiguration() {
+        return dispatcherConfiguration;
     }
 
     @Override
-    public int getConnectionStringPoolCapacity() {
-        return 128;
+    public HttpContextConfiguration getHttpContextConfiguration() {
+        return httpContextConfiguration;
     }
 
     @Override
-    public int getMultipartHeaderBufferSize() {
-        return 512;
-    }
-
-    @Override
-    public long getMultipartIdleSpinCount() {
-        return 10_000;
-    }
-
-    @Override
-    public int getRecvBufferSize() {
-        return 1024 * 1024;
-    }
-
-    @Override
-    public int getRequestHeaderBufferSize() {
-        return 1024;
-    }
-
-    @Override
-    public int getResponseHeaderBufferSize() {
-        return 1024;
-    }
-
-    @Override
-    public int getQueryCacheRows() {
-        return 32;
+    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+        return jsonQueryProcessorConfiguration;
     }
 
     @Override
@@ -161,13 +151,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public MillisecondClock getClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return dispatcherConfiguration;
+    public int getQueryCacheRows() {
+        return 32;
     }
 
     @Override
@@ -206,28 +191,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-        return jsonQueryProcessorConfiguration;
-    }
-
-    @Override
-    public int getSendBufferSize() {
-        return 1024 * 1024;
-    }
-
-    @Override
     public boolean isEnabled() {
         return true;
-    }
-
-    @Override
-    public boolean getDumpNetworkTraffic() {
-        return false;
-    }
-
-    @Override
-    public boolean allowDeflateBeforeSend() {
-        return false;
     }
 
     @Override
@@ -243,36 +208,5 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public boolean haltOnError() {
         return false;
-    }
-
-    @Override
-    public boolean readOnlySecurityContext() {
-        return false;
-    }
-
-    @Override
-    public boolean isInterruptOnClosedConnection() {
-        return true;
-    }
-
-    @Override
-    public int getInterruptorNIterationsPerCheck() {
-        return 5;
-    }
-
-    @Override
-    public int getInterruptorBufferSize() {
-        return 64;
-    }
-
-    @Override
-    public boolean getServerKeepAlive() {
-        return true;
-    }
-
-    @Override
-    public String getHttpVersion() {
-        // trailing space is important
-        return "HTTP/1.1 ";
     }
 }

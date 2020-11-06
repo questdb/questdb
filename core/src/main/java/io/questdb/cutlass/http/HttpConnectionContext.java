@@ -27,12 +27,13 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cutlass.http.ex.*;
-import io.questdb.griffin.HttpSqlExecutionInterruptor;
-import io.questdb.griffin.SqlExecutionInterruptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 
@@ -41,50 +42,46 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
     private final int recvBufferSize;
+    private final int sendBufferSize;
     private final HttpMultipartContentParser multipartContentParser;
     private final HttpHeaderParser multipartContentHeaderParser;
     private final HttpResponseSink responseSink;
     private final ObjectPool<DirectByteCharSequence> csPool;
-    private final HttpServerConfiguration configuration;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
     private final long multipartIdleSpinCount;
     private final CairoSecurityContext cairoSecurityContext;
     private final boolean dumpNetworkTraffic;
     private final boolean allowDeflateBeforeSend;
-    private final HttpSqlExecutionInterruptor execInterruptor;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
     private final RescheduleContext retryRescheduleContext = retry -> {
         LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
         throw RetryOperationException.INSTANCE;
     };
+    private final boolean serverKeepAlive;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
     private boolean pendingRetry = false;
     private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
-    private final boolean serverKeepAlive;
     private int receivedBytes;
 
-    public HttpConnectionContext(HttpServerConfiguration configuration) {
-        this.configuration = configuration;
-        this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
+    public HttpConnectionContext(HttpContextConfiguration configuration) {
+        this.nf = configuration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.recvBufferSize = configuration.getRecvBufferSize();
+        this.sendBufferSize = configuration.getSendBufferSize();
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
         cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
-        execInterruptor = configuration.isInterruptOnClosedConnection()
-                ? new HttpSqlExecutionInterruptor(this.nf, configuration.getInterruptorNIterationsPerCheck(), configuration.getInterruptorBufferSize())
-                : null;
         this.serverKeepAlive = configuration.getServerKeepAlive();
     }
 
@@ -114,7 +111,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     @Override
     public void close() {
         this.fd = -1;
-        Misc.free(execInterruptor);
         nCompletedRequests = 0;
         totalBytesSent = 0;
         csPool.clear();
@@ -155,9 +151,17 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return responseSink.getChunkedSocket();
     }
 
+    public long getLastRequestBytesSent() {
+        return responseSink.getTotalBytesSent();
+    }
+
     @Override
     public LocalValueMap getMap() {
         return localValueMap;
+    }
+
+    public int getNCompletedRequests() {
+        return nCompletedRequests;
     }
 
     public HttpRawSocket getRawResponseSocket() {
@@ -170,6 +174,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     public HttpResponseHeader getResponseHeader() {
         return responseSink.getHeader();
+    }
+
+    public long getTotalBytesSent() {
+        return totalBytesSent;
     }
 
     public void handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
@@ -202,9 +210,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.fd = fd;
         this.dispatcher = dispatcher;
         this.responseSink.of(fd);
-        if (null != execInterruptor) {
-            this.execInterruptor.of(fd);
-        }
         return this;
     }
 
@@ -515,14 +520,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return keepGoing;
     }
 
-    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        clear();
-        LOG.error().$(userMessage).$();
-        simpleResponse().sendStatus(404, userMessage);
-        dispatcher.registerChannel(this, IOOperation.READ);
-        return false;
-    }
-
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
         HttpRequestProcessor processor = selector.select(headerParser.getUrl());
 
@@ -552,20 +549,12 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return false;
     }
 
-    public int getNCompletedRequests() {
-        return nCompletedRequests;
-    }
-
-    public long getTotalBytesSent() {
-        return totalBytesSent;
-    }
-
-    public long getLastRequestBytesSent() {
-        return responseSink.getTotalBytesSent();
-    }
-
-    public SqlExecutionInterruptor getSqlExecutionInterruptor() {
-        return execInterruptor;
+    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        clear();
+        LOG.error().$(userMessage).$();
+        simpleResponse().sendStatus(404, userMessage);
+        dispatcher.registerChannel(this, IOOperation.READ);
+        return false;
     }
 
     public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {

@@ -24,25 +24,38 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.time.MillisecondClock;
 
-public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
+public interface HttpContextConfiguration {
 
-    HttpContextConfiguration getHttpContextConfiguration();
+    boolean allowDeflateBeforeSend();
 
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
+    MillisecondClock getClock();
 
-    int getQueryCacheBlocks();
+    int getConnectionPoolInitialCapacity();
 
-    int getQueryCacheRows();
+    int getConnectionStringPoolCapacity();
 
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
+    boolean getDumpNetworkTraffic();
 
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
+    String getHttpVersion();
 
-    @Override
-    boolean isEnabled();
+    int getMultipartHeaderBufferSize();
+
+    long getMultipartIdleSpinCount();
+
+    NetworkFacade getNetworkFacade();
+
+    int getRecvBufferSize();
+
+    int getRequestHeaderBufferSize();
+
+    int getResponseHeaderBufferSize();
+
+    int getSendBufferSize();
+
+    boolean getServerKeepAlive();
+
+    boolean readOnlySecurityContext();
 }

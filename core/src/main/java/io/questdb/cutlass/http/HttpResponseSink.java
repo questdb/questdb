@@ -95,9 +95,9 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long totalBytesSent = 0;
     private final boolean connectionCloseHeader;
 
-    public HttpResponseSink(HttpServerConfiguration configuration) {
+    public HttpResponseSink(HttpContextConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
+        this.nf = configuration.getNetworkFacade();
         this.out = Unsafe.calloc(responseBufferSize);
         this.headerImpl = new HttpResponseHeaderImpl(configuration.getResponseHeaderBufferSize(), configuration.getClock());
         // size is 32bit int, as hex string max 8 bytes

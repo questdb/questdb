@@ -22,27 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.griffin;
 
-import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.network.NetworkFacade;
 
-public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
+public interface SqlInterruptorConfiguration {
+    int getBufferSize();
 
-    HttpContextConfiguration getHttpContextConfiguration();
+    int getCountOfIterationsPerCheck();
 
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
+    NetworkFacade getNetworkFacade();
 
-    int getQueryCacheBlocks();
-
-    int getQueryCacheRows();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    @Override
     boolean isEnabled();
 }

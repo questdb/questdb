@@ -25,6 +25,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
+import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -32,6 +34,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
+import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.time.MillisecondClock;
 import io.questdb.std.time.MillisecondClockImpl;
 
@@ -140,6 +143,8 @@ public class HttpServerConfigurationBuilder {
             };
 
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
+                private final DefaultSqlInterruptorConfiguration sqlInterruptorConfiguration = new DefaultSqlInterruptorConfiguration();
+
                 @Override
                 public MillisecondClock getClock() {
                     return () -> 0;
@@ -174,6 +179,11 @@ public class HttpServerConfigurationBuilder {
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
                 }
+
+                @Override
+                public SqlInterruptorConfiguration getInterruptorConfiguration() {
+                    return sqlInterruptorConfiguration;
+                }
             };
 
             @Override
@@ -207,19 +217,48 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
-            public long getMultipartIdleSpinCount() {
-                if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
-                return multipartIdleSpinCount;
-            }
+            public HttpContextConfiguration getHttpContextConfiguration() {
+                return new DefaultHttpContextConfiguration() {
+                    @Override
+                    public MillisecondClock getClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
 
-            @Override
-            public int getRecvBufferSize() {
-                return receiveBufferSize;
-            }
+                    @Override
+                    public long getMultipartIdleSpinCount() {
+                        if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
+                        return multipartIdleSpinCount;
+                    }
 
-            @Override
-            public MillisecondClock getClock() {
-                return () -> 0;
+                    @Override
+                    public int getRecvBufferSize() {
+                        return receiveBufferSize;
+                    }
+                    @Override
+                    public int getSendBufferSize() {
+                        return sendBufferSize;
+                    }
+
+                    @Override
+                    public boolean getDumpNetworkTraffic() {
+                        return dumpTraffic;
+                    }
+
+                    @Override
+                    public boolean allowDeflateBeforeSend() {
+                        return allowDeflateBeforeSend;
+                    }
+
+                    @Override
+                    public boolean getServerKeepAlive() {
+                        return serverKeepAlive;
+                    }
+
+                    @Override
+                    public String getHttpVersion() {
+                        return httpProtocolVersion;
+                    }
+                };
             }
 
             @Override
@@ -235,31 +274,6 @@ public class HttpServerConfigurationBuilder {
             @Override
             public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
                 return jsonQueryProcessorConfiguration;
-            }
-
-            @Override
-            public int getSendBufferSize() {
-                return sendBufferSize;
-            }
-
-            @Override
-            public boolean getDumpNetworkTraffic() {
-                return dumpTraffic;
-            }
-
-            @Override
-            public boolean allowDeflateBeforeSend() {
-                return allowDeflateBeforeSend;
-            }
-
-            @Override
-            public boolean getServerKeepAlive() {
-                return serverKeepAlive;
-            }
-
-            @Override
-            public String getHttpVersion() {
-                return httpProtocolVersion;
             }
         };
     }

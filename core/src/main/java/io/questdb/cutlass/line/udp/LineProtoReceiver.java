@@ -39,6 +39,7 @@ public class LineProtoReceiver extends AbstractLineProtoReceiver {
     ) {
         super(configuration, engine, workerPool);
         this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize());
+        start();
     }
 
     @Override

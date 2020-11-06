@@ -65,6 +65,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final MillisecondClock clock;
     private final int doubleScale;
+    private final HttpSqlExecutionInterruptor interruptor;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -88,11 +89,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         this.doubleScale = configuration.getDoubleScale();
+        this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
     }
 
     @Override
     public void close() {
         Misc.free(compiler);
+        Misc.free(interruptor);
     }
 
     public void execute(
@@ -102,7 +105,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
             state.setQueryCacheable(true);
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), context.getSqlExecutionInterruptor());
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()));
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
@@ -176,7 +179,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         // copy random during query resume
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), context.getSqlExecutionInterruptor());
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), interruptor.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();

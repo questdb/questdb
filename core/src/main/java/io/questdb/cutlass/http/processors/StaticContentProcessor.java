@@ -54,7 +54,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         this.indexFileName = configuration.getStaticContentProcessorConfiguration().getIndexFileName();
         this.ff = configuration.getStaticContentProcessorConfiguration().getFilesFacade();
         this.keepAliveHeader = configuration.getStaticContentProcessorConfiguration().getKeepAliveHeader();
-        this.httpProtocolVersion = configuration.getHttpVersion();
+        this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
     }
 
     private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
