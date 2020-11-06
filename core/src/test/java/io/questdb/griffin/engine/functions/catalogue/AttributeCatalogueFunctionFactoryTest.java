@@ -43,6 +43,18 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPgAttributeFuncNoTables() throws Exception {
+        assertQuery(
+                "attrelid\tattname\tattnum\n",
+                "pg_catalog.pg_attribute;",
+                null,
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testPgAttributeFuncWith2Tables() throws Exception {
         assertQuery(
                 "attrelid\tattname\tattnum\n" +

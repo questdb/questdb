@@ -26,7 +26,6 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-
 public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashSet {
     private static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;

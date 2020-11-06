@@ -418,6 +418,18 @@ public final class Chars {
         return h;
     }
 
+    public static int lowerCaseHashCode(CharSequence value, int lo, int hi) {
+        if (hi == lo) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = lo; p < hi; p++) {
+            h = 31 * h + Character.toLowerCase(value.charAt(p));
+        }
+        return h;
+    }
+
     public static int lowerCaseHashCode(CharSequence value) {
         int len = value.length();
         if (len == 0) {
