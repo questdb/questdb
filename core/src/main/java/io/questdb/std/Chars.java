@@ -800,7 +800,7 @@ public final class Chars {
         return 2;
     }
 
-    public static CharSequence toLowerCase(CharSequence str) {
+    public static String toLowerCase(CharSequence str) {
         final CharSink sink = Misc.getThreadLocalBuilder();
         if (str != null) {
             final int len = str.length();
