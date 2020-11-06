@@ -1382,6 +1382,8 @@ public class SqlCodeGenerator implements Mutable {
                 return generateSelectAnalytic(model, executionContext);
             case QueryModel.SELECT_MODEL_DISTINCT:
                 return generateSelectDistinct(model, executionContext);
+            case QueryModel.SELECT_MODEL_CURSOR:
+                return generateSelectCursor(model, executionContext);
             default:
                 if (model.getJoinModels().size() > 1 && processJoins) {
                     return generateJoins(model, executionContext);
@@ -1470,6 +1472,11 @@ public class SqlCodeGenerator implements Mutable {
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
+    }
+
+    private RecordCursorFactory generateSelectCursor(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        System.out.println("here");
+        return null;
     }
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {

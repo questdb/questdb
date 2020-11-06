@@ -94,6 +94,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return functionFactoryCache.isGroupBy(token);
     }
 
+    public boolean isCursor(CharSequence token) {
+        return functionFactoryCache.isCursor(token);
+    }
+
     /**
      * Creates function instance. When node type is {@link ExpressionNode#LITERAL} a column or parameter
      * function is returned. We will be using the supplied {@link #metadata} to resolve type of column. When node token

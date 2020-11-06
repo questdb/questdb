@@ -44,7 +44,7 @@ public class CursorDereferenceFunctionFactoryTest extends AbstractGriffinTest {
                             "NaN\n" +
                             "NaN\n" +
                             "NaN\n",
-                    "select (pg_catalog.pg_class()).relnamespace x from long_sequence(10);",
+                    "select (pg_catalog.pg_class()).relnamespace x,  pg_catalog.pg_class() from long_sequence(10);",
                     null,
                     false,
                     true

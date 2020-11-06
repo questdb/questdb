@@ -50,6 +50,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_ANALYTIC = 3;
     public static final int SELECT_MODEL_GROUP_BY = 4;
     public static final int SELECT_MODEL_DISTINCT = 5;
+    public static final int SELECT_MODEL_CURSOR = 6;
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final int SET_OPERATION_UNION = 1;
     public static final int SET_OPERATION_EXCEPT = 2;
@@ -270,6 +271,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void copyOrderByDirectionAdvice(IntList orderByDirection) {
         this.orderByDirectionAdvice.clear();
         this.orderByDirectionAdvice.addAll(orderByDirection);
+    }
+
+    public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
+        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+            QueryColumn qc = bottomUpColumns.getQuick(i);
+            if (ExpressionNode.compareNodes(node, qc.getAst())) {
+                return qc;
+            }
+        }
+        return null;
     }
 
     public ExpressionNode getAlias() {
@@ -574,6 +585,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return topDownNameSet.excludes(columnName);
     }
 
+    public void moveGroupByFrom(QueryModel model) {
+        this.groupBy.addAll(model.groupBy);
+        // clear the source
+        model.groupBy.clear();
+    }
+
     public void moveLimitFrom(QueryModel baseModel) {
         this.limitLo = baseModel.getLimitLo();
         this.limitHi = baseModel.getLimitHi();
@@ -587,12 +604,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
         // clear the source
         model.clearSampleBy();
-    }
-
-    public void moveGroupByFrom(QueryModel model) {
-        this.groupBy.addAll(model.groupBy);
-        // clear the source
-        model.groupBy.clear();
     }
 
     /**
@@ -924,5 +935,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_ANALYTIC, "select-analytic");
         modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, "select-group-by");
         modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
+        modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");
     }
 }

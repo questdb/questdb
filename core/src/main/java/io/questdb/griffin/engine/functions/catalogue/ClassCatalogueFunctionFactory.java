@@ -64,6 +64,11 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isCursor() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new CursorFunction(
                 position,

@@ -65,6 +65,8 @@ public interface FunctionFactory {
 
     default boolean isGroupBy() { return false; }
 
+    default boolean isCursor() { return false; }
+
     Function newInstance(
             @Transient ObjList<Function> args,
             int position,

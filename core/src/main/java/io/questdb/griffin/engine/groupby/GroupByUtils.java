@@ -76,7 +76,7 @@ public class GroupByUtils {
                         }
                     }
                 } else {
-                    if (compareNodes(groupByNode, selectNode)) {
+                    if (ExpressionNode.compareNodes(groupByNode, selectNode)) {
                         matchingColumnCount++;
                         break;
                     }
@@ -87,40 +87,6 @@ public class GroupByUtils {
         if (matchingColumnCount != groupBySize || matchingColumnCount != groupByColumnCount) {
             throw SqlException.$(0, "group by column does not match key column is select statement ");
         }
-    }
-
-    public static boolean compareNodes(ExpressionNode groupBy, ExpressionNode selectNode) {
-        if (groupBy == null && selectNode == null) {
-            return true;
-        }
-
-        if (groupBy == null || selectNode == null || groupBy.type != selectNode.type) {
-            return false;
-        }
-
-        int dotIndex = groupBy.token != null ? Chars.indexOf(groupBy.token, '.') : -1;
-        if ((dotIndex < 0 && !Chars.equals(groupBy.token, selectNode.token))
-                || (dotIndex > -1 && !Chars.equals(selectNode.token, groupBy.token, dotIndex + 1, groupBy.token.length()))) {
-            return false;
-        }
-
-        int groupByArgsSize = groupBy.args.size();
-        int selectNodeArgsSize = selectNode.args.size();
-
-        if (groupByArgsSize != selectNodeArgsSize) {
-            return false;
-        }
-
-        if (groupByArgsSize < 3) {
-            return compareNodes(groupBy.lhs, selectNode.lhs) && compareNodes(groupBy.rhs, selectNode.rhs);
-        }
-
-        for (int i = 0; i < groupByArgsSize; i++) {
-            if (!compareNodes(groupBy.args.get(i), selectNode.args.get(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public static void prepareGroupByFunctions(
