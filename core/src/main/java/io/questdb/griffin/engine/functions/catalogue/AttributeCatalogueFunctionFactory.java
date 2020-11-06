@@ -86,19 +86,21 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
+        private final ReadOnlyColumn metaMem;
         private long findFileStruct = 0;
         private int columnIndex = 0;
         private int tableId = 1000;
-        private ReadOnlyColumn metaMem;
         private boolean readNextFileFromDisk = true;
         private int columnCount;
         private boolean hasNextFile = true;
+        private boolean foundMetadataFile = false;
 
         public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path) {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
+            this.metaMem = new OnePageMemory();
         }
 
         @Override
@@ -145,6 +147,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private boolean next0() {
             do {
                 if (readNextFileFromDisk) {
+                    foundMetadataFile = false;
                     final long pname = ff.findName(findFileStruct);
                     if (hasNextFile) {
                         nativeLPSZ.of(pname);
@@ -156,22 +159,17 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                             path.trimTo(plimit);
                             path.concat(pname);
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
-                                metaMem = new OnePageMemory(ff, path, ff.length(path));
+                                foundMetadataFile = true;
+                                metaMem.of(ff, path, ff.getPageSize(), ff.length(path));
                                 columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
                                 tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                            } else {
-                                metaMem = null;
                             }
-                        } else {
-                            metaMem = null;
                         }
                         hasNextFile = ff.findNext(findFileStruct) > 0;
-                    } else {
-                        metaMem = null;
                     }
                 }
 
-                if (metaMem != null) {
+                if (foundMetadataFile) {
                     long offset = TableUtils.getColumnNameOffset(columnCount);
                     for (int i = 0; i < columnCount; i++) {
                         CharSequence name = metaMem.getStr(offset);
@@ -196,6 +194,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             ff.findClose(findFileStruct);
             findFileStruct = 0;
             hasNextFile = true;
+            foundMetadataFile = false;
             return false;
         }
 
