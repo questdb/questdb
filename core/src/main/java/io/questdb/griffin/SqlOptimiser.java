@@ -992,8 +992,9 @@ class SqlOptimiser {
         }
     }
 
-    private void emitCursors(@Transient ExpressionNode node, QueryModel model) {
+    private boolean emitCursors(@Transient ExpressionNode node, QueryModel model) {
 
+        boolean replaced = false;
         this.sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -1008,6 +1009,7 @@ class SqlOptimiser {
                         this.sqlNodeStack.push(node.rhs);
                     } else {
                         node.rhs = n;
+                        replaced = true;
                     }
                 }
 
@@ -1017,11 +1019,13 @@ class SqlOptimiser {
                 } else {
                     node.lhs = n;
                     node = null;
+                    replaced = true;
                 }
             } else {
                 node = this.sqlNodeStack.poll();
             }
         }
+        return replaced;
     }
 
     private void emitLiterals(
@@ -2677,6 +2681,7 @@ class SqlOptimiser {
                         // pull out literals
                         emitLiterals(qc1.getAst(), translatingModel, innerVirtualModel, baseModel);
                         useCursorModel = true;
+                        useOuterModel = true;
                         continue;
                     }
                 }
@@ -2699,8 +2704,7 @@ class SqlOptimiser {
                     useOuterModel = true;
                 } else {
                     beforeSplit = cursorModel.getBottomUpColumns().size();
-                    emitCursors(qc.getAst(), cursorModel);
-                    if (beforeSplit < cursorModel.getBottomUpColumns().size()) {
+                    if (emitCursors(qc.getAst(), cursorModel)) {
 
                         outerVirtualModel.addBottomUpColumn(qc);
                         distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));

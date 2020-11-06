@@ -55,7 +55,18 @@ public class ExpressionNode implements Mutable, Sinkable {
     private ExpressionNode() {
     }
 
-    public static boolean compareNodes(ExpressionNode a, ExpressionNode b) {
+    public static boolean compareNodesExact(ExpressionNode a, ExpressionNode b) {
+        if (a == null && b == null) {
+            return true;
+        }
+
+        if (a == null || b == null || a.type != b.type) {
+            return false;
+        }
+        return Chars.equals(a.token, b.token) && compareArgs(a, b);
+    }
+
+    public static boolean compareNodesGroupBy(ExpressionNode a, ExpressionNode b) {
         if (a == null && b == null) {
             return true;
         }
@@ -64,7 +75,7 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
 
-/*
+        // todo: there is a bug where exact same tokens with . will yield false
         int dotIndex = a.token != null ? Chars.indexOf(a.token, '.') : -1;
         if ((dotIndex < 0 && !Chars.equals(a.token, b.token))
                 || (dotIndex > -1 && !Chars.equals(
@@ -75,8 +86,11 @@ public class ExpressionNode implements Mutable, Sinkable {
         ))) {
             return false;
         }
-*/
 
+        return compareArgs(a, b);
+    }
+
+    private static boolean compareArgs(ExpressionNode a, ExpressionNode b) {
         final int groupByArgsSize = a.args.size();
         final int selectNodeArgsSize = b.args.size();
 
@@ -85,11 +99,11 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
 
         if (groupByArgsSize < 3) {
-            return compareNodes(a.lhs, b.lhs) && compareNodes(a.rhs, b.rhs);
+            return compareNodesGroupBy(a.lhs, b.lhs) && compareNodesGroupBy(a.rhs, b.rhs);
         }
 
         for (int i = 0; i < groupByArgsSize; i++) {
-            if (!compareNodes(a.args.get(i), b.args.get(i))) {
+            if (!compareNodesGroupBy(a.args.get(i), b.args.get(i))) {
                 return false;
             }
         }

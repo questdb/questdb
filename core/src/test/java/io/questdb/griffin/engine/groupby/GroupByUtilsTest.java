@@ -43,7 +43,7 @@ public class GroupByUtilsTest {
         ExpressionNode n2 = FACTORY.newInstance();
         n1.type = FUNCTION;
         n2.type = LITERAL;
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -60,7 +60,7 @@ public class GroupByUtilsTest {
         n2.token = "func";
         n2.rhs = FACTORY.newInstance();
         n2.rhs.type = LITERAL;
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -77,7 +77,7 @@ public class GroupByUtilsTest {
         n2.token = "diff";
         n2.rhs = FACTORY.newInstance();
         n2.rhs.type = LITERAL;
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -96,7 +96,7 @@ public class GroupByUtilsTest {
         n2.rhs = FACTORY.newInstance();
         n2.rhs.type = LITERAL;
         n2.rhs.token = "boo";
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -115,7 +115,7 @@ public class GroupByUtilsTest {
         n2.rhs = FACTORY.newInstance();
         n2.rhs.type = LITERAL;
         n2.rhs.token = "boo";
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -125,7 +125,7 @@ public class GroupByUtilsTest {
         n1.type = FUNCTION;
         n2.type = FUNCTION;
         n1.rhs = FACTORY.newInstance();
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -150,7 +150,7 @@ public class GroupByUtilsTest {
         n2.rhs = FACTORY.newInstance();
         n2.rhs.type = LITERAL;
         n2.rhs.token = "A";
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -175,7 +175,7 @@ public class GroupByUtilsTest {
         n2.rhs = FACTORY.newInstance();
         n2.rhs.type = LITERAL;
         n2.rhs.token = "A";
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -195,7 +195,7 @@ public class GroupByUtilsTest {
         n2.rhs = FACTORY.newInstance();
         n2.rhs.type = LITERAL;
         n2.rhs.token = "A";
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -215,7 +215,7 @@ public class GroupByUtilsTest {
         n2.type = FUNCTION;
         n2.token = "func";
         n2.args.add(FACTORY.newInstance());
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -230,7 +230,7 @@ public class GroupByUtilsTest {
         n2.type = FUNCTION;
         n2.token = "func";
         n2.args.add(FACTORY.newInstance());
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -239,7 +239,7 @@ public class GroupByUtilsTest {
         ExpressionNode n2 = FACTORY.newInstance();
         n1.type = FUNCTION;
         n2.type = FUNCTION;
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -255,7 +255,7 @@ public class GroupByUtilsTest {
         n2.type = FUNCTION;
         n2.token = "func";
         n2.args.add(FACTORY.newInstance());
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -280,7 +280,7 @@ public class GroupByUtilsTest {
         n2.type = FUNCTION;
         n2.token = "func";
         n2.args.add(arg);
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -305,7 +305,7 @@ public class GroupByUtilsTest {
         n2.args.add(arg4);
         n2.args.add(arg5);
         n2.args.add(arg6);
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -330,7 +330,7 @@ public class GroupByUtilsTest {
         n2.args.add(arg4);
         n2.args.add(arg5);
         n2.args.add(arg6);
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -340,7 +340,7 @@ public class GroupByUtilsTest {
         n1.type = FUNCTION;
         n2.type = FUNCTION;
         n1.lhs = FACTORY.newInstance();
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -355,7 +355,7 @@ public class GroupByUtilsTest {
         n2.type = FUNCTION;
         n2.lhs = FACTORY.newInstance();
         n2.lhs.type = LITERAL;
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -372,7 +372,7 @@ public class GroupByUtilsTest {
         n2.token = "func";
         n2.lhs = FACTORY.newInstance();
         n2.lhs.type = LITERAL;
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -389,7 +389,7 @@ public class GroupByUtilsTest {
         n2.token = "diff";
         n2.lhs = FACTORY.newInstance();
         n2.lhs.type = LITERAL;
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -408,7 +408,7 @@ public class GroupByUtilsTest {
         n2.lhs = FACTORY.newInstance();
         n2.lhs.type = LITERAL;
         n2.lhs.token = "boo";
-        assertFalse(ExpressionNode.compareNodes(n1, n2));
+        assertFalse(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -427,7 +427,7 @@ public class GroupByUtilsTest {
         n2.lhs = FACTORY.newInstance();
         n2.lhs.type = LITERAL;
         n2.lhs.token = "boo";
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     @Test
@@ -442,7 +442,7 @@ public class GroupByUtilsTest {
         n2.type = FUNCTION;
         n2.rhs = FACTORY.newInstance();
         n2.rhs.type = LITERAL;
-        assertTrue(ExpressionNode.compareNodes(n1, n2));
+        assertTrue(ExpressionNode.compareNodesGroupBy(n1, n2));
     }
 
     static ExpressionNode createNode(int type, String token, ExpressionNode l, ExpressionNode r) {

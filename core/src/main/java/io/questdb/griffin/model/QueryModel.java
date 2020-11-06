@@ -276,7 +276,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
-            if (ExpressionNode.compareNodes(node, qc.getAst())) {
+            if (ExpressionNode.compareNodesExact(node, qc.getAst())) {
                 return qc;
             }
         }

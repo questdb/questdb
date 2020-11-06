@@ -172,6 +172,27 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCursorInSelect() throws SqlException {
+        assertQuery("select-virtual x, x . n  from (select-cursor pg_catalog.pg_class() x from (long_sequence(2)))",
+                "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).n from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectExprFirst() throws SqlException {
+        assertQuery("select-virtual pg_class . n , pg_class from (select-cursor pg_catalog.pg_class() pg_class from (long_sequence(2)))",
+                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectWithAggregation() throws SqlException {
+        assertQuery("select-virtual pg_class . n , pg_class from (select-cursor pg_catalog.pg_class() pg_class from (long_sequence(2)))",
+                "select sum((pg_catalog.pg_class()).n + 1) - 20, pg_catalog.pg_class().y from long_sequence(2)"
+        );
+    }
+
+    @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
                 "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c asof join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",

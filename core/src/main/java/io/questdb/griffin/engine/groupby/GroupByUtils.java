@@ -76,7 +76,7 @@ public class GroupByUtils {
                         }
                     }
                 } else {
-                    if (ExpressionNode.compareNodes(groupByNode, selectNode)) {
+                    if (ExpressionNode.compareNodesGroupBy(groupByNode, selectNode)) {
                         matchingColumnCount++;
                         break;
                     }
