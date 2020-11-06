@@ -100,25 +100,19 @@ public class ExpressionNode implements Mutable, Sinkable {
                 sink.put(')');
                 break;
             case 2:
-                try {
-
-
-                    if (OperatorExpression.isOperator(token)) {
-                        lhs.toSink(sink);
-                        sink.put(' ');
-                        sink.put(token);
-                        sink.put(' ');
-                        rhs.toSink(sink);
-                    } else {
-                        sink.put(token);
-                        sink.put('(');
-                        lhs.toSink(sink);
-                        sink.put(',');
-                        rhs.toSink(sink);
-                        sink.put(')');
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
+                if (OperatorExpression.isOperator(token)) {
+                    lhs.toSink(sink);
+                    sink.put(' ');
+                    sink.put(token);
+                    sink.put(' ');
+                    rhs.toSink(sink);
+                } else {
+                    sink.put(token);
+                    sink.put('(');
+                    lhs.toSink(sink);
+                    sink.put(',');
+                    rhs.toSink(sink);
+                    sink.put(')');
                 }
                 break;
             default:
