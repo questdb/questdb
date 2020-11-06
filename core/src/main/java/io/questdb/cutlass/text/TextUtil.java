@@ -66,6 +66,7 @@ public class TextUtil {
                         sink.put('"');
                     }
                 } else {
+                    quoteCount = 0;
                     sink.put((char) b);
                 }
                 ++p;

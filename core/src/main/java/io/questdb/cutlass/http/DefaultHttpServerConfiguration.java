@@ -36,6 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.time.MillisecondClockImpl;
 
 public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
@@ -152,6 +153,36 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public int getQueryCacheRows() {
         return 32;
+    }
+
+    @Override
+    public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+        return new WaitProcessorConfiguration() {
+            @Override
+            public MillisecondClock getClock() {
+                return MillisecondClockImpl.INSTANCE;
+            }
+
+            @Override
+            public long getMaxWaitCapMs() {
+                return 1000;
+            }
+
+            @Override
+            public double getExponentialWaitMultiplier() {
+                return 2.0;
+            }
+
+            @Override
+            public int getInitialWaitQueueSize() {
+                return 64;
+            }
+
+            @Override
+            public int getMaxProcessingQueueSize() {
+                return 4096;
+            }
+        };
     }
 
     @Override

@@ -32,4 +32,6 @@ public interface HttpMinServerConfiguration extends WorkerPoolAwareConfiguration
     IODispatcherConfiguration getDispatcherConfiguration();
 
     HttpContextConfiguration getHttpContextConfiguration();
+
+    WaitProcessorConfiguration getWaitProcessorConfiguration();
 }

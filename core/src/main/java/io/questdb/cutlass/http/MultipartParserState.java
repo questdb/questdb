@@ -24,25 +24,16 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+public class MultipartParserState {
+    public boolean multipartRetry;
+    public long start;
+    public long buf;
+    public int bufRemaining;
 
-public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
-
-    HttpContextConfiguration getHttpContextConfiguration();
-
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
-
-    int getQueryCacheBlocks();
-
-    int getQueryCacheRows();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    @Override
-    boolean isEnabled();
+    public void saveFdBufferPosition(long start, long buf, int bufRemaining) {
+        this.multipartRetry = true;
+        this.start = start;
+        this.buf = buf;
+        this.bufRemaining = bufRemaining;
+    }
 }

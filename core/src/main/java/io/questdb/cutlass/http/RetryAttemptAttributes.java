@@ -24,25 +24,9 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-
-public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
-
-    HttpContextConfiguration getHttpContextConfiguration();
-
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
-
-    int getQueryCacheBlocks();
-
-    int getQueryCacheRows();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    @Override
-    boolean isEnabled();
+public class RetryAttemptAttributes {
+    public long nextRunTimestamp;
+    public long lastRunTimestamp;
+    public long waitStartTimestamp;
+    public int attempt;
 }

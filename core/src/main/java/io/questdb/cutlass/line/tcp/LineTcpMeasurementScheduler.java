@@ -758,7 +758,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
 
                 preprocessEvent(event);
-                engine.creatTable(
+                engine.createTable(
                         securityContext,
                         appendMemory,
                         path,

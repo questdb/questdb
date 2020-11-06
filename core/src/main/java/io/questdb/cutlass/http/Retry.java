@@ -24,25 +24,19 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+public interface Retry {
+    /**
+     * Run a retry
+     */
+    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
 
-public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
+    /**
+     * Gets retry run attributes
+     */
+    RetryAttemptAttributes getAttemptDetails();
 
-    HttpContextConfiguration getHttpContextConfiguration();
-
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
-
-    int getQueryCacheBlocks();
-
-    int getQueryCacheRows();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    @Override
-    boolean isEnabled();
+    /**
+     * Notify client that re-run failed
+     */
+    void fail(HttpRequestProcessorSelector selector, HttpException e);
 }

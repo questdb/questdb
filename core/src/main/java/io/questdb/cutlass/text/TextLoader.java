@@ -101,6 +101,10 @@ public class TextLoader implements Closeable, Mutable {
         Misc.free(utf8Sink);
     }
 
+    public void closeWriter() {
+        textWriter.closeWriter();
+    }
+
     public void configureColumnDelimiter(byte columnDelimiter) {
         this.columnDelimiter = columnDelimiter;
         assert this.columnDelimiter > 0;

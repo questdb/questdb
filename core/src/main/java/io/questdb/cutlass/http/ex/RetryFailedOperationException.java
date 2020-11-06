@@ -22,27 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cutlass.http.ex;
 
-import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.cutlass.http.HttpException;
 
-public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
+public class RetryFailedOperationException extends HttpException {
+    public static final RetryFailedOperationException INSTANCE;
 
-    HttpContextConfiguration getHttpContextConfiguration();
-
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
-
-    int getQueryCacheBlocks();
-
-    int getQueryCacheRows();
-
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    @Override
-    boolean isEnabled();
+    static {
+        INSTANCE = new RetryFailedOperationException();
+        INSTANCE.put("resource is busy and retry queue is full");
+    }
 }

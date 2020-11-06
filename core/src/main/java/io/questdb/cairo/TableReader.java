@@ -1018,6 +1018,7 @@ public class TableReader implements Closeable {
                             .$(", minTimestamp=").$ts(this.minTimestamp)
                             .$(", maxTimestamp=").$ts(this.maxTimestamp)
                             .$(", attempts=").$(count)
+                            .$(", thread=").$(Thread.currentThread().getName())
                             .$(']').$();
                     return true;
                 }

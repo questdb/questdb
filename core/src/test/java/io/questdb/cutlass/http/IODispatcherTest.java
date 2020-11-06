@@ -24,9 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.TelemetryJob;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -40,7 +37,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
@@ -51,8 +47,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -66,6 +60,8 @@ public class IODispatcherTest {
     public TemporaryFolder temp = new TemporaryFolder();
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
+    };
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -220,7 +216,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -509,86 +505,27 @@ public class IODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
-        assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir,
-                    false,
-                    false
-            );
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
 
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(engine);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, engine.getMessageBus(), 1);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/exec";
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                long fd = Net.socketTcp(true);
-                try {
-                    sendAndReceive(
-                            nf,
-                            request,
-                            response,
-                            requestCount,
-                            0,
-                            false,
-                            expectDisconnect
-                    );
-                } finally {
-                    Net.close(fd);
-                    workerPool.halt();
-                }
-            }
-        });
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(nf)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run(engine -> sendAndReceive(
+                        nf,
+                        request,
+                        response,
+                        requestCount,
+                        0,
+                        false,
+                        expectDisconnect
+                ));
     }
 
     @Test
@@ -1370,8 +1307,9 @@ public class IODispatcherTest {
 
                             // start delaying after 800 bytes
 
-                            if (totalSent > 800) {
+                            if (totalSent > 20) {
                                 LockSupport.parkNanos(10000);
+                                totalSent = 0;
                             }
                             return result;
                         }
@@ -1384,7 +1322,7 @@ public class IODispatcherTest {
                             nf,
                             request,
                             expectedResponse,
-                            1,
+                            3,
                             0,
                             false
                     );
@@ -3407,7 +3345,7 @@ public class IODispatcherTest {
                     String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
                             + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
                             + "Content-Type: application/json; charset=utf-8\r\n"
-                            + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s" + "\r\n";
+                            + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s";
                     TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
                         @Override
                         public boolean onGet(Record record, int count) {
@@ -3436,7 +3374,12 @@ public class IODispatcherTest {
                             long bufLen = request.length();
                             long ptr = Unsafe.malloc(bufLen);
                             try {
-                                sendAndReceive(nf, request, 0, false, true, fd, expectedResponse1, 200, ptr, clientStateListener);
+                                new SendAndReceiveRequestBuilder()
+                                        .withNetworkFacade(nf)
+                                        .withPauseBetweenSendAndReceive(0)
+                                        .withPrintOnly(false)
+                                        .withExpectDisconnect(true)
+                                        .executeExplicit(request, fd, expectedResponse1, 200, ptr, clientStateListener);
                             } finally {
                                 Unsafe.free(ptr, bufLen);
                             }
@@ -3607,7 +3550,7 @@ public class IODispatcherTest {
                     do {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     } while (serverRunning.get());
                     serverHaltLatch.countDown();
@@ -4484,7 +4427,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4655,7 +4598,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4808,7 +4751,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -5057,7 +5000,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                             );
                         }
 
@@ -5212,133 +5155,15 @@ public class IODispatcherTest {
             boolean serverKeepAlive,
             String httpProtocolVersion
     ) {
-        final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-        };
-
-        return new DefaultHttpServerConfiguration(
-                new DefaultHttpContextConfiguration() {
-                    @Override
-                    public boolean allowDeflateBeforeSend() {
-                        return allowDeflateBeforeSend;
-                    }
-
-                    @Override
-                    public MillisecondClock getClock() {
-                        return () -> 0;
-                    }
-
-                    @Override
-                    public boolean getDumpNetworkTraffic() {
-                        return dumpTraffic;
-                    }
-
-                    @Override
-                    public String getHttpVersion() {
-                        return httpProtocolVersion;
-                    }
-
-                    @Override
-                    public int getSendBufferSize() {
-                        return sendBufferSize;
-                    }
-
-                    @Override
-                    public boolean getServerKeepAlive() {
-                        return serverKeepAlive;
-                    }
-                }
-        ) {
-            private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return FilesFacadeImpl.INSTANCE;
-                }
-
-                @Override
-                public CharSequence getIndexFileName() {
-                    return null;
-                }
-
-                @Override
-                public MimeTypesCache getMimeTypesCache() {
-                    return mimeTypesCache;
-                }
-
-                @Override
-                public CharSequence getPublicDirectory() {
-                    return baseDir;
-                }
-
-                @Override
-                public String getKeepAliveHeader() {
-                    return null;
-                }
-            };
-
-            private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-
-                private final DefaultSqlInterruptorConfiguration sqlInterruptorConfiguration = new DefaultSqlInterruptorConfiguration();
-
-                @Override
-                public MillisecondClock getClock() {
-                    return () -> 0;
-                }
-
-                @Override
-                public int getConnectionCheckFrequency() {
-                    return 1_000_000;
-                }
-
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return FilesFacadeImpl.INSTANCE;
-                }
-
-                @Override
-                public int getFloatScale() {
-                    return 10;
-                }
-
-                @Override
-                public int getDoubleScale() {
-                    return Numbers.MAX_SCALE;
-                }
-
-                @Override
-                public CharSequence getKeepAliveHeader() {
-                    return "Keep-Alive: timeout=5, max=10000\r\n";
-                }
-
-                @Override
-                public long getMaxQueryResponseRowLimit() {
-                    return configuredMaxQueryResponseRowLimit;
-                }
-
-                @Override
-                public SqlInterruptorConfiguration getInterruptorConfiguration() {
-                    return sqlInterruptorConfiguration;
-                }
-            };
-
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return ioDispatcherConfiguration;
-            }
-
-            @Override
-            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-                return jsonQueryProcessorConfiguration;
-            }
-
-            @Override
-            public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
-                return staticContentProcessorConfiguration;
-            }
-        };
+        return new HttpServerConfigurationBuilder()
+                .withNetwork(nf)
+                .withBaseDir(baseDir)
+                .withSendBufferSize(sendBufferSize)
+                .withDumpingTraffic(dumpTraffic)
+                .withAllowDeflateBeforeSend(allowDeflateBeforeSend)
+                .withServerKeepAlive(serverKeepAlive)
+                .withHttpProtocolVersion(httpProtocolVersion)
+                .build();
     }
 
     private void sendAndReceive(
@@ -5369,89 +5194,13 @@ public class IODispatcherTest {
             boolean print,
             boolean expectDisconnect
     ) throws InterruptedException {
-        long fd = nf.socketTcp(true);
-        try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
-            try {
-                Assert.assertTrue(fd > -1);
-                Assert.assertEquals(0, nf.connect(fd, sockAddr));
-                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-
-                byte[] expectedResponse = response.getBytes();
-                final int len = Math.max(expectedResponse.length, request.length()) * 2;
-                long ptr = Unsafe.malloc(len);
-                try {
-                    for (int j = 0; j < requestCount; j++) {
-                        sendAndReceive(nf, request, pauseBetweenSendAndReceive, print, expectDisconnect, fd, expectedResponse, len, ptr, null);
-                    }
-                } finally {
-                    Unsafe.free(ptr, len);
-                }
-            } finally {
-                nf.freeSockAddr(sockAddr);
-            }
-        } finally {
-            nf.close(fd);
-        }
-    }
-
-    private void sendAndReceive(
-            NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean print, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
-            HttpClientStateListener listener
-    ) throws InterruptedException {
-        int sent = 0;
-        int reqLen = request.length();
-        Chars.asciiStrCpy(request, reqLen, ptr);
-        while (sent < reqLen) {
-            int n = nf.send(fd, ptr + sent, reqLen - sent);
-            Assert.assertTrue(n > -1);
-            sent += n;
-        }
-
-        if (pauseBetweenSendAndReceive > 0) {
-            Thread.sleep(pauseBetweenSendAndReceive);
-        }
-        // receive response
-        final int expectedToReceive = expectedResponse.length;
-        int received = 0;
-        if (print) {
-            System.out.println("expected=`");
-            System.out.print(new String(expectedResponse, StandardCharsets.UTF_8));
-            System.out.println('`');
-            System.out.println("received=`");
-        }
-        boolean disconnected = false;
-        while (received < expectedToReceive) {
-            int n = nf.recv(fd, ptr + received, len - received);
-            if (n > 0) {
-                // dump(ptr + received, n);
-                // compare bytes
-                for (int i = 0; i < n; i++) {
-                    if (print) {
-                        System.out.print((char) Unsafe.getUnsafe().getByte(ptr + received + i));
-                    } else {
-                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                            LOG.error().$("received not what expected [contents=`").utf8(new DirectByteCharSequence().of(ptr, ptr + received + n)).$("`]").$();
-                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
-                        }
-                    }
-                }
-                received += n;
-                if (null != listener) {
-                    listener.onReceived(received);
-                }
-            } else if (n < 0) {
-                disconnected = true;
-                break;
-            }
-        }
-        if (print) {
-            System.out.println('`');
-        }
-        if (disconnected && !expectDisconnect) {
-            LOG.error().$("disconnected?").$();
-            Assert.fail();
-        }
+        new SendAndReceiveRequestBuilder()
+                .withNetworkFacade(nf)
+                .withExpectDisconnect(expectDisconnect)
+                .withPrintOnly(print)
+                .withRequestCount(requestCount)
+                .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
+                .execute(request, response);
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
@@ -5482,120 +5231,21 @@ public class IODispatcherTest {
         testJsonQuery(recordCount, request, expectedResponse, 100, false);
     }
 
-    private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry) throws Exception {
+    private void testJsonQuery0(int workerCount, HttpQueryTestBuilder.HttpClientCode code, boolean telemetry) throws Exception {
         testJsonQuery0(workerCount, code, telemetry, false);
     }
 
-    private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry, boolean http1) throws Exception {
-        final int[] workerAffinity = new int[workerCount];
-        Arrays.fill(workerAffinity, -1);
-
-        assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 16 * 1024, false, false,
-                    !http1, http1 ? "HTTP/1.0 " : "HTTP/1.1 ");
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return workerAffinity;
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-
-            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-
-            try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
-            ) {
-                TelemetryJob telemetryJob = null;
-                final MessageBus messageBus = new MessageBusImpl(cairoConfiguration);
-                if (telemetry) {
-                    telemetryJob = new TelemetryJob(engine);
-                }
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                messageBus,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/exp";
-                    }
-                });
-
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/chk";
-                    }
-                });
-
-                QueryCache.configure(httpConfiguration);
-
-                workerPool.start(LOG);
-
-                try {
-                    code.run(engine);
-                } finally {
-                    workerPool.halt();
-
-                    if (telemetryJob != null) {
-                        Misc.free(telemetryJob);
-                    }
-                }
-            }
-        });
+    private void testJsonQuery0(int workerCount, HttpQueryTestBuilder.HttpClientCode code, boolean telemetry, boolean http1) throws Exception {
+        new HttpQueryTestBuilder()
+                .withWorkerCount(workerCount)
+                .withTelemetry(telemetry)
+                .withTempFolder(temp)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withServerKeepAlive(!http1)
+                        .withSendBufferSize(16 * 1024)
+                        .withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)
+                        .withHttpProtocolVersion(http1 ? "HTTP/1.0 " : "HTTP/1.1 "))
+                .run(code);
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {
@@ -5616,17 +5266,6 @@ public class IODispatcherTest {
         Files.close(fd);
         Files.setLastModified(path, lastModified);
         Unsafe.free(buf, bufLen);
-    }
-
-    @FunctionalInterface
-    private interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException;
-    }
-
-    private interface HttpClientStateListener {
-        void onClosed();
-
-        void onReceived(int nBytes);
     }
 
     private static class HelloContext implements IOContext {

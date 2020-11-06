@@ -35,9 +35,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.EagerThreadSetup;
-import io.questdb.mp.Job;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
@@ -57,6 +55,8 @@ public class HttpServer implements Closeable {
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
     private final WorkerPool workerPool;
+    private final WaitProcessor rescheduleContext;
+
 
     public HttpServer(HttpMinServerConfiguration configuration, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
@@ -76,19 +76,23 @@ public class HttpServer implements Closeable {
                 configuration.getDispatcherConfiguration(),
                 httpContextFactory
         );
-
         pool.assign(dispatcher);
+        this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
+        pool.assign(this.rescheduleContext);
 
-        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
+        for (int i = 0; i < workerCount; i++) {
             final int index = i;
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
-                        (operation, context) -> context.handleClientOperation(operation, selector);
+                        (operation, context) -> context.handleClientOperation(operation, selector, rescheduleContext);
 
                 @Override
                 public boolean run(int workerId) {
-                    return dispatcher.processIOQueue(processor);
+                    boolean useful = dispatcher.processIOQueue(processor);
+                    useful |= rescheduleContext.runReruns(selector);
+
+                    return useful;
                 }
             });
 

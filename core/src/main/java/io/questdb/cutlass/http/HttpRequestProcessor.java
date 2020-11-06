@@ -41,6 +41,12 @@ public interface HttpRequestProcessor {
     default void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
+    default void onRequestRetry(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    }
+
     default void parkRequest(HttpConnectionContext context) {
+    }
+
+    default void failRequest(HttpConnectionContext context, HttpException exception) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 }

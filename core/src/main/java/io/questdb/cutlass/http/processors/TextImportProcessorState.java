@@ -35,8 +35,11 @@ class TextImportProcessorState implements Mutable, Closeable {
     public static final int STATE_OK = 0;
     //    public static final int STATE_INVALID_FORMAT = 1;
     public static final int STATE_DATA_ERROR = 2;
-    final TextLoader textLoader;
+    public TextLoaderCompletedState completeState;
+    TextLoader textLoader;
     public int columnIndex = 0;
+    long hi;
+    long lo;
     String stateMessage;
     boolean analysed = false;
     int messagePart = TextImportProcessor.MESSAGE_UNKNOWN;
@@ -44,6 +47,7 @@ class TextImportProcessorState implements Mutable, Closeable {
     boolean forceHeader = false;
     int state;
     boolean json = false;
+    CharSequence errorMessage;
 
     TextImportProcessorState(CairoEngine engine) {
         this.textLoader = new TextLoader(engine);
@@ -57,11 +61,20 @@ class TextImportProcessorState implements Mutable, Closeable {
         analysed = false;
         state = STATE_OK;
         textLoader.clear();
+        errorMessage = null;
     }
 
     @Override
     public void close() {
         clear();
-        Misc.free(textLoader);
+        textLoader = Misc.free(textLoader);
+    }
+
+    public void snapshotStateAndCloseWriter() {
+        if (completeState == null) {
+            completeState = new TextLoaderCompletedState();
+        }
+        completeState.copyState(textLoader);
+        textLoader.closeWriter();
     }
 }

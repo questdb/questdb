@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.MimeTypesCache;
+import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
@@ -61,6 +62,7 @@ import java.util.Properties;
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
+    private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
@@ -246,6 +248,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgWorkerCount;
     private boolean pgHaltOnError;
     private boolean pgDaemonPool;
+    private long maxRerunWaitCapMs;
+    private double rerunExponentialWaitMultiplier;
+    private int rerunInitialWaitQueueSize;
+    private int rerunMaxProcessingQueueSize;
     private int lineTcpNetActiveConnectionLimit;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
@@ -398,6 +404,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             try (Path path = new Path().of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath()).$()) {
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
             }
+
+            this.maxRerunWaitCapMs = getLong(properties, env,"http.busy.retry.maximum.wait.before.retry", 1000);
+            this.rerunExponentialWaitMultiplier = getDouble(properties, env,"http.busy.retry.exponential.wait.multipier", 2.0);
+            this.rerunInitialWaitQueueSize = getIntSize(properties, env,"http.busy.retry.initialWaitQueueSize", 64);
+            this.rerunMaxProcessingQueueSize = getIntSize(properties, env,"http.busy.retry.maxProcessingQueueSize", 4096);
         }
         this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
         if (pgEnabled) {
@@ -1199,6 +1210,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+            return httpWaitProcessorConfiguration;
+        }
+
+        @Override
         public HttpContextConfiguration getHttpContextConfiguration() {
             return httpContextConfiguration;
         }
@@ -1940,6 +1956,34 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private class PropWaitProcessorConfiguration implements WaitProcessorConfiguration {
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public long getMaxWaitCapMs() {
+            return maxRerunWaitCapMs;
+        }
+
+        @Override
+        public double getExponentialWaitMultiplier() {
+            return rerunExponentialWaitMultiplier;
+        }
+
+        @Override
+        public int getInitialWaitQueueSize() {
+            return rerunInitialWaitQueueSize;
+        }
+
+        @Override
+        public int getMaxProcessingQueueSize() {
+            return rerunMaxProcessingQueueSize;
+        }
+    }
+
     private class PropPGWireDispatcherConfiguration implements IODispatcherConfiguration {
 
         @Override
@@ -2164,6 +2208,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public HttpContextConfiguration getHttpContextConfiguration() {
             return httpContextConfiguration;
+        }
+
+        @Override
+        public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+            return httpWaitProcessorConfiguration;
         }
 
         @Override

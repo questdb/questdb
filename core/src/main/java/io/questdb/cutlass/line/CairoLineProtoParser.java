@@ -273,7 +273,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
-        engine.creatTable(
+        engine.createTable(
                 cairoSecurityContext,
                 appendMemory,
                 path,

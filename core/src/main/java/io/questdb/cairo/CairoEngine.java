@@ -104,7 +104,7 @@ public class CairoEngine implements Closeable {
         configuration.getFilesFacade().close(tableIndexFd);
     }
 
-    public void creatTable(
+    public void createTable(
             CairoSecurityContext securityContext,
             AppendMemory mem,
             Path path,

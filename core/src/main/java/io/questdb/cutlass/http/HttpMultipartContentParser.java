@@ -24,6 +24,9 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
+import io.questdb.cutlass.http.ex.RetryOperationException;
+import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
@@ -57,6 +60,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     private int boundaryPtr;
     private int consumedBoundaryLen;
     private int state;
+    private long resumePtr;
 
     public HttpMultipartContentParser(HttpHeaderParser headerParser) {
         this.headerParser = headerParser;
@@ -76,6 +80,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         headerParser.close();
     }
 
+    public long getResumePtr() {
+        return resumePtr;
+    }
+
     /**
      * Setup multi-part parser with boundary. Boundary value retrieved from HTTP header must be
      * prefixed with '\r\n--'.
@@ -90,7 +98,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
 
     public boolean parse(long lo, long hi, HttpMultipartContentListener listener)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        long _lo = Long.MAX_VALUE;
+        long _lo = lo;
         long ptr = lo;
         while (ptr < hi) {
             switch (state) {
@@ -152,9 +160,11 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     break;
                 case HEADERS:
                     listener.onPartEnd();
+                    state = HEADERS;
                     // fall through
                 case START_HEADERS:
                     headerParser.clear();
+                    state = START_HEADERS;
                     // fall through
                 case PARTIAL_HEADERS:
                     ptr = headerParser.parse(ptr, hi, false);
@@ -163,8 +173,8 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         return false;
                     }
                     _lo = ptr;
-                    state = BODY;
                     listener.onPartBegin(headerParser);
+                    state = BODY;
                     break;
                 case BODY:
                     byte b = Unsafe.getUnsafe().getByte(ptr++);
@@ -172,13 +182,10 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                         boundaryPtr = 1;
                         switch (matchBoundary(ptr, hi)) {
                             case BOUNDARY_INCOMPLETE:
-                                listener.onChunk(_lo, ptr - 1);
-                                state = POTENTIAL_BOUNDARY;
+                                onChunkWithRetryHandle(listener, _lo, ptr - 1, POTENTIAL_BOUNDARY, hi, true);
                                 return false;
                             case BOUNDARY_MATCH:
-                                listener.onChunk(_lo, ptr - 1);
-                                state = PRE_HEADERS;
-                                ptr += consumedBoundaryLen;
+                                ptr = onChunkWithRetryHandle(listener, _lo, ptr - 1, PRE_HEADERS, ptr + consumedBoundaryLen, false);
                                 break;
                             default:
                                 break;
@@ -196,8 +203,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             break;
                         default:
                             // can only be BOUNDARY_NO_MATCH:
-                            listener.onChunk(boundary.getLo(), boundary.getLo() + p);
-                            state = BODY_BROKEN;
+                            ptr = onChunkWithRetryHandle(listener, boundary.getLo(), boundary.getLo() + p, BODY_BROKEN, ptr, true);
                             break;
                     }
                     break;
@@ -205,14 +211,43 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                     // DONE
                     return true;
             }
+
         }
 
         if (state == BODY) {
-            listener.onChunk(_lo, ptr);
-            state = BODY_BROKEN;
+            onChunkWithRetryHandle(listener, _lo, ptr, BODY_BROKEN, ptr, true);
         }
 
         return false;
+    }
+
+    private long onChunkWithRetryHandle(HttpMultipartContentListener listener, long lo, long hi, int state, long resumePtr, boolean handleIncomplete) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+        RetryOperationException needsRetry = null;
+        try {
+            listener.onChunk(lo, hi);
+        } catch (RetryOperationException e) {
+            // Request re-try
+            needsRetry = e;
+        } catch (NotEnoughLinesException e) {
+            if (handleIncomplete) {
+                this.resumePtr = lo;
+                throw TooFewBytesReceivedException.INSTANCE;
+            } else {
+                throw e;
+            }
+        }
+
+        // Roll to next state
+        this.state = state;
+
+        // And save point to continue
+        // even if RetryOperationException happened
+        this.resumePtr = resumePtr;
+
+        // If retry exception happened, rethrow after setting state and resume point.
+        if (needsRetry != null) throw needsRetry;
+
+        return resumePtr;
     }
 
     private int matchBoundary(long lo, long hi) {
