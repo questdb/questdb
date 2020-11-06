@@ -25,55 +25,32 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.std.LongList;
 
 public class TextLoaderCompletedState {
-    private static final LongList emptyErrors = new LongList();
     private long writtenLineCount;
-    private long parsedLineCount;
     private RecordMetadata metadata;
-    private CharSequence tableName;
-    private long errorLineCount;
-    private boolean isForcedHeader;
-    private LongList colCounts;
-    private String partitionBy;
+    private TextLoader textLoader;
 
     public void copyState(TextLoader textLoader) {
+        // Some values are come from TableWriter and has to be copied
+        // in order to release TableWriter back to the Engine
         this.writtenLineCount = textLoader.getWrittenLineCount();
-        this.parsedLineCount = textLoader.getParsedLineCount();
-        this.errorLineCount = textLoader.getErrorLineCount();
         this.metadata = textLoader.getMetadata() != null
                 ? GenericRecordMetadata.copyOf(textLoader.getMetadata())
                 : null;
-        this.tableName = textLoader.getTableName();
-        this.isForcedHeader = textLoader.isForceHeaders();
-
-        // Lazy copy errors.
-        LongList colCounts = textLoader.getColumnErrorCounts();
-        if (colCounts != null) {
-            if (this.colCounts == null) {
-                this.colCounts = new LongList(colCounts);
-            } else {
-                this.colCounts.clear();
-                this.colCounts.add(colCounts);
-            }
-        } else {
-            if (this.colCounts != null) {
-                this.colCounts.clear();
-            }
-        }
-        this.partitionBy = PartitionBy.toString(textLoader.getPartitionBy());
+        // Some values are safe to get from TextLoader
+        this.textLoader = textLoader;
     }
 
     public LongList getColumnErrorCounts() {
-        return colCounts != null ? colCounts : emptyErrors;
+        return textLoader.getColumnErrorCounts();
     }
 
     public long getErrorLineCount() {
-        return errorLineCount;
+        return textLoader.getErrorLineCount();
     }
 
     public RecordMetadata getMetadata() {
@@ -81,15 +58,15 @@ public class TextLoaderCompletedState {
     }
 
     public long getParsedLineCount() {
-        return parsedLineCount;
+        return textLoader.getParsedLineCount();
     }
 
-    public String getPartitionBy() {
-        return partitionBy;
+    public int getPartitionBy() {
+        return textLoader.getPartitionBy();
     }
 
     public CharSequence getTableName() {
-        return tableName;
+        return textLoader.getTableName();
     }
 
     public long getWrittenLineCount() {
@@ -97,6 +74,6 @@ public class TextLoaderCompletedState {
     }
 
     public boolean isForceHeaders() {
-        return isForcedHeader;
+        return textLoader.isForceHeaders();
     }
 }

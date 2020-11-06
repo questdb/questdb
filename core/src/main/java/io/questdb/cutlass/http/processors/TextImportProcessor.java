@@ -51,7 +51,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int RESPONSE_COLUMN = 2;
     private static final int RESPONSE_SUFFIX = 3;
     private static final int RESPONSE_DONE = 4;
-    private static final int RESPONSE_COMPLETE = 1000;
+    private static final int RESPONSE_COMPLETE = 5;
     private static final int MESSAGE_SCHEMA = 1;
     private static final int MESSAGE_DATA = 2;
     private static final int TO_STRING_COL1_PAD = 15;
@@ -217,21 +217,21 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     private static void resumeJson(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final TextLoaderCompletedState textLoader = state.completeState;
-        final RecordMetadata metadata = textLoader.getMetadata();
-        final LongList errors = textLoader.getColumnErrorCounts();
+        final TextLoaderCompletedState completeState = state.completeState;
+        final RecordMetadata metadata = completeState.getMetadata();
+        final LongList errors = completeState.getColumnErrorCounts();
 
 
         switch (state.responseState) {
             case RESPONSE_PREFIX:
-                long totalRows = textLoader.getParsedLineCount();
-                long importedRows = textLoader.getWrittenLineCount();
+                long totalRows = completeState.getParsedLineCount();
+                long importedRows = completeState.getWrittenLineCount();
                 socket.put('{')
                         .putQuoted("status").put(':').putQuoted("OK").put(',')
-                        .putQuoted("location").put(':').encodeUtf8AndQuote(textLoader.getTableName()).put(',')
-                        .putQuoted("rowsRejected").put(':').put(totalRows - importedRows + textLoader.getErrorLineCount()).put(',')
+                        .putQuoted("location").put(':').encodeUtf8AndQuote(completeState.getTableName()).put(',')
+                        .putQuoted("rowsRejected").put(':').put(totalRows - importedRows + completeState.getErrorLineCount()).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
-                        .putQuoted("header").put(':').put(textLoader.isForceHeaders()).put(',')
+                        .putQuoted("header").put(':').put(completeState.isForceHeaders()).put(',')
                         .putQuoted("columns").put(':').put('[');
                 state.responseState = RESPONSE_COLUMN;
                 // fall through
@@ -326,7 +326,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
                 socket.put('|');
                 pad(socket, TO_STRING_COL1_PAD, "Partition by");
-                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getPartitionBy());
+                pad(socket, TO_STRING_COL2_PAD, PartitionBy.toString(textLoaderCompletedState.getPartitionBy()));
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
                 pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
@@ -470,8 +470,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
 
         // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
-        state.copyCompleteState();
-        state.clear();
+        state.snapshotStateAndCloseWriter();
         if (state.state == TextImportProcessorState.STATE_OK) {
             if (state.json) {
                 socket.status(200, CONTENT_TYPE_JSON);

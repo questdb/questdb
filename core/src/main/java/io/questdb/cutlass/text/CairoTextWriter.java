@@ -85,6 +85,10 @@ public class CairoTextWriter implements Closeable, Mutable {
         appendMemory.close();
     }
 
+    public void closeWriter() {
+        writer = Misc.free(writer);
+    }
+
     public void commit() {
         if (writer != null) {
             if (durable) {

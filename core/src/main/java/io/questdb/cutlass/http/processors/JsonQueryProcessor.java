@@ -40,7 +40,6 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
@@ -52,9 +51,6 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
@@ -327,9 +323,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         JsonQueryProcessorState state = LV.get(context);
-        if (state == null) {
-            readyForNextRequest(context);
-        }
         execute0(state);
     }
 

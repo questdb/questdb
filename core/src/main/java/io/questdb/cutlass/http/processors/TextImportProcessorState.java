@@ -70,10 +70,11 @@ class TextImportProcessorState implements Mutable, Closeable {
         textLoader = Misc.free(textLoader);
     }
 
-    public void copyCompleteState() {
+    public void snapshotStateAndCloseWriter() {
         if (completeState == null) {
             completeState = new TextLoaderCompletedState();
         }
         completeState.copyState(textLoader);
+        textLoader.closeWriter();
     }
 }
