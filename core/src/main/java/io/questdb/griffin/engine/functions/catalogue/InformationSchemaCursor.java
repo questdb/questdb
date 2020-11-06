@@ -32,8 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 
 class InformationSchemaCursor implements NoRandomAccessRecordCursor {
+
     static final RecordMetadata METADATA;
-    private final InformationSchemaRecord record = new InformationSchemaRecord();
+    private static final InformationSchemaRecord record = new InformationSchemaRecord();
 
     @Override
     public void close() {
@@ -54,7 +55,6 @@ class InformationSchemaCursor implements NoRandomAccessRecordCursor {
     public void toTop() {
 
     }
-
 
     @Override
     public long size() {

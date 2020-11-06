@@ -32,8 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 
 class IndexCatalogueCursor implements NoRandomAccessRecordCursor {
+
     static final RecordMetadata METADATA;
-    private final IndexCatalogueRecord record = new IndexCatalogueRecord();
+    private static final IndexCatalogueRecord record = new IndexCatalogueRecord();
 
     @Override
     public void close() {

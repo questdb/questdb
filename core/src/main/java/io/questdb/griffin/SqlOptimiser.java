@@ -201,7 +201,7 @@ class SqlOptimiser {
             QueryModel validatingModel
     ) throws SqlException {
         if (validatingModel != null) {
-            CharSequence refColumn = Chars.toLowerCase(column.getAst().token);
+            CharSequence refColumn = column.getAst().token;
             final int dot = Chars.indexOf(refColumn, '.');
             getIndexOfTableForColumn(validatingModel, refColumn, dot, column.getAst().position);
             // when we have only one model, e.g. this is not a join
@@ -733,7 +733,7 @@ class SqlOptimiser {
         int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
             // column is already being referenced by translating model
-            final CharSequence translatedColumnName = translatingAliasMap.valueAt(index);
+            final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence alias = createColumnAlias(columnName, groupByModel);
             final QueryColumn translatedColumn = nextColumn(alias, translatedColumnName);
             innerModel.addBottomUpColumn(translatedColumn);
@@ -950,7 +950,7 @@ class SqlOptimiser {
                 }
 
                 if (found) {
-                    return nextLiteral(map.valueAt(index), node.position);
+                    return nextLiteral(map.valueAtQuick(index), node.position);
                 }
             }
 
@@ -964,7 +964,7 @@ class SqlOptimiser {
             }
             return nextLiteral(alias, node.position);
         }
-        return nextLiteral(map.valueAt(index), node.position);
+        return nextLiteral(map.valueAtQuick(index), node.position);
     }
 
     private void doRewriteOrderByPositionForUnionModels(QueryModel model, QueryModel parent, QueryModel next) throws SqlException {
@@ -1168,7 +1168,6 @@ class SqlOptimiser {
     }
 
     private int getIndexOfTableForColumn(QueryModel model, CharSequence column, int dot, int position) throws SqlException {
-        column = Chars.toLowerCase(column);
         ObjList<QueryModel> joinModels = model.getJoinModels();
         int index = -1;
         if (dot == -1) {
@@ -2288,7 +2287,7 @@ class SqlOptimiser {
 
                         if (index < 0) {
                             // we have found alias, rewrite order by column
-                            orderBy.token = map.valueAt(index);
+                            orderBy.token = map.valueAtQuick(index);
                         } else {
                             if (dot > -1) {
                                 throw SqlException.invalidColumn(orderBy.position, column);
@@ -2318,7 +2317,7 @@ class SqlOptimiser {
                                     index = synthetic.getColumnNameToAliasMap().keyIndex(column);
 
                                     if (index < 0) {
-                                        alias = synthetic.getColumnNameToAliasMap().valueAt(index);
+                                        alias = synthetic.getColumnNameToAliasMap().valueAtQuick(index);
                                     }
                                 }
 
@@ -2832,7 +2831,7 @@ class SqlOptimiser {
                 int index = dot == -1 ? nameTypeMap.keyIndex(node.token) : nameTypeMap.keyIndex(node.token, dot + 1, node.token.length());
                 // these columns are pre-validated
                 assert index < 0;
-                if (nameTypeMap.valueAt(index).getAst().type != ExpressionNode.LITERAL) {
+                if (nameTypeMap.valueAtQuick(index).getAst().type != ExpressionNode.LITERAL) {
                     throw NonLiteralException.INSTANCE;
                 }
             }
@@ -2855,7 +2854,7 @@ class SqlOptimiser {
                 // we have table column hit when alias is not found
                 // in this case expression rewrite is unnecessary
                 if (index < 0) {
-                    CharSequence column = aliasToColumnMap.valueAt(index);
+                    CharSequence column = aliasToColumnMap.valueAtQuick(index);
                     assert column != null;
                     // it is also unnecessary to rewrite literal if target value is the same
                     if (!Chars.equals(node.token, column)) {

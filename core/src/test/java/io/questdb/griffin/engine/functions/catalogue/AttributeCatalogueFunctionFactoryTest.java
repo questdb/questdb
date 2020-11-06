@@ -42,6 +42,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
         );
     }
 
+
     @Test
     public void testPgAttributeFuncNoTables() throws Exception {
         assertQuery(
@@ -70,6 +71,23 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 false,
                 false
+        );
+    }
+
+    @Test
+    public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
+        assertQuery(
+                "attrelid\tattname\tattnum\n" +
+                        "1\ta\t1\n",
+                "pg_catalog.pg_attribute limit 1;",
+                "create table x(a int)",
+                null,
+                "create table y(a double, b string)",
+                "attrelid\tattname\tattnum\n" +
+                        "1\ta\t1\n",
+                false,
+                false,
+                true
         );
     }
 

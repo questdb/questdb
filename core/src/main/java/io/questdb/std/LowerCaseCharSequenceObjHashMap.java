@@ -112,7 +112,11 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     }
 
     public T valueAt(int index) {
-        return index < 0 ? values[-index - 1] : null;
+        return index < 0 ? valueAtQuick(index) : null;
+    }
+
+    public T valueAtQuick(int index) {
+        return values[-index - 1];
     }
 
     private void putAt0(int index, CharSequence key, T value) {

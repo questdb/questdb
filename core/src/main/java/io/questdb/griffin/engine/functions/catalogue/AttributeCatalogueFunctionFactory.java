@@ -153,9 +153,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                     if (hasNextFile) {
                         nativeLPSZ.of(pname);
                         if (
-                                ff.findType(findFileStruct) == Files.DT_DIR
-                                        && !Chars.equals(nativeLPSZ, '.')
-                                        && !Chars.equals(nativeLPSZ, "..")
+                                ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(nativeLPSZ)
                         ) {
                             path.trimTo(plimit);
                             path.concat(pname);

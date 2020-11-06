@@ -81,7 +81,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
-    private final CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
@@ -182,7 +182,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         withClauses.put(name, model);
     }
 
-    public void addWithClauses(CharSequenceObjHashMap<WithClauseModel> parentWithClauses) {
+    public void addWithClauses(LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses) {
         withClauses.putAll(parentWithClauses);
     }
 
@@ -258,7 +258,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.bottomUpColumnNames.addAll(columnNames);
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence name = columnNames.getQuick(i);
-            this.aliasToColumnNameMap.put(Chars.toLowerCase(name), Chars.toLowerCase(name));
+            this.aliasToColumnNameMap.put(name, name);
         }
     }
 
@@ -550,7 +550,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return withClauses.get(name);
     }
 
-    public CharSequenceObjHashMap<WithClauseModel> getWithClauses() {
+    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
         return withClauses;
     }
 
