@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
 
-public class AttrituteCatalogueFunctionFactoryTest extends AbstractGriffinTest {
+public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPgAttributeFunc() throws Exception {
