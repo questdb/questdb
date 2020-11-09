@@ -56,16 +56,18 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
+        private final ReadOnlyColumn metaMem = new OnePageMemory();
         private final AttributeClassCatalogueCursor cursor;
 
         public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.cursor = new AttributeClassCatalogueCursor(configuration, path);
+            this.cursor = new AttributeClassCatalogueCursor(configuration, path, metaMem);
         }
 
         @Override
         public void close() {
             Misc.free(path);
+            Misc.free(metaMem);
         }
 
         @Override
@@ -95,12 +97,12 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private boolean hasNextFile = true;
         private boolean foundMetadataFile = false;
 
-        public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path) {
+        public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path, ReadOnlyColumn metaMem) {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
-            this.metaMem = new OnePageMemory();
+            this.metaMem = metaMem;
         }
 
         @Override
