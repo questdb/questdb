@@ -26,58 +26,62 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
-import io.questdb.griffin.HttpSqlExecutionInterruptor;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.cutlass.http.ex.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 
-public class HttpConnectionContext implements IOContext, Locality, Mutable {
+public class HttpConnectionContext implements IOContext, Locality, Mutable, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
     private final int recvBufferSize;
+    private final int sendBufferSize;
     private final HttpMultipartContentParser multipartContentParser;
     private final HttpHeaderParser multipartContentHeaderParser;
     private final HttpResponseSink responseSink;
     private final ObjectPool<DirectByteCharSequence> csPool;
-    private final long sendBuffer;
-    private final HttpServerConfiguration configuration;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
     private final long multipartIdleSpinCount;
     private final CairoSecurityContext cairoSecurityContext;
     private final boolean dumpNetworkTraffic;
     private final boolean allowDeflateBeforeSend;
-    private final HttpSqlExecutionInterruptor execInterruptor;
+    private final MultipartParserState multipartParserState = new MultipartParserState();
+    private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
+    private final RescheduleContext retryRescheduleContext = retry -> {
+        LOG.info().$("Retry is requested after successful writer allocation. Retry will be re-scheduled [thread=").$(Thread.currentThread().getId()).$(']');
+        throw RetryOperationException.INSTANCE;
+    };
+    private final boolean serverKeepAlive;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
+    private boolean pendingRetry = false;
     private IODispatcher<HttpConnectionContext> dispatcher;
     private int nCompletedRequests;
     private long totalBytesSent;
-    private final boolean serverKeepAlive;
+    private int receivedBytes;
 
-    public HttpConnectionContext(HttpServerConfiguration configuration) {
-        this.configuration = configuration;
-        this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
+    public HttpConnectionContext(HttpContextConfiguration configuration) {
+        this.nf = configuration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.recvBufferSize = configuration.getRecvBufferSize();
+        this.sendBufferSize = configuration.getSendBufferSize();
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
-        this.sendBuffer = Unsafe.malloc(configuration.getSendBufferSize());
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.allowDeflateBeforeSend = configuration.allowDeflateBeforeSend();
         cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
-        execInterruptor = configuration.isInterruptOnClosedConnection()
-                ? new HttpSqlExecutionInterruptor(this.nf, configuration.getInterruptorNIterationsPerCheck(), configuration.getInterruptorBufferSize())
-                : null;
         this.serverKeepAlive = configuration.getServerKeepAlive();
     }
 
@@ -93,12 +97,20 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.csPool.clear();
         this.localValueMap.clear();
         this.responseSink.clear();
+        if (this.pendingRetry) {
+            LOG.error().$("Reused context with retry pending.").$();
+        }
+        this.pendingRetry = false;
+        this.multipartParserState.multipartRetry = false;
+        this.retryAttemptAttributes.waitStartTimestamp = 0;
+        this.retryAttemptAttributes.lastRunTimestamp = 0;
+        this.retryAttemptAttributes.attempt = 0;
+        this.receivedBytes = 0;
     }
 
     @Override
     public void close() {
         this.fd = -1;
-        Misc.free(execInterruptor);
         nCompletedRequests = 0;
         totalBytesSent = 0;
         csPool.clear();
@@ -108,7 +120,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         headerParser.close();
         localValueMap.close();
         Unsafe.free(recvBuffer, recvBufferSize);
-        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
+        if (this.pendingRetry) {
+            LOG.error().$("Closed context with retry pending.").$();
+        }
+        this.pendingRetry = false;
+        this.receivedBytes = 0;
         LOG.debug().$("closed").$();
     }
 
@@ -119,7 +135,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
     @Override
     public boolean invalid() {
-        return this.fd == -1;
+        return pendingRetry || receivedBytes > 0 || this.fd == -1;
     }
 
     @Override
@@ -135,9 +151,17 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getChunkedSocket();
     }
 
+    public long getLastRequestBytesSent() {
+        return responseSink.getTotalBytesSent();
+    }
+
     @Override
     public LocalValueMap getMap() {
         return localValueMap;
+    }
+
+    public int getNCompletedRequests() {
+        return nCompletedRequests;
     }
 
     public HttpRawSocket getRawResponseSocket() {
@@ -152,11 +176,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getHeader();
     }
 
-    public void handleClientOperation(int operation, HttpRequestProcessorSelector selector) {
+    public long getTotalBytesSent() {
+        return totalBytesSent;
+    }
+
+    public void handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         boolean keepGoing;
         switch (operation) {
             case IOOperation.READ:
-                keepGoing = handleClientRecv(selector);
+                keepGoing = handleClientRecv(selector, rescheduleContext);
                 break;
             case IOOperation.WRITE:
                 keepGoing = handleClientSend();
@@ -170,7 +198,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         if (keepGoing) {
             if (serverKeepAlive) {
                 do {
-                    keepGoing = handleClientRecv(selector);
+                    keepGoing = handleClientRecv(selector, rescheduleContext);
                 } while (keepGoing);
             } else {
                 dispatcher.disconnect(this);
@@ -182,9 +210,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.fd = fd;
         this.dispatcher = dispatcher;
         this.responseSink.of(fd);
-        if (null != execInterruptor) {
-            this.execInterruptor.of(fd);
-        }
         return this;
     }
 
@@ -192,10 +217,24 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getSimple();
     }
 
-    private void completeRequest(HttpRequestProcessor processor) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private void completeRequest(HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         LOG.debug().$("complete [fd=").$(fd).$(']').$();
-        processor.onRequestComplete(this);
-        clear();
+        try {
+            processor.onRequestComplete(this);
+            clear();
+        } catch (RetryOperationException e) {
+            pendingRetry = true;
+            scheduleRetry(processor, rescheduleContext);
+        }
+    }
+
+    public void scheduleRetry(HttpRequestProcessor processor, RescheduleContext rescheduleContext) {
+        try {
+            pendingRetry = true;
+            rescheduleContext.reschedule(this);
+        } catch (RetryFailedOperationException e) {
+            fail(e, processor);
+        }
     }
 
     private boolean consumeMultipart(
@@ -203,9 +242,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             HttpRequestProcessor processor,
             long headerEnd,
             int read,
-            boolean newRequest
+            boolean newRequest,
+            RescheduleContext rescheduleContext
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        boolean keepGoing = false;
         if (newRequest) {
             processor.onHeadersReady(this);
             multipartContentParser.of(headerParser.getBoundary());
@@ -228,8 +267,37 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             buf = bufferEnd;
             bufRemaining = (int) (recvBufferSize - (bufferEnd - recvBuffer));
         } else {
-            buf = start = recvBuffer;
-            bufRemaining = recvBufferSize;
+            start = recvBuffer;
+            buf = start + receivedBytes;
+            bufRemaining = recvBufferSize - receivedBytes;
+            receivedBytes = 0;
+        }
+
+        return continueConsumeMultipart(fd, start, buf, bufRemaining, multipartListener, processor, rescheduleContext);
+    }
+
+    private boolean continueConsumeMultipart(
+            long fd,
+            long start,
+            long buf,
+            int bufRemaining,
+            HttpMultipartContentListener multipartListener,
+            HttpRequestProcessor processor,
+            RescheduleContext rescheduleContext
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        boolean keepGoing = false;
+
+        if (buf > start) {
+            try {
+                if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                    return true;
+                }
+
+                buf = start = recvBuffer;
+                bufRemaining = recvBufferSize;
+            } catch (TooFewBytesReceivedException e) {
+                start = multipartContentParser.getResumePtr();
+            }
         }
 
         long spinsRemaining = multipartIdleSpinCount;
@@ -254,17 +322,21 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
                 // do we have anything in the buffer?
                 if (buf > start) {
-                    if (buf - start > 0 && multipartContentParser.parse(start, buf, multipartListener)) {
-                        // request is complete
-                        completeRequest(processor);
-                        keepGoing = true;
+                    try {
+                        if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                            keepGoing = true;
+                            break;
+                        }
+
+                        buf = start = recvBuffer;
+                        bufRemaining = recvBufferSize;
+                        continue;
+                    } catch (TooFewBytesReceivedException e) {
+                        start = multipartContentParser.getResumePtr();
+                        shiftReceiveBufferUnprocessedBytes(start, (int) (buf - start));
+                        dispatcher.registerChannel(this, IOOperation.READ);
                         break;
                     }
-
-                    buf = start = recvBuffer;
-                    bufRemaining = recvBufferSize;
-                    continue;
-
                 }
 
                 LOG.debug().$("peer is slow [multipart]").$();
@@ -280,18 +352,63 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             buf += n;
 
             if (bufRemaining == 0) {
-                if (buf - start > 1 && multipartContentParser.parse(start, buf, multipartListener)) {
-                    // request is complete
-                    completeRequest(processor);
-                    keepGoing = true;
-                    break;
-                }
+                try {
+                    if (buf - start > 1) {
+                        if (parseMultipartResult(start, buf, bufRemaining, multipartListener, processor, rescheduleContext)) {
+                            keepGoing = true;
+                            break;
+                        }
+                    }
 
-                buf = start = recvBuffer;
-                bufRemaining = recvBufferSize;
+                    buf = start = recvBuffer;
+                    bufRemaining = recvBufferSize;
+                } catch (TooFewBytesReceivedException e) {
+                    start = multipartContentParser.getResumePtr();
+                    int unprocessedSize = (int) (buf - start);
+                    // Shift to start
+                    if (unprocessedSize < recvBufferSize) {
+                        start = multipartContentParser.getResumePtr();
+                        shiftReceiveBufferUnprocessedBytes(start, unprocessedSize);
+                        dispatcher.registerChannel(this, IOOperation.READ);
+                        break;
+                    } else {
+                        // Header does not fit receive buffer
+                        doFail(BufferOverflowException.INSTANCE, processor);
+                        throw ServerDisconnectException.INSTANCE;
+                    }
+                }
             }
         }
         return keepGoing;
+    }
+
+    private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
+        // Shift to start
+        this.receivedBytes = receivedBytes;
+        Unsafe.getUnsafe().copyMemory(start, recvBuffer, receivedBytes);
+        LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
+    }
+
+    private boolean parseMultipartResult(long start, long buf, int bufRemaining, HttpMultipartContentListener
+            multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws
+            PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, TooFewBytesReceivedException {
+        boolean parseResult;
+        try {
+            parseResult = multipartContentParser.parse(start, buf, multipartListener);
+        } catch (RetryOperationException e) {
+            this.multipartParserState.saveFdBufferPosition(multipartContentParser.getResumePtr(), buf, bufRemaining);
+            throw e;
+        } catch (NotEnoughLinesException e) {
+            doFail(e, processor);
+            throw ServerDisconnectException.INSTANCE;
+        }
+
+        if (parseResult) {
+            // request is complete
+            completeRequest(processor, rescheduleContext);
+            return true;
+        }
+        return false;
     }
 
     private void dumpBuffer(long buffer, int size) {
@@ -301,7 +418,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         }
     }
 
-    private boolean handleClientRecv(HttpRequestProcessorSelector selector) {
+    private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         boolean keepGoing = true;
         try {
             final long fd = this.fd;
@@ -337,11 +454,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             if (url == null) {
                 throw HttpException.instance("missing URL");
             }
-            HttpRequestProcessor processor = selector.select(headerParser.getUrl());
-
-            if (processor == null) {
-                processor = selector.getDefaultProcessor();
-            }
+            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
 
             final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
             final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
@@ -358,7 +471,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     // bad request - regular request for processor that expects multipart
                     keepGoing = rejectRequest("Bad request. Multipart POST expected.");
                 } else if (multipartProcessor) {
-                    keepGoing = consumeMultipart(fd, processor, headerEnd, read, newRequest);
+                    keepGoing = consumeMultipart(fd, processor, headerEnd, read, newRequest, rescheduleContext);
                 } else {
 
                     // Do not expect any more bytes to be sent to us before
@@ -379,6 +492,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         clear();
                     }
                 }
+            } catch (RetryOperationException e) {
+                pendingRetry = true;
+                scheduleRetry(processor, rescheduleContext);
+                keepGoing = false;
             } catch (PeerDisconnectedException e) {
                 dispatcher.disconnect(this);
                 keepGoing = false;
@@ -403,12 +520,13 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return keepGoing;
     }
 
-    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        clear();
-        LOG.error().$(userMessage).$();
-        simpleResponse().sendStatus(400, userMessage);
-        dispatcher.registerChannel(this, IOOperation.READ);
-        return false;
+    private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
+        HttpRequestProcessor processor = selector.select(headerParser.getUrl());
+
+        if (processor == null) {
+            processor = selector.getDefaultProcessor();
+        }
+        return processor;
     }
 
     private boolean handleClientSend() {
@@ -431,19 +549,101 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return false;
     }
 
-    public int getNCompletedRequests() {
-        return nCompletedRequests;
+    private boolean rejectRequest(CharSequence userMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        clear();
+        LOG.error().$(userMessage).$();
+        simpleResponse().sendStatus(404, userMessage);
+        dispatcher.registerChannel(this, IOOperation.READ);
+        return false;
     }
 
-    public long getTotalBytesSent() {
-        return totalBytesSent;
+    public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        if (pendingRetry) {
+            pendingRetry = false;
+            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
+            try {
+                LOG.info().$("retrying query [fd=").$(fd).$(']').$();
+                processor.onRequestRetry(this);
+                if (multipartParserState.multipartRetry) {
+                    if (continueConsumeMultipart(
+                            fd,
+                            multipartParserState.start,
+                            multipartParserState.buf,
+                            multipartParserState.bufRemaining,
+                            (HttpMultipartContentListener) processor,
+                            processor,
+                            retryRescheduleContext
+                    )) {
+                        LOG.info().$("success retried multipart import [fd=").$(fd).$(']').$();
+                        keepGoing(selector, rescheduleContext);
+                    } else {
+                        LOG.info().$("retry success but import not finished [fd=").$(fd).$(']').$();
+                    }
+                } else {
+                    keepGoing(selector, rescheduleContext);
+                }
+            } catch (RetryOperationException e2) {
+                pendingRetry = true;
+                return false;
+            } catch (PeerDisconnectedException ignore) {
+                dispatcher.disconnect(this);
+            } catch (PeerIsSlowToReadException e2) {
+                LOG.info().$("peer is slow on running the rerun [fd=").$(fd).$(", thread=")
+                        .$(Thread.currentThread().getId()).$(']').$();
+                processor.parkRequest(this);
+                resumeProcessor = processor;
+                dispatcher.registerChannel(this, IOOperation.WRITE);
+            } catch (ServerDisconnectException e) {
+                LOG.info().$("kicked out [fd=").$(fd).$(']').$();
+                dispatcher.disconnect(this);
+            }
+        }
+        return true;
     }
 
-    public long getLastRequestBytesSent() {
-        return responseSink.getTotalBytesSent();
+    private void keepGoing(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        clear();
+        if (serverKeepAlive) {
+            while (handleClientRecv(selector, rescheduleContext));
+        } else {
+            dispatcher.disconnect(this);
+        }
     }
 
-    public SqlExecutionInterruptor getSqlExecutionInterruptor() {
-        return execInterruptor;
+    @Override
+    public RetryAttemptAttributes getAttemptDetails() {
+        return retryAttemptAttributes;
+    }
+
+    @Override
+    public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+        LOG.info().$("Failed to retry query [fd=").$(fd).$(']').$();
+        HttpRequestProcessor processor = getHttpRequestProcessor(selector);
+        fail(e, processor);
+    }
+
+    private void fail(HttpException e, HttpRequestProcessor processor) {
+        pendingRetry = false;
+        try {
+            doFail(e, processor);
+        } catch (PeerDisconnectedException peerDisconnectedException) {
+            dispatcher.disconnect(this);
+        } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
+            LOG.info().$("Peer is slow to receive failed to retry response [fd=").$(fd).$(']').$();
+            processor.parkRequest(this);
+            resumeProcessor = processor;
+            dispatcher.registerChannel(this, IOOperation.WRITE);
+        } catch (ServerDisconnectException serverDisconnectException) {
+            LOG.info().$("Failed query result cannot be delivered. Kicked out [fd=").$(fd).$(']').$();
+            dispatcher.disconnect(this);
+        }
+    }
+
+    private void doFail(HttpException e, HttpRequestProcessor processor) throws
+            PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+        LOG.info().$("Failing client query with: ").$(e.getMessage()).$();
+        processor.failRequest(this, e);
+        clear();
+        dispatcher.disconnect(this);
     }
 }

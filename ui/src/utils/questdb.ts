@@ -26,6 +26,7 @@ type RawDqlResult = {
   count: number
   dataset: any[][]
   ddl: undefined
+  error: undefined
   query: string
   timings: Timings
 }
@@ -35,7 +36,8 @@ type RawDdlResult = {
 }
 
 type RawErrorResult = {
-  error: string
+  ddl: undefined
+  error: "<error message>"
   position: number
   query: string
 }
@@ -45,7 +47,7 @@ type DdlResult = {
   type: Type.DDL
 }
 
-type RawResult = RawDqlResult | RawDdlResult
+type RawResult = RawDqlResult | RawDdlResult | RawErrorResult
 
 export type ErrorResult = RawErrorResult & {
   type: Type.ERROR
@@ -200,6 +202,14 @@ export class Client {
         }
       }
 
+      if (data.error) {
+        // eslint-disable-next-line prefer-promise-reject-errors
+        return Promise.reject({
+          ...data,
+          type: Type.ERROR,
+        })
+      }
+
       return {
         ...data,
         timings: {
@@ -210,19 +220,9 @@ export class Client {
       }
     }
 
-    if (/quest/.test(response.headers.get("server") || "")) {
-      const data = (await response.json()) as RawErrorResult
-
-      // eslint-disable-next-line prefer-promise-reject-errors
-      return Promise.reject({
-        ...data,
-        type: Type.ERROR,
-      })
-    }
-
     // eslint-disable-next-line prefer-promise-reject-errors
     return Promise.reject({
-      error: "QuestDB is not reachable",
+      error: `QuestDB is not reachable [${response.status}]`,
       position: -1,
       query,
       type: Type.ERROR,

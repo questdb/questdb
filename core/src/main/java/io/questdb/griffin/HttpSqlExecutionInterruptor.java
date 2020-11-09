@@ -14,11 +14,17 @@ public class HttpSqlExecutionInterruptor implements SqlExecutionInterruptor, Clo
     private int nIterationsSinceCheck;
     private long fd = -1;
 
-    public HttpSqlExecutionInterruptor(NetworkFacade nf, int nIterationsPerCheck, int bufferSize) {
-        super();
-        this.nf = nf;
-        this.nIterationsPerCheck = nIterationsPerCheck;
-        this.bufferSize = bufferSize;
+    public static HttpSqlExecutionInterruptor create(SqlInterruptorConfiguration configuration) {
+        if(configuration.isEnabled()) {
+            return new HttpSqlExecutionInterruptor(configuration);
+        }
+        return null;
+    }
+
+    public HttpSqlExecutionInterruptor(SqlInterruptorConfiguration configuration) {
+        this.nf = configuration.getNetworkFacade();
+        this.nIterationsPerCheck = configuration.getCountOfIterationsPerCheck();
+        this.bufferSize = configuration.getBufferSize();
         buffer = Unsafe.malloc(bufferSize);
     }
 

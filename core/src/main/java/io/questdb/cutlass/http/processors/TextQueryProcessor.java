@@ -65,6 +65,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final MillisecondClock clock;
     private final int doubleScale;
+    private final HttpSqlExecutionInterruptor interruptor;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -88,11 +89,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         this.doubleScale = configuration.getDoubleScale();
+        this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
     }
 
     @Override
     public void close() {
         Misc.free(compiler);
+        Misc.free(interruptor);
     }
 
     public void execute(
@@ -102,7 +105,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
             state.setQueryCacheable(true);
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), context.getSqlExecutionInterruptor());
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()));
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
@@ -125,7 +128,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 try {
                     state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                     state.metadata = state.recordCursorFactory.getMetadata();
-                    header(context.getChunkedResponseSocket(), 200);
+                    header(context.getChunkedResponseSocket());
                     resumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -134,7 +137,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     internalError(context.getChunkedResponseSocket(), e, state);
                 }
             } else {
-                header(context.getChunkedResponseSocket(), 200);
+                header(context.getChunkedResponseSocket());
                 sendConfirmation(context.getChunkedResponseSocket());
                 readyForNextRequest(context);
             }
@@ -176,7 +179,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         // copy random during query resume
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), context.getSqlExecutionInterruptor());
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), interruptor.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
@@ -299,11 +302,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
-    protected void header(
-            HttpChunkedResponseSocket socket,
-            int status
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(status, "text/csv; charset=utf-8");
+    protected void header(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(200, "text/csv; charset=utf-8");
         socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
@@ -319,7 +319,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         error(state).$("Server error executing query ").utf8(state.query).$(e).$();
-        sendException(socket, 0, e.getMessage(), 500, state.query);
+        sendException(socket, 0, e.getMessage(), state.query);
     }
 
     private boolean parseUrl(
@@ -331,7 +331,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         final DirectByteCharSequence query = request.getUrlParam("query");
         if (query == null || query.length() == 0) {
             info(state).$("Empty query request received. Sending empty reply.").$();
-            sendException(socket, 0, "No query text", 400, state.query);
+            sendException(socket, 0, "No query text", state.query);
             return false;
         }
 
@@ -372,7 +372,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);
         } catch (Utf8Exception e) {
             info(state).$("Bad UTF8 encoding").$();
-            sendException(socket, 0, "Bad UTF8 encoding in query text", 400, state.query);
+            sendException(socket, 0, "Bad UTF8 encoding in query text", state.query);
             return false;
         }
         state.skip = skip;
@@ -473,17 +473,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpChunkedResponseSocket socket,
             int position,
             CharSequence message,
-            int status,
             CharSequence query
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, status);
-        socket.put('{').
-                putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',').
-                putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',').
-                putQuoted("position").put(':').put(position);
-        socket.put('}');
-        socket.sendChunk();
-        socket.done();
+        header(socket);
+        JsonQueryProcessorState.prepareExceptionJson(socket, position, message, query);
     }
 
     private void syntaxError(
@@ -496,6 +489,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$("`, at=").$(sqlException.getPosition())
                 .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
                 .$(']').$();
-        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), 400, state.query);
+        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), state.query);
     }
 }

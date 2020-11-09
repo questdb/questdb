@@ -1663,7 +1663,7 @@ class SqlOptimiser {
         moveWhereInsideSubQueries(rewrittenModel);
         eraseColumnPrefixInWhereClauses(rewrittenModel);
         moveTimestampToChooseModel(rewrittenModel);
-        propagateTopDownColumns(rewrittenModel, true, null);
+        propagateTopDownColumns(rewrittenModel);
         return rewrittenModel;
     }
 
@@ -2008,18 +2008,15 @@ class SqlOptimiser {
         parent.addParsedWhereNode(node);
     }
 
-    private void propagateTopDownColumns(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel) {
+    private void propagateTopDownColumns(QueryModel model) {
+        propagateTopDownColumns0(model, true, null);
+    }
+
+    private void propagateTopDownColumns0(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel) {
 
         // skip over NONE model that does not have table name
         final QueryModel nested = skipNoneTypeModels(model.getNestedModel());
         final boolean nestedIsFlex = modelIsFlex(nested);
-
-        if (nestedIsFlex) {
-            final ObjList<QueryColumn> columns = model.getColumns();
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                emitLiteralsTopDown(columns.getQuick(i).getAst(), nested);
-            }
-        }
 
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
 
@@ -2047,7 +2044,7 @@ class SqlOptimiser {
                     }
                 }
             }
-            propagateTopDownColumns(jm, false, model);
+            propagateTopDownColumns0(jm, false, model);
 
             // process post-join-where
             final ExpressionNode postJoinWhere = jm.getPostJoinWhereClause();
@@ -2056,7 +2053,6 @@ class SqlOptimiser {
                 emitLiteralsTopDown(postJoinWhere, model);
             }
         }
-
 
         // latest by
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
@@ -2075,6 +2071,9 @@ class SqlOptimiser {
         // where clause
         if (model.getWhereClause() != null) {
             emitLiteralsTopDown(model.getWhereClause(), model);
+            if (nested != null) {
+                emitLiteralsTopDown(model.getWhereClause(), nested);
+            }
         }
 
         // propagate 'order by'
@@ -2088,14 +2087,21 @@ class SqlOptimiser {
             }
         }
 
+        if (nestedIsFlex) {
+            final ObjList<QueryColumn> columns = model.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                emitLiteralsTopDown(columns.getQuick(i).getAst(), nested);
+            }
+        }
+
         // go down the nested path
         if (nested != null) {
-            propagateTopDownColumns(nested, false, null);
+            propagateTopDownColumns0(nested, false, null);
         }
 
         final QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
-            propagateTopDownColumns(unionModel, true, null);
+            propagateTopDownColumns(unionModel);
         }
     }
 
@@ -2827,12 +2833,15 @@ class SqlOptimiser {
         @Override
         public void visit(ExpressionNode node) {
             if (node.type == ExpressionNode.LITERAL) {
-                final int dot = Chars.indexOf(node.token, '.');
-                int index = dot == -1 ? nameTypeMap.keyIndex(node.token) : nameTypeMap.keyIndex(node.token, dot + 1, node.token.length());
-                // these columns are pre-validated
-                assert index < 0;
-                if (nameTypeMap.valueAtQuick(index).getAst().type != ExpressionNode.LITERAL) {
-                    throw NonLiteralException.INSTANCE;
+                final int len = node.token.length();
+                if (isNotBindVariable(node.token)) {
+                    final int dot = Chars.indexOf(node.token, 0, len, '.');
+                    int index = nameTypeMap.keyIndex(node.token, dot + 1, len);
+                    // these columns are pre-validated
+                    assert index < 0;
+                    if (nameTypeMap.valueAt(index).getAst().type != ExpressionNode.LITERAL) {
+                        throw NonLiteralException.INSTANCE;
+                    }
                 }
             }
         }
@@ -2916,7 +2925,7 @@ class SqlOptimiser {
                     // ignore bind variables
                     if (isNotBindVariable(node.token)) {
                         int dot = Chars.indexOf(node.token, '.');
-                        CharSequence name = extractColumnName(node.token, dot);
+                        CharSequence name = dot == -1 ? node.token : node.token.subSequence(dot + 1, node.token.length());
                         indexes.add(getIndexOfTableForColumn(model, node.token, dot, node.position));
                         if (names != null) {
                             names.add(name);

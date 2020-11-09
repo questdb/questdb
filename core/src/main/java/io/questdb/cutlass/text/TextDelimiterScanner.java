@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Unsafe;
@@ -169,7 +170,7 @@ public class TextDelimiterScanner implements Closeable {
 
         if (lineCount < 2) {
             LOG.info().$("not enough lines [table=").$(tableName).$(']').$();
-            throw TextException.$("not enough lines [table=").put(tableName).put(']');
+            throw NotEnoughLinesException.$("not enough lines [table=").put(tableName).put(']');
         }
 
         double lastDelimiterStdDev = Double.POSITIVE_INFINITY;

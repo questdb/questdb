@@ -37,11 +37,11 @@ public interface RecordMetadata extends ColumnTypes {
     int getColumnType(int index);
 
     default int getColumnIndex(CharSequence columnName) {
-        int index = getColumnIndexQuiet(columnName);
-        if (index == -1) {
-            throw InvalidColumnException.INSTANCE;
+        final int index = getColumnIndexQuiet(columnName);
+        if (index > -1) {
+            return index;
         }
-        return index;
+        throw InvalidColumnException.INSTANCE;
     }
 
     default int getColumnIndexQuiet(CharSequence columnName) {

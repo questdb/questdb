@@ -68,7 +68,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         CharSequence tableName = context.getRequestHeader().getUrlParam("j");
         if (tableName == null) {
-            context.simpleResponse().sendStatus(400, "table name missing");
+            context.simpleResponse().sendStatus(200, "table name missing");
         } else {
             int check = cairoEngine.getStatus(context.getCairoSecurityContext(), path, tableName);
             if (Chars.equalsNc("json", context.getRequestHeader().getUrlParam("f"))) {

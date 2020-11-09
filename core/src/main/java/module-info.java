@@ -482,6 +482,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
             // first
-            io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
-            ;
+            io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
+//                  Change string case
+            io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory,
+            io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
+    ;
 }

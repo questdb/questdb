@@ -343,8 +343,12 @@ public final class Chars {
     }
 
     public static int indexOf(CharSequence s, final int lo, char c) {
+        return indexOf(s, lo, s.length(), c);
+    }
+
+    public static int indexOf(CharSequence s, final int lo, int hi, char c) {
         int i = lo;
-        for (int n = s.length(); i < n; i++) {
+        for (; i < hi; i++) {
             if (s.charAt(i) == c) {
                 return i;
             }
@@ -556,6 +560,24 @@ public final class Chars {
 
     public static char toLowerCaseAscii(char character) {
         return character > 64 && character < 91 ? (char) (character + 32) : character;
+    }
+
+    public static void toUpperCase(@Nullable final CharSequence str, final CharSink sink) {
+        if(str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toUpperCase(str.charAt(i)));
+            }
+        }
+    }
+
+    public static void toLowerCase(@Nullable final CharSequence str, final CharSink sink) {
+        if(str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toLowerCase(str.charAt(i)));
+            }
+        }
     }
 
     public static void toSink(BinarySequence sequence, CharSink sink) {

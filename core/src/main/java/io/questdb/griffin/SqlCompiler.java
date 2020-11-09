@@ -1002,7 +1002,7 @@ public class SqlCompiler implements Closeable {
         RecordMetadata metadata = writer.getMetadata();
 
         do {
-            CharSequence tok = expectToken(lexer, "column name");
+            CharSequence tok = GenericLexer.unquote(expectToken(lexer, "column name"));
 
             if (metadata.getColumnIndexQuiet(tok) == -1) {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
@@ -1087,7 +1087,7 @@ public class SqlCompiler implements Closeable {
         RecordMetadata metadata = writer.getMetadata();
 
         do {
-            CharSequence tok = expectToken(lexer, "current column name");
+            CharSequence tok = GenericLexer.unquote(expectToken(lexer, "current column name"));
             if (metadata.getColumnIndexQuiet(tok) == -1) {
                 throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
             }
@@ -1098,7 +1098,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "'to' expected'");
             }
 
-            tok = expectToken(lexer, "new column name");
+            tok = GenericLexer.unquote(expectToken(lexer, "new column name"));
             if (Chars.equals(existingName, tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "new column name is identical to existing name");
             }
@@ -1207,7 +1207,7 @@ public class SqlCompiler implements Closeable {
             throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
         }
 
-        TableReaderMetadata sourceMetaData = (TableReaderMetadata) reader.getMetadata();
+        TableReaderMetadata sourceMetaData = reader.getMetadata();
         int rootLen = path.length();
         try {
             mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
@@ -1397,7 +1397,7 @@ public class SqlCompiler implements Closeable {
 
                 try {
                     if (createTableModel.getQueryModel() == null) {
-                        engine.creatTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
+                        engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
                     } else {
                         writer = createTableFromCursor(createTableModel, executionContext);
                     }
@@ -1422,7 +1422,7 @@ public class SqlCompiler implements Closeable {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
-            engine.creatTable(
+            engine.createTable(
                     executionContext.getCairoSecurityContext(),
                     mem,
                     path,

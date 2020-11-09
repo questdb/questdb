@@ -95,9 +95,9 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long totalBytesSent = 0;
     private final boolean connectionCloseHeader;
 
-    public HttpResponseSink(HttpServerConfiguration configuration) {
+    public HttpResponseSink(HttpContextConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
+        this.nf = configuration.getNetworkFacade();
         this.out = Unsafe.calloc(responseBufferSize);
         this.headerImpl = new HttpResponseHeaderImpl(configuration.getResponseHeaderBufferSize(), configuration.getClock());
         // size is 32bit int, as hex string max 8 bytes
@@ -477,7 +477,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     public class SimpleResponseImpl {
 
         public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            final String std = headerImpl.status(httpVersion, code, "text/html; charset=utf-8", -1L);
+            final String std = headerImpl.status(httpVersion, code, "text/plain; charset=utf-8", -1L);
             sink.put(message == null ? std : message).put(Misc.EOL);
             prepareHeaderSink();
             resumeSend(CHUNK_HEAD);

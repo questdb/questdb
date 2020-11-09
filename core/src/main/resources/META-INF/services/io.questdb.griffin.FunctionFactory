@@ -519,3 +519,7 @@ io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
 
 # 'haversine_dist_degree'
 io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory
+
+# Change string case
+io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
+io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory

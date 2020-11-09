@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -55,6 +56,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public HttpServerConfiguration getHttpServerConfiguration() {
         return httpServerConfiguration;
+    }
+
+    @Override
+    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+        return null;
     }
 
     @Override

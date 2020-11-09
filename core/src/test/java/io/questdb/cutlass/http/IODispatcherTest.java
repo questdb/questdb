@@ -24,21 +24,19 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.TelemetryJob;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
+import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.time.MillisecondClock;
@@ -49,8 +47,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -64,6 +60,8 @@ public class IODispatcherTest {
     public TemporaryFolder temp = new TemporaryFolder();
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
+    };
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -177,7 +175,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -218,7 +216,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -272,11 +270,11 @@ public class IODispatcherTest {
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
                         "14\r\n" +
                         "table name missing\r\n" +
@@ -369,7 +367,7 @@ public class IODispatcherTest {
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
                         "08\r\n" +
                         "Exists\r\n" +
@@ -403,12 +401,14 @@ public class IODispatcherTest {
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration);
                 HttpServer ignored = HttpServer.create(
-                        new DefaultHttpServerConfiguration() {
-                            @Override
-                            public MillisecondClock getClock() {
-                                return StationaryMillisClock.INSTANCE;
-                            }
-                        },
+                        new DefaultHttpServerConfiguration(
+                                new DefaultHttpContextConfiguration() {
+                                    @Override
+                                    public MillisecondClock getClock() {
+                                        return StationaryMillisClock.INSTANCE;
+                                    }
+                                }
+                        ),
                         null,
                         LOG,
                         cairoEngine
@@ -469,12 +469,12 @@ public class IODispatcherTest {
         try (
                 CairoEngine cairoEngine = new CairoEngine(configuration);
                 HttpServer ignored = HttpServer.create(
-                        new DefaultHttpServerConfiguration() {
+                        new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
                             public MillisecondClock getClock() {
                                 return StationaryMillisClock.INSTANCE;
                             }
-                        },
+                        }),
                         null,
                         LOG,
                         cairoEngine
@@ -505,92 +505,33 @@ public class IODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
-        assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir,
-                    false,
-                    false
-            );
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
 
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(engine);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, engine.getMessageBus(), 1);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/exec";
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                long fd = Net.socketTcp(true);
-                try {
-                    sendAndReceive(
-                            nf,
-                            request,
-                            response,
-                            requestCount,
-                            0,
-                            false,
-                            expectDisconnect
-                    );
-                } finally {
-                    Net.close(fd);
-                    workerPool.halt();
-                }
-            }
-        });
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(nf)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run(engine -> sendAndReceive(
+                        nf,
+                        request,
+                        response,
+                        requestCount,
+                        0,
+                        false,
+                        expectDisconnect
+                ));
     }
 
     @Test
     public void testImportBadJson() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -653,79 +594,13 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testPostRequestToGetProcessor() throws Exception {
-        testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/html; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "2a\r\n" +
-                        "Bad request. non-multipart GET expected.\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                "POST /exec?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Content-Length: 832\r\n" +
-                        "Accept: */*\r\n" +
-                        "Origin: http://localhost:9000\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
-                        "\r\n" +
-                        "[{\"name\":\"timestamp,\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"\r\n" +
-                        "\r\n" +
-                        "timestamp,bid\r\n" +
-                        "27/05/2018 00:00:01,100\r\n" +
-                        "27/05/2018 00:00:02,101\r\n" +
-                        "27/05/2018 00:00:03,102\r\n" +
-                        "27/05/2018 00:00:04,103\r\n" +
-                        "27/05/2018 00:00:05,104\r\n" +
-                        "27/05/2018 00:00:06,105\r\n" +
-                        "27/05/2018 00:00:07,106\r\n" +
-                        "27/05/2018 00:00:08,107\r\n" +
-                        "27/05/2018 00:00:09,108\r\n" +
-                        "27/05/2018 00:00:10,109\r\n" +
-                        "27/05/2018 00:00:11,110\r\n" +
-                        "27/05/2018 00:00:12,111\r\n" +
-                        "27/05/2018 00:00:13,112\r\n" +
-                        "27/05/2018 00:00:14,113\r\n" +
-                        "27/05/2018 00:00:15,114\r\n" +
-                        "27/05/2018 00:00:16,115\r\n" +
-                        "27/05/2018 00:00:17,116\r\n" +
-                        "27/05/2018 00:00:18,117\r\n" +
-                        "27/05/2018 00:00:19,118\r\n" +
-                        "27/05/2018 00:00:20,119\r\n" +
-                        "27/05/2018 00:00:21,120\r\n" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
-                NetworkFacadeImpl.INSTANCE,
-                true,
-                1
-        );
-    }
-
-    @Test
     public void testImportBadRequestGet() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 404 Not Found\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
                         "27\r\n" +
                         "Bad request. Multipart POST expected.\r\n" +
@@ -839,7 +714,7 @@ public class IODispatcherTest {
         // append different data structure to the same table
 
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -911,7 +786,7 @@ public class IODispatcherTest {
     @Test
     public void testImportDelimiterNotDetected() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -986,7 +861,7 @@ public class IODispatcherTest {
     @Test
     public void testImportForceUnknownDate() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -1051,7 +926,7 @@ public class IODispatcherTest {
     @Test
     public void testImportForceUnknownTimestamp() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -1432,8 +1307,9 @@ public class IODispatcherTest {
 
                             // start delaying after 800 bytes
 
-                            if (totalSent > 800) {
+                            if (totalSent > 20) {
                                 LockSupport.parkNanos(10000);
+                                totalSent = 0;
                             }
                             return result;
                         }
@@ -1446,7 +1322,7 @@ public class IODispatcherTest {
                             nf,
                             request,
                             expectedResponse,
-                            1,
+                            3,
                             0,
                             false
                     );
@@ -1845,7 +1721,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -1885,6 +1761,104 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryCreateInsertStringifiedJson() throws Exception {
+        testJsonQuery0(1, engine -> {
+            // create table
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0Acreate%20table%20data(s%20string)&timings=true HTTP/1.1\r\n" +
+                            "Host: 127.0.0.1:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
+                            "Accept: */*\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Sec-Fetch-Dest: empty\r\n" +
+                            "Referer: http://127.0.0.1:9000/\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false
+            );
+
+            // insert one record
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0A%0D%0Ainsert%20into%20data%20values%20(%27%7B%20title%3A%20%5C%22Title%5C%22%7D%27)&timings=true HTTP/1.1\r\n" +
+                            "Host: 127.0.0.1:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
+                            "Accept: */*\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Sec-Fetch-Dest: empty\r\n" +
+                            "Referer: http://127.0.0.1:9000/\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "0c\r\n" +
+                            "{\"ddl\":\"OK\"}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false
+            );
+
+            // check if we have one record
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?limit=0%2C1000&count=true&src=con&query=data&timings=false HTTP/1.1\r\n" +
+                            "Host: 127.0.0.1:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
+                            "Accept: */*\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Sec-Fetch-Dest: empty\r\n" +
+                            "Referer: http://127.0.0.1:9000/\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "6b\r\n" +
+                            "{\"query\":\"data\",\"columns\":[{\"name\":\"s\",\"type\":\"STRING\"}],\"dataset\":[[\"{ title: \\\\\\\"Title\\\\\\\"}\"]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false
+            );
+        }, false);
     }
 
     @Test
@@ -2039,104 +2013,6 @@ public class IODispatcherTest {
                             "\r\n" +
                             "011c\r\n" +
                             "{\"query\":\"\\n\\nselect * from balances_x latest by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"dataset\":[],\"count\":0}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
-    }
-
-    @Test
-    public void testJsonQueryCreateInsertStringifiedJson() throws Exception {
-        testJsonQuery0(1, engine -> {
-            // create table
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0Acreate%20table%20data(s%20string)&timings=true HTTP/1.1\r\n" +
-                            "Host: 127.0.0.1:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
-                            "Accept: */*\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Sec-Fetch-Dest: empty\r\n" +
-                            "Referer: http://127.0.0.1:9000/\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-
-            // insert one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0A%0D%0Ainsert%20into%20data%20values%20(%27%7B%20title%3A%20%5C%22Title%5C%22%7D%27)&timings=true HTTP/1.1\r\n" +
-                            "Host: 127.0.0.1:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
-                            "Accept: */*\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Sec-Fetch-Dest: empty\r\n" +
-                            "Referer: http://127.0.0.1:9000/\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-
-            // check if we have one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?limit=0%2C1000&count=true&src=con&query=data&timings=false HTTP/1.1\r\n" +
-                            "Host: 127.0.0.1:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
-                            "Accept: */*\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Sec-Fetch-Dest: empty\r\n" +
-                            "Referer: http://127.0.0.1:9000/\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "6b\r\n" +
-                            "{\"query\":\"data\",\"columns\":[{\"name\":\"s\",\"type\":\"STRING\"}],\"dataset\":[[\"{ title: \\\\\\\"Title\\\\\\\"}\"]],\"count\":1}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     1,
@@ -2340,7 +2216,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -2366,7 +2242,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -2423,7 +2299,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -2447,7 +2323,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -2514,7 +2390,7 @@ public class IODispatcherTest {
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -3131,12 +3007,12 @@ public class IODispatcherTest {
         final String expectedEvent = "100\n" +
                 "1\n" +
                 "101\n";
-        assertColumn(expectedEvent, "telemetry", 1);
+        assertColumn(expectedEvent, 1);
 
         final String expectedOrigin = "1\n" +
                 "2\n" +
                 "1\n";
-        assertColumn(expectedOrigin, "telemetry", 2);
+        assertColumn(expectedOrigin, 2);
     }
 
     @Test
@@ -3172,13 +3048,13 @@ public class IODispatcherTest {
                 "1\n" +
                 "1\n" +
                 "101\n";
-        assertColumn(expected, "telemetry", 1);
+        assertColumn(expected, 1);
 
         final String expectedOrigin = "1\n" +
                 "2\n" +
                 "2\n" +
                 "1\n";
-        assertColumn(expectedOrigin, "telemetry", 2);
+        assertColumn(expectedOrigin, 2);
     }
 
     @Test
@@ -3238,47 +3114,50 @@ public class IODispatcherTest {
 
                 workerPool.start(LOG);
 
-                // create table with all column types
-                CairoTestUtils.createTestTable(
-                        engine.getConfiguration(),
-                        20,
-                        new Rnd(),
-                        new TestRecord.ArrayBinarySequence());
+                try {
 
-                // send multipart request to server
-                final String request = "GET /query?query=x%20where2%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n";
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            20,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
 
-                String expectedResponse = "HTTP/1.1 400 Bad request\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "4d\r\n" +
-                        "{\"query\":\"x where2 i = ('EHNRX')\",\"error\":\"unexpected token: i\",\"position\":9}\r\n" +
-                        "00\r\n" +
-                        "\r\n";
+                    // send multipart request to server
+                    final String request = "GET /query?query=x%20where2%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
 
-                sendAndReceive(
-                        NetworkFacadeImpl.INSTANCE,
-                        request,
-                        expectedResponse,
-                        10,
-                        0,
-                        false
-                );
+                    String expectedResponse = "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "4d\r\n" +
+                            "{\"query\":\"x where2 i = ('EHNRX')\",\"error\":\"unexpected token: i\",\"position\":9}\r\n" +
+                            "00\r\n" +
+                            "\r\n";
 
-                workerPool.halt();
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            10,
+                            0,
+                            false
+                    );
+                } finally {
+                    workerPool.halt();
+                }
             }
         });
     }
@@ -3466,7 +3345,7 @@ public class IODispatcherTest {
                     String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
                             + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
                             + "Content-Type: application/json; charset=utf-8\r\n"
-                            + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s" + "\r\n";
+                            + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s";
                     TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
                         @Override
                         public boolean onGet(Record record, int count) {
@@ -3495,7 +3374,12 @@ public class IODispatcherTest {
                             long bufLen = request.length();
                             long ptr = Unsafe.malloc(bufLen);
                             try {
-                                sendAndReceive(nf, request, 0, false, true, fd, expectedResponse1, 200, ptr, clientStateListener);
+                                new SendAndReceiveRequestBuilder()
+                                        .withNetworkFacade(nf)
+                                        .withPauseBetweenSendAndReceive(0)
+                                        .withPrintOnly(false)
+                                        .withExpectDisconnect(true)
+                                        .executeExplicit(request, fd, expectedResponse1, 200, ptr, clientStateListener);
                             } finally {
                                 Unsafe.free(ptr, bufLen);
                             }
@@ -3631,7 +3515,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     closeCount.incrementAndGet();
@@ -3666,7 +3550,7 @@ public class IODispatcherTest {
                     do {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     } while (serverRunning.get());
                     serverHaltLatch.countDown();
@@ -3696,15 +3580,14 @@ public class IODispatcherTest {
     @Test
     public void testMissingContentDisposition() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "31\r\n" +
+                        "2f\r\n" +
                         "'Content-Disposition' multipart header missing'\r\n" +
-                        "\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload HTTP/1.1\r\n" +
@@ -3730,15 +3613,14 @@ public class IODispatcherTest {
     @Test
     public void testMissingContentDispositionFileName() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "14\r\n" +
+                        "12\r\n" +
                         "no file name given\r\n" +
-                        "\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload HTTP/1.1\r\n" +
@@ -3765,15 +3647,14 @@ public class IODispatcherTest {
     @Test
     public void testMissingContentDispositionName() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "39\r\n" +
+                        "37\r\n" +
                         "invalid value in 'Content-Disposition' multipart header\r\n" +
-                        "\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload HTTP/1.1\r\n" +
@@ -3854,6 +3735,72 @@ public class IODispatcherTest {
                 NetworkFacadeImpl.INSTANCE.close(fd);
             }
         }, false);
+    }
+
+    @Test
+    public void testPostRequestToGetProcessor() throws Exception {
+        testImport(
+                "HTTP/1.1 404 Not Found\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "2a\r\n" +
+                        "Bad request. non-multipart GET expected.\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                "POST /exec?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Content-Length: 832\r\n" +
+                        "Accept: */*\r\n" +
+                        "Origin: http://localhost:9000\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                        "\r\n" +
+                        "[{\"name\":\"timestamp,\"type\":\"DATE\"},{\"name\":\"bid\",\"type\":\"INT\"}]\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"\r\n" +
+                        "\r\n" +
+                        "timestamp,bid\r\n" +
+                        "27/05/2018 00:00:01,100\r\n" +
+                        "27/05/2018 00:00:02,101\r\n" +
+                        "27/05/2018 00:00:03,102\r\n" +
+                        "27/05/2018 00:00:04,103\r\n" +
+                        "27/05/2018 00:00:05,104\r\n" +
+                        "27/05/2018 00:00:06,105\r\n" +
+                        "27/05/2018 00:00:07,106\r\n" +
+                        "27/05/2018 00:00:08,107\r\n" +
+                        "27/05/2018 00:00:09,108\r\n" +
+                        "27/05/2018 00:00:10,109\r\n" +
+                        "27/05/2018 00:00:11,110\r\n" +
+                        "27/05/2018 00:00:12,111\r\n" +
+                        "27/05/2018 00:00:13,112\r\n" +
+                        "27/05/2018 00:00:14,113\r\n" +
+                        "27/05/2018 00:00:15,114\r\n" +
+                        "27/05/2018 00:00:16,115\r\n" +
+                        "27/05/2018 00:00:17,116\r\n" +
+                        "27/05/2018 00:00:18,117\r\n" +
+                        "27/05/2018 00:00:19,118\r\n" +
+                        "27/05/2018 00:00:20,119\r\n" +
+                        "27/05/2018 00:00:21,120\r\n" +
+                        "\r\n" +
+                        "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                NetworkFacadeImpl.INSTANCE,
+                true,
+                1
+        );
     }
 
     @Test
@@ -4000,7 +3947,7 @@ public class IODispatcherTest {
                                         "Server: questDB/1.0\r\n" +
                                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                         "Transfer-Encoding: chunked\r\n" +
-                                        "Content-Type: text/html; charset=utf-8\r\n" +
+                                        "Content-Type: text/plain; charset=utf-8\r\n" +
                                         "\r\n" +
                                         "0b\r\n" +
                                         "Not Found\r\n" +
@@ -4009,40 +3956,17 @@ public class IODispatcherTest {
                                         "\r\n";
 
 
-                                for (int i = 0; i < 4; i++) {
-                                    long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
-                                    try {
-                                        sendRequest(request3, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader3, expectedResponseHeader3.length());
-                                    } finally {
-                                        Net.close(fd);
-                                    }
-                                }
-
+                                sendAndReceive(NetworkFacadeImpl.INSTANCE, request3, expectedResponseHeader3, 4, 0, false);
                                 // and few more 304s
-
-                                for (int i = 0; i < 3; i++) {
-                                    long fd = Net.socketTcp(true);
-                                    Assert.assertTrue(fd > -1);
-                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
-                                    try {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
-                                    } finally {
-                                        Net.close(fd);
-                                    }
-                                }
-
+                                sendAndReceive(NetworkFacadeImpl.INSTANCE, request2, expectedResponseHeader2, 4, 0, false);
                             } finally {
                                 Unsafe.free(buffer, netBufferLen);
                             }
                         } finally {
                             Net.freeSockAddr(sockAddr);
                         }
-                        workerPool.halt();
                     } finally {
+                        workerPool.halt();
                         Files.remove(path);
                     }
                 }
@@ -4092,7 +4016,7 @@ public class IODispatcherTest {
                         Rnd rnd = new Rnd();
                         final int diskBufferLen = 1024 * 1024;
 
-                        writeRandomFile(path, rnd, 122222212222L, diskBufferLen);
+                        writeRandomFile(path, rnd, 122299092L, diskBufferLen);
 
                         long fd = Net.socketTcp(true);
                         try {
@@ -4122,12 +4046,12 @@ public class IODispatcherTest {
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                             "Content-Length: 20971520\r\n" +
                                             "Content-Type: text/plain\r\n" +
-                                            "ETag: \"122222212222\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
+                                            "ETag: \"122299092\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
                                             "\r\n";
 
                                     for (int j = 0; j < 10; j++) {
                                         sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
                                     }
 //
                                     // send few requests to receive 304
@@ -4139,7 +4063,7 @@ public class IODispatcherTest {
                                             "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
                                             "Accept-Encoding: gzip,deflate,sdch\r\n" +
                                             "Accept-Language: en-US,en;q=0.8\r\n" +
-                                            "If-None-Match: \"122222212222\"\r\n" + // this header should make static processor return 304
+                                            "If-None-Match: \"122299092\"\r\n" + // this header should make static processor return 304
                                             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                                             "\r\n";
 
@@ -4157,7 +4081,7 @@ public class IODispatcherTest {
                                     // couple more full downloads after 304
                                     for (int j = 0; j < 2; j++) {
                                         sendRequest(request, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971667);
                                     }
 
                                     // get a 404 now
@@ -4176,7 +4100,7 @@ public class IODispatcherTest {
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                             "Transfer-Encoding: chunked\r\n" +
-                                            "Content-Type: text/html; charset=utf-8\r\n" +
+                                            "Content-Type: text/plain; charset=utf-8\r\n" +
                                             "\r\n" +
                                             "0b\r\n" +
                                             "Not Found\r\n" +
@@ -4185,18 +4109,9 @@ public class IODispatcherTest {
                                             "\r\n";
 
 
-                                    for (int i = 0; i < 4; i++) {
-                                        sendRequest(request3, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader3, expectedResponseHeader3.length());
-                                    }
-
+                                    sendAndReceive(NetworkFacadeImpl.INSTANCE, request3, expectedResponseHeader3, 4, 0, false);
                                     // and few more 304s
-
-                                    for (int i = 0; i < 3; i++) {
-                                        sendRequest(request2, fd, buffer);
-                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
-                                    }
-
+                                    sendAndReceive(NetworkFacadeImpl.INSTANCE, request2, expectedResponseHeader2, 4, 0, false);
                                 } finally {
                                     Unsafe.free(buffer, netBufferLen);
                                 }
@@ -4207,9 +4122,8 @@ public class IODispatcherTest {
                             Net.close(fd);
                             LOG.info().$("closed [fd=").$(fd).$(']').$();
                         }
-
-                        workerPool.halt();
                     } finally {
+                        workerPool.halt();
                         Files.remove(path);
                     }
                 }
@@ -4363,7 +4277,7 @@ public class IODispatcherTest {
                                         "Server: questDB/1.0\r\n" +
                                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                         "Transfer-Encoding: chunked\r\n" +
-                                        "Content-Type: text/html; charset=utf-8\r\n" +
+                                        "Content-Type: text/plain; charset=utf-8\r\n" +
                                         "Connection: close\r\n" +
                                         "\r\n" +
                                         "0b\r\n" +
@@ -4456,7 +4370,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -4513,7 +4427,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4594,7 +4508,7 @@ public class IODispatcherTest {
                 "Server: questDB/1.0\r\n" +
                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                 "Transfer-Encoding: chunked\r\n" +
-                "Content-Type: text/html; charset=utf-8\r\n" +
+                "Content-Type: text/plain; charset=utf-8\r\n" +
                 "\r\n" +
                 "04\r\n" +
                 "OK\r\n" +
@@ -4603,12 +4517,14 @@ public class IODispatcherTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration() {
-                @Override
-                public MillisecondClock getClock() {
-                    return () -> 0;
-                }
-            };
+            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+                    new DefaultHttpContextConfiguration() {
+                        @Override
+                        public MillisecondClock getClock() {
+                            return () -> 0;
+                        }
+                    }
+            );
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -4620,7 +4536,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -4682,7 +4598,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -4780,7 +4696,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -4835,7 +4751,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run(0);
                         dispatcher.processIOQueue(
-                                (operation, context) -> context.handleClientOperation(operation, selector)
+                                (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -5007,7 +4923,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()).of(fd, dispatcher1)
             )) {
 
                 // server will publish status of each request to this queue
@@ -5084,7 +5000,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run(0);
                             dispatcher.processIOQueue(
-                                    (operation, context) -> context.handleClientOperation(operation, selector)
+                                    (operation, context) -> context.handleClientOperation(operation, selector, EmptyRescheduleContext)
                             );
                         }
 
@@ -5155,6 +5071,7 @@ public class IODispatcherTest {
             if (n > 0) {
                 if (headerCheckRemaining > 0) {
                     for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
+//                        System.out.print(expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining));
                         if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
                             Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
                         }
@@ -5185,11 +5102,11 @@ public class IODispatcherTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
-    private void assertColumn(CharSequence expected, CharSequence tableName, int index) {
+    private void assertColumn(CharSequence expected, int index) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
 
-        try (TableReader reader = new TableReader(configuration, tableName)) {
+        try (TableReader reader = new TableReader(configuration, "telemetry")) {
             final StringSink sink = new StringSink();
             final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
             sink.clear();
@@ -5238,123 +5155,15 @@ public class IODispatcherTest {
             boolean serverKeepAlive,
             String httpProtocolVersion
     ) {
-        final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-        };
-
-        return new DefaultHttpServerConfiguration() {
-            private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return FilesFacadeImpl.INSTANCE;
-                }
-
-                @Override
-                public CharSequence getIndexFileName() {
-                    return null;
-                }
-
-                @Override
-                public MimeTypesCache getMimeTypesCache() {
-                    return mimeTypesCache;
-                }
-
-                @Override
-                public CharSequence getPublicDirectory() {
-                    return baseDir;
-                }
-
-                @Override
-                public String getKeepAliveHeader() {
-                    return null;
-                }
-            };
-
-            private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-                @Override
-                public MillisecondClock getClock() {
-                    return () -> 0;
-                }
-
-                @Override
-                public int getConnectionCheckFrequency() {
-                    return 1_000_000;
-                }
-
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return FilesFacadeImpl.INSTANCE;
-                }
-
-                @Override
-                public int getFloatScale() {
-                    return 10;
-                }
-
-                @Override
-                public int getDoubleScale() {
-                    return Numbers.MAX_SCALE;
-                }
-
-                @Override
-                public CharSequence getKeepAliveHeader() {
-                    return "Keep-Alive: timeout=5, max=10000\r\n";
-                }
-
-                @Override
-                public long getMaxQueryResponseRowLimit() {
-                    return configuredMaxQueryResponseRowLimit;
-                }
-            };
-
-            @Override
-            public MillisecondClock getClock() {
-                return () -> 0;
-            }
-
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return ioDispatcherConfiguration;
-            }
-
-            @Override
-            public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
-                return staticContentProcessorConfiguration;
-            }
-
-            @Override
-            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-                return jsonQueryProcessorConfiguration;
-            }
-
-            @Override
-            public int getSendBufferSize() {
-                return sendBufferSize;
-            }
-
-            @Override
-            public boolean getDumpNetworkTraffic() {
-                return dumpTraffic;
-            }
-
-            @Override
-            public boolean allowDeflateBeforeSend() {
-                return allowDeflateBeforeSend;
-            }
-
-            @Override
-            public boolean getServerKeepAlive() {
-                return serverKeepAlive;
-            }
-
-            @Override
-            public String getHttpVersion() {
-                return httpProtocolVersion;
-            }
-        };
+        return new HttpServerConfigurationBuilder()
+                .withNetwork(nf)
+                .withBaseDir(baseDir)
+                .withSendBufferSize(sendBufferSize)
+                .withDumpingTraffic(dumpTraffic)
+                .withAllowDeflateBeforeSend(allowDeflateBeforeSend)
+                .withServerKeepAlive(serverKeepAlive)
+                .withHttpProtocolVersion(httpProtocolVersion)
+                .build();
     }
 
     private void sendAndReceive(
@@ -5385,84 +5194,13 @@ public class IODispatcherTest {
             boolean print,
             boolean expectDisconnect
     ) throws InterruptedException {
-        long fd = nf.socketTcp(true);
-        try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
-            try {
-                Assert.assertTrue(fd > -1);
-                Assert.assertEquals(0, nf.connect(fd, sockAddr));
-                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-
-                byte[] expectedResponse = response.getBytes();
-                final int len = Math.max(expectedResponse.length, request.length()) * 2;
-                long ptr = Unsafe.malloc(len);
-                try {
-                    for (int j = 0; j < requestCount; j++) {
-                        sendAndReceive(nf, request, pauseBetweenSendAndReceive, print, expectDisconnect, fd, expectedResponse, len, ptr, null);
-                    }
-                } finally {
-                    Unsafe.free(ptr, len);
-                }
-            } finally {
-                nf.freeSockAddr(sockAddr);
-            }
-        } finally {
-            nf.close(fd);
-        }
-    }
-
-    private void sendAndReceive(
-            NetworkFacade nf, String request, long pauseBetweenSendAndReceive, boolean print, boolean expectDisconnect, long fd, byte[] expectedResponse, final int len, long ptr,
-            HttpClientStateListener listener
-    ) throws InterruptedException {
-        int sent = 0;
-        int reqLen = request.length();
-        Chars.asciiStrCpy(request, reqLen, ptr);
-        while (sent < reqLen) {
-            int n = nf.send(fd, ptr + sent, reqLen - sent);
-            Assert.assertTrue(n > -1);
-            sent += n;
-        }
-
-        if (pauseBetweenSendAndReceive > 0) {
-            Thread.sleep(pauseBetweenSendAndReceive);
-        }
-        // receive response
-        final int expectedToReceive = expectedResponse.length;
-        int received = 0;
-        if (print) {
-            System.out.println("expected");
-            System.out.println(new String(expectedResponse, StandardCharsets.UTF_8));
-        }
-        boolean disconnected = false;
-        while (received < expectedToReceive) {
-            int n = nf.recv(fd, ptr + received, len - received);
-            if (n > 0) {
-                // dump(ptr + received, n);
-                // compare bytes
-                for (int i = 0; i < n; i++) {
-                    if (print) {
-                        System.out.print((char) Unsafe.getUnsafe().getByte(ptr + received + i));
-                    } else {
-                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                            LOG.error().$("received not what expected [contents=`").utf8(new DirectByteCharSequence().of(ptr, ptr + received + n)).$("`]").$();
-                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
-                        }
-                    }
-                }
-                received += n;
-                if (null != listener) {
-                    listener.onReceived(received);
-                }
-            } else if (n < 0) {
-                disconnected = true;
-                break;
-            }
-        }
-        if (disconnected && !expectDisconnect) {
-            LOG.error().$("disconnected?").$();
-            Assert.fail();
-        }
+        new SendAndReceiveRequestBuilder()
+                .withNetworkFacade(nf)
+                .withExpectDisconnect(expectDisconnect)
+                .withPrintOnly(print)
+                .withRequestCount(requestCount)
+                .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
+                .execute(request, response);
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
@@ -5493,118 +5231,21 @@ public class IODispatcherTest {
         testJsonQuery(recordCount, request, expectedResponse, 100, false);
     }
 
-    private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry) throws Exception {
+    private void testJsonQuery0(int workerCount, HttpQueryTestBuilder.HttpClientCode code, boolean telemetry) throws Exception {
         testJsonQuery0(workerCount, code, telemetry, false);
     }
 
-    private void testJsonQuery0(int workerCount, HttpClientCode code, boolean telemetry, boolean http1) throws Exception {
-        final int[] workerAffinity = new int[workerCount];
-        Arrays.fill(workerAffinity, -1);
-
-        assertMemoryLeak(() -> {
-            final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 16 * 1024, false, false,
-                    !http1, http1 ? "HTTP/1.0 " : "HTTP/1.1 ");
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return workerAffinity;
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            });
-
-            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-
-            try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
-            ) {
-                TelemetryJob telemetryJob = null;
-                final MessageBus messageBus = new MessageBusImpl(cairoConfiguration);
-                if (telemetry) {
-                    telemetryJob = new TelemetryJob(engine);
-                }
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                messageBus,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                null,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/exp";
-                    }
-                });
-
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/chk";
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                try {
-                    code.run(engine);
-                } finally {
-                    workerPool.halt();
-
-                    if (telemetryJob != null) {
-                        Misc.free(telemetryJob);
-                    }
-                }
-            }
-        });
+    private void testJsonQuery0(int workerCount, HttpQueryTestBuilder.HttpClientCode code, boolean telemetry, boolean http1) throws Exception {
+        new HttpQueryTestBuilder()
+                .withWorkerCount(workerCount)
+                .withTelemetry(telemetry)
+                .withTempFolder(temp)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withServerKeepAlive(!http1)
+                        .withSendBufferSize(16 * 1024)
+                        .withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)
+                        .withHttpProtocolVersion(http1 ? "HTTP/1.0 " : "HTTP/1.1 "))
+                .run(code);
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {
@@ -5625,17 +5266,6 @@ public class IODispatcherTest {
         Files.close(fd);
         Files.setLastModified(path, lastModified);
         Unsafe.free(buf, bufLen);
-    }
-
-    @FunctionalInterface
-    private interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException;
-    }
-
-    private interface HttpClientStateListener {
-        void onClosed();
-
-        void onReceived(int nBytes);
     }
 
     private static class HelloContext implements IOContext {
