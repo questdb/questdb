@@ -58,7 +58,7 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
     }
 
     public void addAt(int index, CharSequence key) {
-        keys[index] = Chars.toLowerCase(key);
+        keys[index] = key;
         if (--free < 1) {
             rehash();
         }

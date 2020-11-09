@@ -274,7 +274,7 @@ public final class Chars {
         }
 
         for (int i = 0; i < ll; i++) {
-            if (toLowerCaseAscii(l.charAt(i + lLo)) != r.charAt(i + rLo)) {
+            if (toLowerCaseAscii(l.charAt(i + lLo)) != toLowerCaseAscii(r.charAt(i + rLo))) {
                 return false;
             }
         }
@@ -288,7 +288,7 @@ public final class Chars {
         }
 
         for (int i = 0; i < ll; i++) {
-            if (toLowerCaseAscii(l.charAt(i)) != r.charAt(i)) {
+            if (toLowerCaseAscii(l.charAt(i)) != toLowerCaseAscii(r.charAt(i))) {
                 return false;
             }
         }

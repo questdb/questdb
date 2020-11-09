@@ -41,7 +41,7 @@ public class LowerCaseCharSequenceHashSetTest {
             String str = rnd.nextString(4);
             int keyIndex = lowerCaseSet.keyIndex(str, 0, str.length());
             if (lowerCaseSet.add(str)) {
-                Assert.assertTrue("at " + i, referenceSet.add(str.toLowerCase()));
+                Assert.assertTrue("at " + i, referenceSet.add(str));
                 Assert.assertTrue(keyIndex > -1);
             } else {
                 Assert.assertTrue(keyIndex < 0);
@@ -77,7 +77,7 @@ public class LowerCaseCharSequenceHashSetTest {
             String s = rnd.nextString(4);
             if (i % 4 == 0) {
                 lowerCaseSet.remove(s);
-                referenceSet.remove(s.toLowerCase());
+                referenceSet.remove(s);
             }
         }
 

@@ -46,13 +46,13 @@ public class LowerCaseCharSequenceObjHashMapTest {
 
             int keyIndex = lowerCaseMap.keyIndex(str, 0, str.length());
             if (lowerCaseMap.put(str, value)) {
-                Assert.assertNull("at " + i, referenceMap.put(str.toLowerCase(), value));
+                Assert.assertNull("at " + i, referenceMap.put(str, value));
                 Assert.assertTrue(keyIndex > -1);
             } else {
                 Assert.assertTrue(keyIndex < 0);
                 // this should fail to put
                 lowerCaseMap.putIfAbsent(str, value);
-                lowerCaseMap.putAt(keyIndex, str, referenceMap.get(str.toLowerCase()));
+                lowerCaseMap.putAt(keyIndex, str, referenceMap.get(str));
             }
         }
 
@@ -85,7 +85,7 @@ public class LowerCaseCharSequenceObjHashMapTest {
             String s = rnd.nextString(4);
             if (i % 4 == 0) {
                 lowerCaseMap.remove(s);
-                referenceMap.remove(s.toLowerCase());
+                referenceMap.remove(s);
             }
         }
 
