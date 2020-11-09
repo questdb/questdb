@@ -11,41 +11,13 @@ import io.questdb.std.Unsafe;
 public class SlaveWriterImpl implements SlaveWriter, Closeable {
     private final LongList columnAddresses = new LongList();
     private final LongList columnSizes = new LongList();
-    private int frameSequenceId;
+    private long timestampLo;
     private TableBlockWriter blockWriter;
 
-    public SlaveWriterImpl of(int frameSequenceId, TableBlockWriter blockWriter) {
-        this.frameSequenceId = frameSequenceId;
+    public SlaveWriterImpl of(TableBlockWriter blockWriter) {
         this.blockWriter = blockWriter;
+        timestampLo = Long.MIN_VALUE;
         return this;
-    }
-
-    @Override
-    public synchronized int getFrameSequenceId() {
-        return frameSequenceId;
-    }
-
-    @Override
-    public synchronized void startPageFrame(long timestampLo) {
-        blockWriter.startPageFrame(timestampLo);
-    }
-
-    @Override
-    public synchronized long mapColumnAppend(int columnIndex, long size) {
-        long address = Unsafe.malloc(size);
-        columnSizes.add(size);
-        columnAddresses.add(address);
-        return address;
-    }
-
-    @Override
-    public synchronized void unmapColumnAppend(int columnIndex, long address, long size) {
-        blockWriter.appendPageFrameColumn(columnIndex, size, address);
-    }
-
-    @Override
-    public synchronized void endPageFrame() {
-        frameSequenceId++;
     }
 
     @Override
@@ -73,5 +45,28 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     @Override
     public void close() {
         clear();
+    }
+
+    @Override
+    public synchronized long mapColumnData(long timestampLo, int columnIndex, long offset, long size) {
+        if (this.timestampLo != timestampLo) {
+            blockWriter.startPageFrame(timestampLo);
+            this.timestampLo = timestampLo;
+        }
+        long address = Unsafe.malloc(size);
+        columnSizes.add(size);
+        columnAddresses.add(address);
+        return address;
+    }
+
+    @Override
+    public synchronized void unmap(int columnIndex, long address, long size) {
+        blockWriter.appendPageFrameColumn(columnIndex, size, address);
+    }
+
+    @Override
+    public synchronized void markBlockNFrames(int nFrames) {
+        // TODO Auto-generated method stub
+
     }
 }

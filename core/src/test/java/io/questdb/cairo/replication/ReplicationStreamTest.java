@@ -128,7 +128,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         };
         streamTargetReadBufferAddress = Unsafe.malloc(streamTargetReadBufferSize);
 
-        SlaveWriter slaveWriter = new SlaveWriterImpl().of(1, writer.newBlock());
+        SlaveWriter slaveWriter = new SlaveWriterImpl().of(writer.newBlock());
 
         ReplicationSlaveManager recvMgr = new ReplicationSlaveManager() {
             @Override
@@ -151,7 +151,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator(configuration);
                 ReplicationStreamReceiver streamWriter = new ReplicationStreamReceiver(configuration, recvMgr)) {
 
-            streamGenerator.of(reader.getMetadata().getId(), slaveWriter.getFrameSequenceId(), cursor, reader.getMetadata(), null);
+            streamGenerator.of(reader.getMetadata().getId(), cursor, reader.getMetadata(), null);
             streamWriter.of(streamTargetFd);
 
             ReplicationStreamFrameMeta streamFrameMeta;

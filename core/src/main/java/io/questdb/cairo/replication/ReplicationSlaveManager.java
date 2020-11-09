@@ -6,15 +6,11 @@ public interface ReplicationSlaveManager {
     void releaseSlaveWriter(int masterTableId, SlaveWriter slaveWriter);
 
     public interface SlaveWriter {
-        int getFrameSequenceId();
+        long mapColumnData(long timestampLo, int columnIndex, long offset, long size);
 
-        void startPageFrame(long timestampLo);
+        void unmap(int columnIndex, long address, long size);
 
-        long mapColumnAppend(int columnIndex, long size);
-
-        void unmapColumnAppend(int columnIndex, long address, long size);
-
-        void endPageFrame();
+        void markBlockNFrames(int nFrames);
 
         void commit();
 
