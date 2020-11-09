@@ -1050,7 +1050,7 @@ public class SqlCodeGenerator implements Mutable {
             return recordCursorFactory;
         }
         try {
-            final CharSequenceIntHashMap orderBy = model.getOrderHash();
+            final LowerCaseCharSequenceIntHashMap orderBy = model.getOrderHash();
             final ObjList<CharSequence> columnNames = orderBy.keys();
             final int size = columnNames.size();
 

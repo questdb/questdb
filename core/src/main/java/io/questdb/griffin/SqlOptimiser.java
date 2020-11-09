@@ -668,7 +668,7 @@ class SqlOptimiser {
 
     // order hash is used to determine redundant order when parsing analytic function definition
     private void createOrderHash(QueryModel model) {
-        CharSequenceIntHashMap hash = model.getOrderHash();
+        LowerCaseCharSequenceIntHashMap hash = model.getOrderHash();
         hash.clear();
 
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -687,7 +687,7 @@ class SqlOptimiser {
         if (nestedModel != null) {
             createOrderHash(nestedModel);
             if (m > 0) {
-                CharSequenceIntHashMap thatHash = nestedModel.getOrderHash();
+                LowerCaseCharSequenceIntHashMap thatHash = nestedModel.getOrderHash();
                 if (thatHash.size() > 0) {
                     for (int i = 0; i < m; i++) {
                         QueryColumn column = columns.getQuick(i);
@@ -729,7 +729,7 @@ class SqlOptimiser {
         // taking into account that column is pre-aliased, e.g.
         // "col, col" will look like "col, col col1"
 
-        CharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
+        LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
         int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
             // column is already being referenced by translating model
@@ -914,7 +914,7 @@ class SqlOptimiser {
     }
 
     private ExpressionNode doReplaceLiteral(@Transient ExpressionNode node, QueryModel translatingModel, QueryModel innerModel, QueryModel validatingModel) throws SqlException {
-        final CharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
+        final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
         int index = map.keyIndex(node.token);
         if (index > -1) {
             // there is a possibility that column references join table, but in a different way
@@ -1210,7 +1210,7 @@ class SqlOptimiser {
             return orderByAdvice;
         }
 
-        CharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
+        LowerCaseCharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
             QueryColumn queryColumn = map.get(orderBy.getQuick(i).token);
             if (queryColumn.getAst().type == ExpressionNode.LITERAL) {
@@ -2277,7 +2277,7 @@ class SqlOptimiser {
                     if (ascendColumns && base != model) {
                         // check if column is aliased as either
                         // "x y" or "tab.x y" or "t.x y", where "t" is alias of table "tab"
-                        final CharSequenceObjHashMap<CharSequence> map = baseParent.getColumnNameToAliasMap();
+                        final LowerCaseCharSequenceObjHashMap<CharSequence> map = baseParent.getColumnNameToAliasMap();
                         CharSequence alias = null;
                         int index = map.keyIndex(column);
                         if (index > -1 && dot > -1) {
@@ -2496,7 +2496,7 @@ class SqlOptimiser {
 
             if (flatModel) {
                 if (flatParent && m.getSampleBy() != null) {
-                    throw SqlException.$(m.getSampleBy().position, "'sample by' must be used with 'select' clause, which contains aggerate expression(s)");
+                    throw SqlException.$(m.getSampleBy().position, "'sample by' must be used with 'select' clause, which contains aggregate expression(s)");
                 }
             } else {
                 model.replaceJoinModel(i, rewriteSelectClause0(m));
@@ -2828,7 +2828,7 @@ class SqlOptimiser {
     }
 
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
-        private CharSequenceObjHashMap<QueryColumn> nameTypeMap;
+        private LowerCaseCharSequenceObjHashMap<QueryColumn> nameTypeMap;
 
         @Override
         public void visit(ExpressionNode node) {
@@ -2846,14 +2846,14 @@ class SqlOptimiser {
             }
         }
 
-        PostOrderTreeTraversalAlgo.Visitor of(CharSequenceObjHashMap<QueryColumn> nameTypeMap) {
+        PostOrderTreeTraversalAlgo.Visitor of(LowerCaseCharSequenceObjHashMap<QueryColumn> nameTypeMap) {
             this.nameTypeMap = nameTypeMap;
             return this;
         }
     }
 
     private static class LiteralRewritingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
-        private CharSequenceObjHashMap<CharSequence> aliasToColumnMap;
+        private LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnMap;
 
         @Override
         public void visit(ExpressionNode node) {
@@ -2873,7 +2873,7 @@ class SqlOptimiser {
             }
         }
 
-        PostOrderTreeTraversalAlgo.Visitor of(CharSequenceObjHashMap<CharSequence> aliasToColumnMap) {
+        PostOrderTreeTraversalAlgo.Visitor of(LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnMap) {
             this.aliasToColumnMap = aliasToColumnMap;
             return this;
         }

@@ -81,7 +81,7 @@ public class SqlUtil {
             CharacterStore store,
             CharSequence base,
             int indexOfDot,
-            CharSequenceObjHashMap<QueryColumn> aliasToColumnMap
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap
     ) {
         final boolean disallowed = disallowedAliases.contains(base);
 

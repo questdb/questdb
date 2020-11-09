@@ -328,7 +328,7 @@ public final class SqlParser {
         return parseSelect(lexer);
     }
 
-    QueryModel parseAsSubQuery(GenericLexer lexer, @Nullable CharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
+    QueryModel parseAsSubQuery(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
         QueryModel model;
         this.subQueryMode = true;
         try {
@@ -339,7 +339,7 @@ public final class SqlParser {
         return model;
     }
 
-    private QueryModel parseAsSubQueryAndExpectClosingBrace(GenericLexer lexer, CharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
+    private QueryModel parseAsSubQueryAndExpectClosingBrace(GenericLexer lexer, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
         final QueryModel model = parseAsSubQuery(lexer, withClauses);
         expectTok(lexer, ')');
         return model;
@@ -655,7 +655,7 @@ public final class SqlParser {
         return null;
     }
 
-    private QueryModel parseDml(GenericLexer lexer, @Nullable CharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
+    private QueryModel parseDml(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
         QueryModel model = null;
         QueryModel prevModel = null;
         while (true) {
@@ -823,7 +823,7 @@ public final class SqlParser {
     }
 
     @NotNull
-    private QueryModel parseDml0(GenericLexer lexer, @Nullable CharSequenceObjHashMap<WithClauseModel> parentWithClauses) throws SqlException {
+    private QueryModel parseDml0(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses) throws SqlException {
         CharSequence tok;
         final int modelPosition = lexer.getPosition();
 
@@ -1274,7 +1274,7 @@ public final class SqlParser {
         return null;
     }
 
-    private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, CharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
+    private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
         QueryModel m = wcm.popModel();
         if (m != null) {
             return m;
