@@ -55,6 +55,11 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
         );
     }
 
+    @Override
+    public boolean isCursor() {
+        return true;
+    }
+
     private static class ClassCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();

@@ -1977,7 +1977,7 @@ public class SqlCodeGenerator implements Mutable {
                 // need to make sure that filter is updated on the model in case it is processed up the call stack
                 //
                 // At this juncture filter can use used up by one of the implementations below.
-                // We will clear it preventively. If nothing picks filter up we will set model "where"
+                // We will clear it preemptively. If nothing picks filter up we will set model "where"
                 // to the downsized filter
                 model.setWhereClause(null);
 

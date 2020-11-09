@@ -42,7 +42,6 @@ public class SendAndReceiveRequestBuilder {
     private boolean printOnly;
     private boolean expectDisconnect;
     private int requestCount = 1;
-    private int maxWaitTimeoutMs = 5000;
     private int compareLength = -1;
 
     public SendAndReceiveRequestBuilder withNetworkFacade(NetworkFacade nf) {
@@ -67,11 +66,6 @@ public class SendAndReceiveRequestBuilder {
     
     public SendAndReceiveRequestBuilder withRequestCount(int requestCount) {
         this.requestCount = requestCount;
-        return this;
-    }
-
-    public SendAndReceiveRequestBuilder withMaxTimeoutMs(int maxWaitTimeoutMs) {
-        this.maxWaitTimeoutMs = maxWaitTimeoutMs;
         return this;
     }
 
@@ -151,6 +145,7 @@ public class SendAndReceiveRequestBuilder {
                 disconnected = true;
                 break;
             } else {
+                int maxWaitTimeoutMs = 5000;
                 if (System.currentTimeMillis() - timestamp > maxWaitTimeoutMs) {
                     timeoutExpired = true;
                     break;

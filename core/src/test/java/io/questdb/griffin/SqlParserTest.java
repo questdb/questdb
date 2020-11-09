@@ -173,7 +173,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testCursorInSelect() throws SqlException {
-        assertQuery("select-virtual x, x . n column from (select-cursor pg_catalog.pg_class() x from (long_sequence(2)))",
+        assertQuery("select-virtual x1, x1 . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
                 "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).n from long_sequence(2)"
         );
     }
@@ -181,28 +181,42 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testCursorInSelectOneColumn() throws SqlException {
-        assertQuery("select-cursor pg_catalog.pg_class() x from ((long_sequence(2)))",
+        assertQuery("select-choose x1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
                 "select pg_catalog.pg_class() x from long_sequence(2)"
         );
     }
 
     @Test
     public void testCursorInSelectOneColumnSansAlias() throws SqlException {
-        assertQuery("select-cursor pg_catalog.pg_class() pg_class from ((long_sequence(2)))",
+        assertQuery("select-choose pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
                 "select pg_catalog.pg_class() from long_sequence(2)"
         );
     }
 
     @Test
+    public void testCursorMultiple() throws SqlException {
+        assertQuery("select-choose pg_class, pg_description from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() pg_description] pg_catalog.pg_description() pg_description from (pg_catalog.pg_description()) _xQdbA2)",
+                "select pg_catalog.pg_class(), pg_catalog.pg_description() from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorMultipleDuplicateAliases() throws SqlException {
+        assertQuery("select-choose cc, cc1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() cc] pg_catalog.pg_class() cc from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() cc1] pg_catalog.pg_description() cc1 from (pg_catalog.pg_description()) _xQdbA2)",
+                "select pg_catalog.pg_class() cc, pg_catalog.pg_description() cc from long_sequence(2)"
+        );
+    }
+
+    @Test
     public void testCursorInSelectExprFirst() throws SqlException {
-        assertQuery("select-virtual pg_class . n column, pg_class from (select-cursor pg_catalog.pg_class() pg_class from (long_sequence(2)))",
+        assertQuery("select-virtual pg_class . n column, pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
                 "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
         );
     }
 
     @Test
     public void testCursorInSelectWithAggregation() throws SqlException {
-        assertQuery("select-virtual pg_class . n , pg_class from (select-cursor pg_catalog.pg_class() pg_class from (long_sequence(2)))",
+        assertQuery("select-virtual sum - 20 column, column1 from (select-group-by [sum(pg_class . n + 1) sum, column1] sum(pg_class . n + 1) sum, column1 from (select-virtual [pg_class, pg_class . y column1] pg_class, pg_class . y column1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)))",
                 "select sum((pg_catalog.pg_class()).n + 1) - 20, pg_catalog.pg_class().y from long_sequence(2)"
         );
     }
@@ -5241,20 +5255,18 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
-    // todo: this should be an error because alias is duplicated or alias should be ranamed
     @Test
     public void testSelectSumSquared() throws SqlException {
         assertQuery(
-                "",
+                "select-virtual x, sum1 * sum x1 from (select-group-by [x, sum(x) sum, sum(x) sum1] x, sum(x) sum, sum(x) sum1 from (select [x] from long_sequence(2)))",
                 "select x, sum(x)*sum(x) x from long_sequence(2)"
         );
     }
 
-    // todo: extra choose model is excessive
     @Test
     public void testSelectDuplicateAlias() throws SqlException {
         assertQuery(
-                "",
+                "select-choose x, x x1 from (select-choose [x] x from (select [x] from long_sequence(1)))",
                 "select x x, x x from long_sequence(1)"
         );
     }
