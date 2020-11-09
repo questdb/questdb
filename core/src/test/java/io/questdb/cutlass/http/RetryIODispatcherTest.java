@@ -343,7 +343,7 @@ public class RetryIODispatcherTest {
                                                         "\r\n"
                                         );
                                     } catch (Exception e) {
-                                        LOG.error().$("Failed execute insert http request. Server error ").$(e);
+                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
                                     }
                                 }
                             } finally {
@@ -557,8 +557,14 @@ public class RetryIODispatcherTest {
                                         sendAndReceiveRequestBuilder
                                                 .execute(importRequest, importResponse);
                                         successRequests.incrementAndGet();
+                                    } catch (AssertionError e) {
+                                        if (allowFailures) {
+                                            LOG.info().$("Failed execute insert http request. Comparison failed").$();
+                                        } else {
+                                            LOG.error().$("Failed execute insert http request. Comparison failed").$(e).$();
+                                        }
                                     } catch (Exception e) {
-                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                        LOG.error().$("Failed execute insert http request.").$(e).$();
                                     }
                                 }
                             } finally {
@@ -695,7 +701,7 @@ public class RetryIODispatcherTest {
                                         new SendAndReceiveRequestBuilder()
                                                 .execute(ValidImportRequest,ValidImportResponse);
                                     } catch (AssertionError e) {
-                                        LOG.error().$(e).$();
+                                        LOG.info().$("Server call succeeded but response is different from the expected one").$();
                                         failedImports.incrementAndGet();
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
