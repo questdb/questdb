@@ -99,7 +99,11 @@ public class SqlUtil {
                 characterStoreEntry.put(base);
             }
         } else {
-            characterStoreEntry.put(base, indexOfDot + 1, base.length());
+            if (indexOfDot + 1 == base.length()) {
+                characterStoreEntry.put("column");
+            } else {
+                characterStoreEntry.put(base, indexOfDot + 1, base.length());
+            }
         }
 
 

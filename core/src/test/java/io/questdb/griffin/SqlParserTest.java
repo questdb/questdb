@@ -173,14 +173,29 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testCursorInSelect() throws SqlException {
-        assertQuery("select-virtual x, x . n  from (select-cursor pg_catalog.pg_class() x from (long_sequence(2)))",
+        assertQuery("select-virtual x, x . n column from (select-cursor pg_catalog.pg_class() x from (long_sequence(2)))",
                 "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).n from long_sequence(2)"
+        );
+    }
+
+
+    @Test
+    public void testCursorInSelectOneColumn() throws SqlException {
+        assertQuery("select-cursor pg_catalog.pg_class() x from ((long_sequence(2)))",
+                "select pg_catalog.pg_class() x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectOneColumnSansAlias() throws SqlException {
+        assertQuery("select-cursor pg_catalog.pg_class() pg_class from ((long_sequence(2)))",
+                "select pg_catalog.pg_class() from long_sequence(2)"
         );
     }
 
     @Test
     public void testCursorInSelectExprFirst() throws SqlException {
-        assertQuery("select-virtual pg_class . n , pg_class from (select-cursor pg_catalog.pg_class() pg_class from (long_sequence(2)))",
+        assertQuery("select-virtual pg_class . n column, pg_class from (select-cursor pg_catalog.pg_class() pg_class from (long_sequence(2)))",
                 "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
         );
     }
@@ -5223,6 +5238,24 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " y as (select * from x)" +
                         " select * from y",
                 modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    // todo: this should be an error because alias is duplicated or alias should be ranamed
+    @Test
+    public void testSelectSumSquared() throws SqlException {
+        assertQuery(
+                "",
+                "select x, sum(x)*sum(x) x from long_sequence(2)"
+        );
+    }
+
+    // todo: extra choose model is excessive
+    @Test
+    public void testSelectDuplicateAlias() throws SqlException {
+        assertQuery(
+                "",
+                "select x x, x x from long_sequence(1)"
         );
     }
 

@@ -97,6 +97,7 @@ class SqlOptimiser {
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+
     SqlOptimiser(
             CairoConfiguration configuration,
             CairoEngine engine,
@@ -221,12 +222,11 @@ class SqlOptimiser {
 
     private void addFunction(
             QueryColumn qc,
-            QueryModel baseModel,
+            QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
             QueryModel analyticModel,
             QueryModel groupByModel,
-            QueryModel cursorModel,
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
@@ -242,9 +242,8 @@ class SqlOptimiser {
         final QueryColumn innerColumn = nextColumn(qc.getAlias());
 
         // pull literals only into translating model
-        emitLiterals(qc.getAst(), translatingModel, null, baseModel);
+        emitLiterals(qc.getAst(), translatingModel, null, validatingModel);
         groupByModel.addBottomUpColumn(innerColumn);
-        cursorModel.addBottomUpColumn(innerColumn);
         analyticModel.addBottomUpColumn(innerColumn);
         outerModel.addBottomUpColumn(innerColumn);
         distinctModel.addBottomUpColumn(innerColumn);
@@ -690,7 +689,6 @@ class SqlOptimiser {
             QueryModel innerModel,
             QueryModel analyticModel,
             QueryModel groupByModel,
-            QueryModel cursorModel,
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
@@ -707,7 +705,6 @@ class SqlOptimiser {
             final QueryColumn translatedColumn = nextColumn(alias, translatedColumnName);
             innerModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
-            cursorModel.addBottomUpColumn(translatedColumn);
             analyticModel.addBottomUpColumn(translatedColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             distinctModel.addBottomUpColumn(translatedColumn);
@@ -728,7 +725,6 @@ class SqlOptimiser {
             innerModel.addBottomUpColumn(translatedColumn);
             analyticModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
-            cursorModel.addBottomUpColumn(translatedColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             distinctModel.addBottomUpColumn(translatedColumn);
         }
@@ -742,7 +738,6 @@ class SqlOptimiser {
             QueryModel innerModel,
             QueryModel analyticModel,
             QueryModel groupByModel,
-            QueryModel cursorModel,
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
@@ -763,7 +758,6 @@ class SqlOptimiser {
                     innerModel,
                     analyticModel,
                     groupByModel,
-                    cursorModel,
                     outerModel,
                     distinctModel
             );
@@ -778,7 +772,6 @@ class SqlOptimiser {
                         innerModel,
                         analyticModel,
                         groupByModel,
-                        cursorModel,
                         outerModel,
                         distinctModel
                 );
@@ -794,7 +787,6 @@ class SqlOptimiser {
             QueryModel innerModel,
             QueryModel analyticModel,
             QueryModel groupByModel,
-            QueryModel cursorModel,
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
@@ -819,7 +811,6 @@ class SqlOptimiser {
                     innerModel,
                     analyticModel,
                     groupByModel,
-                    cursorModel,
                     outerModel,
                     distinctModel
             );
@@ -2595,7 +2586,6 @@ class SqlOptimiser {
                             innerVirtualModel,
                             analyticModel,
                             groupByModel,
-                            cursorModel,
                             outerVirtualModel,
                             distinctModel
                     );
@@ -2612,7 +2602,6 @@ class SqlOptimiser {
                             innerVirtualModel,
                             analyticModel,
                             groupByModel,
-                            cursorModel,
                             outerVirtualModel,
                             distinctModel
                     );
@@ -2625,7 +2614,6 @@ class SqlOptimiser {
                             innerVirtualModel,
                             analyticModel,
                             groupByModel,
-                            cursorModel,
                             outerVirtualModel,
                             distinctModel
                     );
@@ -2668,24 +2656,41 @@ class SqlOptimiser {
                             } else {
                                 qc1 = qc;
                             }
-                            cursorModel.addBottomUpColumn(qc);
+                            cursorModel.addBottomUpColumn(qc1);
                         } else {
                             qc = qc1;
                         }
 
-                        // todo: review positioning relative to group-by
-                        QueryColumn cursorRef = nextColumn(qc.getAlias());
+                        final QueryColumn cursorRef = nextColumn(qc.getAlias());
+                        innerVirtualModel.addBottomUpColumn(cursorRef);
+                        analyticModel.addBottomUpColumn(cursorRef);
+                        groupByModel.addBottomUpColumn(cursorRef);
                         outerVirtualModel.addBottomUpColumn(cursorRef);
                         distinctModel.addBottomUpColumn(cursorRef);
-
-                        // pull out literals
-                        emitLiterals(qc1.getAst(), translatingModel, innerVirtualModel, baseModel);
                         useCursorModel = true;
-                        useOuterModel = true;
                         continue;
                     }
                 }
 
+                if (emitCursors(qc.getAst(), cursorModel)) {
+                    CharSequence alias = createColumnAlias(qc.getAst(), innerVirtualModel);
+                    if (alias != qc.getAlias()) {
+                        qc = queryColumnPool.next().of(alias, qc.getAst());
+                    }
+                    baseModel.addJoinModel(cursorModel);
+                    cursorModel.setJoinType(QueryModel.JOIN_CROSS);
+                    cursorModel = queryModelPool.next();
+                    cursorModel.setSelectModelType(QueryModel.SELECT_MODEL_CURSOR);
+//                    innerVirtualModel.addBottomUpColumn(qc);
+//
+//                    final QueryColumn cursorRef = nextColumn(alias);
+//                    translatingModel.addBottomUpColumn(cursorRef);
+//                    analyticModel.addBottomUpColumn(cursorRef);
+//                    groupByModel.addBottomUpColumn(cursorRef);
+//                    outerVirtualModel.addBottomUpColumn(cursorRef);
+//                    distinctModel.addBottomUpColumn(cursorRef);
+//                    useCursorModel = true;
+                }
                 // this is not a direct call to aggregation function, in which case
                 // we emit aggregation function into group-by model and leave the
                 // rest in outer model
@@ -2703,37 +2708,18 @@ class SqlOptimiser {
                     useGroupByModel = true;
                     useOuterModel = true;
                 } else {
-                    beforeSplit = cursorModel.getBottomUpColumns().size();
-                    if (emitCursors(qc.getAst(), cursorModel)) {
-
-                        outerVirtualModel.addBottomUpColumn(qc);
-                        distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
-
-                        // pull literals from newly created group-by columns into both of underlying models
-                        for (int j = beforeSplit, n = cursorModel.getBottomUpColumns().size(); j < n; j++) {
-                            emitLiterals(cursorModel.getBottomUpColumns().getQuick(i).getAst(), translatingModel, innerVirtualModel, baseModel);
-                        }
-
-                        useCursorModel = true;
-                        useOuterModel = true;
-                    } else {
-                        addFunction(
-                                qc,
-                                baseModel,
-                                translatingModel,
-                                innerVirtualModel,
-                                analyticModel,
-                                groupByModel,
-                                cursorModel,
-                                outerVirtualModel,
-                                distinctModel
-                        );
-                        useInnerModel = true;
-                    }
+                    addFunction(
+                            qc,
+                            baseModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            analyticModel,
+                            groupByModel,
+                            outerVirtualModel,
+                            distinctModel
+                    );
+                    useInnerModel = true;
                 }
-
-
-                // this model will be outer cursor model, on top of group by model
             }
         }
 
@@ -2744,7 +2730,7 @@ class SqlOptimiser {
 
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = useInnerModel || useGroupByModel || useAnalyticModel || useCursorModel;
+        boolean translationIsRedundant = useInnerModel || useGroupByModel || useAnalyticModel;
         if (translationIsRedundant) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
@@ -2767,6 +2753,13 @@ class SqlOptimiser {
             translatingModel.moveLimitFrom(model);
         }
 
+        if (useCursorModel) {
+            cursorModel.setNestedModel(root);
+            cursorModel.moveLimitFrom(limitSource);
+            root = cursorModel;
+            limitSource = cursorModel;
+        }
+
         if (useInnerModel) {
             innerVirtualModel.setNestedModel(root);
             innerVirtualModel.moveLimitFrom(limitSource);
@@ -2786,18 +2779,10 @@ class SqlOptimiser {
             limitSource = groupByModel;
         }
 
-        if (useCursorModel) {
-            cursorModel.setNestedModel(root);
-            cursorModel.moveLimitFrom(limitSource);
-            root = cursorModel;
-            limitSource = cursorModel;
-        }
-
         if (useOuterModel) {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
             root = outerVirtualModel;
-//            limitSource = outerVirtualModel;
         } else if (root != outerVirtualModel && root.getBottomUpColumns().size() < outerVirtualModel.getBottomUpColumns().size()) {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
