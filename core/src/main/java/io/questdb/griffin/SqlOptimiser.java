@@ -194,8 +194,9 @@ class SqlOptimiser {
             ExpressionNode node,
             @Nullable CharSequence alias,
             QueryModel translatingModel,
-            QueryModel baseModel
-    ) {
+            QueryModel baseModel,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         QueryColumn qc = translatingModel.findBottomUpColumnByAst(node);
         if (qc == null) {
             if (alias != null) {
@@ -210,6 +211,7 @@ class SqlOptimiser {
 
             final QueryModel crossInner = queryModelPool.next();
             crossInner.setTableName(node);
+            parseFunctionAndEnumerateColumns(crossInner, sqlExecutionContext);
             cross.setNestedModel(crossInner);
 
             // add here for uniqueness tracking
@@ -1016,7 +1018,12 @@ class SqlOptimiser {
 
     // This method will create CROSS join models in the "baseModel" for all unique cursor
     // function it finds on the node. The "model" is used to ensure uniqueness
-    private boolean emitCursors(@Transient ExpressionNode node, QueryModel model, QueryModel baseModel) {
+    private boolean emitCursors(
+            @Transient ExpressionNode node,
+            QueryModel model,
+            QueryModel baseModel,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
 
         boolean replaced = false;
         this.sqlNodeStack.clear();
@@ -1028,7 +1035,7 @@ class SqlOptimiser {
             if (node != null) {
 
                 if (node.rhs != null) {
-                    ExpressionNode n = replaceIfCursor(node.rhs, model, baseModel);
+                    ExpressionNode n = replaceIfCursor(node.rhs, model, baseModel, sqlExecutionContext);
                     if (node.rhs == n) {
                         this.sqlNodeStack.push(node.rhs);
                     } else {
@@ -1037,7 +1044,7 @@ class SqlOptimiser {
                     }
                 }
 
-                ExpressionNode n = replaceIfCursor(node.lhs, model, baseModel);
+                ExpressionNode n = replaceIfCursor(node.lhs, model, baseModel, sqlExecutionContext);
                 if (n == node.lhs) {
                     node = node.lhs;
                 } else {
@@ -1692,16 +1699,18 @@ class SqlOptimiser {
         }
     }
 
-    QueryModel optimise(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        optimiseExpressionModels(model, executionContext);
-        enumerateTableColumns(model, executionContext);
+    QueryModel optimise(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        optimiseExpressionModels(model, sqlExecutionContext);
+        enumerateTableColumns(model, sqlExecutionContext);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
         final QueryModel rewrittenModel = rewriteOrderBy(
                 rewriteOrderByPositionForUnionModels(
                         rewriteOrderByPosition(
                                 rewriteSelectClause(
-                                        model, true
+                                        model,
+                                        true,
+                                        sqlExecutionContext
                                 )
                         )
                 )
@@ -2216,9 +2225,14 @@ class SqlOptimiser {
         return node;
     }
 
-    private ExpressionNode replaceIfCursor(@Transient ExpressionNode node, QueryModel model, QueryModel baseModel) {
+    private ExpressionNode replaceIfCursor(
+            @Transient ExpressionNode node,
+            QueryModel model,
+            QueryModel baseModel,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         if (node != null && functionParser.isCursor(node.token)) {
-            return nextLiteral(addCursorFunctionAsCrossJoin(node, null, model, baseModel).getAlias());
+            return nextLiteral(addCursorFunctionAsCrossJoin(node, null, model, baseModel, sqlExecutionContext).getAlias());
         }
         return node;
     }
@@ -2527,10 +2541,10 @@ class SqlOptimiser {
     }
 
     // flatParent = true means that parent model does not have selected columns
-    private QueryModel rewriteSelectClause(QueryModel model, boolean flatParent) throws SqlException {
+    private QueryModel rewriteSelectClause(QueryModel model, boolean flatParent, SqlExecutionContext sqlExecutionContext) throws SqlException {
 
         if (model.getUnionModel() != null) {
-            QueryModel rewrittenUnionModel = rewriteSelectClause(model.getUnionModel(), true);
+            QueryModel rewrittenUnionModel = rewriteSelectClause(model.getUnionModel(), true, sqlExecutionContext);
             if (rewrittenUnionModel != model.getUnionModel()) {
                 model.setUnionModel(rewrittenUnionModel);
             }
@@ -2542,7 +2556,7 @@ class SqlOptimiser {
             final boolean flatModel = m.getBottomUpColumns().size() == 0;
             final QueryModel nestedModel = m.getNestedModel();
             if (nestedModel != null) {
-                QueryModel rewritten = rewriteSelectClause(nestedModel, flatModel);
+                QueryModel rewritten = rewriteSelectClause(nestedModel, flatModel, sqlExecutionContext);
                 if (rewritten != nestedModel) {
                     m.setNestedModel(rewritten);
                     // since we have rewritten nested model we also have to update column hash
@@ -2555,7 +2569,7 @@ class SqlOptimiser {
                     throw SqlException.$(m.getSampleBy().position, "'sample by' must be used with 'select' clause, which contains aggregate expression(s)");
                 }
             } else {
-                model.replaceJoinModel(i, rewriteSelectClause0(m));
+                model.replaceJoinModel(i, rewriteSelectClause0(m, sqlExecutionContext));
             }
         }
 
@@ -2564,7 +2578,7 @@ class SqlOptimiser {
     }
 
     @NotNull
-    private QueryModel rewriteSelectClause0(QueryModel model) throws SqlException {
+    private QueryModel rewriteSelectClause0(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         assert model.getNestedModel() != null;
 
         final QueryModel groupByModel = queryModelPool.next();
@@ -2684,7 +2698,7 @@ class SqlOptimiser {
                         useGroupByModel = true;
                         continue;
                     } else if (functionParser.isCursor(qc.getAst().token)) {
-                        qc = addCursorFunctionAsCrossJoin(qc.getAst(), qc.getAlias(), cursorModel, baseModel);
+                        qc = addCursorFunctionAsCrossJoin(qc.getAst(), qc.getAlias(), cursorModel, baseModel, sqlExecutionContext);
                         QueryColumn ref = nextColumn(qc.getAlias());
                         translatingModel.addBottomUpColumn(ref);
                         innerVirtualModel.addBottomUpColumn(ref);
@@ -2692,7 +2706,7 @@ class SqlOptimiser {
                     }
                 }
 
-                if (emitCursors(qc.getAst(), cursorModel, baseModel)) {
+                if (emitCursors(qc.getAst(), cursorModel, baseModel, sqlExecutionContext)) {
                     qc = ensureAliasUniqueness(innerVirtualModel, qc);
                 }
                 // this is not a direct call to aggregation function, in which case

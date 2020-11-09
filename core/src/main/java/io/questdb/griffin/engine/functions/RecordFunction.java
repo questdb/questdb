@@ -24,25 +24,28 @@
 
 package io.questdb.griffin.engine.functions;
 
-
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public abstract class StrArrayFunction implements Function {
+public abstract class RecordFunction implements ScalarFunction {
     private final int position;
 
-    public StrArrayFunction(int position) {
+    public RecordFunction(int position) {
         this.position = position;
     }
 
     @Override
-    public final BinarySequence getBin(Record rec) {
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -52,62 +55,57 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public final boolean getBool(Record rec) {
+    public boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final byte getByte(Record rec) {
+    public byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final char getChar(Record rec) {
+    public char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDate(Record rec) {
+    public long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final double getDouble(Record rec) {
+    public double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final float getFloat(Record rec) {
+    public float getFloat(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getInt(Record rec) {
+    public int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getLong(Record rec) {
+    public long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final Long256 getLong256A(Record rec) {
+    public Long256 getLong256A(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final RecordMetadata getMetadata() {
+    public Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -117,17 +115,12 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public final RecordCursorFactory getRecordCursorFactory() {
+    public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final short getShort(Record rec) {
+    public short getShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -137,7 +130,17 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
+    public CharSequence getStr(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void getStr(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 
@@ -147,22 +150,32 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final CharSequence getSymbol(Record rec) {
-        return getStr(rec);
-    }
-
-    @Override
-    public final long getTimestamp(Record rec) {
+    public int getStrLen(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getType() {
-        return ColumnType.STRING;
+    public CharSequence getSymbol(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getType() {
+        return ColumnType.RECORD;
     }
 }

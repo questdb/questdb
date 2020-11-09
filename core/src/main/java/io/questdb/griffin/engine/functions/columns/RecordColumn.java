@@ -22,38 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.RecordFunction;
 
-public interface ScalarFunction extends Function {
-    @Override
-    default int getArrayLength() {
-        throw new UnsupportedOperationException();
+public class RecordColumn extends RecordFunction  {
+    private final int columnIndex;
+
+    public RecordColumn(int position, int columnIndex) {
+        super(position);
+        this.columnIndex = columnIndex;
     }
 
     @Override
-    default CharSequence getStr(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
+    public RecordMetadata getMetadata() {
+        return null;
     }
 
     @Override
-    default void getStr(Record rec, CharSink sink, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default CharSequence getStrB(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default int getStrLen(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
+    public Record getRecord(Record rec) {
+        return rec.getRecord(columnIndex);
     }
 }

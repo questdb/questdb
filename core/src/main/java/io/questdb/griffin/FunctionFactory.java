@@ -52,7 +52,7 @@ public interface FunctionFactory {
      * <li>N = timestamp</li>
      * <li>U = binary</li>
      * <li>V = variable argument list</li>
-     * <li>C = cursor</li>
+     * <li>R = record</li>
      * <li>H = long256</li>
      * </ul>
      *

@@ -82,6 +82,8 @@ public interface Function extends Closeable {
 
     RecordCursorFactory getRecordCursorFactory();
 
+    Record getRecord(Record rec);
+
     short getShort(Record rec);
 
     CharSequence getStr(Record rec);

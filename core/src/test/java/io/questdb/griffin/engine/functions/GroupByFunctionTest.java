@@ -157,7 +157,11 @@ public class GroupByFunctionTest {
 
         @Override
         public void getStr(Record rec, CharSink sink, int arrayIndex) {
+        }
 
+        @Override
+        public Record getRecord(Record rec) {
+            return null;
         }
 
         @Override

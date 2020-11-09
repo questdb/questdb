@@ -1475,8 +1475,11 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     private RecordCursorFactory generateSelectCursor(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        System.out.println("here");
-        return null;
+        // sql parser ensures this type of model always has only one column
+        return new RecordAsAFieldRecordCursorFactory(
+                generate(model.getNestedModel(), executionContext),
+                model.getColumns().getQuick(0).getAlias()
+        );
     }
 
     private RecordCursorFactory generateSelectDistinct(QueryModel model, SqlExecutionContext executionContext) throws SqlException {

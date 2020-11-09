@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 public class CursorDereferenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return ".(Cs)";
+        return ".(Rs)";
     }
 
     @Override

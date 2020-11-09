@@ -102,6 +102,10 @@ public interface Record {
         sink.put(getStr(col));
     }
 
+    default Record getRecord(int col) {
+        throw new UnsupportedOperationException();
+    }
+
     default CharSequence getStrB(int col) {
         throw new UnsupportedOperationException();
     }
