@@ -30,12 +30,18 @@ import io.questdb.test.tools.TestUtils.LeakProneCode;
 
 public class ReplicationStreamTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(ReplicationStreamTest.class);
+    private static final int STREAM_TARGET_FD = Integer.MAX_VALUE;
 
     interface FilesFacadeReadHandler {
         long read(long fd, long buf, long len, long offset);
     }
 
+    interface FilesFacadeWriteHandler {
+        long write(long fd, long buf, long len, long offset);
+    }
+
     private static FilesFacadeReadHandler READ_HANDLER = null;
+    private static FilesFacadeWriteHandler WRITE_HANDLER = null;
 
     @BeforeClass
     public static void setUp() throws IOException {
@@ -43,7 +49,18 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long read(long fd, long buf, long len, long offset) {
+                if (fd != STREAM_TARGET_FD) {
+                    return super.read(fd, buf, len, offset);
+                }
                 return READ_HANDLER.read(fd, buf, len, offset);
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                if (fd != STREAM_TARGET_FD) {
+                    return super.write(fd, address, len, offset);
+                }
+                return WRITE_HANDLER.write(fd, address, len, offset);
             }
         };
 
@@ -106,14 +123,14 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     private long streamTargetReadBufferOffset;
     private long streamTargetReadBufferLength;
 
+    private long streamTargetWriteBufferSize = 1000;
+    private long streamTargetWriteBufferAddress;
+    private long streamTargetWriteBufferOffset;
+
     private void sendReplicationStream(String sourceTableName, long nFirstRow, long maxRowsPerFrame, TableWriter writer) {
-        int streamTargetFd = 1000;
         READ_HANDLER = new FilesFacadeReadHandler() {
             @Override
             public long read(long fd, long buf, long len, long offset) {
-                if (fd != streamTargetFd) {
-                    Assert.fail();
-                }
                 long nRead = 0;
                 if (streamTargetReadBufferOffset < streamTargetReadBufferLength) {
                     nRead = streamTargetReadBufferLength - streamTargetReadBufferOffset;
@@ -127,6 +144,21 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
             }
         };
         streamTargetReadBufferAddress = Unsafe.malloc(streamTargetReadBufferSize);
+        streamTargetWriteBufferAddress = Unsafe.malloc(streamTargetWriteBufferSize);
+        streamTargetWriteBufferOffset = 0;
+
+        WRITE_HANDLER = new FilesFacadeWriteHandler() {
+            @Override
+            public long write(long fd, long buf, long len, long offset) {
+                long nWrote = streamTargetWriteBufferSize - streamTargetWriteBufferOffset;
+                if (nWrote > len) {
+                    nWrote = len;
+                }
+                Unsafe.getUnsafe().copyMemory(buf + offset, streamTargetWriteBufferAddress + streamTargetWriteBufferOffset, nWrote);
+                streamTargetWriteBufferOffset += nWrote;
+                return nWrote;
+            }
+        };
 
         SlaveWriter slaveWriter = new SlaveWriterImpl().of(writer.newBlock());
 
@@ -152,32 +184,44 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 ReplicationStreamReceiver streamWriter = new ReplicationStreamReceiver(configuration, recvMgr)) {
 
             streamGenerator.of(reader.getMetadata().getId(), cursor, reader.getMetadata(), null);
-            streamWriter.of(streamTargetFd);
+            streamWriter.of(STREAM_TARGET_FD);
 
             ReplicationStreamFrameMeta streamFrameMeta;
             while ((streamFrameMeta = streamGenerator.next()) != null) {
-                long sz = streamFrameMeta.getFrameHeaderSize() + streamFrameMeta.getFrameDataSize();
-                if (sz > streamTargetReadBufferSize) {
-                    streamTargetReadBufferAddress = Unsafe.realloc(streamTargetReadBufferAddress, streamTargetReadBufferSize, sz);
-                    streamTargetReadBufferSize = sz;
-                }
-                Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameHeaderAddress(), streamTargetReadBufferAddress, streamFrameMeta.getFrameHeaderSize());
-                if (streamFrameMeta.getFrameDataSize() > 0) {
-                    Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameDataAddress(), streamTargetReadBufferAddress + streamFrameMeta.getFrameHeaderSize(),
-                            streamFrameMeta.getFrameDataSize());
-                }
-                streamTargetReadBufferOffset = 0;
-                streamTargetReadBufferLength = sz;
-
-                while (streamTargetReadBufferLength > streamTargetReadBufferOffset) {
-                    streamWriter.handleIO();
-                }
-                streamTargetReadBufferOffset = 0;
-                streamTargetReadBufferLength = 0;
+                sendFrame(streamWriter, streamFrameMeta);
             }
+
+            Assert.assertEquals(0, streamTargetWriteBufferOffset);
+            while (streamTargetWriteBufferOffset != TableReplicationStreamHeaderSupport.SCR_HEADER_SIZE) {
+                streamWriter.handleIO();
+            }
+
+            streamFrameMeta = streamGenerator.generateCommitBlockFrame();
+            sendFrame(streamWriter, streamFrameMeta);
         }
 
         Unsafe.free(streamTargetReadBufferAddress, streamTargetReadBufferSize);
-        slaveWriter.commit();
+        Unsafe.free(streamTargetWriteBufferAddress, streamTargetWriteBufferSize);
+    }
+
+    private void sendFrame(ReplicationStreamReceiver streamWriter, ReplicationStreamFrameMeta streamFrameMeta) {
+        long sz = streamFrameMeta.getFrameHeaderSize() + streamFrameMeta.getFrameDataSize();
+        if (sz > streamTargetReadBufferSize) {
+            streamTargetReadBufferAddress = Unsafe.realloc(streamTargetReadBufferAddress, streamTargetReadBufferSize, sz);
+            streamTargetReadBufferSize = sz;
+        }
+        Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameHeaderAddress(), streamTargetReadBufferAddress, streamFrameMeta.getFrameHeaderSize());
+        if (streamFrameMeta.getFrameDataSize() > 0) {
+            Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameDataAddress(), streamTargetReadBufferAddress + streamFrameMeta.getFrameHeaderSize(),
+                    streamFrameMeta.getFrameDataSize());
+        }
+        streamTargetReadBufferOffset = 0;
+        streamTargetReadBufferLength = sz;
+
+        while (streamTargetReadBufferLength > streamTargetReadBufferOffset) {
+            streamWriter.handleIO();
+        }
+        streamTargetReadBufferOffset = 0;
+        streamTargetReadBufferLength = 0;
     }
 }

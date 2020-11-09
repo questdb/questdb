@@ -1,6 +1,7 @@
 package io.questdb.cairo.replication;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import io.questdb.cairo.TableBlockWriter;
 import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
@@ -13,10 +14,12 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     private final LongList columnSizes = new LongList();
     private long timestampLo;
     private TableBlockWriter blockWriter;
+    private final AtomicInteger nRemainingFrames = new AtomicInteger();
 
     public SlaveWriterImpl of(TableBlockWriter blockWriter) {
         this.blockWriter = blockWriter;
         timestampLo = Long.MIN_VALUE;
+        nRemainingFrames.set(0);
         return this;
     }
 
@@ -60,13 +63,13 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     }
 
     @Override
-    public synchronized void unmap(int columnIndex, long address, long size) {
+    public synchronized boolean unmap(int columnIndex, long address, long size) {
         blockWriter.appendPageFrameColumn(columnIndex, size, address);
+        return nRemainingFrames.incrementAndGet() == 0;
     }
 
     @Override
-    public synchronized void markBlockNFrames(int nFrames) {
-        // TODO Auto-generated method stub
-
+    public synchronized boolean markBlockNFrames(int nFrames) {
+        return nRemainingFrames.addAndGet(-1 * nFrames) == 0;
     }
 }

@@ -12,7 +12,7 @@ import io.questdb.std.Unsafe;
 
 public class ReplicationStreamReceiver implements Closeable {
     enum IOContextResult {
-        NEEDS_READ, NEEDS_BACKOFF_RETRY
+        NEEDS_READ, NEEDS_BACKOFF_RETRY, NEEDS_WRITE
     }
 
     private final FilesFacade ff;
@@ -22,11 +22,12 @@ public class ReplicationStreamReceiver implements Closeable {
     private final ObjList<TableDetails> tableDetailsCache = new ObjList<>();
     private long fd = -1;
     private long frameHeaderAddress;
-    private long frameHeaderReadOffset;
-    private long frameHeaderReadRemaining;
+    private long frameHeaderOffset;
+    private long frameHeaderRemaining;
 
     private byte frameType;
     private long frameDataNBytesRemaining;
+    private int masterTableId;
     private SlaveWriter slaveWriter;
 
     private long frameFirstTimestamp;
@@ -37,6 +38,8 @@ public class ReplicationStreamReceiver implements Closeable {
     private int dataFrameColumnIndex;
     private long dataFrameColumnOffset;
 
+    private boolean readyToCommit;
+
     public ReplicationStreamReceiver(CairoConfiguration configuration, ReplicationSlaveManager recvMgr) {
         this.ff = configuration.getFilesFacade();
         this.recvMgr = recvMgr;
@@ -46,34 +49,43 @@ public class ReplicationStreamReceiver implements Closeable {
 
     public void of(long fd) {
         this.fd = fd;
+        readyToCommit = false;
         resetReading();
     }
 
     private void resetReading() {
-        frameHeaderReadOffset = 0;
-        frameHeaderReadRemaining = TableReplicationStreamHeaderSupport.MIN_HEADER_SIZE;
+        frameHeaderOffset = 0;
+        frameHeaderRemaining = TableReplicationStreamHeaderSupport.MIN_HEADER_SIZE;
         frameType = TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN;
         frameMappingAddress = 0;
         slaveWriter = null;
     }
 
     IOContextResult handleIO() {
-        while (frameHeaderReadRemaining > 0) {
-            long nRead = ff.read(fd, frameHeaderAddress, frameHeaderReadRemaining, frameHeaderReadOffset);
+        if (!readyToCommit) {
+            return handleRead();
+        } else {
+            return handleWrite();
+        }
+    }
+
+    IOContextResult handleRead() {
+        while (frameHeaderRemaining > 0) {
+            long nRead = ff.read(fd, frameHeaderAddress, frameHeaderRemaining, frameHeaderOffset);
             if (nRead == -1) {
                 // TODO Disconnected while reading header
                 throw new RuntimeException();
             }
-            frameHeaderReadOffset += nRead;
-            frameHeaderReadRemaining -= nRead;
-            if (frameHeaderReadRemaining > 0) {
+            frameHeaderOffset += nRead;
+            frameHeaderRemaining -= nRead;
+            if (frameHeaderRemaining > 0) {
                 return IOContextResult.NEEDS_READ;
             }
 
             if (frameType == TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN) {
                 // decode the generic header
                 decodeGenericHeader();
-                if (frameHeaderReadRemaining > 0)
+                if (frameHeaderRemaining > 0)
                     continue;
             }
 
@@ -85,7 +97,11 @@ public class ReplicationStreamReceiver implements Closeable {
 
                 case TableReplicationStreamHeaderSupport.FRAME_TYPE_END_OF_BLOCK: {
                     handleEndOfBlockHeader();
-                    resetReading();
+                    return IOContextResult.NEEDS_WRITE;
+                }
+
+                case TableReplicationStreamHeaderSupport.FRAME_TYPE_COMMIT_BLOCK: {
+                    handleCommitBlock();
                     return IOContextResult.NEEDS_READ;
                 }
 
@@ -101,11 +117,30 @@ public class ReplicationStreamReceiver implements Closeable {
         }
         frameDataNBytesRemaining -= nRead;
         if (frameDataNBytesRemaining == 0) {
-            slaveWriter.unmap(dataFrameColumnIndex, frameMappingAddress, frameMappingSize);
+            if (slaveWriter.unmap(dataFrameColumnIndex, frameMappingAddress, frameMappingSize)) {
+                handleReadyToCommit();
+            }
             slaveWriter = null;
             resetReading();
         }
         return IOContextResult.NEEDS_READ;
+    }
+
+    IOContextResult handleWrite() {
+        long nWritten = ff.write(fd, frameHeaderAddress, frameHeaderRemaining, frameHeaderOffset);
+        if (nWritten == -1) {
+            // TODO Disconnected mid stream
+            throw new RuntimeException();
+        }
+        frameHeaderRemaining -= nWritten;
+        frameHeaderOffset += nWritten;
+        if (frameHeaderRemaining == 0) {
+            readyToCommit = false;
+            resetReading();
+            return IOContextResult.NEEDS_READ;
+        }
+
+        return IOContextResult.NEEDS_WRITE;
     }
 
     private void handleEndOfBlockHeader() {
@@ -114,7 +149,18 @@ public class ReplicationStreamReceiver implements Closeable {
             throw new RuntimeException();
         }
         int nFrames = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_EOB_N_FRAMES_SENT);
-        slaveWriter.markBlockNFrames(nFrames);
+        if (slaveWriter.markBlockNFrames(nFrames)) {
+            handleReadyToCommit();
+        }
+    }
+
+    private void handleCommitBlock() {
+        if (frameDataNBytesRemaining != 0) {
+            // TODO Received junk in the header
+            throw new RuntimeException();
+        }
+        slaveWriter.commit();
+        resetReading();
     }
 
     private void handleDataFrameHeader() {
@@ -129,21 +175,30 @@ public class ReplicationStreamReceiver implements Closeable {
     }
 
     private void decodeGenericHeader() {
-        assert frameHeaderReadRemaining == 0;
+        assert frameHeaderRemaining == 0;
         frameType = Unsafe.getUnsafe().getByte(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_TYPE);
         if (frameType > TableReplicationStreamHeaderSupport.FRAME_TYPE_MAX_ID || frameType < TableReplicationStreamHeaderSupport.FRAME_TYPE_MIN_ID) {
             // TODO Received junk frame type
             throw new RuntimeException();
         }
-        frameHeaderReadRemaining = TableReplicationStreamHeaderSupport.getFrameHeaderSize(frameType) - frameHeaderReadOffset;
-        frameDataNBytesRemaining = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_SIZE) - frameHeaderReadOffset
-                - frameHeaderReadRemaining;
+        frameHeaderRemaining = TableReplicationStreamHeaderSupport.getFrameHeaderSize(frameType) - frameHeaderOffset;
+        frameDataNBytesRemaining = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_SIZE) - frameHeaderOffset
+                - frameHeaderRemaining;
         if (frameDataNBytesRemaining < 0) {
             // TODO Received junk in the header
             throw new RuntimeException();
         }
-        int masterTableId = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID);
+        masterTableId = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID);
         slaveWriter = getSlaveWriter(masterTableId);
+    }
+
+    private void handleReadyToCommit() {
+        frameHeaderRemaining = TableReplicationStreamHeaderSupport.SCR_HEADER_SIZE;
+        Unsafe.getUnsafe().putInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_SIZE, (int) frameHeaderRemaining);
+        Unsafe.getUnsafe().putByte(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_TYPE, TableReplicationStreamHeaderSupport.FRAME_TYPE_SLAVE_COMMIT_READY);
+        Unsafe.getUnsafe().putInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID, masterTableId);
+        frameHeaderOffset = 0;
+        readyToCommit = true;
     }
 
     private SlaveWriter getSlaveWriter(int masterTableId) {

@@ -19,10 +19,14 @@ public class TableReplicationStreamHeaderSupport {
     public static final long OFFSET_DF_DATA_OFFSET = OFFSET_DF_COLUMN_INDEX + Integer.BYTES;
     public static final long DF_HEADER_SIZE = OFFSET_DF_DATA_OFFSET + Long.BYTES;
 
+    public static final long SCR_HEADER_SIZE = OFFSET_MASTER_TABLE_ID + Integer.BYTES;
+
+    public static final long CB_HEADER_SIZE = OFFSET_MASTER_TABLE_ID + Integer.BYTES;
+
     public static final long OFFSET_EOB_N_FRAMES_SENT = OFFSET_MASTER_TABLE_ID + Integer.BYTES;
     public static final long EOB_HEADER_SIZE = OFFSET_EOB_N_FRAMES_SENT + Integer.BYTES;
 
-    public static final long MIN_HEADER_SIZE = EOB_HEADER_SIZE;
+    public static final long MIN_HEADER_SIZE = CB_HEADER_SIZE;
     public static final long MAX_HEADER_SIZE = DF_HEADER_SIZE;
 
     private static long[] HEADER_SIZE_BY_FRAME_TYPE;
@@ -30,6 +34,8 @@ public class TableReplicationStreamHeaderSupport {
         HEADER_SIZE_BY_FRAME_TYPE = new long[FRAME_TYPE_MAX_ID - FRAME_TYPE_MIN_ID + 1];
         HEADER_SIZE_BY_FRAME_TYPE[FRAME_TYPE_DATA_FRAME - FRAME_TYPE_MIN_ID] = DF_HEADER_SIZE;
         HEADER_SIZE_BY_FRAME_TYPE[FRAME_TYPE_END_OF_BLOCK - FRAME_TYPE_MIN_ID] = EOB_HEADER_SIZE;
+        HEADER_SIZE_BY_FRAME_TYPE[FRAME_TYPE_SLAVE_COMMIT_READY - FRAME_TYPE_MIN_ID] = SCR_HEADER_SIZE;
+        HEADER_SIZE_BY_FRAME_TYPE[FRAME_TYPE_COMMIT_BLOCK - FRAME_TYPE_MIN_ID] = CB_HEADER_SIZE;
     }
 
     public static final long getFrameHeaderSize(byte frameType) {

@@ -8,9 +8,9 @@ public interface ReplicationSlaveManager {
     public interface SlaveWriter {
         long mapColumnData(long timestampLo, int columnIndex, long offset, long size);
 
-        void unmap(int columnIndex, long address, long size);
+        boolean unmap(int columnIndex, long address, long size);
 
-        void markBlockNFrames(int nFrames);
+        boolean markBlockNFrames(int nFrames);
 
         void commit();
 

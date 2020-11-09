@@ -58,6 +58,14 @@ public class ReplicationStreamGenerator implements Closeable {
         return frameMeta;
     }
 
+    public ReplicationStreamFrameMeta generateCommitBlockFrame() {
+        frameDataSize = 0;
+        frameDataAddress = 0;
+        frameHeaderSize = TableReplicationStreamHeaderSupport.CB_HEADER_SIZE;
+        updateGenericHeader(TableReplicationStreamHeaderSupport.FRAME_TYPE_COMMIT_BLOCK, frameHeaderSize);
+        return frameMeta;
+    }
+
     private void generateDataFrame() {
         frameDataSize = sourceFrame.getPageSize(atColumnIndex);
         frameDataAddress = sourceFrame.getPageAddress(atColumnIndex);
