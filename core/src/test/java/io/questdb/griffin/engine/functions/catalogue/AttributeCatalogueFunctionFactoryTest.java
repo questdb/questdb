@@ -133,7 +133,8 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x(a int)",
                 null,
                 false,
-                false
+                false,
+                true
         );
     }
 
@@ -146,7 +147,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "    result.COLUMN_NAME,        \n" +
                 "    result.KEY_SEQ,        \n" +
                 "    result.PK_NAME,\n" +
-                "  --  result.KEYS,\n" +
+                "    result.KEYS,\n" +
                 "    result.A_ATTNUM,\n" +
                 "    RAW \n" +
                 "FROM\n" +
@@ -157,7 +158,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "        a.attname AS COLUMN_NAME,   \n" +
                 "        (information_schema._pg_expandarray(i.indkey)).n AS KEY_SEQ, \n" +
                 "        ci.relname AS PK_NAME,   \n" +
-                "  --      information_schema._pg_expandarray(i.indkey) AS KEYS, \n" +
+                "        information_schema._pg_expandarray(i.indkey) AS KEYS, \n" +
                 "        a.attnum AS A_ATTNUM,\n" +
                 "        i.indkey AS RAW \n" +
                 "    FROM pg_catalog.pg_class ct\n" +
@@ -170,11 +171,11 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "        AND ct.relname = E'po_items' \n" +
                 "        AND i.indisprimary  \n" +
                 "    ) result \n" +
-                "--WHERE A_ATTNUM = (result.KEYS).x  \n" +
+                "WHERE A_ATTNUM = (result.KEYS).x  \n" +
                 "ORDER BY result.table_name, result.PK_NAME, result.KEY_SEQ;";
 
         assertQuery(
-                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tA_ATTNUM\tRAW\n",
+                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n",
                 query,
                 "create table x(a int)",
                 null,
@@ -192,7 +193,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "    result.COLUMN_NAME,        \n" +
                 "    result.KEY_SEQ,        \n" +
                 "    result.PK_NAME,\n" +
-                "  --  result.KEYS,\n" +
+                "    result.KEYS,\n" +
                 "    result.A_ATTNUM,\n" +
                 "    RAW \n" +
                 "FROM\n" +
@@ -203,7 +204,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "        a.attname AS COLUMN_NAME,   \n" +
                 "        (information_schema._pg_expandarray(i.indkey)).n AS KEY_SEQ, \n" +
                 "        ci.relname AS PK_NAME,   \n" +
-                "  --      information_schema._pg_expandarray(i.indkey) AS KEYS, \n" +
+                "        information_schema._pg_expandarray(i.indkey) AS KEYS, \n" +
                 "        a.attnum AS A_ATTNUM,\n" +
                 "        i.indkey AS RAW \n" +
                 "    FROM pg_catalog.pg_class ct\n" +
@@ -216,15 +217,16 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "        AND ct.relname = E'po_items' \n" +
                 "        AND i.indisprimary  \n" +
                 "    ) result \n" +
-                "--WHERE A_ATTNUM = (result.KEYS).x  \n" +
+                "WHERE A_ATTNUM = (result.KEYS).x  \n" +
                 "ORDER BY result.TABLE_NAME, result.pk_name, result.KEY_SEQ;";
 
         assertQuery(
-                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tA_ATTNUM\tRAW\n",
+                "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\tKEYS\tA_ATTNUM\tRAW\n",
                 query,
                 "create table x(a int)",
                 null,
                 true,
+                false,
                 false
         );
     }

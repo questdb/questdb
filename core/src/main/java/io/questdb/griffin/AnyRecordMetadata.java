@@ -22,40 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
+import io.questdb.cairo.BaseRecordMetadata;
+import io.questdb.cairo.ColumnType;
 
-public interface RecordSinkSPI {
-    void putBin(BinarySequence value);
+public final class AnyRecordMetadata extends BaseRecordMetadata {
+    public static final AnyRecordMetadata INSTANCE = new AnyRecordMetadata();
 
-    void putBool(boolean value);
+    private AnyRecordMetadata() {
+        columnCount = 0;
+    }
 
-    void putByte(byte value);
+    @Override
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+        return 0;
+    }
 
-    void putDate(long value);
-
-    void putDouble(double value);
-
-    void putFloat(float value);
-
-    void putInt(int value);
-
-    void putLong(long value);
-
-    void putLong256(Long256 value);
-
-    void putShort(short value);
-
-    void putChar(char value);
-
-    void putStr(CharSequence value);
-
-    void putStr(CharSequence value, int lo, int hi);
-
-    void putRecord(Record value);
-
-    void putTimestamp(long value);
+    @Override
+    public int getColumnType(int columnIndex) {
+        return ColumnType.LONG;
+    }
 }

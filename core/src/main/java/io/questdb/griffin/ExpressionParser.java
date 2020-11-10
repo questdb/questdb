@@ -796,7 +796,7 @@ class ExpressionParser {
                         } else{
                             argStackDepth++;
                             final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", DOT_PRECEDENCE, position);
-                            dotDereference.paramCount = argStackDepth;
+                            dotDereference.paramCount = 2;
                             opStack.push(dotDereference);
                             opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.unquote(tok), Integer.MIN_VALUE, position));
                         }

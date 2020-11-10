@@ -492,6 +492,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDotDereferenceExpression() throws SqlException {
+        x("ua.zc.=", "u = (a.z).c");
+    }
+
+    @Test
     public void testDotDereferenceFunction() throws SqlException {
         x("a.b123f.", "(a.b).f(1,2,3)");
     }

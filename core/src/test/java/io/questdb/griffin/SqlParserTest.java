@@ -3103,7 +3103,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "-- where x = 10\n", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
+                // we now allow column reference from SQL although column access will fail
+                TestUtils.assertEquals("unknown function name: acc(LONG)", e.getFlyweightMessage());
             }
         }
     }
@@ -5258,7 +5259,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectSumSquared() throws SqlException {
         assertQuery(
-                "select-virtual x, sum1 * sum x1 from (select-group-by [x, sum(x) sum, sum(x) sum1] x, sum(x) sum, sum(x) sum1 from (select [x] from long_sequence(2)))",
+                "select-virtual x, sum * sum x1 from (select-group-by [x, sum(x) sum] x, sum(x) sum from (select [x] from long_sequence(2)))",
                 "select x, sum(x)*sum(x) x from long_sequence(2)"
         );
     }

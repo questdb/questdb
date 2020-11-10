@@ -984,8 +984,9 @@ class SqlOptimiser {
         }
     }
 
-    private void emitAggregates(@Transient ExpressionNode node, QueryModel model) {
+    private boolean emitAggregates(@Transient ExpressionNode node, QueryModel model) {
 
+        boolean replaced = false;
         this.sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
@@ -999,6 +1000,7 @@ class SqlOptimiser {
                     if (node.rhs == n) {
                         this.sqlNodeStack.push(node.rhs);
                     } else {
+                        replaced = true;
                         node.rhs = n;
                     }
                 }
@@ -1007,6 +1009,7 @@ class SqlOptimiser {
                 if (n == node.lhs) {
                     node = node.lhs;
                 } else {
+                    replaced = true;
                     node.lhs = n;
                     node = null;
                 }
@@ -1014,6 +1017,7 @@ class SqlOptimiser {
                 node = this.sqlNodeStack.poll();
             }
         }
+        return replaced;
     }
 
     // This method will create CROSS join models in the "baseModel" for all unique cursor
@@ -1972,7 +1976,7 @@ class SqlOptimiser {
 
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
         assert model.getTableNameFunction() == null;
-        Function function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, executionContext);
+        final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
         if (function.getType() != ColumnType.CURSOR) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
@@ -2218,8 +2222,11 @@ class SqlOptimiser {
 
     private ExpressionNode replaceIfAggregate(@Transient ExpressionNode node, QueryModel model) {
         if (node != null && functionParser.isGroupBy(node.token)) {
-            QueryColumn c = queryColumnPool.next().of(createColumnAlias(node, model), node);
-            model.addBottomUpColumn(c);
+            QueryColumn c = model.findBottomUpColumnByAst(node);
+            if (c == null) {
+                c = queryColumnPool.next().of(createColumnAlias(node, model), node);
+                model.addBottomUpColumn(c);
+            }
             return nextLiteral(c.getAlias());
         }
         return node;
@@ -2712,9 +2719,8 @@ class SqlOptimiser {
                 // this is not a direct call to aggregation function, in which case
                 // we emit aggregation function into group-by model and leave the
                 // rest in outer model
-                int beforeSplit = groupByModel.getBottomUpColumns().size();
-                emitAggregates(qc.getAst(), groupByModel);
-                if (beforeSplit < groupByModel.getBottomUpColumns().size()) {
+                final int beforeSplit = groupByModel.getBottomUpColumns().size();
+                if (emitAggregates(qc.getAst(), groupByModel)) {
                     qc = ensureAliasUniqueness(outerVirtualModel, qc);
                     outerVirtualModel.addBottomUpColumn(qc);
                     distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));

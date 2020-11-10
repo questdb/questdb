@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 public class InformationSchemaFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "information_schema._pg_expandarray(I)";
+        return "information_schema._pg_expandarray(V)";
     }
 
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
@@ -46,5 +46,10 @@ public class InformationSchemaFunctionFactory implements FunctionFactory {
                         false
                 )
         );
+    }
+
+    @Override
+    public boolean isCursor() {
+        return true;
     }
 }

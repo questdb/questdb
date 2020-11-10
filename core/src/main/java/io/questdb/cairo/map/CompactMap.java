@@ -447,6 +447,11 @@ public class CompactMap implements Map {
         }
 
         @Override
+        public void putRecord(Record value) {
+            // noop
+        }
+
+        @Override
         public void putStr(CharSequence value) {
             if (value == null) {
                 entries.putLong(TableUtils.NULL_LEN);

@@ -157,6 +157,9 @@ public class ExpressionNode implements Mutable, Sinkable {
                 break;
             case 2:
                 if (OperatorExpression.isOperator(token)) {
+                    if (lhs == null) {
+                        System.out.println("not good");
+                    }
                     lhs.toSink(sink);
                     sink.put(' ');
                     sink.put(token);
