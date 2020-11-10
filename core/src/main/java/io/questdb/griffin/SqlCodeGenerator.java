@@ -636,7 +636,6 @@ public class SqlCodeGenerator implements Mutable {
         RecordCursorFactory master = null;
         CharSequence masterAlias = null;
 
-        executionContext.pushTimestampRequiredFlag(true);
         try {
             int n = ordered.size();
             assert n > 0;
@@ -673,57 +672,114 @@ public class SqlCodeGenerator implements Mutable {
                             masterAlias = null;
                             break;
                         case QueryModel.JOIN_ASOF:
-                            validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
-                            processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
-                            if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-                                if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
-                                    master = createAsOfJoin(
-                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                            master,
-                                            RecordSinkFactory.getInstance(
-                                                    asm,
-                                                    masterMetadata,
-                                                    listColumnFilterB,
-                                                    true
-                                            ),
-                                            slave,
-                                            RecordSinkFactory.getInstance(
-                                                    asm,
-                                                    slaveMetadata,
-                                                    listColumnFilterA,
-                                                    true
-                                            ),
-                                            masterMetadata.getColumnCount()
-                                    );
+                            executionContext.pushTimestampRequiredFlag(true);
+                            try {
+                                validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
+                                    if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
+                                        master = createAsOfJoin(
+                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                master,
+                                                RecordSinkFactory.getInstance(
+                                                        asm,
+                                                        masterMetadata,
+                                                        listColumnFilterB,
+                                                        true
+                                                ),
+                                                slave,
+                                                RecordSinkFactory.getInstance(
+                                                        asm,
+                                                        slaveMetadata,
+                                                        listColumnFilterA,
+                                                        true
+                                                ),
+                                                masterMetadata.getColumnCount()
+                                        );
+                                    } else {
+                                        master = new AsOfJoinNoKeyRecordCursorFactory(
+                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                master,
+                                                slave,
+                                                masterMetadata.getColumnCount()
+                                        );
+                                    }
                                 } else {
-                                    master = new AsOfJoinNoKeyRecordCursorFactory(
-                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                    master = createFullFatJoin(
                                             master,
+                                            masterMetadata,
+                                            masterAlias,
                                             slave,
-                                            masterMetadata.getColumnCount()
+                                            slaveMetadata,
+                                            slaveModel.getName(),
+                                            slaveModel.getJoinKeywordPosition(),
+                                            CREATE_FULL_FAT_AS_OF_JOIN
                                     );
                                 }
-                            } else {
-                                master = createFullFatJoin(
-                                        master,
-                                        masterMetadata,
-                                        masterAlias,
-                                        slave,
-                                        slaveMetadata,
-                                        slaveModel.getName(),
-                                        slaveModel.getJoinKeywordPosition(),
-                                        CREATE_FULL_FAT_AS_OF_JOIN
-                                );
+                                masterAlias = null;
+                            } finally {
+                                executionContext.popTimestampRequiredFlag();
                             }
-                            masterAlias = null;
                             break;
                         case QueryModel.JOIN_LT:
-                            validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
-                            processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
-                            if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-                                if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
-                                    master = createLtJoin(
-                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                            executionContext.pushTimestampRequiredFlag(true);
+                            try {
+                                validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
+                                    if (listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0) {
+                                        master = createLtJoin(
+                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                master,
+                                                RecordSinkFactory.getInstance(
+                                                        asm,
+                                                        masterMetadata,
+                                                        listColumnFilterB,
+                                                        true
+                                                ),
+                                                slave,
+                                                RecordSinkFactory.getInstance(
+                                                        asm,
+                                                        slaveMetadata,
+                                                        listColumnFilterA,
+                                                        true
+                                                ),
+                                                masterMetadata.getColumnCount()
+                                        );
+                                    } else {
+                                        master = new LtJoinNoKeyRecordCursorFactory(
+                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                master,
+                                                slave,
+                                                masterMetadata.getColumnCount()
+                                        );
+                                    }
+                                } else {
+                                    master = createFullFatJoin(
+                                            master,
+                                            masterMetadata,
+                                            masterAlias,
+                                            slave,
+                                            slaveMetadata,
+                                            slaveModel.getName(),
+                                            slaveModel.getJoinKeywordPosition(),
+                                            CREATE_FULL_FAT_LT_JOIN
+                                    );
+                                }
+                                masterAlias = null;
+                            } finally {
+                                executionContext.popTimestampRequiredFlag();
+                            }
+                            break;
+                        case QueryModel.JOIN_SPLICE:
+                            executionContext.pushTimestampRequiredFlag(true);
+                            try {
+                                validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
+                                    master = createSpliceJoin(
+                                            // splice join result does not have timestamp
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
                                             master,
                                             RecordSinkFactory.getInstance(
                                                     asm,
@@ -741,52 +797,10 @@ public class SqlCodeGenerator implements Mutable {
                                             masterMetadata.getColumnCount()
                                     );
                                 } else {
-                                    master = new LtJoinNoKeyRecordCursorFactory(
-                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                            master,
-                                            slave,
-                                            masterMetadata.getColumnCount()
-                                    );
+                                    assert false;
                                 }
-                            } else {
-                                master = createFullFatJoin(
-                                        master,
-                                        masterMetadata,
-                                        masterAlias,
-                                        slave,
-                                        slaveMetadata,
-                                        slaveModel.getName(),
-                                        slaveModel.getJoinKeywordPosition(),
-                                        CREATE_FULL_FAT_LT_JOIN
-                                );
-                            }
-                            masterAlias = null;
-                            break;
-                        case QueryModel.JOIN_SPLICE:
-                            validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
-                            processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
-                            if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-                                master = createSpliceJoin(
-                                        // splice join result does not have timestamp
-                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
-                                        master,
-                                        RecordSinkFactory.getInstance(
-                                                asm,
-                                                masterMetadata,
-                                                listColumnFilterB,
-                                                true
-                                        ),
-                                        slave,
-                                        RecordSinkFactory.getInstance(
-                                                asm,
-                                                slaveMetadata,
-                                                listColumnFilterA,
-                                                true
-                                        ),
-                                        masterMetadata.getColumnCount()
-                                );
-                            } else {
-                                assert false;
+                            } finally {
+                                executionContext.popTimestampRequiredFlag();
                             }
                             break;
                         default:
@@ -830,8 +844,6 @@ public class SqlCodeGenerator implements Mutable {
         } catch (CairoException | SqlException e) {
             Misc.free(master);
             throw e;
-        } finally {
-            executionContext.popTimestampRequiredFlag();
         }
     }
 
