@@ -25,15 +25,16 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public class GenericRecordMetadata extends BaseRecordMetadata {
     public static final GenericRecordMetadata EMPTY = new GenericRecordMetadata();
+    private final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
 
     public GenericRecordMetadata() {
         this.columnMetadata = new ObjList<>();
-        this.columnNameIndexMap = new CharSequenceIntHashMap();
+        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
         this.timestampIndex = -1;
     }
 
@@ -47,6 +48,15 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
                     from.isSymbolTableStatic(i)
             ));
         }
+    }
+
+    @Override
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+        final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
+        if (index < 0) {
+            return columnNameIndexMap.valueAt(index);
+        }
+        return -1;
     }
 
     public static GenericRecordMetadata copyOf(RecordMetadata that) {

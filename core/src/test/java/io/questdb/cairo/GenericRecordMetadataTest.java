@@ -79,6 +79,31 @@ public class GenericRecordMetadataTest {
     }
 
     @Test
+    public void testDuplicateColumn2() {
+        final String expected = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"abc\",\"type\":\"INT\"},{\"index\":1,\"name\":\"cde\",\"type\":\"INT\"}],\"timestampIndex\":-1}";
+
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.INT));
+
+        sink.clear();
+        metadata.toJson(sink);
+        TestUtils.assertEquals(expected, sink);
+
+        try {
+            metadata.add(new TableColumnMetadata("ABC", ColumnType.FLOAT));
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getMessage(), "Duplicate column");
+        }
+
+        sink.clear();
+        metadata.toJson(sink);
+        TestUtils.assertEquals(expected, sink);
+    }
+
+
+    @Test
     public void testReuse() {
         String expected1 = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"abc\",\"type\":\"INT\"},{\"index\":1,\"name\":\"cde\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":2}";
         GenericRecordMetadata metadata = new GenericRecordMetadata();
