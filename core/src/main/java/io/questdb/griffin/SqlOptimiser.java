@@ -2843,6 +2843,7 @@ class SqlOptimiser {
                         && model.getTableName() == null
                         && model.getTableNameFunction() == null
                         && model.getJoinModels().size() == 1
+                        && model.getWhereClause() == null
         ) {
             model = model.getNestedModel();
         }

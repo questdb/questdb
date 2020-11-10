@@ -137,7 +137,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         allValueWriters.extendAndSet(ColumnType.SYMBOL, JsonQueryProcessorState::putSymValue);
         allValueWriters.extendAndSet(ColumnType.BINARY, JsonQueryProcessorState::putBinValue);
         allValueWriters.extendAndSet(ColumnType.LONG256, JsonQueryProcessorState::putLong256Value);
-        allValueWriters.extendAndSet(ColumnType.CURSOR, JsonQueryProcessorState::putCursorValue);
+        allValueWriters.extendAndSet(ColumnType.RECORD, JsonQueryProcessorState::putCursorValue);
 
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;

@@ -64,7 +64,7 @@ auto.create=true
 ```
 
 To publish a message
-
+K
 ```shell
 bin/windows/kafka-console-producer.bat --topic quickstart-events --bootstrap-server localhost:9092
 ```

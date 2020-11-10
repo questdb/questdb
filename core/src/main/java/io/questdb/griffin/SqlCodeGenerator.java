@@ -1491,7 +1491,7 @@ public class SqlCodeGenerator implements Mutable {
         QueryModel twoDeepNested;
         ExpressionNode tableNameEn;
         if (
-                model.getBottomUpColumns().size() == 1
+                model.getColumns().size() == 1
                         && model.getNestedModel() != null
                         && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
                         && (twoDeepNested = model.getNestedModel().getNestedModel()) != null
@@ -1599,7 +1599,6 @@ public class SqlCodeGenerator implements Mutable {
                     // find position of hour() alias in selected columns
                     // also make sure there are no other literal column than our function reference
                     final CharSequence functionColumnName = columns.getQuick(0).getName();
-                    columns = model.getBottomUpColumns();
                     for (int i = 0, n = columns.size(); i < n; i++) {
                         columnExpr = columns.getQuick(i).getAst();
                         if (columnExpr.type == LITERAL) {
@@ -1725,7 +1724,7 @@ public class SqlCodeGenerator implements Mutable {
             valueTypes.clear();
             listColumnFilterA.clear();
 
-            final int columnCount = model.getBottomUpColumns().size();
+            final int columnCount = model.getColumns().size();
             ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
             GroupByUtils.prepareGroupByFunctions(
                     model,
@@ -1784,7 +1783,8 @@ public class SqlCodeGenerator implements Mutable {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
         try {
-            final int columnCount = model.getBottomUpColumns().size();
+            final ObjList<QueryColumn> columns = model.getColumns();
+            final int columnCount = columns.size();
             final RecordMetadata metadata = factory.getMetadata();
             final ObjList<Function> functions = new ObjList<>(columnCount);
             final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
@@ -1799,7 +1799,7 @@ public class SqlCodeGenerator implements Mutable {
             }
 
             for (int i = 0; i < columnCount; i++) {
-                final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+                final QueryColumn column = columns.getQuick(i);
                 ExpressionNode node = column.getAst();
                 if (timestampColumn != null && node.type == ExpressionNode.LITERAL && Chars.equals(timestampColumn, node.token)) {
                     virtualMetadata.setTimestampIndex(i);
@@ -2453,11 +2453,11 @@ public class SqlCodeGenerator implements Mutable {
     private Record.CharSequenceFunction validateSubQueryColumnAndGetGetter(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
         final int zeroColumnType = metadata.getColumnType(0);
         if (zeroColumnType != ColumnType.STRING && zeroColumnType != ColumnType.SYMBOL) {
-            assert intrinsicModel.keySubQuery.getBottomUpColumns() != null;
-            assert intrinsicModel.keySubQuery.getBottomUpColumns().size() > 0;
+            assert intrinsicModel.keySubQuery.getColumns() != null;
+            assert intrinsicModel.keySubQuery.getColumns().size() > 0;
 
             throw SqlException
-                    .position(intrinsicModel.keySubQuery.getBottomUpColumns().getQuick(0).getAst().position)
+                    .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
                     .put("unsupported column type: ")
                     .put(metadata.getColumnName(0))
                     .put(": ")
