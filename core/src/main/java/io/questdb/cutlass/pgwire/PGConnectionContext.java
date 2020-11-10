@@ -50,6 +50,17 @@ import static io.questdb.std.time.DateFormatUtils.PG_DATE_TIME_Z_FORMAT;
 import static io.questdb.std.time.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class PGConnectionContext implements IOContext, Mutable {
+    public static final String TAG_SET = "SET";
+    public static final String TAG_BEGIN = "BEGIN";
+    public static final String TAG_COMMIT = "COMMIT";
+    public static final String TAG_ROLLBACK = "ROLLBACK";
+    public static final String TAG_SELECT = "SELECT";
+    public static final String TAG_OK = "OK";
+    public static final String TAG_COPY = "COPY";
+    public static final String TAG_INSERT = "INSERT";
+    public static final char STATUS_IN_TRANSACTION = 'T';
+    public static final char STATUS_IN_ERROR = 'E';
+    public static final char STATUS_IDLE = 'I';
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
@@ -58,10 +69,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final int TAIL_SUCCESS = 1;
     private static final int TAIL_ERROR = 2;
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
-    public static final String TAG_SET = "SET";
-    public static final String TAG_BEGIN = "BEGIN";
-    public static final String TAG_COMMIT = "COMMIT";
-    public static final String TAG_ROLLBACK = "ROLLBACK";
     private static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
@@ -76,13 +83,11 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final byte MESSAGE_TYPE_CLOSE_COMPLETE = '3';
     private static final byte MESSAGE_TYPE_NO_DATA = 'n';
     private static final byte MESSAGE_TYPE_COPY_IN_RESPONSE = 'G';
-    public static final String TAG_SELECT = "SELECT";
-    public static final String TAG_OK = "OK";
-    public static final String TAG_COPY = "COPY";
-    public static final String TAG_INSERT = "INSERT";
-    public static final char STATUS_IN_TRANSACTION = 'T';
-    public static final char STATUS_IN_ERROR = 'E';
-    public static final char STATUS_IDLE = 'I';
+    private static final int NO_TRANSACTION = 0;
+    private static final int IN_TRANSACTION = 1;
+    private static final int COMMIT_TRANSACTION = 2;
+    private static final int ERROR_TRANSACTION = 3;
+    private static final int ROLLING_BACK_TRANSACTION = 4;
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -123,6 +128,12 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
     private final DateLocale dateLocale;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
+    private final ObjHashSet<InsertMethod> cachedTransactionInsertWriters = new ObjHashSet<>();
+    //    private final ObjList<TypeAdapter> probes = new ObjList<>();
+    private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
+    private final IntList parameterFormats = new IntList();
+    private final DirectCharSink utf8Sink;
+    private final TypeManager typeManager;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean requireInitialMessage = false;
@@ -142,17 +153,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private Rnd rnd;
     private int rowCount;
     private boolean isEmptyQuery;
-    private static final int NO_TRANSACTION = 0;
-    private static final int IN_TRANSACTION = 1;
-    private static final int COMMIT_TRANSACTION = 2;
-    private static final int ERROR_TRANSACTION = 3;
-    private static final int ROLLING_BACK_TRANSACTION = 4;
-    private final ObjHashSet<InsertMethod> cachedTransactionInsertWriters = new ObjHashSet<>();
-    //    private final ObjList<TypeAdapter> probes = new ObjList<>();
-    private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
-    private final IntList parameterFormats = new IntList();
-    private final DirectCharSink utf8Sink;
-    private final TypeManager typeManager;
     private int transactionState = NO_TRANSACTION;
 
     public PGConnectionContext(
@@ -405,6 +405,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
+    public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        CharacterStoreEntry e = queryCharacterStore.newEntry();
+        if (Chars.utf8Decode(address, address + valueLen, e)) {
+            bindVariableService.setChar(index, queryCharacterStore.toImmutable().charAt(0)); //
+        } else {
+            LOG.error().$("invalid UTF8 bytes [index=").$(index).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
     public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
         dbcs.of(address, address + valueLen);
         try {
@@ -486,16 +496,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException {
-        CharacterStoreEntry e = queryCharacterStore.newEntry();
-        if (Chars.utf8Decode(address, address + valueLen, e)) {
-            bindVariableService.setChar(index, queryCharacterStore.toImmutable().charAt(0)); //
-        } else {
-            LOG.error().$("invalid UTF8 bytes [index=").$(index).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
     private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
         if (required == valueLen) {
             return;
@@ -518,12 +518,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         sink.encodeUtf8Z(name);
         sink.encodeUtf8Z(value);
         sink.putLen(addr);
-    }
-
-    private void appendCharColumn(Record record, int columnIndex) {
-        long a = responseAsciiSink.skip();
-        responseAsciiSink.putUtf8(record.getChar(columnIndex));
-        responseAsciiSink.putLenEx(a);
     }
 
     private void appendBinColumn(Record record, int i) throws SqlException {
@@ -556,53 +550,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putLenEx(a);
     }
 
-    private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        if (queryText.length() > 0) {
-            boolean foundCachedFactory = retrieveCachedFactory(factoryCache);
-            if (!foundCachedFactory) {
-                final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
-
-                switch (cc.getType()) {
-                    case CompiledQuery.SELECT:
-                        currentFactory = cc.getRecordCursorFactory();
-                        queryTag = TAG_SELECT;
-                        factoryCache.put(queryText, currentFactory);
-                        break;
-                    case CompiledQuery.INSERT:
-                        currentInsertStatement = cc.getInsertStatement();
-                        queryTag = TAG_INSERT;
-                        factoryCache.put(queryText, currentInsertStatement);
-                        break;
-                    case CompiledQuery.COPY_LOCAL:
-                        queryTag = TAG_COPY;
-                        sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                        break;
-                    case CompiledQuery.SET:
-                        if (SqlKeywords.isBegin(queryText)) {
-                            queryTag = TAG_BEGIN;
-                            transactionState = IN_TRANSACTION;
-                        } else if (SqlKeywords.isCommit(queryText)) {
-                            queryTag = TAG_COMMIT;
-                            if (transactionState != ERROR_TRANSACTION) {
-                                transactionState = COMMIT_TRANSACTION;
-                            }
-                        } else if (SqlKeywords.isRollback(queryText)) {
-                            queryTag = TAG_ROLLBACK;
-                            transactionState = ROLLING_BACK_TRANSACTION;
-                        } else {
-                            queryTag = TAG_SET;
-                        }
-                        break;
-                    default:
-                        // DDL SQL
-                        queryTag = TAG_OK;
-                        break;
-                }
-            }
-        } else {
-            isEmptyQuery = true;
-        }
+    private void appendCharColumn(Record record, int columnIndex) {
+        long a = responseAsciiSink.skip();
+        responseAsciiSink.putUtf8(record.getChar(columnIndex));
+        responseAsciiSink.putLenEx(a);
     }
 
     private void appendDateColumn(Record record, int columnIndex) {
@@ -649,6 +600,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
+    private void appendLong256Column(Record record, int columnIndex) {
+        final Long256 long256Value = record.getLong256A(columnIndex);
+        final long a = responseAsciiSink.skip();
+        Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseAsciiSink);
+        responseAsciiSink.putLenEx(a);
+    }
+
     private void appendLongColumn(Record record, int columnIndex) {
         final long longValue = record.getLong(columnIndex);
         if (longValue == Numbers.LONG_NaN) {
@@ -658,13 +616,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.put(longValue);
             responseAsciiSink.putLenEx(a);
         }
-    }
-
-    private void appendLong256Column(Record record, int columnIndex) {
-        final Long256 long256Value = record.getLong256A(columnIndex);
-        final long a = responseAsciiSink.skip();
-        Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseAsciiSink);
-        responseAsciiSink.putLenEx(a);
     }
 
     private void appendRecord(
@@ -791,47 +742,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void executeInsert() {
-        try {
-            switch (transactionState) {
-                case IN_TRANSACTION:
-                    final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext);
-                    m.execute();
-                    cachedTransactionInsertWriters.add(m);
-                    break;
-                case ERROR_TRANSACTION:
-                    // when transaction is in error state, skip execution
-                    break;
-                default:
-                    // in any other case we will commit in place
-                    try (final InsertMethod m2 = currentInsertStatement.createMethod(sqlExecutionContext)) {
-                        m2.execute();
-                        m2.commit();
-                    }
-                    break;
-            }
-            sendCurrentCursorTail = TAIL_SUCCESS;
-            prepareExecuteTail(false);
-        } catch (CairoException e) {
-            LOG.error().$(e.getFlyweightMessage()).$();
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
-            responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-            final long addr = responseAsciiSink.skip();
-            responseAsciiSink.put('M');
-            responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
-            responseAsciiSink.put('S');
-            responseAsciiSink.encodeUtf8Z("ERROR");
-            responseAsciiSink.put((char) 0);
-            responseAsciiSink.putLen(addr);
-            sendCurrentCursorTail = TAIL_ERROR;
-            prepareExecuteTail(false);
-        } finally {
-            currentInsertStatement = null;
-        }
-    }
-
     private void checkNotTrue(boolean check, String message) throws BadProtocolException {
         if (check) {
             // we did not find 0 within message limit
@@ -843,6 +753,55 @@ public class PGConnectionContext implements IOContext, Mutable {
     void clearRecvBuffer() {
         recvBufferWriteOffset = 0;
         recvBufferReadOffset = 0;
+    }
+
+    private void compileQuery(SqlCompiler compiler, AssociativeCache<Object> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        if (queryText.length() > 0) {
+            boolean foundCachedFactory = retrieveCachedFactory(factoryCache);
+            if (!foundCachedFactory) {
+                final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
+
+                switch (cc.getType()) {
+                    case CompiledQuery.SELECT:
+                        currentFactory = cc.getRecordCursorFactory();
+                        queryTag = TAG_SELECT;
+                        factoryCache.put(queryText, currentFactory);
+                        break;
+                    case CompiledQuery.INSERT:
+                        currentInsertStatement = cc.getInsertStatement();
+                        queryTag = TAG_INSERT;
+                        factoryCache.put(queryText, currentInsertStatement);
+                        break;
+                    case CompiledQuery.COPY_LOCAL:
+                        queryTag = TAG_COPY;
+                        sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                        break;
+                    case CompiledQuery.SET:
+                        if (SqlKeywords.isBegin(queryText)) {
+                            queryTag = TAG_BEGIN;
+                            transactionState = IN_TRANSACTION;
+                        } else if (SqlKeywords.isCommit(queryText)) {
+                            queryTag = TAG_COMMIT;
+                            if (transactionState != ERROR_TRANSACTION) {
+                                transactionState = COMMIT_TRANSACTION;
+                            }
+                        } else if (SqlKeywords.isRollback(queryText)) {
+                            queryTag = TAG_ROLLBACK;
+                            transactionState = ROLLING_BACK_TRANSACTION;
+                        } else {
+                            queryTag = TAG_SET;
+                        }
+                        break;
+                    default:
+                        // DDL SQL
+                        queryTag = TAG_OK;
+                        break;
+                }
+            }
+        } else {
+            isEmptyQuery = true;
+        }
     }
 
     int doReceive(int remaining) {
@@ -906,22 +865,44 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    void prepareReadyForQuery() {
-        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
-        switch (transactionState) {
-            case IN_TRANSACTION:
-                responseAsciiSink.put(STATUS_IN_TRANSACTION);
-                break;
-            case ERROR_TRANSACTION:
-                responseAsciiSink.put(STATUS_IN_ERROR);
-                break;
-            case NO_TRANSACTION:
-            case COMMIT_TRANSACTION:
-            case ROLLING_BACK_TRANSACTION:
-            default:
-                responseAsciiSink.put(STATUS_IDLE);
-                break;
+    private void executeInsert() {
+        try {
+            switch (transactionState) {
+                case IN_TRANSACTION:
+                    final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext);
+                    m.execute();
+                    cachedTransactionInsertWriters.add(m);
+                    break;
+                case ERROR_TRANSACTION:
+                    // when transaction is in error state, skip execution
+                    break;
+                default:
+                    // in any other case we will commit in place
+                    try (final InsertMethod m2 = currentInsertStatement.createMethod(sqlExecutionContext)) {
+                        m2.execute();
+                        m2.commit();
+                    }
+                    break;
+            }
+            sendCurrentCursorTail = TAIL_SUCCESS;
+            prepareExecuteTail(false);
+        } catch (CairoException e) {
+            LOG.error().$(e.getFlyweightMessage()).$();
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
+            responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+            final long addr = responseAsciiSink.skip();
+            responseAsciiSink.put('M');
+            responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
+            responseAsciiSink.put('S');
+            responseAsciiSink.encodeUtf8Z("ERROR");
+            responseAsciiSink.put((char) 0);
+            responseAsciiSink.putLen(addr);
+            sendCurrentCursorTail = TAIL_ERROR;
+            prepareExecuteTail(false);
+        } finally {
+            currentInsertStatement = null;
         }
     }
 
@@ -1081,39 +1062,25 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void prepareError(SqlException e) {
-        responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = responseAsciiSink.skip();
-        responseAsciiSink.put('M');
-        responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
-        responseAsciiSink.put('S');
-        responseAsciiSink.encodeUtf8Z("ERROR");
-        if (e.getPosition() > -1) {
-            responseAsciiSink.put('P').put(e.getPosition() + 1).put((char) 0);
-        }
-        responseAsciiSink.put((char) 0);
-        responseAsciiSink.putLen(addr);
+    private void populateAppender() {
+        columnAppenders.extendAndSet(ColumnType.INT, this::appendIntCol);
+        columnAppenders.extendAndSet(ColumnType.STRING, this::appendStrColumn);
+        columnAppenders.extendAndSet(ColumnType.SYMBOL, this::appendSymbolColumn);
+        columnAppenders.extendAndSet(ColumnType.LONG, this::appendLongColumn);
+        columnAppenders.extendAndSet(ColumnType.SHORT, this::appendShortColumn);
+        columnAppenders.extendAndSet(ColumnType.DOUBLE, this::appendDoubleColumn);
+        columnAppenders.extendAndSet(ColumnType.FLOAT, this::appendFloatColumn);
+        columnAppenders.extendAndSet(ColumnType.TIMESTAMP, this::appendTimestampColumn);
+        columnAppenders.extendAndSet(ColumnType.DATE, this::appendDateColumn);
+        columnAppenders.extendAndSet(ColumnType.BOOLEAN, this::appendBooleanColumn);
+        columnAppenders.extendAndSet(ColumnType.BYTE, this::appendByteColumn);
+        columnAppenders.extendAndSet(ColumnType.BINARY, this::appendBinColumn);
+        columnAppenders.extendAndSet(ColumnType.CHAR, this::appendCharColumn);
+        columnAppenders.extendAndSet(ColumnType.LONG256, this::appendLong256Column);
     }
 
     private void prepareBindComplete() {
         responseAsciiSink.put(MESSAGE_TYPE_BIND_COMPLETE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES);
-    }
-
-    private void prepareLoginOk() {
-        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES * 2); // length of this message
-        responseAsciiSink.putNetworkInt(0); // response code
-        prepareParams(responseAsciiSink, "TimeZone", "GMT");
-        prepareParams(responseAsciiSink, "application_name", "QuestDB");
-        prepareParams(responseAsciiSink, "server_version", serverVersion);
-        prepareParams(responseAsciiSink, "integer_datetimes", "on");
-        prepareParams(responseAsciiSink, "client_encoding", "UTF8");
-        prepareReadyForQuery();
-    }
-
-    private void prepareParseComplete() {
-        responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
         responseAsciiSink.putNetworkInt(Integer.BYTES);
     }
 
@@ -1136,6 +1103,20 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
             responseAsciiSink.putLen(addr);
         }
+    }
+
+    private void prepareError(SqlException e) {
+        responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = responseAsciiSink.skip();
+        responseAsciiSink.put('M');
+        responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
+        responseAsciiSink.put('S');
+        responseAsciiSink.encodeUtf8Z("ERROR");
+        if (e.getPosition() > -1) {
+            responseAsciiSink.put('P').put(e.getPosition() + 1).put((char) 0);
+        }
+        responseAsciiSink.put((char) 0);
+        responseAsciiSink.putLen(addr);
     }
 
     private void prepareExecuteTail(boolean addRowCount) {
@@ -1164,51 +1145,22 @@ public class PGConnectionContext implements IOContext, Mutable {
         currentInsertStatement = null;
     }
 
-    private void populateAppender() {
-        columnAppenders.extendAndSet(ColumnType.INT, this::appendIntCol);
-        columnAppenders.extendAndSet(ColumnType.STRING, this::appendStrColumn);
-        columnAppenders.extendAndSet(ColumnType.SYMBOL, this::appendSymbolColumn);
-        columnAppenders.extendAndSet(ColumnType.LONG, this::appendLongColumn);
-        columnAppenders.extendAndSet(ColumnType.SHORT, this::appendShortColumn);
-        columnAppenders.extendAndSet(ColumnType.DOUBLE, this::appendDoubleColumn);
-        columnAppenders.extendAndSet(ColumnType.FLOAT, this::appendFloatColumn);
-        columnAppenders.extendAndSet(ColumnType.TIMESTAMP, this::appendTimestampColumn);
-        columnAppenders.extendAndSet(ColumnType.DATE, this::appendDateColumn);
-        columnAppenders.extendAndSet(ColumnType.BOOLEAN, this::appendBooleanColumn);
-        columnAppenders.extendAndSet(ColumnType.BYTE, this::appendByteColumn);
-        columnAppenders.extendAndSet(ColumnType.BINARY, this::appendBinColumn);
-        columnAppenders.extendAndSet(ColumnType.CHAR, this::appendCharColumn);
-        columnAppenders.extendAndSet(ColumnType.LONG256, this::appendLong256Column);
+    private void prepareLoginOk() {
+        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
+        responseAsciiSink.putNetworkInt(Integer.BYTES * 2); // length of this message
+        responseAsciiSink.putNetworkInt(0); // response code
+        prepareParams(responseAsciiSink, "TimeZone", "GMT");
+        prepareParams(responseAsciiSink, "application_name", "QuestDB");
+        prepareParams(responseAsciiSink, "server_version", serverVersion);
+        prepareParams(responseAsciiSink, "integer_datetimes", "on");
+        prepareParams(responseAsciiSink, "client_encoding", "UTF8");
+        prepareReadyForQuery();
     }
 
-    private void processClose(long lo, long msgLimit, CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap) throws BadProtocolException {
-        final byte type = Unsafe.getUnsafe().getByte(lo);
-        if (type == 'S') {
-            lo = lo + 1;
-            long hi = getStringLength(lo, msgLimit);
-            checkNotTrue(hi == -1, "bad prepared statement name length");
-            CharSequence statementName = getStatementName(lo, hi);
-            if (statementName != null) {
-                final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
-                if (wrapper != null) {
-                    IntList bindVariableTypes = wrapper.bindVariableTypes;
-                    if (bindVariableTypes != null) {
-                        bindVarTypesPool.push(bindVariableTypes);
-                    }
-                    namedStatementWrapperPool.push(wrapper);
-                } else {
-                    LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
-                    throw BadProtocolException.INSTANCE;
-                }
-            }
-            queryTextCharacterStore.clear();
-        } else if (type == 'P') {
-            LOG.info().$("close message for portal - ignoring").$();
-        } else {
-            LOG.error().$("invalid type for close message [type=").$(type).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-        prepareCloseComplete();
+    private void prepareLoginResponse() {
+        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
+        responseAsciiSink.putNetworkInt(Integer.BYTES * 2);
+        responseAsciiSink.putNetworkInt(3);
     }
 
     private void prepareNoDataMessage() {
@@ -1216,133 +1168,61 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putNetworkInt(Integer.BYTES);
     }
 
-    private boolean retrieveCachedFactory(AssociativeCache<Object> factoryCache) {
-        final Object cachedFactory = factoryCache.peek(queryText);
-        if (cachedFactory instanceof RecordCursorFactory) {
-            queryTag = TAG_SELECT;
-            currentFactory = (RecordCursorFactory) cachedFactory;
-        } else if (cachedFactory instanceof InsertStatement) {
-            queryTag = TAG_INSERT;
-            currentInsertStatement = (InsertStatement) cachedFactory;
-        }
-        return cachedFactory != null;
+    private void prepareParseComplete() {
+        responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
+        responseAsciiSink.putNetworkInt(Integer.BYTES);
     }
 
-    private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (currentFactory != null) {
-            LOG.info().$("executing query").$();
-            currentCursor = currentFactory.getCursor(sqlExecutionContext);
-            // cache random if it was replaced
-            this.rnd = sqlExecutionContext.getRandom();
-            sendCursor();
-        } else if (currentInsertStatement != null) {
-            executeInsert();
-        } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
-            if (queryTag != null && !Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
-                if (transactionState == COMMIT_TRANSACTION) {
-                    for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-                        final InsertMethod m = cachedTransactionInsertWriters.get(i);
-                        m.commit();
-                        Misc.free(m);
-                    }
-                    cachedTransactionInsertWriters.clear();
-                    transactionState = NO_TRANSACTION;
-                } else if (transactionState == ROLLING_BACK_TRANSACTION) {
-                    for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-                        InsertMethod m = cachedTransactionInsertWriters.get(i);
-                        m.rollback();
-                        Misc.free(m);
-                    }
-                    cachedTransactionInsertWriters.clear();
-                    transactionState = NO_TRANSACTION;
-                }
-            }
-            if (isEmptyQuery) {
-                prepareNoDataMessage();
-            }
-            sendCurrentCursorTail = TAIL_SUCCESS;
-            prepareExecuteTail(false);
+    void prepareReadyForQuery() {
+        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
+        switch (transactionState) {
+            case IN_TRANSACTION:
+                responseAsciiSink.put(STATUS_IN_TRANSACTION);
+                break;
+            case ERROR_TRANSACTION:
+                responseAsciiSink.put(STATUS_IN_ERROR);
+                break;
+            case NO_TRANSACTION:
+            case COMMIT_TRANSACTION:
+            case ROLLING_BACK_TRANSACTION:
+            default:
+                responseAsciiSink.put(STATUS_IDLE);
+                break;
         }
     }
 
-    private void processParse(
-            long address,
-            long lo,
-            long msgLimit,
-            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
-            @Transient ObjList<BindVariableSetter> bindVariableSetters
-    ) throws BadProtocolException, SqlException {
-        // 'Parse'
-        //message length
-        long hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad prepared statement name length");
-
-        //named statement
-        CharSequence statementName = getStatementName(lo, hi);
-        NamedStatementWrapper wrapper = null;
-        IntList bindVariableTypes = null;
-        if (statementName != null) {
-            wrapper = namedStatementMap.get(statementName);
-            if (wrapper == null) {
-                wrapper = namedStatementWrapperPool.pop();
-                namedStatementMap.put(statementName, wrapper);
+    private void prepareRowDescription() {
+        final RecordMetadata metadata = currentFactory.getMetadata();
+        ResponseAsciiSink sink = responseAsciiSink;
+        sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
+        final long addr = sink.skip();
+        final int n = metadata.getColumnCount();
+        sink.putNetworkShort((short) n);
+        for (int i = 0; i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            sink.encodeUtf8Z(metadata.getColumnName(i));
+            sink.putNetworkInt(0); //tableOid ?
+            sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
+            sink.putNetworkInt(typeOids.get(columnType)); // type
+            if (columnType < ColumnType.STRING) {
+                //type size
+                sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
+            } else {
+                // type size
+                sink.put((short) -1);
             }
-            bindVariableTypes = wrapper.bindVariableTypes;
+            //type modifier
+            sink.putNetworkInt(-1);
+            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+            // format code
+            sink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
         }
+        sink.putLen(addr);
+    }
 
-        //query text
-        lo = hi + 1;
-        hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad query text length");
-
-        prepareForNewQuery();
-        parseQueryText(lo, hi);
-
-        //parameter type count
-        lo = hi + 1;
-        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter type count");
-
-        short parameterCount = getShort(lo);
-
-        //process parameter types
-        bindVariableSetters.clear();
-        if (parameterCount > 0) {
-            if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
-                LOG.error()
-                        .$("could not read parameters [parameterCount=").$(parameterCount)
-                        .$(", offset=").$(lo - address)
-                        .$(", remaining=").$(msgLimit - lo)
-                        .$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
-
-            LOG.debug().$("params [count=").$(parameterCount).$(']').$();
-            lo += Short.BYTES;
-            bindVariableService.clear();
-            if (wrapper != null) {
-                if (bindVariableTypes == null) {
-                    bindVariableTypes = bindVarTypesPool.pop();
-                }
-            }
-            setupBindVariables(lo, parameterCount, bindVariableSetters, bindVariableTypes);
-        } else if (parameterCount < 0) {
-            LOG.error()
-                    .$("invalid parameter count [parameterCount=").$(parameterCount)
-                    .$(", offset=").$(lo - address)
-                    .$(']').$();
-            throw BadProtocolException.INSTANCE;
-        } else if (wrapper != null && wrapper.bindVariableTypes != null) {
-            bindVarTypesPool.push(wrapper.bindVariableTypes);
-            wrapper.bindVariableTypes = null;
-        }
-
-        if (wrapper != null) {
-            CharacterStoreEntry cachedQueryText = queryTextCharacterStore.newEntry();
-            cachedQueryText.put(queryText);
-            wrapper.queryText = queryTextCharacterStore.toImmutable();
-            wrapper.bindVariableTypes = bindVariableTypes;
-        }
-        prepareParseComplete();
+    private void prepareSslResponse() {
+        responseAsciiSink.put('N');
     }
 
     private void processBind(
@@ -1403,6 +1283,36 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareBindComplete();
     }
 
+    private void processClose(long lo, long msgLimit, CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap) throws BadProtocolException {
+        final byte type = Unsafe.getUnsafe().getByte(lo);
+        if (type == 'S') {
+            lo = lo + 1;
+            long hi = getStringLength(lo, msgLimit);
+            checkNotTrue(hi == -1, "bad prepared statement name length");
+            CharSequence statementName = getStatementName(lo, hi);
+            if (statementName != null) {
+                final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
+                if (wrapper != null) {
+                    IntList bindVariableTypes = wrapper.bindVariableTypes;
+                    if (bindVariableTypes != null) {
+                        bindVarTypesPool.push(bindVariableTypes);
+                    }
+                    namedStatementWrapperPool.push(wrapper);
+                } else {
+                    LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
+                    throw BadProtocolException.INSTANCE;
+                }
+            }
+            queryTextCharacterStore.clear();
+        } else if (type == 'P') {
+            LOG.info().$("close message for portal - ignoring").$();
+        } else {
+            LOG.error().$("invalid type for close message [type=").$(type).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+        prepareCloseComplete();
+    }
+
     private void processDescribe(
             @Transient ObjList<BindVariableSetter> bindVariableSetters,
             long lo,
@@ -1431,16 +1341,40 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {
-        if (parameterValueCount > 0) {
-            if (parameterValueCount < parameterTypeCount) {
-                LOG.error().$("parameter type count must be less or equals to number of parameters values").$();
-                throw BadProtocolException.INSTANCE;
+    private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (currentFactory != null) {
+            LOG.info().$("executing query").$();
+            currentCursor = currentFactory.getCursor(sqlExecutionContext);
+            // cache random if it was replaced
+            this.rnd = sqlExecutionContext.getRandom();
+            sendCursor();
+        } else if (currentInsertStatement != null) {
+            executeInsert();
+        } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
+            if (queryTag != null && !Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
+                if (transactionState == COMMIT_TRANSACTION) {
+                    for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
+                        final InsertMethod m = cachedTransactionInsertWriters.get(i);
+                        m.commit();
+                        Misc.free(m);
+                    }
+                    cachedTransactionInsertWriters.clear();
+                    transactionState = NO_TRANSACTION;
+                } else if (transactionState == ROLLING_BACK_TRANSACTION) {
+                    for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
+                        InsertMethod m = cachedTransactionInsertWriters.get(i);
+                        m.rollback();
+                        Misc.free(m);
+                    }
+                    cachedTransactionInsertWriters.clear();
+                    transactionState = NO_TRANSACTION;
+                }
             }
-            if (parameterFormatCount > 1 && parameterFormatCount != parameterValueCount) {
-                LOG.error().$("parameter format count and parameter value count must match").$();
-                throw BadProtocolException.INSTANCE;
+            if (isEmptyQuery) {
+                prepareNoDataMessage();
             }
+            sendCurrentCursorTail = TAIL_SUCCESS;
+            prepareExecuteTail(false);
         }
     }
 
@@ -1540,8 +1474,84 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void prepareSslResponse() {
-        responseAsciiSink.put('N');
+    private void processParse(
+            long address,
+            long lo,
+            long msgLimit,
+            @Transient CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap,
+            @Transient ObjList<BindVariableSetter> bindVariableSetters
+    ) throws BadProtocolException, SqlException {
+        // 'Parse'
+        //message length
+        long hi = getStringLength(lo, msgLimit);
+        checkNotTrue(hi == -1, "bad prepared statement name length");
+
+        //named statement
+        CharSequence statementName = getStatementName(lo, hi);
+        NamedStatementWrapper wrapper = null;
+        IntList bindVariableTypes = null;
+        if (statementName != null) {
+            wrapper = namedStatementMap.get(statementName);
+            if (wrapper == null) {
+                wrapper = namedStatementWrapperPool.pop();
+                namedStatementMap.put(statementName, wrapper);
+            }
+            bindVariableTypes = wrapper.bindVariableTypes;
+        }
+
+        //query text
+        lo = hi + 1;
+        hi = getStringLength(lo, msgLimit);
+        checkNotTrue(hi == -1, "bad query text length");
+
+        prepareForNewQuery();
+        parseQueryText(lo, hi);
+
+        //parameter type count
+        lo = hi + 1;
+        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter type count");
+
+        short parameterCount = getShort(lo);
+
+        //process parameter types
+        bindVariableSetters.clear();
+        if (parameterCount > 0) {
+            if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
+                LOG.error()
+                        .$("could not read parameters [parameterCount=").$(parameterCount)
+                        .$(", offset=").$(lo - address)
+                        .$(", remaining=").$(msgLimit - lo)
+                        .$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+
+            LOG.debug().$("params [count=").$(parameterCount).$(']').$();
+            lo += Short.BYTES;
+            bindVariableService.clear();
+            if (wrapper != null) {
+                if (bindVariableTypes == null) {
+                    bindVariableTypes = bindVarTypesPool.pop();
+                }
+            }
+            setupBindVariables(lo, parameterCount, bindVariableSetters, bindVariableTypes);
+        } else if (parameterCount < 0) {
+            LOG.error()
+                    .$("invalid parameter count [parameterCount=").$(parameterCount)
+                    .$(", offset=").$(lo - address)
+                    .$(']').$();
+            throw BadProtocolException.INSTANCE;
+        } else if (wrapper != null && wrapper.bindVariableTypes != null) {
+            bindVarTypesPool.push(wrapper.bindVariableTypes);
+            wrapper.bindVariableTypes = null;
+        }
+
+        if (wrapper != null) {
+            CharacterStoreEntry cachedQueryText = queryTextCharacterStore.newEntry();
+            cachedQueryText.put(queryText);
+            wrapper.queryText = queryTextCharacterStore.toImmutable();
+            wrapper.bindVariableTypes = bindVariableTypes;
+        }
+        prepareParseComplete();
     }
 
     private void processQuery(
@@ -1600,6 +1610,85 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
+    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
+        final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
+
+        checkNotTrue(remaining < 1, "undersized receive buffer or someone is abusing protocol");
+
+        int n = doReceive(remaining);
+        if (n < 0) {
+            throw PeerDisconnectedException.INSTANCE;
+        }
+
+        if (n == 0) {
+            int retriesRemaining = idleRecvCountBeforeGivingUp;
+            while (retriesRemaining > 0) {
+                n = doReceive(remaining);
+                if (n == 0) {
+                    retriesRemaining--;
+                    continue;
+                }
+
+                if (n < 0) {
+                    // todo: test that we close resources and rollback transaction when peer disconnects
+                    LOG.info().$("disconnect [code=").$(n).$(']').$();
+                    throw PeerDisconnectedException.INSTANCE;
+                }
+
+                break;
+            }
+
+            if (retriesRemaining == 0) {
+                throw PeerIsSlowToWriteException.INSTANCE;
+            }
+        }
+        recvBufferWriteOffset += n;
+    }
+
+    private boolean retrieveCachedFactory(AssociativeCache<Object> factoryCache) {
+        final Object cachedFactory = factoryCache.peek(queryText);
+        if (cachedFactory instanceof RecordCursorFactory) {
+            queryTag = TAG_SELECT;
+            currentFactory = (RecordCursorFactory) cachedFactory;
+        } else if (cachedFactory instanceof InsertStatement) {
+            queryTag = TAG_INSERT;
+            currentInsertStatement = (InsertStatement) cachedFactory;
+        }
+        return cachedFactory != null;
+    }
+
+    private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        doSend(
+                0,
+                (int) (sendBufferPtr - sendBuffer)
+        );
+        responseAsciiSink.reset();
+    }
+
+    private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (TableUtils.TABLE_EXISTS == engine.getStatus(
+                sqlExecutionContext.getCairoSecurityContext(),
+                path,
+                textLoader.getTableName()
+        )) {
+            responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
+            long addr = responseAsciiSink.skip();
+            responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName())) {
+                RecordMetadata metadata = writer.getMetadata();
+                responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    responseAsciiSink.putNetworkShort((short) typeOids.get(metadata.getColumnType(i)));
+                }
+            }
+            responseAsciiSink.putLen(addr);
+        } else {
+            prepareError(SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist"));
+            prepareReadyForQuery();
+        }
+        sendAndReset();
+    }
+
     private void sendCursor() throws PeerDisconnectedException, PeerIsSlowToReadException {
         // the assumption for now is that any  will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
@@ -1641,122 +1730,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareExecuteTail(true);
     }
 
-    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
-        final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
-
-        checkNotTrue(remaining < 1, "undersized receive buffer or someone is abusing protocol");
-
-        int n = doReceive(remaining);
-        if (n < 0) {
-            throw PeerDisconnectedException.INSTANCE;
-        }
-
-        if (n == 0) {
-            int retriesRemaining = idleRecvCountBeforeGivingUp;
-            while (retriesRemaining > 0) {
-                n = doReceive(remaining);
-                if (n == 0) {
-                    retriesRemaining--;
-                    continue;
-                }
-
-                if (n < 0) {
-                    // todo: test that we close resources and rollback transaction when peer disconnects
-                    LOG.info().$("disconnect [code=").$(n).$(']').$();
-                    throw PeerDisconnectedException.INSTANCE;
-                }
-
-                break;
-            }
-
-            if (retriesRemaining == 0) {
-                throw PeerIsSlowToWriteException.INSTANCE;
-            }
-        }
-        recvBufferWriteOffset += n;
-    }
-
-    private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        doSend(
-                0,
-                (int) (sendBufferPtr - sendBuffer)
-        );
-        responseAsciiSink.reset();
-    }
-
-    private void prepareLoginResponse() {
-        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES * 2);
-        responseAsciiSink.putNetworkInt(3);
-    }
-
-    private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (TableUtils.TABLE_EXISTS == engine.getStatus(
-                sqlExecutionContext.getCairoSecurityContext(),
-                path,
-                textLoader.getTableName()
-        )) {
-            responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
-            long addr = responseAsciiSink.skip();
-            responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName())) {
-                RecordMetadata metadata = writer.getMetadata();
-                responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    responseAsciiSink.putNetworkShort((short) typeOids.get(metadata.getColumnType(i)));
-                }
-            }
-            responseAsciiSink.putLen(addr);
-        } else {
-            prepareError(SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist"));
-            prepareReadyForQuery();
-        }
-        sendAndReset();
-    }
-
-    private void prepareRowDescription() {
-        final RecordMetadata metadata = currentFactory.getMetadata();
-        ResponseAsciiSink sink = responseAsciiSink;
-        sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
-        final long addr = sink.skip();
-        final int n = metadata.getColumnCount();
-        sink.putNetworkShort((short) n);
-        for (int i = 0; i < n; i++) {
-            final int columnType = metadata.getColumnType(i);
-            sink.encodeUtf8Z(metadata.getColumnName(i));
-            sink.putNetworkInt(0); //tableOid ?
-            sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
-            sink.putNetworkInt(typeOids.get(columnType)); // type
-            if (columnType < ColumnType.STRING) {
-                //type size
-                sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
-            } else {
-                // type size
-                sink.put((short) -1);
-            }
-            //type modifier
-            sink.putNetworkInt(-1);
-            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
-            // format code
-            sink.putNetworkShort((short) 1); // format code
-        }
-        sink.putLen(addr);
-    }
-
     private void sendExecuteTail(int tail) throws PeerDisconnectedException, PeerIsSlowToReadException {
         sendCurrentCursorTail = tail;
         prepareExecuteTail(false);
         prepareReadyForQuery();
         sendAndReset();
-    }
-
-    private void setupNamedStatement(ObjList<BindVariableSetter> bindVariableSetters, NamedStatementWrapper wrapper) throws SqlException {
-        queryText = wrapper.queryText;
-        bindVariableSetters.clear();
-        if (wrapper.bindVariableTypes != null) {
-            bindVariableSetters.clear();
-            setupCachedBindVariables(bindVariableSetters, wrapper.bindVariableTypes);
-        }
     }
 
     private void setupBindVariable(ObjList<BindVariableSetter> bindVariableSetters, int idx, int pgType) throws SqlException {
@@ -1848,9 +1826,42 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
+    private void setupNamedStatement(ObjList<BindVariableSetter> bindVariableSetters, NamedStatementWrapper wrapper) throws SqlException {
+        queryText = wrapper.queryText;
+        bindVariableSetters.clear();
+        if (wrapper.bindVariableTypes != null) {
+            bindVariableSetters.clear();
+            setupCachedBindVariables(bindVariableSetters, wrapper.bindVariableTypes);
+        }
+    }
+
+    private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {
+        if (parameterValueCount > 0) {
+            if (parameterValueCount < parameterTypeCount) {
+                LOG.error().$("parameter type count must be less or equals to number of parameters values").$();
+                throw BadProtocolException.INSTANCE;
+            }
+            if (parameterFormatCount > 1 && parameterFormatCount != parameterValueCount) {
+                LOG.error().$("parameter format count and parameter value count must match").$();
+                throw BadProtocolException.INSTANCE;
+            }
+        }
+    }
+
     @FunctionalInterface
     private interface ColumnAppender {
         void append(Record record, int columnIndex) throws SqlException;
+    }
+
+    public static class NamedStatementWrapper implements Mutable {
+
+        public CharSequence queryText = null;
+        public IntList bindVariableTypes = null;
+
+        public void clear() {
+            queryText = null;
+            bindVariableTypes = null;
+        }
     }
 
     class ResponseAsciiSink extends AbstractCharSink {
@@ -1989,16 +2000,5 @@ public class PGConnectionContext implements IOContext, Mutable {
         typeOids.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
         typeOids.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
         typeOids.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
-    }
-
-    public static class NamedStatementWrapper implements Mutable {
-
-        public CharSequence queryText = null;
-        public IntList bindVariableTypes = null;
-
-        public void clear() {
-            queryText = null;
-            bindVariableTypes = null;
-        }
     }
 }
