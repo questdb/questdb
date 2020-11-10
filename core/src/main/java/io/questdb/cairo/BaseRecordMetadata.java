@@ -55,6 +55,11 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     }
 
     @Override
+    public RecordMetadata getMetadata(int columnIndex) {
+        return getColumnQuick(columnIndex).getMetadata();
+    }
+
+    @Override
     public String getColumnName(int columnIndex) {
         return getColumnQuick(columnIndex).getName();
     }

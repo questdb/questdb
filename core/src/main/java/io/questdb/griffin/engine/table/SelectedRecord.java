@@ -59,6 +59,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public char getChar(int col) {
+        return base.getChar(getColumnIndex(col));
+    }
+
+    @Override
     public long getDate(int col) {
         return base.getDate(getColumnIndex(col));
     }
@@ -84,13 +89,18 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public char getChar(int col) {
-        return base.getChar(getColumnIndex(col));
+    public void getLong256(int col, CharSink sink) {
+        base.getLong256(getColumnIndex(col), sink);
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
-        base.getLong256(getColumnIndex(col), sink);
+    public Long256 getLong256A(int col) {
+        return base.getLong256A(getColumnIndex(col));
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+        return base.getLong256B(getColumnIndex(col));
     }
 
     @Override
@@ -111,6 +121,11 @@ class SelectedRecord implements Record {
     @Override
     public void getStr(int col, CharSink sink) {
         base.getStr(getColumnIndex(col), sink);
+    }
+
+    @Override
+    public Record getRecord(int col) {
+        return base.getRecord(getColumnIndex(col));
     }
 
     @Override
@@ -137,25 +152,11 @@ class SelectedRecord implements Record {
         return base;
     }
 
-    IntList getColumnCrossIndex() {
-        return columnCrossIndex;
-    }
-
     private int getColumnIndex(int columnIndex) {
         return columnCrossIndex.getQuick(columnIndex);
     }
 
     void of(Record record) {
         this.base = record;
-    }
-
-    @Override
-    public Long256 getLong256A(int col) {
-        return base.getLong256A(getColumnIndex(col));
-    }
-
-    @Override
-    public Long256 getLong256B(int col) {
-        return base.getLong256B(getColumnIndex(col));
     }
 }

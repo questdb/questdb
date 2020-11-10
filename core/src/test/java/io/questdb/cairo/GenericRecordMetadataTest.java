@@ -37,9 +37,9 @@ public class GenericRecordMetadataTest {
     public void testBaseInterfaceDefaults() {
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, true, 1024, true));
-        metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("abc", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, true, 1024, true, null));
+        metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP, null));
         metadata.setTimestampIndex(2);
 
         Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType("timestamp"));
@@ -59,15 +59,15 @@ public class GenericRecordMetadataTest {
         final String expected = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"abc\",\"type\":\"INT\"},{\"index\":1,\"name\":\"cde\",\"type\":\"INT\"}],\"timestampIndex\":-1}";
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("cde", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("abc", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.INT, null));
 
         sink.clear();
         metadata.toJson(sink);
         TestUtils.assertEquals(expected, sink);
 
         try {
-            metadata.add(new TableColumnMetadata("abc", ColumnType.FLOAT));
+            metadata.add(new TableColumnMetadata("abc", ColumnType.FLOAT, null));
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains(e.getMessage(), "Duplicate column");
@@ -107,9 +107,9 @@ public class GenericRecordMetadataTest {
     public void testReuse() {
         String expected1 = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"abc\",\"type\":\"INT\"},{\"index\":1,\"name\":\"cde\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":2}";
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("cde", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("abc", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP, null));
         metadata.setTimestampIndex(2);
 
         sink.clear();
@@ -118,8 +118,8 @@ public class GenericRecordMetadataTest {
 
         String expected2 = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"z\",\"type\":\"DATE\"}],\"timestampIndex\":-1}";
         metadata.clear();
-        metadata.add(new TableColumnMetadata("x", ColumnType.SYMBOL, false, 0, false));
-        metadata.add(new TableColumnMetadata("z", ColumnType.DATE));
+        metadata.add(new TableColumnMetadata("x", ColumnType.SYMBOL, false, 0, false, null));
+        metadata.add(new TableColumnMetadata("z", ColumnType.DATE, null));
         sink.clear();
         metadata.toJson(sink);
         TestUtils.assertEquals(expected2, sink);

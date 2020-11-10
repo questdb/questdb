@@ -98,11 +98,6 @@ public class SymbolFunctionTest {
         function.getLong(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetMetadata() {
-        function.getMetadata();
-    }
-
     @Test
     public void testGetPosition() {
         Assert.assertEquals(25, function.getPosition());

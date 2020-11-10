@@ -333,7 +333,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             case ColumnType.TIMESTAMP:
                 return new TimestampColumn(node.position, index);
             case ColumnType.RECORD:
-                return new RecordColumn(node.position, index);
+                return new RecordColumn(node.position, index, metadata.getMetadata(index));
             default:
                 return new Long256Column(node.position, index);
         }

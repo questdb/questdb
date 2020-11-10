@@ -107,11 +107,6 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getPosition() {
         return position;
     }

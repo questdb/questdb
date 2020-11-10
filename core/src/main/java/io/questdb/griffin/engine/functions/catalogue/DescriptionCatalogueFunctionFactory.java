@@ -212,10 +212,10 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("objsubid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("description", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("objsubid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("description", ColumnType.STRING, null));
         METADATA = metadata;
     }
 }

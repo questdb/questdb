@@ -30,19 +30,21 @@ import io.questdb.griffin.engine.functions.RecordFunction;
 
 public class RecordColumn extends RecordFunction  {
     private final int columnIndex;
+    private final RecordMetadata metadata;
 
-    public RecordColumn(int position, int columnIndex) {
+    public RecordColumn(int position, int columnIndex, RecordMetadata metadata) {
         super(position);
         this.columnIndex = columnIndex;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return null;
+        this.metadata = metadata;
     }
 
     @Override
     public Record getRecord(Record rec) {
         return rec.getRecord(columnIndex);
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 }

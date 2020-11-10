@@ -102,11 +102,6 @@ public abstract class DoubleFunction implements ScalarFunction {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getPosition() {
         return position;
     }

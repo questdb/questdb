@@ -28,7 +28,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -118,11 +117,6 @@ public class GroupByFunctionTest {
 
         @Override
         public Long256 getLong256B(Record rec) {
-            return null;
-        }
-
-        @Override
-        public RecordMetadata getMetadata() {
             return null;
         }
 

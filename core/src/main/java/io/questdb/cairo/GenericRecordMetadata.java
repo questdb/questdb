@@ -45,7 +45,8 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
                     from.getColumnType(i),
                     from.isColumnIndexed(i),
                     from.getIndexValueBlockCapacity(i),
-                    from.isSymbolTableStatic(i)
+                    from.isSymbolTableStatic(i),
+                    GenericRecordMetadata.copyOf(from.getMetadata(i))
             ));
         }
     }
@@ -60,9 +61,15 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
     }
 
     public static GenericRecordMetadata copyOf(RecordMetadata that) {
-        GenericRecordMetadata metadata = copyOfSansTimestamp(that);
-        metadata.setTimestampIndex(that.getTimestampIndex());
-        return metadata;
+        if (that != null) {
+            if (that instanceof GenericRecordMetadata) {
+                return (GenericRecordMetadata) that;
+            }
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that);
+            metadata.setTimestampIndex(that.getTimestampIndex());
+            return metadata;
+        }
+        return null;
     }
 
     public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
@@ -72,15 +79,7 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
     }
 
     public GenericRecordMetadata add(TableColumnMetadata meta) {
-        int index = columnNameIndexMap.keyIndex(meta.getName());
-        if (index > -1) {
-            columnNameIndexMap.putAt(index, meta.getName(), columnCount);
-            columnMetadata.add(meta);
-            columnCount++;
-            return this;
-        } else {
-            throw CairoException.instance(0).put("Duplicate column [name=").put(meta.getName()).put(']');
-        }
+        return add(columnCount, meta);
     }
 
     public GenericRecordMetadata add(int i, TableColumnMetadata meta) {

@@ -1036,7 +1036,7 @@ public class SqlCompiler implements Closeable {
             String designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
             if (designatedTimestampColumnName != null) {
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
-                metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP));
+                metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && function.getType() == ColumnType.BOOLEAN) {
                     writer.removePartition(function);

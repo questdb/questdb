@@ -24,15 +24,20 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
+import org.jetbrains.annotations.Nullable;
+
 public class TableColumnMetadata {
     private final int type;
     private final boolean symbolTableStatic;
+    @Nullable
+    private final RecordMetadata metadata;
     private String name;
     private int indexValueBlockCapacity;
     private boolean indexed;
 
-    public TableColumnMetadata(String name, int type) {
-        this(name, type, false, 0, false);
+    public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
+        this(name, type, false, 0, false, metadata);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert type != ColumnType.SYMBOL;
@@ -43,13 +48,15 @@ public class TableColumnMetadata {
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
-            boolean symbolTableStatic
+            boolean symbolTableStatic,
+            @Nullable RecordMetadata metadata
     ) {
         this.name = name;
         this.type = type;
         this.indexed = indexFlag;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
+        this.metadata = GenericRecordMetadata.copyOf(metadata);
     }
 
     public int getIndexValueBlockCapacity() {
@@ -60,8 +67,17 @@ public class TableColumnMetadata {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
     }
 
+    @Nullable
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
     public String getName() {
         return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
     }
 
     public int getType() {
@@ -70,10 +86,6 @@ public class TableColumnMetadata {
 
     public boolean isIndexed() {
         return indexed;
-    }
-
-    public void setName(String name) {
-        this.name = name;
     }
 
     public void setIndexed(boolean value) {

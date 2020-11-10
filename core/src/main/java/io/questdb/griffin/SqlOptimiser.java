@@ -1977,7 +1977,7 @@ class SqlOptimiser {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
         model.setTableNameFunction(function);
-        copyColumnsFromMetadata(model, function.getMetadata());
+        copyColumnsFromMetadata(model, function.getRecordCursorFactory().getMetadata());
     }
 
     private void processEmittedJoinClauses(QueryModel model) {

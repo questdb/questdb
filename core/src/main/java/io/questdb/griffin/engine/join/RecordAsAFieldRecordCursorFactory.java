@@ -33,22 +33,26 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 
 public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
-
     private final RecordCursorFactory base;
     private final GenericRecordMetadata metadata;
     private final RecordAsAFieldRecordCursor cursor;
 
     public RecordAsAFieldRecordCursorFactory(RecordCursorFactory base, CharSequence columnAlias) {
         this.base = base;
-        this.cursor = new RecordAsAFieldRecordCursor(base.getMetadata());
+        this.cursor = new RecordAsAFieldRecordCursor();
         this.metadata = new GenericRecordMetadata();
-        this.metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), ColumnType.RECORD));
+        this.metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), ColumnType.RECORD, base.getMetadata()));
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(base);
     }
 
     @Override
@@ -64,26 +68,18 @@ public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
     private static final class RecordAsAFieldRecord implements Record {
 
         private Record base;
-        private RecordMetadata metadata;
 
         @Override
         public Record getRecord(int col) {
             assert col == 0;
             return base;
         }
-
-
     }
 
     private static final class RecordAsAFieldRecordCursor implements DelegatingRecordCursor {
         private final RecordAsAFieldRecord record = new RecordAsAFieldRecord();
         private final RecordAsAFieldRecord recordB = new RecordAsAFieldRecord();
         private RecordCursor base;
-
-        public RecordAsAFieldRecordCursor(RecordMetadata metadata) {
-            record.metadata = metadata;
-            recordB.metadata = metadata;
-        }
 
         @Override
         public void close() {
@@ -124,7 +120,7 @@ public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
         public void of(RecordCursor base, SqlExecutionContext executionContext) {
             this.base = base;
             record.base = base.getRecord();
-            recordB.base = base.getRecordB();
+//            recordB.base = base.getRecordB();
         }
     }
 }

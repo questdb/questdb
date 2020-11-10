@@ -135,4 +135,9 @@ class UnionRecord implements Record {
     public long getTimestamp(int col) {
         return base.getTimestamp(col);
     }
+
+    @Override
+    public Record getRecord(int col) {
+        return base.getRecord(col);
+    }
 }

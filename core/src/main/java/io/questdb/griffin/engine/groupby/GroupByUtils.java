@@ -234,7 +234,8 @@ public class GroupByUtils {
                                 type,
                                 metadata.isColumnIndexed(index),
                                 metadata.getIndexValueBlockCapacity(index),
-                                metadata.isSymbolTableStatic(index)
+                                metadata.isSymbolTableStatic(index),
+                                metadata.getMetadata(index)
                         )
                 );
                 groupByColumnCount++;
@@ -253,7 +254,8 @@ public class GroupByUtils {
                                 type,
                                 false,
                                 0,
-                                groupByFunction instanceof SymbolFunction && (((SymbolFunction) groupByFunction).isSymbolTableStatic())
+                                groupByFunction instanceof SymbolFunction && (((SymbolFunction) groupByFunction).isSymbolTableStatic()),
+                                groupByFunction.getMetadata()
                         )
                 );
             }

@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -103,11 +102,6 @@ public abstract class StrArrayFunction implements Function {
 
     @Override
     public final Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final RecordMetadata getMetadata() {
         throw new UnsupportedOperationException();
     }
 

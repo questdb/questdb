@@ -35,19 +35,19 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
     @Test
     public void testSimple() {
         JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 10);
-        metadata.add("a", "x", ColumnType.INT, false, 0, false);
-        metadata.add("a", "y", ColumnType.DOUBLE, false, 0, false);
-        metadata.add("a", "m", ColumnType.DOUBLE, false, 0, false);
-        metadata.add("b", "x", ColumnType.DOUBLE, false, 0, false);
-        metadata.add("b", "y", ColumnType.BINARY, false, 0, false);
-        metadata.add("b", "z", ColumnType.FLOAT, false, 0, false);
+        metadata.add("a", "x", ColumnType.INT, false, 0, false, null);
+        metadata.add("a", "y", ColumnType.DOUBLE, false, 0, false, null);
+        metadata.add("a", "m", ColumnType.DOUBLE, false, 0, false, null);
+        metadata.add("b", "x", ColumnType.DOUBLE, false, 0, false, null);
+        metadata.add("b", "y", ColumnType.BINARY, false, 0, false, null);
+        metadata.add("b", "z", ColumnType.FLOAT, false, 0, false, null);
         try {
-            metadata.add("b", "y", ColumnType.FLOAT, false, 0, false);
+            metadata.add("b", "y", ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception ignored) {
         }
 
-        metadata.add(null, "c.x", ColumnType.STRING, false, 0, false);
+        metadata.add(null, "c.x", ColumnType.STRING, false, 0, false, null);
 
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("x"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.x"));
@@ -64,7 +64,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("b.k"));
 
         // add ambiguity to column names without aliases
-        metadata.add(null, "z.m", ColumnType.STRING, false, 0, false);
+        metadata.add(null, "z.m", ColumnType.STRING, false, 0, false, null);
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("m"));
 
         Assert.assertEquals(ColumnType.BINARY, metadata.getColumnType("b.y"));

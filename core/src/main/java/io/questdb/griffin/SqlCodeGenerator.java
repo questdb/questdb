@@ -348,7 +348,8 @@ public class SqlCodeGenerator implements Mutable {
                         type,
                         slaveMetadata.isColumnIndexed(i),
                         slaveMetadata.getIndexValueBlockCapacity(i),
-                        slaveMetadata.isSymbolTableStatic(i)
+                        slaveMetadata.isSymbolTableStatic(i),
+                        slaveMetadata.getMetadata(i)
                 );
                 listColumnFilterB.add(i);
                 columnIndex.add(i);
@@ -370,7 +371,8 @@ public class SqlCodeGenerator implements Mutable {
                     type,
                     slaveMetadata.isColumnIndexed(i),
                     slaveMetadata.getIndexValueBlockCapacity(i),
-                    slaveMetadata.isSymbolTableStatic(i)
+                    slaveMetadata.isSymbolTableStatic(i),
+                    slaveMetadata.getMetadata(i)
             );
             columnIndex.add(index);
             slaveTypes.add(type);
@@ -1448,7 +1450,8 @@ public class SqlCodeGenerator implements Mutable {
                             metadata.getColumnType(index),
                             metadata.isColumnIndexed(index),
                             metadata.getIndexValueBlockCapacity(index),
-                            metadata.isSymbolTableStatic(index)
+                            metadata.isSymbolTableStatic(index),
+                            metadata.getMetadata(index)
                     )
             );
 
@@ -1465,7 +1468,8 @@ public class SqlCodeGenerator implements Mutable {
                             metadata.getColumnType(timestampIndex),
                             metadata.isColumnIndexed(timestampIndex),
                             metadata.getIndexValueBlockCapacity(timestampIndex),
-                            metadata.isSymbolTableStatic(timestampIndex)
+                            metadata.isSymbolTableStatic(timestampIndex),
+                            metadata.getMetadata(timestampIndex)
                     )
             );
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
@@ -1510,7 +1514,8 @@ public class SqlCodeGenerator implements Mutable {
                                     readerMetadata.getColumnType(columnIndex),
                                     readerMetadata.isColumnIndexed(columnIndex),
                                     readerMetadata.getIndexValueBlockCapacity(columnIndex),
-                                    readerMetadata.isSymbolTableStatic(columnIndex)
+                                    readerMetadata.isSymbolTableStatic(columnIndex),
+                                    readerMetadata.getMetadata(columnIndex)
                             )
                     );
                     return new DistinctSymbolRecordCursorFactory(
@@ -1560,7 +1565,7 @@ public class SqlCodeGenerator implements Mutable {
                 if (columnExpr.type == FUNCTION && columnExpr.paramCount == 0 && isCountKeyword(columnExpr.token)) {
                     // check if count() was not aliased, if it was, we need to generate new metadata, bummer
                     final RecordMetadata metadata = isCountKeyword(columnName) ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
-                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), ColumnType.LONG));
+                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), ColumnType.LONG, null));
                     return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
                 }
             }
@@ -1636,14 +1641,22 @@ public class SqlCodeGenerator implements Mutable {
                     if (type == ColumnType.SYMBOL) {
                         meta.add(
                                 indexInThis,
-                                new TableColumnMetadata(Chars.toString(columns.getQuick(indexInThis).getName()), type, false, 0, metadata.isSymbolTableStatic(indexInBase))
+                                new TableColumnMetadata(
+                                        Chars.toString(columns.getQuick(indexInThis).getName())
+                                        , type
+                                        , false
+                                        , 0
+                                        , metadata.isSymbolTableStatic(indexInBase),
+                                        null
+                                )
                         );
                     } else {
                         meta.add(
                                 indexInThis,
                                 new TableColumnMetadata(
                                         Chars.toString(columns.getQuick(indexInThis).getName()),
-                                        type
+                                        type,
+                                        null
                                 )
                         );
                     }
@@ -1656,7 +1669,13 @@ public class SqlCodeGenerator implements Mutable {
                     int indexInThis = tempAggIndex.getQuick(i);
                     VectorAggregateFunction vaf = constructor.create(0, tempKeyKinds.size() == 0 ? 0 : tempKeyKinds.getQuick(0), indexInBase, executionContext.getWorkerCount());
                     tempVaf.add(vaf);
-                    meta.add(indexInThis, new TableColumnMetadata(Chars.toString(columns.getQuick(indexInThis).getName()), vaf.getType()));
+                    meta.add(indexInThis,
+                            new TableColumnMetadata(
+                                    Chars.toString(columns.getQuick(indexInThis).getName()),
+                                    vaf.getType(),
+                                    null
+                            )
+                    );
                 }
 
                 if (tempKeyIndexesInBase.size() == 0) {
@@ -1801,14 +1820,16 @@ public class SqlCodeGenerator implements Mutable {
                                     function.getType(),
                                     false,
                                     0,
-                                    ((SymbolFunction) function).isSymbolTableStatic()
+                                    ((SymbolFunction) function).isSymbolTableStatic(),
+                                    function.getMetadata()
                             )
                     );
                 } else {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
-                                    function.getType()
+                                    function.getType(),
+                                    function.getMetadata()
                             )
                     );
                 }
@@ -1916,7 +1937,8 @@ public class SqlCodeGenerator implements Mutable {
                                 type,
                                 readerMeta.isColumnIndexed(columnIndex),
                                 readerMeta.getIndexValueBlockCapacity(columnIndex),
-                                readerMeta.isSymbolTableStatic(columnIndex)
+                                readerMeta.isSymbolTableStatic(columnIndex),
+                                readerMeta.getMetadata(columnIndex)
                         ));
 
                         if (columnIndex == readerTimestampIndex) {
@@ -1928,7 +1950,8 @@ public class SqlCodeGenerator implements Mutable {
                     if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && executionContext.isTimestampRequired()) {
                         myMeta.add(new TableColumnMetadata(
                                 readerMeta.getColumnName(readerTimestampIndex),
-                                readerMeta.getColumnType(readerTimestampIndex)
+                                readerMeta.getColumnType(readerTimestampIndex),
+                                readerMeta.getMetadata(readerTimestampIndex)
                         ));
                         myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
 
