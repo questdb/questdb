@@ -33,21 +33,31 @@ public class CursorDereferenceFunctionFactoryTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table pg_test(a int)", sqlExecutionContext);
             assertQuery(
-                    "x\n" +
-                            "11\n" +
-                            "2200\n" +
-                            "NaN\n" +
-                            "NaN\n" +
-                            "NaN\n" +
-                            "NaN\n" +
-                            "NaN\n" +
-                            "NaN\n" +
-                            "NaN\n" +
-                            "NaN\n",
-                    "select (pg_catalog.pg_class()).relnamespace x from long_sequence(10);",
+                    "x\tpg_class\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n" +
+                            "11\t\n" +
+                            "2200\t\n",
+                    "select (pg_catalog.pg_class()).relnamespace x,  pg_catalog.pg_class() from long_sequence(10);",
                     null,
                     false,
-                    true
+                    false
             );
         });
     }

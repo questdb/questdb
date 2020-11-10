@@ -32,18 +32,10 @@ import io.questdb.std.str.CharSink;
 public class JoinRecord implements Record {
     private final int split;
     private Record master;
-    private Record slave;
+    protected Record slave;
 
     public JoinRecord(int split) {
         this.split = split;
-    }
-
-    @Override
-    public long getLong(int col) {
-        if (col < split) {
-            return master.getLong(col);
-        }
-        return slave.getLong(col - split);
     }
 
     @Override
@@ -79,6 +71,14 @@ public class JoinRecord implements Record {
     }
 
     @Override
+    public char getChar(int col) {
+        if (col < split) {
+            return master.getChar(col);
+        }
+        return slave.getChar(col - split);
+    }
+
+    @Override
     public long getDate(int col) {
         if (col < split) {
             return master.getDate(col);
@@ -111,24 +111,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public long getRowId() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getShort(int col) {
+    public long getLong(int col) {
         if (col < split) {
-            return master.getShort(col);
+            return master.getLong(col);
         }
-        return slave.getShort(col - split);
-    }
-
-    @Override
-    public char getChar(int col) {
-        if (col < split) {
-            return master.getChar(col);
-        }
-        return slave.getChar(col - split);
+        return slave.getLong(col - split);
     }
 
     @Override
@@ -154,6 +141,27 @@ public class JoinRecord implements Record {
             return master.getLong256B(col);
         }
         return slave.getLong256B(col - split);
+    }
+
+    @Override
+    public Record getRecord(int col) {
+        if (col < split) {
+            return master.getRecord(col);
+        }
+        return slave.getRecord(col - split);
+    }
+
+    @Override
+    public long getRowId() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getShort(int col) {
+        if (col < split) {
+            return master.getShort(col);
+        }
+        return slave.getShort(col - split);
     }
 
     @Override

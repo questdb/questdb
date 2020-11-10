@@ -172,6 +172,56 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCursorInSelect() throws SqlException {
+        assertQuery("select-virtual x1, x1 . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
+                "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).n from long_sequence(2)"
+        );
+    }
+
+
+    @Test
+    public void testCursorInSelectOneColumn() throws SqlException {
+        assertQuery("select-choose x1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
+                "select pg_catalog.pg_class() x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectOneColumnSansAlias() throws SqlException {
+        assertQuery("select-choose pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
+                "select pg_catalog.pg_class() from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorMultiple() throws SqlException {
+        assertQuery("select-choose pg_class, pg_description from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() pg_description] pg_catalog.pg_description() pg_description from (pg_catalog.pg_description()) _xQdbA2)",
+                "select pg_catalog.pg_class(), pg_catalog.pg_description() from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorMultipleDuplicateAliases() throws SqlException {
+        assertQuery("select-choose cc, cc1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() cc] pg_catalog.pg_class() cc from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() cc1] pg_catalog.pg_description() cc1 from (pg_catalog.pg_description()) _xQdbA2)",
+                "select pg_catalog.pg_class() cc, pg_catalog.pg_description() cc from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectExprFirst() throws SqlException {
+        assertQuery("select-virtual pg_class . n column, pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
+                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectWithAggregation() throws SqlException {
+        assertQuery("select-virtual sum - 20 column, column1 from (select-group-by [sum(pg_class . n + 1) sum, column1] sum(pg_class . n + 1) sum, column1 from (select-virtual [pg_class, pg_class . y column1] pg_class, pg_class . y column1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)))",
+                "select sum((pg_catalog.pg_class()).n + 1) - 20, pg_catalog.pg_class().y from long_sequence(2)"
+        );
+    }
+
+    @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
                 "select-choose customerId, kk, count from ((select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c asof join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null))) _xQdbA1) limit 10",
@@ -1956,7 +2006,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnGroupBy() throws SqlException {
         assertQuery(
-                "select-choose hash, count from ((select-group-by [hash, count() count] hash, count() count from (select [hash] from transactions.csv)) _xQdbA1 where count > 1)",
+                "select-choose hash, count from (select [hash, count() count] from (select-group-by [count() count, hash] hash, count() count from (select [hash] from transactions.csv)) _xQdbA1 where count > 1)",
                 "select * from (select hash, count() from 'transactions.csv') where count > 1;",
                 modelOf("transactions.csv").col("hash", ColumnType.LONG256)
         );
@@ -2522,7 +2572,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoinGroupByFilter() throws Exception {
         assertQuery(
-                "select-choose country, sum from ((select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId)) _xQdbA1 where sum > 2)",
+                "select-choose country, sum from (select [country, sum(quantity) sum] from (select-group-by [sum(quantity) sum, country] country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId)) _xQdbA1 where sum > 2)",
                 "(select country, sum(quantity) sum from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -3053,9 +3103,18 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "-- where x = 10\n", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
+                // we now allow column reference from SQL although column access will fail
+                TestUtils.assertEquals("unknown function name: acc(LONG)", e.getFlyweightMessage());
             }
         }
+    }
+
+    @Test
+    public void testFilter1() throws SqlException {
+        assertQuery(
+                "select-virtual x, cast(x + 10,timestamp) cast from (select [x, rnd_double() rnd] from (select-virtual [rnd_double() rnd, x] x, rnd_double() rnd from (select [x] from long_sequence(100000))) _xQdbA1 where rnd < 0.9999)",
+                "select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999"
+        );
     }
 
     @Test
@@ -3132,7 +3191,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMixedFieldsSubQuery() throws Exception {
         assertQuery(
-                "select-choose x, y from ((select-virtual [x, z + x y] x, z + x y from (select [x, z] from tab t2 latest by x where x > 100)) t1 where y > 0)",
+                "select-choose x, y from (select [x, z + x y] from (select-virtual [z + x y, x] x, z + x y from (select [x, z] from tab t2 latest by x where x > 100)) t1 where y > 0)",
                 "select x, y from (select x,z + x y from tab t2 latest by x where x > 100) t1 where y > 0",
                 modelOf("tab").col("x", ColumnType.INT).col("z", ColumnType.INT));
     }
@@ -3855,7 +3914,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testRegexOnFunction() throws SqlException {
         assertQuery(
-                "select-choose a from ((select-virtual [rnd_str() a] rnd_str() a from (long_sequence(100))) _xQdbA1 where a ~ '^W')",
+                "select-choose a from (select [rnd_str() a] from (select-virtual [rnd_str() a] rnd_str() a from (long_sequence(100))) _xQdbA1 where a ~ '^W')",
                 "(select rnd_str() a from long_sequence(100)) where a ~ '^W'"
         );
     }
@@ -4388,7 +4447,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectOrderByWhereOnCount() throws SqlException {
-        assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab) order by a) _xQdbA1 where c > 0)",
+        assertQuery("select-choose a, c from (select [a, count() c] from (select-group-by [count() c, a] a, count() c from (select [a] from tab) order by a) _xQdbA1 where c > 0)",
                 "(select a, count() c from tab order by 1) where c > 0",
                 modelOf("tab").col("a", ColumnType.SYMBOL)
         );
@@ -4436,7 +4495,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectWhereOnCount() throws SqlException {
-        assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab)) _xQdbA1 where c > 0)",
+        assertQuery("select-choose a, c from (select [a, count() c] from (select-group-by [count() c, a] a, count() c from (select [a] from tab)) _xQdbA1 where c > 0)",
                 "(select a, count() c from tab) where c > 0",
                 modelOf("tab").col("a", ColumnType.SYMBOL)
         );
@@ -5202,6 +5261,22 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " y as (select * from x)" +
                         " select * from y",
                 modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectSumSquared() throws SqlException {
+        assertQuery(
+                "select-virtual x, sum * sum x1 from (select-group-by [x, sum(x) sum] x, sum(x) sum from (select [x] from long_sequence(2)))",
+                "select x, sum(x)*sum(x) x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testSelectDuplicateAlias() throws SqlException {
+        assertQuery(
+                "select-choose x, x x1 from (select-choose [x] x from (select [x] from long_sequence(1)))",
+                "select x x, x x from long_sequence(1)"
         );
     }
 

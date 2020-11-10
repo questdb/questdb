@@ -233,9 +233,9 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("attrelid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("attname", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("attnum", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("attrelid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("attname", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("attnum", ColumnType.SHORT, null));
         METADATA = metadata;
     }
 }

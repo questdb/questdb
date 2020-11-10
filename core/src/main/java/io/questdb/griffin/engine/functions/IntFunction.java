@@ -103,11 +103,6 @@ public abstract class IntFunction implements ScalarFunction {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getPosition() {
         return position;
     }

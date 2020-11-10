@@ -54,7 +54,8 @@ public class TableWriterMetadata extends BaseRecordMetadata {
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
-                            true
+                            true,
+                            null
                     )
             );
             if (type == ColumnType.SYMBOL) {
@@ -77,7 +78,8 @@ public class TableWriterMetadata extends BaseRecordMetadata {
                         type,
                         indexFlag,
                         indexValueBlockCapacity,
-                        true
+                        true,
+                        null
                 )
         );
         columnCount++;

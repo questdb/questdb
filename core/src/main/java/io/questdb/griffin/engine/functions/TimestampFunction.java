@@ -28,7 +28,6 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -106,11 +105,6 @@ public abstract class TimestampFunction implements ScalarFunction {
 
     @Override
     public Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
         throw new UnsupportedOperationException();
     }
 

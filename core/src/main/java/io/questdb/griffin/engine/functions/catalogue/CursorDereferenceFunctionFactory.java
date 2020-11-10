@@ -26,41 +26,35 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CursorDereferenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return ".(Cs)";
+        return ".(Rs)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         Function cursorFunction = args.getQuick(0);
         Function columnNameFunction = args.getQuick(1);
-        RecordCursorFactory factory = cursorFunction.getRecordCursorFactory();
+        RecordMetadata metadata = cursorFunction.getMetadata();
         // name is always constant
-        int columnIndex = factory.getMetadata().getColumnIndexQuiet(columnNameFunction.getStr(null));
-        if (columnIndex == -1) {
-            throw SqlException.invalidColumn(columnNameFunction.getPosition(), columnNameFunction.getStr(null));
-        }
-
-        int columnType = factory.getMetadata().getColumnType(columnIndex);
+        final int columnIndex = metadata.getColumnIndex(columnNameFunction.getStr(null));
+        final int columnType = metadata.getColumnType(columnIndex);
 
         if (columnType == ColumnType.INT) {
             return new IntColumnFunction(
                     position,
                     cursorFunction,
                     columnNameFunction,
-                    factory,
                     columnIndex
             );
         }
@@ -71,23 +65,17 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
     private static class IntColumnFunction extends IntFunction implements BinaryFunction {
         private final Function cursorFunction;
         private final Function columnNameFunction;
-        private final RecordCursorFactory factory;
         private final int columnIndex;
-        private RecordCursor cursor;
-        private Record record;
-        private boolean cursorEnded = false;
 
         public IntColumnFunction(
                 int position,
                 Function cursorFunction,
                 Function columnNameFunction,
-                RecordCursorFactory factory,
                 int columnIndex
         ) {
             super(position);
             this.cursorFunction = cursorFunction;
             this.columnNameFunction = columnNameFunction;
-            this.factory = factory;
             this.columnIndex = columnIndex;
         }
 
@@ -103,38 +91,7 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            if (cursorEnded) {
-                return Numbers.INT_NaN;
-            }
-            if (cursor.hasNext()) {
-                return record.getInt(columnIndex);
-            }
-            cursorEnded = true;
-            return Numbers.INT_NaN;
-        }
-
-        @Override
-        public void toTop() {
-            cursor.toTop();
-            cursorEnded = false;
-        }
-
-        @Override
-        public boolean supportsRandomAccess() {
-            return false;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            super.init(symbolTableSource, executionContext);
-            cursor = factory.getCursor(executionContext);
-            record = cursor.getRecord();
-            cursorEnded = false;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(factory);
+            return cursorFunction.getRecord(rec).getInt(columnIndex);
         }
     }
 }

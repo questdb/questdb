@@ -4417,6 +4417,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testTimestampPropagation() throws Exception {
+        compiler.compile("create table readings (sensorId int)", sqlExecutionContext);
+        compiler.compile("create table sensors (ID int, make symbol, city symbol)", sqlExecutionContext);
+        assertQuery(
+                "sensorId\tsensId\tmake\tcity\n",
+                "SELECT * FROM readings JOIN(SELECT ID sensId, make, city FROM sensors) ON readings.sensorId = sensId",
+                null,
+                false
+        );
+    }
+
     //NOTE Kahan should fail this  - Neumaier should pass
     //    @Test
 //    public void testSumDoubleColumnWithNeumaierMethodVectorised1() throws Exception {

@@ -321,7 +321,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             argType = getArgType(arg);
         }
 
-        metadata.add(new TableColumnMetadata(columnName, argType, false, 0, false));
+        metadata.add(new TableColumnMetadata(columnName, argType, false, 0, false, null));
 
         if (constantArg || forceConstant) {
             printConstant(argType, expression1, arg);

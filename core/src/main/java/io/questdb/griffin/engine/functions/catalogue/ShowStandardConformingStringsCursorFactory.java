@@ -37,7 +37,7 @@ public class ShowStandardConformingStringsCursorFactory implements RecordCursorF
     private static final StringValueRecord RECORD = new StringValueRecord("on");
 
     static {
-        METADATA.add(new TableColumnMetadata("standard_conforming_strings", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("standard_conforming_strings", ColumnType.STRING, null));
     }
 
     private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);

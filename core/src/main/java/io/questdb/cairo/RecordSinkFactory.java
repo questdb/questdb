@@ -33,37 +33,39 @@ public class RecordSinkFactory {
     public static RecordSink getInstance(BytecodeAssembler asm, ColumnTypes columnTypes, @Transient ColumnFilter columnFilter, boolean symAsString) {
         asm.init(RecordSink.class);
         asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/sink"));
-        int interfaceClassIndex = asm.poolClass(RecordSink.class);
+        final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/sink"));
+        final int interfaceClassIndex = asm.poolClass(RecordSink.class);
 
-        int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
-        int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
-        int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
-        int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
-        int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
-        int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
-        int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
-        int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
-        int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
-        int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
-        int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
-        int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
-        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
+        final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
+        final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
+        final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
+        final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
+        final int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        final int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
+        final int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
+        final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
+        final int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
+        final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
+        final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
+        final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
         //
-        int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
-        int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
-        int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
-        int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
-        int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
-        int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
-        int wPutBool = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBool", "(Z)V");
-        int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
-        int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
-        int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(Ljava/lang/CharSequence;)V");
-        int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDate", "(J)V");
-        int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
+        final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
+        final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
+        final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
+        final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
+        final int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
+        final int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
+        final int wPutBool = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBool", "(Z)V");
+        final int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
+        final int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
+        final int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(Ljava/lang/CharSequence;)V");
+        final int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDate", "(J)V");
+        final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
         final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
+        final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, "putRecord", "(Lio/questdb/cairo/sql/Record;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
@@ -147,6 +149,10 @@ public class RecordSinkFactory {
                 case ColumnType.LONG256:
                     asm.invokeInterface(rGetLong256, 1);
                     asm.invokeInterface(wPutLong256, 1);
+                    break;
+                case ColumnType.RECORD:
+                    asm.invokeInterface(rGetRecord, 1);
+                    asm.invokeInterface(wPutRecord, 1);
                     break;
                 default:
                     break;

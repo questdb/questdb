@@ -100,11 +100,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return getBase().getMetadata();
-    }
-
-    @Override
     public int getPosition() {
         return position;
     }

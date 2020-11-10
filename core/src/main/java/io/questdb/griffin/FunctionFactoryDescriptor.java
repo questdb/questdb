@@ -135,6 +135,9 @@ public class FunctionFactoryDescriptor {
             case 'c':
                 sigArgType = ColumnType.CURSOR;
                 break;
+            case 'r':
+                sigArgType = ColumnType.RECORD;
+                break;
             case 'h':
                 sigArgType = ColumnType.LONG256;
                 break;

@@ -34,10 +34,8 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.BinarySequence;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
-import io.questdb.std.str.CharSink;
 
 /**
  * Splice join compares time series that do not always align on timestamp. Consider
@@ -116,165 +114,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         return false;
     }
 
-    public static class FullJoinRecord implements Record {
-        private final int split;
-        private Record master;
-        private Record slave;
-
-        public FullJoinRecord(int split) {
-            this.split = split;
-        }
-
-        @Override
-        public BinarySequence getBin(int col) {
-            if (col < split) {
-                return master.getBin(col);
-            }
-            return slave.getBin(col - split);
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            if (col < split) {
-                return master.getBinLen(col);
-            }
-            return slave.getBinLen(col - split);
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            if (col < split) {
-                return master.getBool(col);
-            }
-            return slave.getBool(col - split);
-        }
-
-        @Override
-        public byte getByte(int col) {
-            if (col < split) {
-                return master.getByte(col);
-            }
-            return slave.getByte(col - split);
-        }
-
-        @Override
-        public long getDate(int col) {
-            if (col < split) {
-                return master.getDate(col);
-            }
-            return slave.getDate(col - split);
-        }
-
-        @Override
-        public double getDouble(int col) {
-            if (col < split) {
-                return master.getDouble(col);
-            }
-            return slave.getDouble(col - split);
-        }
-
-        @Override
-        public float getFloat(int col) {
-            if (col < split) {
-                return master.getFloat(col);
-            }
-            return slave.getFloat(col - split);
-        }
-
-        @Override
-        public int getInt(int col) {
-            if (col < split) {
-                return master.getInt(col);
-            }
-            return slave.getInt(col - split);
-        }
-
-        @Override
-        public long getLong(int col) {
-            if (col < split) {
-                return master.getLong(col);
-            }
-            return slave.getLong(col - split);
-        }
-
-        @Override
-        public long getRowId() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public short getShort(int col) {
-            if (col < split) {
-                return master.getShort(col);
-            }
-            return slave.getShort(col - split);
-        }
-
-        @Override
-        public char getChar(int col) {
-            if (col < split) {
-                return master.getChar(col);
-            }
-            return slave.getChar(col - split);
-        }
-
-        @Override
-        public CharSequence getStr(int col) {
-            if (col < split) {
-                return master.getStr(col);
-            }
-            return slave.getStr(col - split);
-        }
-
-        @Override
-        public void getStr(int col, CharSink sink) {
-            if (col < split) {
-                master.getStr(col, sink);
-            } else {
-                slave.getStr(col - split, sink);
-            }
-        }
-
-        @Override
-        public CharSequence getStrB(int col) {
-            if (col < split) {
-                return master.getStrB(col);
-            }
-            return slave.getStrB(col - split);
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            if (col < split) {
-                return master.getStrLen(col);
-            }
-            return slave.getStrLen(col - split);
-        }
-
-        @Override
-        public CharSequence getSym(int col) {
-            if (col < split) {
-                return master.getSym(col);
-            }
-            return slave.getSym(col - split);
-        }
-
-        @Override
-        public long getTimestamp(int col) {
-            if (col < split) {
-                return master.getTimestamp(col);
-            }
-            return slave.getTimestamp(col - split);
-        }
-
-        void of(Record master, Record slave) {
-            this.master = master;
-            this.slave = slave;
-        }
-    }
-
     private class SpliceJoinLightRecordCursor implements NoRandomAccessRecordCursor {
-        private final FullJoinRecord record;
+        private final JoinRecord record;
         private final Map joinKeyMap;
         private final int columnSplit;
         private final int masterTimestampIndex;
@@ -305,7 +146,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 Record nullMasterRecord,
                 Record nullSlaveRecord
         ) {
-            this.record = new FullJoinRecord(columnSplit);
+            this.record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
@@ -331,11 +172,6 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 return masterCursor.getSymbolTable(columnIndex);
             }
             return slaveCursor.getSymbolTable(columnIndex - columnSplit);
-        }
-
-        @Override
-        public long size() {
-            return -1L;
         }
 
         @Override
@@ -416,6 +252,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             masterCursor.toTop();
             slaveCursor.toTop();
             resetState();
+        }
+
+        @Override
+        public long size() {
+            return -1L;
         }
 
         private void masterRecordLeads() {

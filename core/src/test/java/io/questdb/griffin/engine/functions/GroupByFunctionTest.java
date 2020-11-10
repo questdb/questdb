@@ -28,7 +28,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -122,11 +121,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public RecordMetadata getMetadata() {
-            return null;
-        }
-
-        @Override
         public int getPosition() {
             return 0;
         }
@@ -157,7 +151,11 @@ public class GroupByFunctionTest {
 
         @Override
         public void getStr(Record rec, CharSink sink, int arrayIndex) {
+        }
 
+        @Override
+        public Record getRecord(Record rec) {
+            return null;
         }
 
         @Override

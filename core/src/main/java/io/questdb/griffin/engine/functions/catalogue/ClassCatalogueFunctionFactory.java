@@ -64,6 +64,11 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isCursor() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new CursorFunction(
                 position,
@@ -318,11 +323,11 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("relname", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("relnamespace", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("relowner", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("relname", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("relnamespace", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR, null));
+        metadata.add(new TableColumnMetadata("relowner", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
         METADATA = metadata;
     }
 }

@@ -25,10 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.griffin.OperatorExpression;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class ExpressionNode implements Mutable, Sinkable {
@@ -58,6 +55,61 @@ public class ExpressionNode implements Mutable, Sinkable {
     private ExpressionNode() {
     }
 
+    public static boolean compareNodesExact(ExpressionNode a, ExpressionNode b) {
+        if (a == null && b == null) {
+            return true;
+        }
+
+        if (a == null || b == null || a.type != b.type) {
+            return false;
+        }
+        return Chars.equals(a.token, b.token) && compareArgs(a, b);
+    }
+
+    public static boolean compareNodesGroupBy(ExpressionNode a, ExpressionNode b) {
+        if (a == null && b == null) {
+            return true;
+        }
+
+        if (a == null || b == null || a.type != b.type) {
+            return false;
+        }
+
+        // todo: there is a bug where exact same tokens with . will yield false
+        int dotIndex = a.token != null ? Chars.indexOf(a.token, '.') : -1;
+        if ((dotIndex < 0 && !Chars.equals(a.token, b.token))
+                || (dotIndex > -1 && !Chars.equals(
+                b.token,
+                a.token,
+                dotIndex + 1,
+                a.token.length()
+        ))) {
+            return false;
+        }
+
+        return compareArgs(a, b);
+    }
+
+    private static boolean compareArgs(ExpressionNode a, ExpressionNode b) {
+        final int groupByArgsSize = a.args.size();
+        final int selectNodeArgsSize = b.args.size();
+
+        if (groupByArgsSize != selectNodeArgsSize) {
+            return false;
+        }
+
+        if (groupByArgsSize < 3) {
+            return compareNodesGroupBy(a.lhs, b.lhs) && compareNodesGroupBy(a.rhs, b.rhs);
+        }
+
+        for (int i = 0; i < groupByArgsSize; i++) {
+            if (!compareNodesGroupBy(a.args.get(i), b.args.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public void clear() {
         args.clear();
         token = null;
@@ -69,6 +121,10 @@ public class ExpressionNode implements Mutable, Sinkable {
         paramCount = 0;
         intrinsicValue = IntrinsicModel.UNDEFINED;
         queryModel = null;
+    }
+
+    public boolean deepEquals(ExpressionNode that) {
+        return false;
     }
 
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {
@@ -101,6 +157,9 @@ public class ExpressionNode implements Mutable, Sinkable {
                 break;
             case 2:
                 if (OperatorExpression.isOperator(token)) {
+                    if (lhs == null) {
+                        System.out.println("not good");
+                    }
                     lhs.toSink(sink);
                     sink.put(' ');
                     sink.put(token);

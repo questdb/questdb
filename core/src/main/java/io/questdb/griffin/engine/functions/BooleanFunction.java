@@ -102,11 +102,6 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getPosition() {
         return position;
     }

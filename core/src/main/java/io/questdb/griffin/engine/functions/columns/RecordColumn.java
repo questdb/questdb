@@ -22,40 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.RecordFunction;
 
-public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorFactory {
-    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final StringValueRecord RECORD = new StringValueRecord("read committed");
+public class RecordColumn extends RecordFunction  {
+    private final int columnIndex;
+    private final RecordMetadata metadata;
 
-
-    static {
-        METADATA.add(new TableColumnMetadata("transaction_isolation", ColumnType.STRING, null));
+    public RecordColumn(int position, int columnIndex, RecordMetadata metadata) {
+        super(position);
+        this.columnIndex = columnIndex;
+        this.metadata = metadata;
     }
 
-    private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
-
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+    public Record getRecord(Record rec) {
+        return rec.getRecord(columnIndex);
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return METADATA;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return metadata;
     }
 }

@@ -215,6 +215,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putRecord(Record value) {
+        // noop
+    }
+
+    @Override
     public void putStr(CharSequence value) {
         if (value != null) {
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);

@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -105,11 +104,6 @@ public class CursorFunction implements ScalarFunction {
     @Override
     public final long getLong(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return factory.getMetadata();
     }
 
     @Override

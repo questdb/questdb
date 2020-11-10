@@ -22,91 +22,91 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
-public class NamedParameterLinkFunction implements ScalarFunction {
-    private final String variableName;
-    private final int type;
+public abstract class RecordFunction implements ScalarFunction {
     private final int position;
-    private Function base;
 
-    public NamedParameterLinkFunction(String variableName, int type, int position) {
-        this.variableName = variableName;
-        this.type = type;
+    public RecordFunction(int position) {
         this.position = position;
     }
 
     @Override
-    public void close() {
-        base = Misc.free(base);
-    }
-
-    @Override
-    public char getChar(Record rec) {
-        return getBase().getChar(rec);
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public BinarySequence getBin(Record rec) {
-        return getBase().getBin(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen(Record rec) {
-        return getBase().getBinLen(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return getBase().getBool(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public byte getByte(Record rec) {
-        return getBase().getByte(rec);
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public char getChar(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getDate(Record rec) {
-        return getBase().getDate(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return getBase().getDouble(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getBase().getFloat(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(Record rec) {
-        return getBase().getInt(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong(Record rec) {
-        return getBase().getLong(rec);
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Long256 getLong256A(Record rec) {
-        return getBase().getLong256A(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        return getBase().getLong256B(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -116,66 +116,66 @@ public class NamedParameterLinkFunction implements ScalarFunction {
 
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
-        return getBase().getRecordCursorFactory();
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public short getShort(Record rec) {
-        return getBase().getShort(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStr(Record rec) {
-        return getBase().getStr(rec);
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStr(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getStr(Record rec, CharSink sink) {
-        getBase().getStr(rec, sink);
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getBase().getStrB(rec);
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen(Record rec) {
-        return getBase().getStrLen(rec);
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return getBase().getSymbol(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return getBase().getTimestamp(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getType() {
-        return type;
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        getBase().getLong256(rec, sink);
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        base = executionContext.getBindVariableService().getFunction(variableName);
-        if (base == null) {
-            throw CairoException.instance(0).put("undefined bind variable: ").put(variableName);
-        }
-        assert base.getType() == type;
-        base.init(symbolTableSource, executionContext);
-    }
-
-    private Function getBase() {
-        assert base != null;
-        return base;
+        return ColumnType.RECORD;
     }
 }

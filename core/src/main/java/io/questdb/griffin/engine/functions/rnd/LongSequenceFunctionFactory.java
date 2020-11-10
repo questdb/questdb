@@ -203,7 +203,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("x", ColumnType.LONG, null));
         METADATA = metadata;
     }
 }

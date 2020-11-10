@@ -55,16 +55,6 @@ public class VirtualRecord implements Record, ColumnTypes {
     }
 
     @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    @Override
-    public int getColumnType(int columnIndex) {
-        return functions.getQuick(columnIndex).getType();
-    }
-
-    @Override
     public boolean getBool(int col) {
         return getFunction(col).getBool(base);
     }
@@ -72,6 +62,11 @@ public class VirtualRecord implements Record, ColumnTypes {
     @Override
     public byte getByte(int col) {
         return getFunction(col).getByte(base);
+    }
+
+    @Override
+    public char getChar(int col) {
+        return getFunction(col).getChar(base);
     }
 
     @Override
@@ -100,6 +95,21 @@ public class VirtualRecord implements Record, ColumnTypes {
     }
 
     @Override
+    public void getLong256(int col, CharSink sink) {
+        getFunction(col).getLong256(base, sink);
+    }
+
+    @Override
+    public Long256 getLong256A(int col) {
+        return getFunction(col).getLong256A(base);
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+        return getFunction(col).getLong256B(base);
+    }
+
+    @Override
     public long getRowId() {
         return base.getRowId();
     }
@@ -110,11 +120,6 @@ public class VirtualRecord implements Record, ColumnTypes {
     }
 
     @Override
-    public char getChar(int col) {
-        return getFunction(col).getChar(base);
-    }
-
-    @Override
     public CharSequence getStr(int col) {
         return getFunction(col).getStr(base);
     }
@@ -122,6 +127,11 @@ public class VirtualRecord implements Record, ColumnTypes {
     @Override
     public void getStr(int col, CharSink sink) {
         getFunction(col).getStr(base, sink);
+    }
+
+    @Override
+    public Record getRecord(int col) {
+        return getFunction(col).getRecord(base);
     }
 
     @Override
@@ -140,23 +150,18 @@ public class VirtualRecord implements Record, ColumnTypes {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
-        getFunction(col).getLong256(base, sink);
-    }
-
-    @Override
-    public Long256 getLong256A(int col) {
-        return getFunction(col).getLong256A(base);
-    }
-
-    @Override
-    public Long256 getLong256B(int col) {
-        return getFunction(col).getLong256B(base);
-    }
-
-    @Override
     public long getTimestamp(int col) {
         return getFunction(col).getTimestamp(base);
+    }
+
+    @Override
+    public int getColumnCount() {
+        return columnCount;
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+        return functions.getQuick(columnIndex).getType();
     }
 
     public ObjList<? extends Function> getFunctions() {

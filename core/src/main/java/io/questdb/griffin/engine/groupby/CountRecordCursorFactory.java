@@ -115,6 +115,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     static {
-        DEFAULT_COUNT_METADATA.add(new TableColumnMetadata("count", ColumnType.LONG));
+        DEFAULT_COUNT_METADATA.add(new TableColumnMetadata("count", ColumnType.LONG, null));
     }
 }

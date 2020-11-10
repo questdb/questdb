@@ -42,11 +42,11 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typarray", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typarray", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT, null));
         METADATA = metadata;
     }
 
