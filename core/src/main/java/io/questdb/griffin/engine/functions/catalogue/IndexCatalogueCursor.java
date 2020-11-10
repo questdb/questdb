@@ -66,10 +66,10 @@ class IndexCatalogueCursor implements NoRandomAccessRecordCursor {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN, null));
         METADATA = metadata;
     }
 }

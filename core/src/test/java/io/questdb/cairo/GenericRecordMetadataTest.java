@@ -83,15 +83,15 @@ public class GenericRecordMetadataTest {
         final String expected = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"abc\",\"type\":\"INT\"},{\"index\":1,\"name\":\"cde\",\"type\":\"INT\"}],\"timestampIndex\":-1}";
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("cde", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("abc", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.INT, null));
 
         sink.clear();
         metadata.toJson(sink);
         TestUtils.assertEquals(expected, sink);
 
         try {
-            metadata.add(new TableColumnMetadata("ABC", ColumnType.FLOAT));
+            metadata.add(new TableColumnMetadata("ABC", ColumnType.FLOAT, null));
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains(e.getMessage(), "Duplicate column");

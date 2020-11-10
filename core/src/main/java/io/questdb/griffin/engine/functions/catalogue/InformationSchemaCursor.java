@@ -66,8 +66,8 @@ class InformationSchemaCursor implements NoRandomAccessRecordCursor {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("x", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("n", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("x", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("n", ColumnType.INT, null));
         METADATA = metadata;
     }
 }
