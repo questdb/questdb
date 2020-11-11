@@ -123,10 +123,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         queryModel = null;
     }
 
-    public boolean deepEquals(ExpressionNode that) {
-        return false;
-    }
-
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {
         clear();
         this.type = type;

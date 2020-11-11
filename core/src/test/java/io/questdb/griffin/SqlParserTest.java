@@ -70,7 +70,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testAnalyticOrderDirection() throws Exception {
         assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (select [a, b, c] from xyz)",
-                "select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz",
+                "select a,b, f(c) over (partition by b order by ts desc, x asc, y) my from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -85,7 +85,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testAnalyticPartitionByMultiple() throws Exception {
         assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select [a, b, c] from xyz)",
-                "select a,b, f(c) my over (partition by b, a order by ts), d(c) over() from xyz",
+                "select a,b, f(c) over (partition by b, a order by ts) my, d(c) over() from xyz",
                 modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
         );
     }
@@ -1639,7 +1639,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testDisallowDotInColumnAlias() throws Exception {
-        assertSyntaxError("select x x.y, y from tab order by x", 10, "',' or 'from' expected");
+        assertSyntaxError("select x x.y, y from tab order by x", 10, "',', 'from' or 'over' expected");
     }
 
     @Test
@@ -1806,17 +1806,17 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testExtraComma2OrderByInAnalyticFunction() throws Exception {
-        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts,) from xyz", 53, "literal expected");
+        assertSyntaxError("select a,b, f(c) over (partition by b order by ts,) from xyz", 50, "Expression expected");
     }
 
     @Test
     public void testExtraCommaOrderByInAnalyticFunction() throws Exception {
-        assertSyntaxError("select a,b, f(c) my over (partition by b order by ,ts) from xyz", 50, "literal");
+        assertSyntaxError("select a,b, f(c) over (partition by b order by ,ts) from xyz", 47, "Expression expected");
     }
 
     @Test
     public void testExtraCommaPartitionByInAnalyticFunction() throws Exception {
-        assertSyntaxError("select a,b, f(c) my over (partition by b, order by ts) from xyz", 48, "')' expected");
+        assertSyntaxError("select a,b, f(c) over (partition by b, order by ts) from xyz", 45, "')' expected");
     }
 
     @Test
@@ -3462,6 +3462,18 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOneAnalyticColumnPrefixed() throws Exception {
+        assertQuery(
+                "select-analytic a, b, row_number() row_number over (partition by z.b order by z.ts) from (select [a, b] from xyz z)",
+                "select a,b, row_number() over (partition by z.b order by z.ts) from xyz z",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testOneAnalyticColumnAndLimit() throws Exception {
         assertQuery("select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c] from xyz) limit 200",
                 "select a,b, f(c) over (partition by b order by ts) from xyz limit 200",
@@ -4312,7 +4324,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError(
                 "select sum(x) x() from tab",
                 15,
-                "',' or 'from' expected",
+                "',', 'from' or 'over' expected",
                 modelOf("tab").col("x", ColumnType.INT)
         );
     }
@@ -4707,7 +4719,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError(
                 "select tab2.*, bxx.  * from tab1 a join tab2 on (x)",
                 33,
-                "',' or 'from' expected",
+                "',', 'from' or 'over' expected",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -5172,7 +5184,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testTwoAnalyticColumns() throws Exception {
         assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b order by ts), d(c) d over () from (select [a, b, c] from xyz)",
-                "select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz",
+                "select a,b, f(c) over (partition by b order by ts) my, d(c) over() from xyz",
                 modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
         );
     }
@@ -5184,17 +5196,17 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testUnderTerminatedOver() throws Exception {
-        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts from xyz", 53, "expected");
+        assertSyntaxError("select a,b, f(c) over (partition by b order by ts from xyz", 50, "expected");
     }
 
     @Test
     public void testUnderTerminatedOver2() throws Exception {
-        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts", 52, "'asc' or 'desc' expected");
+        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 49, "'asc' or 'desc' expected");
     }
 
     @Test
     public void testUnexpectedTokenInAnalyticFunction() throws Exception {
-        assertSyntaxError("select a,b, f(c) my over (by b order by ts) from xyz", 26, "expected");
+        assertSyntaxError("select a,b, f(c) over (by b order by ts) from xyz", 23, "expected");
     }
 
     @Test

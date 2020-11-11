@@ -740,6 +740,57 @@ public final class SqlParser {
 
             tok = optTok(lexer);
 
+            QueryColumn col;
+
+            if (tok != null && isOverKeyword(tok)) {
+                // analytic
+                expectTok(lexer, '(');
+
+                col = analyticColumnPool.next().of(null, expr);
+                tok = tok(lexer, "'");
+
+                if (isPartitionKeyword(tok)) {
+                    expectTok(lexer, "by");
+
+                    ObjList<ExpressionNode> partitionBy = ((AnalyticColumn)col).getPartitionBy();
+
+                    do {
+                        partitionBy.add(expectExpr(lexer));
+                        tok = tok(lexer, "'order' or ')'");
+                    } while (Chars.equals(tok, ','));
+                }
+
+                if (isOrderKeyword(tok)) {
+                    expectTok(lexer, "by");
+
+                    do {
+                        final ExpressionNode orderByExpr = expectExpr(lexer);
+
+                        tok = tokIncludingLocalBrace(lexer, "'asc' or 'desc'");
+
+                        if (isDescKeyword(tok)) {
+                            ((AnalyticColumn)col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_DESCENDING);
+                            tok = tok(lexer, "',' or ')'");
+                        } else {
+                            ((AnalyticColumn)col).addOrderBy(orderByExpr, QueryModel.ORDER_DIRECTION_ASCENDING);
+                            if (isAscKeyword(tok)) {
+                                tok = tok(lexer, "',' or ')'");
+                            }
+                        }
+                    } while (Chars.equals(tok, ','));
+                }
+                expectTok(tok, lexer.lastTokenPosition(), ')');
+//                model.addBottomUpColumn(col);
+//                tok = tok(lexer, "'from' or ','");
+                tok = optTok(lexer);
+
+            } else {
+                if (expr.type == ExpressionNode.QUERY) {
+                    throw SqlException.$(expr.position, "query is not expected, did you mean column?");
+                }
+                col = queryColumnPool.next().of(null, expr);
+            }
+
             if (tok != null && Chars.equals(tok, ';')) {
                 alias = createColumnAlias(expr, model);
                 tok = optTok(lexer);
@@ -756,51 +807,8 @@ public final class SqlParser {
                 alias = createColumnAlias(expr, model);
             }
 
-            if (tok != null && isOverKeyword(tok)) {
-                // analytic
-                expectTok(lexer, '(');
-
-                AnalyticColumn col = analyticColumnPool.next().of(alias, expr);
-                tok = tok(lexer, "'");
-
-                if (isPartitionKeyword(tok)) {
-                    expectTok(lexer, "by");
-
-                    ObjList<ExpressionNode> partitionBy = col.getPartitionBy();
-
-                    do {
-                        partitionBy.add(expectLiteral(lexer));
-                        tok = tok(lexer, "'order' or ')'");
-                    } while (Chars.equals(tok, ','));
-                }
-
-                if (isOrderKeyword(tok)) {
-                    expectTok(lexer, "by");
-
-                    do {
-                        ExpressionNode e = expectLiteral(lexer);
-                        tok = tok(lexer, "'asc' or 'desc'");
-
-                        if (isDescKeyword(tok)) {
-                            col.addOrderBy(e, QueryModel.ORDER_DIRECTION_DESCENDING);
-                            tok = tok(lexer, "',' or ')'");
-                        } else {
-                            col.addOrderBy(e, QueryModel.ORDER_DIRECTION_ASCENDING);
-                            if (isAscKeyword(tok)) {
-                                tok = tok(lexer, "',' or ')'");
-                            }
-                        }
-                    } while (Chars.equals(tok, ','));
-                }
-                expectTok(tok, lexer.lastTokenPosition(), ')');
-                model.addBottomUpColumn(col);
-                tok = tok(lexer, "'from' or ','");
-            } else {
-                if (expr.type == ExpressionNode.QUERY) {
-                    throw SqlException.$(expr.position, "query is not expected, did you mean column?");
-                }
-                model.addBottomUpColumn(queryColumnPool.next().of(alias, expr));
-            }
+            col.setAlias(alias);
+            model.addBottomUpColumn(col);
 
             if (tok == null) {
                 lexer.unparse();
@@ -818,7 +826,7 @@ public final class SqlParser {
             }
 
             if (!Chars.equals(tok, ',')) {
-                throw err(lexer, "',' or 'from' expected");
+                throw err(lexer, "',', 'from' or 'over' expected");
             }
         }
     }

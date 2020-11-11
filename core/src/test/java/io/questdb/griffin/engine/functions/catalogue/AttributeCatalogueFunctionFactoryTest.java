@@ -168,7 +168,6 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testKafkaQuery3() throws Exception {
         assertQuery(
                 "",
