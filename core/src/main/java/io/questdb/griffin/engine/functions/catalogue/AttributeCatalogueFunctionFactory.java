@@ -206,12 +206,12 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public short getShort(int col) {
-                return columnNumber;
+                return col == 2 ? columnNumber : 0;
             }
 
             @Override
             public int getInt(int col) {
-                return tableId;
+                return col == 0 ? tableId : 0;
             }
 
             @Override
@@ -222,6 +222,16 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             @Override
             public CharSequence getStrB(int col) {
                 return name;
+            }
+
+            @Override
+            public boolean getBool(int col) {
+                return false;
+            }
+
+            @Override
+            public char getChar(int col) {
+                return Character.MIN_VALUE;
             }
 
             @Override
@@ -236,6 +246,12 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("attrelid", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("attname", ColumnType.STRING, null));
         metadata.add(new TableColumnMetadata("attnum", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("atttypid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("attnotnull", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("atttypmod", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("attlen", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("attidentity", ColumnType.CHAR, null));
+        metadata.add(new TableColumnMetadata("attisdropped", ColumnType.BOOLEAN, null));
         METADATA = metadata;
     }
 }

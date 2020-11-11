@@ -38,7 +38,7 @@ import io.questdb.std.str.Path;
 
 public class TypeCatalogueFunctionFactory implements FunctionFactory {
 
-    private static final RecordMetadata METADATA;
+    protected static final RecordMetadata METADATA;
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -47,6 +47,9 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("typarray", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR, null));
         METADATA = metadata;
     }
 
@@ -65,7 +68,7 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
         );
     }
 
-    private static class TypeCatalogueCursorFactory extends AbstractRecordCursorFactory {
+    public static class TypeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
 

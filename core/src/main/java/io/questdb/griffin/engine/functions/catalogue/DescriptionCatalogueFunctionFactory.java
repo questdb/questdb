@@ -194,6 +194,11 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
             }
 
             @Override
+            public short getShort(int col) {
+                return (short) intValues[col];
+            }
+
+            @Override
             public CharSequence getStr(int col) {
                 return "table";
             }
@@ -214,7 +219,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("classoid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("objsubid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("objsubid", ColumnType.SHORT, null));
         metadata.add(new TableColumnMetadata("description", ColumnType.STRING, null));
         METADATA = metadata;
     }
