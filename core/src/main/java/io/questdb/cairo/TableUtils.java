@@ -511,7 +511,7 @@ public final class TableUtils {
         }
     }
 
-    static LPSZ dFile(Path path, CharSequence columnName) {
+    public static LPSZ dFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".d").$();
     }
 

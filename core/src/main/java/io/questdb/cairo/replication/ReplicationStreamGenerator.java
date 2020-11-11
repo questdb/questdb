@@ -36,7 +36,7 @@ public class ReplicationStreamGenerator implements Closeable {
         this.metaData = metaData;
         this.nFrames = 0;
         columnCount = metaData.getColumnCount();
-        // symbolCounts
+        // TODO: symbols
     }
 
     public ReplicationStreamFrameMeta next() {
@@ -74,7 +74,7 @@ public class ReplicationStreamGenerator implements Closeable {
         Unsafe.getUnsafe().putLong(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_FIRST_TIMESTAMP, sourceFrame.getFirstTimestamp());
         Unsafe.getUnsafe().putInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_COLUMN_INDEX, atColumnIndex);
         // TODO:
-        Unsafe.getUnsafe().putLong(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_DATA_OFFSET, Long.MIN_VALUE);
+        Unsafe.getUnsafe().putLong(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_DATA_OFFSET, 0);
         updateGenericHeader(TableReplicationStreamHeaderSupport.FRAME_TYPE_DATA_FRAME, frameSize);
         nFrames++;
         atColumnIndex++;

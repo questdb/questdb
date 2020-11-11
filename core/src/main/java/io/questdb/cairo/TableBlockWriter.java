@@ -51,8 +51,19 @@ public class TableBlockWriter implements Closeable {
         pubSeq = messageBus.getTableBlockWriterPubSequence();
     }
 
+    public void appendCompletedPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress, long dataFd, long mapSz) {
+        LOG.info().$("appending completed data").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", pageFrameSize=").$(pageFrameSize).$(']').$();
+        updateTimeStamps(columnIndex, pageFrameSize, sourceAddress);
+        partWriter.appendCompletedPageFrameColumn(columnIndex, pageFrameSize, sourceAddress, dataFd, mapSz);
+    }
+
     public void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
         LOG.info().$("appending data").$(" [tableName=").$(writer.getName()).$(", columnIndex=").$(columnIndex).$(", pageFrameSize=").$(pageFrameSize).$(']').$();
+        updateTimeStamps(columnIndex, pageFrameSize, sourceAddress);
+        partWriter.appendPageFrameColumn(columnIndex, pageFrameSize, sourceAddress);
+    }
+
+    private void updateTimeStamps(int columnIndex, long pageFrameSize, long sourceAddress) {
         if (columnIndex == timestampColumnIndex) {
             long firstBlockTimestamp = Unsafe.getUnsafe().getLong(sourceAddress);
             if (firstBlockTimestamp < firstTimestamp) {
@@ -64,7 +75,6 @@ public class TableBlockWriter implements Closeable {
                 lastTimestamp = lastBlockTimestamp;
             }
         }
-        partWriter.appendPageFrameColumn(columnIndex, pageFrameSize, sourceAddress);
     }
 
     public void cancel() {
@@ -93,11 +103,10 @@ public class TableBlockWriter implements Closeable {
             partitionBlockWriters.getQuick(n).startCommitAppendedBlock();
         }
         completePendingConcurrentTasks(false);
-        long nTotalRowsAdded = 0;
         for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
-            nTotalRowsAdded += partitionBlockWriters.getQuick(n).completeCommitAppendedBlock();
+            partitionBlockWriters.getQuick(n).completeCommitAppendedBlock();
         }
-        writer.commitBlock(firstTimestamp, lastTimestamp, nTotalRowsAdded);
+        writer.commitBlock(firstTimestamp);
         LOG.info().$("committed new block [table=").$(writer.getName()).$(']').$();
         clear();
     }
@@ -107,7 +116,7 @@ public class TableBlockWriter implements Closeable {
         partWriter.startPageFrame(timestampLo);
     }
 
-    private static long mapFile(FilesFacade ff, long fd, final long mapOffset, final long mapSz) {
+    public static long mapFile(FilesFacade ff, long fd, final long mapOffset, final long mapSz) {
         long alignedMapOffset = (mapOffset / ff.getPageSize()) * ff.getPageSize();
         long addressOffsetDueToAlignment = mapOffset - alignedMapOffset;
         long alignedMapSz = mapSz + addressOffsetDueToAlignment;
@@ -129,7 +138,7 @@ public class TableBlockWriter implements Closeable {
         return address + addressOffsetDueToAlignment;
     }
 
-    private static void unmapFile(FilesFacade ff, final long address, final long mapSz) {
+    public static void unmapFile(FilesFacade ff, final long address, final long mapSz) {
         long alignedAddress = (address / ff.getPageSize()) * ff.getPageSize();
         long alignedMapSz = mapSz + address - alignedAddress;
         ff.munmap(alignedAddress, alignedMapSz);
@@ -407,6 +416,7 @@ public class TableBlockWriter implements Closeable {
         private final PartitionStruct partitionStruct = new PartitionStruct();
         private final LongList columnTops = new LongList();
         private final Path path = new Path();
+        private int plen;
         private long timestampLo;
         private long timestampHi;
         private boolean opened;
@@ -422,7 +432,7 @@ public class TableBlockWriter implements Closeable {
             partitionStruct.of(columnCount);
             path.of(root).concat(writer.getName());
             timestampHi = TableUtils.setPathForPartition(path, partitionBy, timestampLo);
-            int plen = path.length();
+            plen = path.length();
             try {
                 if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                     throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
@@ -431,21 +441,18 @@ public class TableBlockWriter implements Closeable {
                 assert columnCount > 0;
                 columnTops.setAll(columnCount, -1);
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    final CharSequence name = metadata.getColumnName(columnIndex);
                     final long appendOffset = writer.getPrimaryAppendOffset(timestampLo, columnIndex);
                     partitionStruct.setColumnStartOffset(columnIndex, appendOffset);
                     partitionStruct.setColumnAppendOffset(columnIndex, appendOffset);
-
-                    partitionStruct.setColumnDataFd(columnIndex, TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(plen), name)));
+                    partitionStruct.setColumnDataFd(columnIndex, -1);
+                    partitionStruct.setColumnIndexFd(columnIndex, -1);
                     int columnType = metadata.getColumnType(columnIndex);
                     switch (columnType) {
                         case ColumnType.STRING:
                         case ColumnType.BINARY:
-                            partitionStruct.setColumnIndexFd(columnIndex, TableUtils.openFileRWOrFail(ff, iFile(path.trimTo(plen), name)));
                             partitionStruct.setColumnFieldSizePow2(columnIndex, -1);
                             break;
                         default:
-                            partitionStruct.setColumnIndexFd(columnIndex, -1);
                             partitionStruct.setColumnFieldSizePow2(columnIndex, ColumnType.pow2SizeOf(columnType));
                             break;
                     }
@@ -466,16 +473,18 @@ public class TableBlockWriter implements Closeable {
                 int i;
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     long fd = partitionStruct.getColumnDataFd(columnIndex);
-                    ff.close(fd);
+                    if (fd != -1) {
+                        long address = partitionStruct.getColumnMappingStart(columnIndex);
+                        if (address != 0) {
+                            long sz = partitionStruct.getColumnMappingSize(columnIndex);
+                            unmapFile(ff, address, sz);
+                            partitionStruct.setColumnMappingStart(columnIndex, 0);
+                        }
+                        ff.close(fd);
+                    }
                     fd = partitionStruct.getColumnIndexFd(columnIndex);
                     if (fd != -1) {
                         ff.close(fd);
-                    }
-                    long address = partitionStruct.getColumnMappingStart(columnIndex);
-                    if (address != 0) {
-                        long sz = partitionStruct.getColumnMappingSize(columnIndex);
-                        unmapFile(ff, address, sz);
-                        partitionStruct.setColumnMappingStart(columnIndex, 0);
                     }
                 }
                 int nAdditionalMappings = partitionStruct.getnAdditionalMappings();
@@ -490,6 +499,16 @@ public class TableBlockWriter implements Closeable {
             }
         }
 
+        private void appendCompletedPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress, long dateFd, long mapSz) {
+            long appendOffset = partitionStruct.getColumnAppendOffset(columnIndex);
+            long nextAppendOffset = appendOffset + pageFrameSize;
+            partitionStruct.setColumnAppendOffset(columnIndex, nextAppendOffset);
+
+            partitionStruct.setColumnDataFd(columnIndex, dateFd);
+            partitionStruct.setColumnMappingStart(columnIndex, sourceAddress);
+            partitionStruct.setColumnMappingSize(columnIndex, mapSz);
+        }
+
         private void appendPageFrameColumn(int columnIndex, long pageFrameSize, long sourceAddress) {
             if (sourceAddress != 0) {
                 long appendOffset = partitionStruct.getColumnAppendOffset(columnIndex);
@@ -500,12 +519,18 @@ public class TableBlockWriter implements Closeable {
                 long columnStartAddress = partitionStruct.getColumnMappingStart(columnIndex);
                 if (columnStartAddress == 0) {
                     assert appendOffset == partitionStruct.getColumnStartOffset(columnIndex);
-                    long mapSz = Math.max(pageFrameSize, ff.getMapPageSize());
-                    long address = mapFile(ff, partitionStruct.getColumnDataFd(columnIndex), appendOffset, mapSz);
-                    partitionStruct.setColumnMappingStart(columnIndex, address);
-                    partitionStruct.setColumnMappingSize(columnIndex, mapSz);
-                    columnStartAddress = address;
-                    destAddress = columnStartAddress;
+                    try {
+                        long fd = TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(plen), metadata.getColumnName(columnIndex)));
+                        partitionStruct.setColumnDataFd(columnIndex, fd);
+                        long mapSz = Math.max(pageFrameSize, ff.getMapPageSize());
+                        long address = mapFile(ff, fd, appendOffset, mapSz);
+                        partitionStruct.setColumnMappingStart(columnIndex, address);
+                        partitionStruct.setColumnMappingSize(columnIndex, mapSz);
+                        columnStartAddress = address;
+                        destAddress = columnStartAddress;
+                    } finally {
+                        path.trimTo(plen);
+                    }
                 } else {
                     long initialOffset = partitionStruct.getColumnStartOffset(columnIndex);
                     assert initialOffset < appendOffset;
@@ -597,16 +622,21 @@ public class TableBlockWriter implements Closeable {
                             assert offsetHi - offsetLo <= partitionStruct.getColumnMappingSize(columnIndex);
                             long columnDataAddressHi = columnDataAddressLo + offsetHi - offsetLo;
 
-                            long indexFd = partitionStruct.getColumnIndexFd(columnIndex);
-                            long indexOffsetLo = writer.getSecondaryAppendOffset(timestampLo, columnIndex);
+                            try {
+                                long indexFd = TableUtils.openFileRWOrFail(ff, iFile(path.trimTo(plen), metadata.getColumnName(columnIndex)));
+                                partitionStruct.setColumnIndexFd(columnIndex, indexFd);
+                                long indexOffsetLo = writer.getSecondaryAppendOffset(timestampLo, columnIndex);
 
-                            if (columnType == ColumnType.STRING) {
-                                task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo, columnIndex, partitionStruct);
-                            } else {
-                                task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo, columnIndex, partitionStruct);
+                                if (columnType == ColumnType.STRING) {
+                                    task.assignUpdateStringIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo, columnIndex, partitionStruct);
+                                } else {
+                                    task.assignUpdateBinaryIndex(columnDataAddressLo, columnDataAddressHi, offsetLo, indexFd, indexOffsetLo, columnIndex, partitionStruct);
+                                }
+                                partitionStruct.setColumnNRowsAdded(columnIndex, -1);
+                                enqueueConcurrentTask(task);
+                            } finally {
+                                path.trimTo(plen);
                             }
-                            partitionStruct.setColumnNRowsAdded(columnIndex, -1);
-                            enqueueConcurrentTask(task);
                         } else {
                             partitionStruct.setColumnNRowsAdded(columnIndex, 0);
                         }

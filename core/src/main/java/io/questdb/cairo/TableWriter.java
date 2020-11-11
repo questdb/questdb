@@ -2861,7 +2861,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    void commitBlock(long firstTimestamp, long lastTimestamp, long nRowsAdded) {
+    void commitBlock(long firstTimestamp) {
         if (minTimestamp == Long.MAX_VALUE) {
             minTimestamp = firstTimestamp;
         }

@@ -117,7 +117,7 @@ public class ReplicationStreamReceiver implements Closeable {
         }
         frameDataNBytesRemaining -= nRead;
         if (frameDataNBytesRemaining == 0) {
-            if (slaveWriter.unmap(dataFrameColumnIndex, frameMappingAddress, frameMappingSize)) {
+            if (slaveWriter.completeFrame()) {
                 handleReadyToCommit();
             }
             slaveWriter = null;

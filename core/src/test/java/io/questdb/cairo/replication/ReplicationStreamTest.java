@@ -160,7 +160,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
             }
         };
 
-        SlaveWriter slaveWriter = new SlaveWriterImpl().of(writer.newBlock());
+        SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
 
         ReplicationSlaveManager recvMgr = new ReplicationSlaveManager() {
             @Override
@@ -200,6 +200,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
             sendFrame(streamWriter, streamFrameMeta);
         }
 
+        slaveWriter.close();
         Unsafe.free(streamTargetReadBufferAddress, streamTargetReadBufferSize);
         Unsafe.free(streamTargetWriteBufferAddress, streamTargetWriteBufferSize);
     }
