@@ -44,17 +44,18 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordCursorFactory base,
             ColumnTypes columnTypes,
             RecordSink recordSink,
-            RecordComparator comparator) {
+            RecordComparator comparator
+    ) {
         super(metadata);
         this.chain = new RecordTreeChain(
                 columnTypes,
                 recordSink,
                 comparator,
                 configuration.getSqlSortKeyPageSize(),
-                configuration
-                        .getSqlSortKeyMaxPages(),
+                configuration.getSqlSortKeyMaxPages(),
                 configuration.getSqlSortValuePageSize(),
-                configuration.getSqlSortValueMaxPages());
+                configuration.getSqlSortValueMaxPages()
+        );
         this.base = base;
         this.cursor = new SortedRecordCursor(chain);
     }
