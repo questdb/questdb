@@ -583,6 +583,11 @@ public class FastMap implements Map {
         }
 
         @Override
+        public void putRecord(Record value) {
+            // noop
+        }
+
+        @Override
         @SuppressWarnings("unused")
         public void putTimestamp(long value) {
             putLong(value);

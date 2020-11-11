@@ -5009,6 +5009,7 @@ public class IODispatcherTest {
                     }).start();
                 }
 
+                AtomicInteger completedCount = new AtomicInteger();
                 for (int j = 0; j < senderCount; j++) {
                     int k = j;
                     new Thread(() -> {
@@ -5035,6 +5036,7 @@ public class IODispatcherTest {
                                 }
                             }
                         } finally {
+                            completedCount.incrementAndGet();
                             Net.freeSockAddr(sockAddr);
                         }
                     }).start();
@@ -5044,6 +5046,11 @@ public class IODispatcherTest {
                 while (receiveCount < N * senderCount) {
                     long cursor = subSeq.next();
                     if (cursor < 0) {
+                        if (cursor == -1 && completedCount.get() == senderCount) {
+                            Assert.fail("Not all requests successful, test failed, see previous failures");
+                            break;
+                        }
+                        Thread.yield();
                         continue;
                     }
                     boolean valid = queue.get(cursor).valid;

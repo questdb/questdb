@@ -861,7 +861,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         }
 
         private FunctionBuilder withColumn(String name, int type, Object value) {
-            metadata.add(new TableColumnMetadata(name, type));
+            metadata.add(new TableColumnMetadata(name, type, null));
             columnValues.add(value);
             return this;
         }

@@ -86,6 +86,10 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    default Record getRecord(int col) {
+        throw new UnsupportedOperationException();
+    }
+
     default long getRowId() {
         throw new UnsupportedOperationException();
     }

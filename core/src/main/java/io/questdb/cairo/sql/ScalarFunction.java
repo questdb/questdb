@@ -51,4 +51,9 @@ public interface ScalarFunction extends Function {
     default int getStrLen(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    default Record getRecord(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

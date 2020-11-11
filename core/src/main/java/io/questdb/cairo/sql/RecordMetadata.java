@@ -34,12 +34,12 @@ public interface RecordMetadata extends ColumnTypes {
 
     int getColumnCount();
 
-    int getColumnType(int index);
+    int getColumnType(int columnIndex);
 
     default int getColumnIndex(CharSequence columnName) {
-        final int index = getColumnIndexQuiet(columnName);
-        if (index > -1) {
-            return index;
+        final int columnIndex = getColumnIndexQuiet(columnName);
+        if (columnIndex > -1) {
+            return columnIndex;
         }
         throw InvalidColumnException.INSTANCE;
     }
@@ -66,6 +66,10 @@ public interface RecordMetadata extends ColumnTypes {
 
     default boolean isSymbolTableStatic(CharSequence columnName) {
         return isSymbolTableStatic(getColumnIndex(columnName));
+    }
+
+    default RecordMetadata getMetadata(int columnIndex) {
+        return null;
     }
 
     boolean isColumnIndexed(int columnIndex);

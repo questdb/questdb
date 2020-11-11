@@ -38,6 +38,7 @@ public class FunctionFactoryCache {
     private final CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> booleanFactories = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> commutativeBooleanFactories = new CharSequenceObjHashMap<>();
     private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
+    private final CharSequenceHashSet cursorFunctionNames = new CharSequenceHashSet();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -69,6 +70,8 @@ public class FunctionFactoryCache {
                         }
                     } else if (factory.isGroupBy()) {
                         groupByFunctionNames.add(name);
+                    } else if (factory.isCursor()) {
+                        cursorFunctionNames.add(name);
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e).$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
@@ -81,6 +84,10 @@ public class FunctionFactoryCache {
         return factories.get(token);
     }
 
+    public boolean isCursor(CharSequence name) {
+        return cursorFunctionNames.contains(name);
+    }
+
     public boolean isFlipped(CharSequence token) {
         return commutativeBooleanFactories.get(token) != null;
     }
@@ -90,7 +97,7 @@ public class FunctionFactoryCache {
     }
 
     public boolean isNegated(CharSequence token) {
-        return booleanFactories.get(token) != null;
+        return booleanFactories.keyIndex(token) < 0;
     }
 
     // Add a descriptor to `factories` and optionally `extraList`

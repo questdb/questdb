@@ -81,7 +81,7 @@ public class SqlUtil {
             CharacterStore store,
             CharSequence base,
             int indexOfDot,
-            CharSequenceObjHashMap<QueryColumn> aliasToColumnMap
+            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap
     ) {
         final boolean disallowed = disallowedAliases.contains(base);
 
@@ -99,7 +99,11 @@ public class SqlUtil {
                 characterStoreEntry.put(base);
             }
         } else {
-            characterStoreEntry.put(base, indexOfDot + 1, base.length());
+            if (indexOfDot + 1 == base.length()) {
+                characterStoreEntry.put("column");
+            } else {
+                characterStoreEntry.put(base, indexOfDot + 1, base.length());
+            }
         }
 
 

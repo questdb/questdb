@@ -60,7 +60,8 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                                 TableUtils.getColumnType(metaMem, i),
                                 TableUtils.isColumnIndexed(metaMem, i),
                                 TableUtils.getIndexBlockCapacity(metaMem, i),
-                                true
+                                true,
+                                null
                         )
                 );
                 offset += ReadOnlyMemory.getStorageLength(name);
@@ -263,7 +264,8 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 TableUtils.getColumnType(metaMem, index),
                 TableUtils.isColumnIndexed(metaMem, index),
                 TableUtils.getIndexBlockCapacity(metaMem, index),
-                true
+                true,
+                null
         );
     }
 }

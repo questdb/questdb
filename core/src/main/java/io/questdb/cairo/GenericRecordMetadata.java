@@ -25,15 +25,16 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public class GenericRecordMetadata extends BaseRecordMetadata {
     public static final GenericRecordMetadata EMPTY = new GenericRecordMetadata();
+    private final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
 
     public GenericRecordMetadata() {
         this.columnMetadata = new ObjList<>();
-        this.columnNameIndexMap = new CharSequenceIntHashMap();
+        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
         this.timestampIndex = -1;
     }
 
@@ -44,15 +45,31 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
                     from.getColumnType(i),
                     from.isColumnIndexed(i),
                     from.getIndexValueBlockCapacity(i),
-                    from.isSymbolTableStatic(i)
+                    from.isSymbolTableStatic(i),
+                    GenericRecordMetadata.copyOf(from.getMetadata(i))
             ));
         }
     }
 
+    @Override
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+        final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
+        if (index < 0) {
+            return columnNameIndexMap.valueAt(index);
+        }
+        return -1;
+    }
+
     public static GenericRecordMetadata copyOf(RecordMetadata that) {
-        GenericRecordMetadata metadata = copyOfSansTimestamp(that);
-        metadata.setTimestampIndex(that.getTimestampIndex());
-        return metadata;
+        if (that != null) {
+            if (that instanceof GenericRecordMetadata) {
+                return (GenericRecordMetadata) that;
+            }
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that);
+            metadata.setTimestampIndex(that.getTimestampIndex());
+            return metadata;
+        }
+        return null;
     }
 
     public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
@@ -62,15 +79,7 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
     }
 
     public GenericRecordMetadata add(TableColumnMetadata meta) {
-        int index = columnNameIndexMap.keyIndex(meta.getName());
-        if (index > -1) {
-            columnNameIndexMap.putAt(index, meta.getName(), columnCount);
-            columnMetadata.add(meta);
-            columnCount++;
-            return this;
-        } else {
-            throw CairoException.instance(0).put("Duplicate column [name=").put(meta.getName()).put(']');
-        }
+        return add(columnCount, meta);
     }
 
     public GenericRecordMetadata add(int i, TableColumnMetadata meta) {

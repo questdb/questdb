@@ -76,11 +76,18 @@ public interface Function extends Closeable {
 
     Long256 getLong256B(Record rec);
 
-    RecordMetadata getMetadata();
-
     int getPosition();
 
+    // when function returns factory it becomes factory
+    // on other words this is not a tear-away instance
     RecordCursorFactory getRecordCursorFactory();
+
+    // function returns a record of values
+    Record getRecord(Record rec);
+
+    default RecordMetadata getMetadata() {
+        return null;
+    }
 
     short getShort(Record rec);
 

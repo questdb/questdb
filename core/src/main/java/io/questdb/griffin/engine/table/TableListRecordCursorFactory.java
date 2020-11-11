@@ -41,7 +41,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("table", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("table", ColumnType.STRING, null));
         METADATA = metadata;
     }
 

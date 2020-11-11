@@ -38,7 +38,7 @@ public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorF
 
 
     static {
-        METADATA.add(new TableColumnMetadata("transaction_isolation", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("transaction_isolation", ColumnType.STRING, null));
     }
 
     private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);

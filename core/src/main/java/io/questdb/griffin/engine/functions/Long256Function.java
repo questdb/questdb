@@ -91,11 +91,6 @@ public abstract class Long256Function implements ScalarFunction {
     }
 
     @Override
-    public final RecordMetadata getMetadata() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getPosition() {
         return position;
     }

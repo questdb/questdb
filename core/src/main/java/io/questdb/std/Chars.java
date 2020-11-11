@@ -230,6 +230,39 @@ public final class Chars {
         return l != null && equalsIgnoreCase(l, r);
     }
 
+    public static boolean equalsLowerCase(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll = lHi - lLo;
+        if (ll != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (Character.toLowerCase(l.charAt(i + lLo)) != Character.toLowerCase(r.charAt(i + rLo))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equalsLowerCase(@NotNull CharSequence l, CharSequence r) {
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public static boolean equalsLowerCaseAscii(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
@@ -241,7 +274,7 @@ public final class Chars {
         }
 
         for (int i = 0; i < ll; i++) {
-            if (toLowerCaseAscii(l.charAt(i + lLo)) != r.charAt(i + rLo)) {
+            if (toLowerCaseAscii(l.charAt(i + lLo)) != toLowerCaseAscii(r.charAt(i + rLo))) {
                 return false;
             }
         }
@@ -255,7 +288,7 @@ public final class Chars {
         }
 
         for (int i = 0; i < ll; i++) {
-            if (toLowerCaseAscii(l.charAt(i)) != r.charAt(i)) {
+            if (toLowerCaseAscii(l.charAt(i)) != toLowerCaseAscii(r.charAt(i))) {
                 return false;
             }
         }
@@ -389,6 +422,31 @@ public final class Chars {
         return h;
     }
 
+    public static int lowerCaseHashCode(CharSequence value, int lo, int hi) {
+        if (hi == lo) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = lo; p < hi; p++) {
+            h = 31 * h + Character.toLowerCase(value.charAt(p));
+        }
+        return h;
+    }
+
+    public static int lowerCaseHashCode(CharSequence value) {
+        int len = value.length();
+        if (len == 0) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = 0; p < len; p++) {
+            h = 31 * h + Character.toLowerCase(value.charAt(p));
+        }
+        return h;
+    }
+
     public static boolean noMatch(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
         int lp = llo;
         int rp = rlo;
@@ -498,8 +556,6 @@ public final class Chars {
             b.put(toLowerCaseAscii(value.charAt(i)));
         }
         return b.toString();
-
-
     }
 
     public static char toLowerCaseAscii(char character) {
@@ -764,5 +820,16 @@ public final class Chars {
 
         sink.put((char) (b1 << 6 ^ b2 ^ 3968));
         return 2;
+    }
+
+    public static String toLowerCase(CharSequence str) {
+        final CharSink sink = Misc.getThreadLocalBuilder();
+        if (str != null) {
+            final int len = str.length();
+            for (int i = 0; i < len; i++) {
+                sink.put(Character.toLowerCase(str.charAt(i)));
+            }
+        }
+        return sink.toString();
     }
 }

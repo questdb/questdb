@@ -90,6 +90,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return functionFactoryCache.getFunctionCount();
     }
 
+    public boolean isCursor(CharSequence token) {
+        return functionFactoryCache.isCursor(token);
+    }
+
     public boolean isGroupBy(CharSequence token) {
         return functionFactoryCache.isGroupBy(token);
     }
@@ -328,6 +332,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 return new DateColumn(node.position, index);
             case ColumnType.TIMESTAMP:
                 return new TimestampColumn(node.position, index);
+            case ColumnType.RECORD:
+                return new RecordColumn(node.position, index, metadata.getMetadata(index));
             default:
                 return new Long256Column(node.position, index);
         }

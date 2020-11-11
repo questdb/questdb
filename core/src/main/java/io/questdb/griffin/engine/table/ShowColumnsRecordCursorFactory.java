@@ -43,12 +43,12 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     private static final int N_SYMBOL_CAPACITY_COL = 5;
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("column", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("type", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("indexed", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("column", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("type", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("indexed", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT, null));
         METADATA = metadata;
     }
 

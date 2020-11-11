@@ -95,11 +95,6 @@ public class Long256FunctionTest {
         Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetMetadata() {
-        function.getMetadata();
-    }
-
     @Test
     public void testGetPosition() {
         Assert.assertEquals(25, function.getPosition());

@@ -69,7 +69,8 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
             int columnType,
             boolean indexFlag,
             int indexValueBlockCapacity,
-            boolean symbolTableStatic
+            boolean symbolTableStatic,
+            RecordMetadata metadata
     ) {
         int dot = Chars.indexOf(columnName, '.');
         // add column with its own alias
@@ -97,7 +98,8 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
                     columnType,
                     indexFlag,
                     indexValueBlockCapacity,
-                    symbolTableStatic
+                    symbolTableStatic,
+                    metadata
             );
         } else {
             cm = new TableColumnMetadata(
@@ -105,7 +107,8 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
                     columnType,
                     indexFlag,
                     indexValueBlockCapacity,
-                    symbolTableStatic
+                    symbolTableStatic,
+                    metadata
             );
         }
         this.columnMetadata.add(cm);
@@ -132,7 +135,8 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
                     fromMetadata.getColumnType(i),
                     fromMetadata.isColumnIndexed(i),
                     fromMetadata.getIndexValueBlockCapacity(i),
-                    fromMetadata.isSymbolTableStatic(i)
+                    fromMetadata.isSymbolTableStatic(i),
+                    GenericRecordMetadata.copyOf(fromMetadata.getMetadata(i))
             );
         }
     }

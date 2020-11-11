@@ -68,11 +68,6 @@ public class IntFunctionTest {
         function.getByte(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetMetadata() {
-        function.getMetadata();
-    }
-
     @Test
     public void testGetPosition() {
         Assert.assertEquals(25, function.getPosition());

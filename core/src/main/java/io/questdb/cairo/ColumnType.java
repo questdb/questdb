@@ -50,7 +50,8 @@ public final class ColumnType {
     public static final int PARAMETER = 14;
     public static final int VAR_ARG = 16;
     public static final int CURSOR = 15;
-    public static final int MAX = CURSOR;
+    public static final int RECORD = 16;
+    public static final int MAX = RECORD;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
@@ -97,8 +98,9 @@ public final class ColumnType {
         typeNameMap.put(DATE, "DATE");
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
-        typeNameMap.put(CURSOR, "CURSOR");
         typeNameMap.put(LONG256, "LONG256");
+        typeNameMap.put(CURSOR, "CURSOR");
+        typeNameMap.put(RECORD, "RECORD");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
