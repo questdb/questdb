@@ -13,7 +13,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
-import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamFrameMeta;
+import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorFrame;
+import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorResult;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -183,12 +184,20 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator(configuration);
                 ReplicationStreamReceiver streamWriter = new ReplicationStreamReceiver(configuration, recvMgr)) {
 
-            streamGenerator.of(reader.getMetadata().getId(), cursor, reader.getMetadata(), null);
+            streamGenerator.of(reader.getMetadata().getId(), 1, cursor, reader.getMetadata(), null);
             streamWriter.of(STREAM_TARGET_FD);
 
-            ReplicationStreamFrameMeta streamFrameMeta;
-            while ((streamFrameMeta = streamGenerator.next()) != null) {
-                sendFrame(streamWriter, streamFrameMeta);
+            ReplicationStreamGeneratorResult streamResult;
+            while ((streamResult = streamGenerator.nextDataFrame()) != null) {
+                if (!streamResult.isRetry()) {
+                    try {
+                        sendFrame(streamWriter, streamResult.getFrame());
+                    } finally {
+                        streamResult.getFrame().complete();
+                    }
+                } else {
+                    Thread.yield();
+                }
             }
 
             Assert.assertEquals(0, streamTargetWriteBufferOffset);
@@ -196,8 +205,14 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 streamWriter.handleIO();
             }
 
-            streamFrameMeta = streamGenerator.generateCommitBlockFrame();
-            sendFrame(streamWriter, streamFrameMeta);
+            while ((streamResult = streamGenerator.generateCommitBlockFrame()).isRetry()) {
+                Thread.yield();
+            }
+            try {
+                sendFrame(streamWriter, streamResult.getFrame());
+            } finally {
+                streamResult.getFrame().complete();
+            }
         }
 
         slaveWriter.close();
@@ -205,7 +220,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         Unsafe.free(streamTargetWriteBufferAddress, streamTargetWriteBufferSize);
     }
 
-    private void sendFrame(ReplicationStreamReceiver streamWriter, ReplicationStreamFrameMeta streamFrameMeta) {
+    private void sendFrame(ReplicationStreamReceiver streamWriter, ReplicationStreamGeneratorFrame streamFrameMeta) {
         long sz = streamFrameMeta.getFrameHeaderSize() + streamFrameMeta.getFrameDataSize();
         if (sz > streamTargetReadBufferSize) {
             streamTargetReadBufferAddress = Unsafe.realloc(streamTargetReadBufferAddress, streamTargetReadBufferSize, sz);
