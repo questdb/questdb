@@ -23,24 +23,20 @@
 
 package io.questdb.griffin.engine.analytic;
 
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.misc.Misc;
-import com.questdb.ql.*;
-import com.questdb.ql.impl.CollectionRecordMetadata;
-import com.questdb.ql.impl.RecordList;
-import com.questdb.ql.impl.SplitRecordMetadata;
-import com.questdb.ql.impl.join.hash.FakeRecord;
-import com.questdb.ql.impl.map.MapUtils;
-import com.questdb.ql.impl.sort.RecordComparator;
-import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.ObjList;
-import com.questdb.std.RedBlackTree;
-import com.questdb.std.str.CharSink;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.orderby.LongTreeChain;
+import io.questdb.griffin.engine.orderby.RecordComparator;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 
-public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource {
-    private final RecordList recordList;
-    private final RecordSource delegate;
+public class CachedRowAnalyticRecordCursorFactory implements RecordCursorFactory {
+    private final LongList recordList;
+    private final RecordCursorFactory delegate;
     private final ObjList<RedBlackTree> orderedSources;
     private final int orderGroupCount;
     private final ObjList<ObjList<AnalyticFunction>> functionGroups;
@@ -52,19 +48,30 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
     private final FakeRecord fakeRecord = new FakeRecord();
     private RecordCursor parentCursor;
 
-    public CachedRowAnalyticRecordSource(
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        return null;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
+    public CachedRowAnalyticRecordCursorFactory(
             int pageSize,
-            RecordSource delegate,
+            RecordCursorFactory delegate,
             ObjList<RecordComparator> comparators,
-            ObjList<ObjList<AnalyticFunction>> functionGroups) {
+            ObjList<ObjList<AnalyticFunction>> functionGroups
+    ) {
         this.delegate = delegate;
         this.orderGroupCount = comparators.size();
         assert orderGroupCount == functionGroups.size();
         this.orderedSources = new ObjList<>(orderGroupCount);
         this.functionGroups = functionGroups;
-        this.recordList = new RecordList(MapUtils.ROWID_RECORD_METADATA, pageSize);
+        this.recordList = new LongList(MapUtils.ROWID_RECORD_METADATA, pageSize);
         // create our metadata and also flatten functions for our record representation
-        CollectionRecordMetadata funcMetadata = new CollectionRecordMetadata();
+        GenericRecordMetadata funcMetadata = new GenericRecordMetadata();
         this.functions = new ObjList<>(orderGroupCount);
         for (int i = 0; i < orderGroupCount; i++) {
             ObjList<AnalyticFunction> l = functionGroups.getQuick(i);
@@ -77,8 +84,6 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
         this.metadata = new SplitRecordMetadata(delegate.getMetadata(), funcMetadata);
         this.split = delegate.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
-        this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
-        this.recordList.setStorageFacade(storageFacade);
 
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderGroupCount; i++) {
