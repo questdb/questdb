@@ -1165,7 +1165,7 @@ class SqlOptimiser {
                 enumerateTableColumns(model.getNestedModel(), executionContext);
                 // copy columns of nested model onto parent one
                 // we must treat sub-query just like we do a table
-                model.copyColumnsFrom(model.getNestedModel());
+                model.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
             }
         }
         for (int i = 1, n = jm.size(); i < n; i++) {
@@ -2511,7 +2511,7 @@ class SqlOptimiser {
                 if (rewritten != nestedModel) {
                     m.setNestedModel(rewritten);
                     // since we have rewritten nested model we also have to update column hash
-                    m.copyColumnsFrom(rewritten);
+                    m.copyColumnsFrom(rewritten, queryColumnPool, expressionNodePool);
                 }
             }
 

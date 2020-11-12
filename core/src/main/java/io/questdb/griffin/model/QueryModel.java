@@ -252,9 +252,25 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByFill.clear();
     }
 
-    public void copyColumnsFrom(QueryModel other) {
+    public void copyColumnsFrom(
+            QueryModel other,
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<ExpressionNode> expressionNodePool
+    ) {
         clearColumnMapStructs();
-        this.aliasToColumnMap.putAll(other.aliasToColumnMap);
+
+
+        // copy only literal columns and convert functions to literal while copying
+        final ObjList<CharSequence> aliases = other.aliasToColumnMap.keys();
+        for (int i = 0, n = aliases.size(); i < n; i++) {
+            final CharSequence alias = aliases.getQuick(i);
+            QueryColumn qc = other.aliasToColumnMap.get(alias);
+            if (qc.getAst().type == ExpressionNode.LITERAL) {
+                this.aliasToColumnMap.put(alias, qc);
+            } else {
+                this.aliasToColumnMap.put(alias, queryColumnPool.next().of(alias, expressionNodePool.next().of(ExpressionNode.LITERAL, alias, 0, qc.getAst().position)));
+            }
+        }
         ObjList<CharSequence> columnNames = other.bottomUpColumnNames;
         this.bottomUpColumnNames.addAll(columnNames);
         for (int i = 0, n = columnNames.size(); i < n; i++) {
