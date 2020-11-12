@@ -27,7 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.pool.ex.EntryUnavailableException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

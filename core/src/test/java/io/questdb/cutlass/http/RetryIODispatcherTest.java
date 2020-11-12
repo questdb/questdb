@@ -26,7 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.pool.ex.EntryUnavailableException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.log.Log;
@@ -699,7 +699,7 @@ public class RetryIODispatcherTest {
                                     // insert one record
                                     try {
                                         new SendAndReceiveRequestBuilder()
-                                                .execute(ValidImportRequest,ValidImportResponse);
+                                                .execute(ValidImportRequest, ValidImportResponse);
                                     } catch (AssertionError e) {
                                         LOG.info().$("Server call succeeded but response is different from the expected one").$();
                                         failedImports.incrementAndGet();
@@ -732,6 +732,60 @@ public class RetryIODispatcherTest {
                                     "00\r\n" +
                                     "\r\n");
 
+                });
+    }
+
+    @Test
+    public void testRenameWaitsWhenWriterLocked() throws Exception {
+        final int parallelCount = 2;
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(parallelCount)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    // create table
+                    new SendAndReceiveRequestBuilder().execute(
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    RequestHeaders,
+                            ResponseHeaders +
+                                    "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+
+                    TableWriter writer = lockWriter(engine, "balances_x");
+                    CountDownLatch countDownLatch = new CountDownLatch(1);
+                    new Thread(() -> {
+                        try {
+                            try {
+                                // Rename table
+                                new SendAndReceiveRequestBuilder().execute(
+                                        "GET /query?query=rename+table+%27balances_x%27+to+%27balances_y%27&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                                RequestHeaders,
+                                        ResponseHeaders +
+                                                "0c\r\n" +
+                                                "{\"ddl\":\"OK\"}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                            } catch (Exception e) {
+                                LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                            }
+                        } finally {
+                            countDownLatch.countDown();
+                        }
+                    }).start();
+                    boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
+
+                    // Cairo engine should not allow table rename while writer is opened
+                    // Cairo is expected to have finished == false
+                    Assert.assertFalse(finished);
+
+                    writer.close();
+                    Assert.assertTrue("Table rename did not complete within timeout after writer is released",
+                            countDownLatch.await(500, TimeUnit.MILLISECONDS));
                 });
     }
 
