@@ -7,7 +7,6 @@ import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 public class ReplicationStreamReceiver implements Closeable {
@@ -18,8 +17,7 @@ public class ReplicationStreamReceiver implements Closeable {
     private final FilesFacade ff;
     private final ReplicationSlaveManager recvMgr;
     private final IntList tableIds = new IntList();
-    private final IntObjHashMap<TableDetails> tableDetailsByMasterTableId = new IntObjHashMap<>();
-    private final ObjList<TableDetails> tableDetailsCache = new ObjList<>();
+    private final IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
     private long fd = -1;
     private long frameHeaderAddress;
     private long frameHeaderOffset;
@@ -202,26 +200,18 @@ public class ReplicationStreamReceiver implements Closeable {
     }
 
     private SlaveWriter getSlaveWriter(int masterTableId) {
-        SlaveWriter slaveWriter;
-        TableDetails tableDetails = tableDetailsByMasterTableId.get(masterTableId);
-        if (null == tableDetails) {
+        SlaveWriter slaveWriter = slaveWriteByMasterTableId.get(masterTableId);
+        if (null == slaveWriter) {
             slaveWriter = recvMgr.getSlaveWriter(masterTableId);
-            tableDetails = newTableDetails().of(masterTableId, slaveWriter);
-            tableDetailsByMasterTableId.put(masterTableId, tableDetails);
+            slaveWriteByMasterTableId.put(masterTableId, slaveWriter);
             tableIds.add(masterTableId);
-        } else {
-            slaveWriter = tableDetails.getSlaveWriter();
         }
         return slaveWriter;
     }
 
     public void clear() {
         if (fd != -1) {
-            for (int id = 0, sz = tableIds.size(); id < sz; id++) {
-                releaseTableDetails(tableDetailsByMasterTableId.get(tableIds.get(id)));
-            }
-            tableIds.clear();
-            tableDetailsByMasterTableId.clear();
+            slaveWriteByMasterTableId.clear();
             fd = -1;
         }
     }
@@ -233,50 +223,5 @@ public class ReplicationStreamReceiver implements Closeable {
             Unsafe.free(frameHeaderAddress, TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE);
             frameHeaderAddress = 0;
         }
-    }
-
-    private TableDetails newTableDetails() {
-        int sz = tableDetailsCache.size();
-        if (sz > 0) {
-            sz--;
-            TableDetails tableDetails = tableDetailsCache.get(sz);
-            tableDetailsCache.remove(sz);
-            return tableDetails;
-        }
-        return new TableDetails();
-    }
-
-    private void releaseTableDetails(TableDetails tableDetails) {
-        tableDetails.clear();
-        tableDetailsCache.add(tableDetails);
-    }
-
-    private class TableDetails implements Closeable {
-        private int masterTableId;
-        private SlaveWriter slaveWriter;
-
-        private TableDetails of(int masterTableId, SlaveWriter slaveWriter) {
-            assert this.slaveWriter == null;
-            this.masterTableId = masterTableId;
-            this.slaveWriter = slaveWriter;
-            return this;
-        }
-
-        private SlaveWriter getSlaveWriter() {
-            return slaveWriter;
-        }
-
-        private void clear() {
-            if (null != slaveWriter) {
-                recvMgr.releaseSlaveWriter(masterTableId, slaveWriter);
-                slaveWriter = null;
-            }
-        }
-
-        @Override
-        public void close() {
-            clear();
-        }
-
     }
 }
