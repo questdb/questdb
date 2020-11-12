@@ -22,9 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.pool.ex;
-
-import io.questdb.cairo.CairoException;
+package io.questdb.cairo;
 
 public class EntryUnavailableException extends CairoException {
     public static final EntryUnavailableException INSTANCE;
