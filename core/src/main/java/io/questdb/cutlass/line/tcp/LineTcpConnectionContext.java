@@ -90,7 +90,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         complete = true;
                     } else {
                         LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
-                                .$(byteCharSequence.of(recvBufLineStart, recvBufLineNext - 1)).$();
+                                .$(byteCharSequence.of(recvBufLineStart, Math.min(recvBufLineNext, recvBufPos))).$();
                     }
                     recvBufLineStart = recvBufLineNext;
                 } finally {
