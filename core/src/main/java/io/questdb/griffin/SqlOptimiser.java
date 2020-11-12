@@ -673,8 +673,6 @@ class SqlOptimiser {
 
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
         final int n = orderBy.size();
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        final int m = columns.size();
         final QueryModel nestedModel = model.getNestedModel();
 
         if (n > 0) {
@@ -686,21 +684,6 @@ class SqlOptimiser {
 
         if (nestedModel != null) {
             createOrderHash(nestedModel);
-            if (m > 0) {
-                LowerCaseCharSequenceIntHashMap thatHash = nestedModel.getOrderHash();
-                if (thatHash.size() > 0) {
-                    for (int i = 0; i < m; i++) {
-                        QueryColumn column = columns.getQuick(i);
-                        ExpressionNode node = column.getAst();
-                        if (node.type == ExpressionNode.LITERAL) {
-                            int direction = thatHash.get(node.token);
-                            if (direction != -1) {
-                                hash.put(column.getName(), direction);
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         final ObjList<QueryModel> joinModels = model.getJoinModels();
@@ -2345,9 +2328,9 @@ class SqlOptimiser {
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
                     int indexOfTableForColumn = getIndexOfTableForColumn(base, column, dot, orderBy.position);
-                    if (dot < 0 && baseParent.getAliasToColumnNameMap().get(base.getBottomUpColumnNames().get(indexOfTableForColumn)) == null) {
-                        throw SqlException.invalidColumn(orderBy.position, column);
-                    }
+//                    if (dot < 0 && baseParent.getAliasToColumnNameMap().get(base.getBottomUpColumnNames().get(indexOfTableForColumn)) == null) {
+//                        throw SqlException.invalidColumn(orderBy.position, column);
+//                    }
 
                     // good news, our column matched base model
                     // this condition is to ignore order by columns that are not in select and behind group by
