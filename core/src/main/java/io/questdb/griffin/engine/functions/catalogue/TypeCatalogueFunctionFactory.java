@@ -24,34 +24,14 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.Misc;
+import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 
 public class TypeCatalogueFunctionFactory implements FunctionFactory {
-
-    protected static final RecordMetadata METADATA;
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING, null));
-        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typarray", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN, null));
-        metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR, null));
-        METADATA = metadata;
-    }
 
     @Override
     public String getSignature() {
@@ -62,33 +42,11 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new CursorFunction(
                 position,
-                new TypeCatalogueCursorFactory(
-                        METADATA
+                new GenericRecordCursorFactory(
+                        TypeCatalogueCursor.METADATA,
+                        new TypeCatalogueCursor(),
+                        false
                 )
         );
-    }
-
-    public static class TypeCatalogueCursorFactory extends AbstractRecordCursorFactory {
-
-        private final Path path = new Path();
-
-        public TypeCatalogueCursorFactory(RecordMetadata metadata) {
-            super(metadata);
-        }
-
-        @Override
-        public void close() {
-            Misc.free(path);
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            return EmptyTableRecordCursor.INSTANCE;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return false;
-        }
     }
 }

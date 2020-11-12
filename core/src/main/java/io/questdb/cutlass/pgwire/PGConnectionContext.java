@@ -73,7 +73,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
-    private static final IntList typeOids = new IntList();
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
@@ -1983,22 +1982,5 @@ public class PGConnectionContext implements IOContext, Mutable {
             sendBufferPtr += Integer.BYTES;
             return checkpoint;
         }
-    }
-
-    static {
-        typeOids.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        typeOids.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
-        typeOids.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
-        typeOids.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
-        typeOids.extendAndSet(ColumnType.INT, PG_INT4); // INT4
-        typeOids.extendAndSet(ColumnType.SHORT, PG_INT2); // INT2
-        typeOids.extendAndSet(ColumnType.CHAR, PG_CHAR);
-        typeOids.extendAndSet(ColumnType.SYMBOL, PG_VARCHAR); // NAME
-        typeOids.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
-        typeOids.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
-        typeOids.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        typeOids.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
-        typeOids.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
-        typeOids.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
     }
 }
