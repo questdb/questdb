@@ -34,7 +34,7 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.pool.ex.EntryUnavailableException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;

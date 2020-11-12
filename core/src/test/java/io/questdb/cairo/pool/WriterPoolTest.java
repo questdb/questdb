@@ -26,7 +26,7 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.pool.ex.EntryUnavailableException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
