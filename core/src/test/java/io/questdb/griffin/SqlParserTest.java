@@ -82,78 +82,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinClauseAlignmentBug() throws SqlException {
-        assertQuery(
-                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema',true,case(TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema',switch(relkind,'r','SYSTEM TABLE','v','SYSTEM VIEW','i','SYSTEM INDEX',NULL),TABLE_SCHEM = 'pg_toast',switch(relkind,'r','SYSTEM TOAST TABLE','i','SYSTEM TOAST INDEX',NULL),switch(relkind,'r','TEMPORARY TABLE','p','TEMPORARY TABLE','i','TEMPORARY INDEX','S','TEMPORARY SEQUENCE','v','TEMPORARY VIEW',NULL)),false,switch(relkind,'r','TABLE','p','PARTITIONED TABLE','i','INDEX','S','SEQUENCE','v','VIEW','c','TYPE','f','FOREIGN TABLE','m','MATERIALIZED VIEW',NULL),NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' join (select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d where objsubid = 0) d on d.objoid = c.oid join (select [oid, relname, relnamespace] from pg_catalog.pg_class() dc where relname = 'pg_class') dc on dc.oid = d.classoid join (select [oid, nspname] from pg_catalog.pg_namespace() dn where nspname = 'pg_catalog') dn on dn.oid = dc.relnamespace)) order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
-                "SELECT \n" +
-                        "     NULL AS TABLE_CAT, \n" +
-                        "     n.nspname AS TABLE_SCHEM, \n" +
-                        "     \n" +
-                        "     c.relname AS TABLE_NAME,  \n" +
-                        "     CASE n.nspname ~ '^pg_' OR n.nspname = 'information_schema'  \n" +
-                        "        WHEN true THEN \n" +
-                        "           CASE  \n" +
-                        "                WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN \n" +
-                        "                    CASE c.relkind   \n" +
-                        "                        WHEN 'r' THEN 'SYSTEM TABLE' \n" +
-                        "                        WHEN 'v' THEN 'SYSTEM VIEW'\n" +
-                        "                        WHEN 'i' THEN 'SYSTEM INDEX'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END\n" +
-                        "                WHEN n.nspname = 'pg_toast' THEN \n" +
-                        "                    CASE c.relkind   \n" +
-                        "                        WHEN 'r' THEN 'SYSTEM TOAST TABLE'\n" +
-                        "                        WHEN 'i' THEN 'SYSTEM TOAST INDEX'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END\n" +
-                        "                ELSE \n" +
-                        "                    CASE c.relkind\n" +
-                        "                        WHEN 'r' THEN 'TEMPORARY TABLE'\n" +
-                        "                        WHEN 'p' THEN 'TEMPORARY TABLE'\n" +
-                        "                        WHEN 'i' THEN 'TEMPORARY INDEX'\n" +
-                        "                        WHEN 'S' THEN 'TEMPORARY SEQUENCE'\n" +
-                        "                        WHEN 'v' THEN 'TEMPORARY VIEW'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END  \n" +
-                        "            END  \n" +
-                        "        WHEN false THEN \n" +
-                        "            CASE c.relkind  \n" +
-                        "                WHEN 'r' THEN 'TABLE'  \n" +
-                        "                WHEN 'p' THEN 'PARTITIONED TABLE'  \n" +
-                        "                WHEN 'i' THEN 'INDEX'  \n" +
-                        "                WHEN 'S' THEN 'SEQUENCE'  \n" +
-                        "                WHEN 'v' THEN 'VIEW'  \n" +
-                        "                WHEN 'c' THEN 'TYPE'  \n" +
-                        "                WHEN 'f' THEN 'FOREIGN TABLE'  \n" +
-                        "                WHEN 'm' THEN 'MATERIALIZED VIEW'  \n" +
-                        "                ELSE NULL  \n" +
-                        "            END  \n" +
-                        "        ELSE NULL  \n" +
-                        "    END AS TABLE_TYPE, \n" +
-                        "    d.description AS REMARKS,\n" +
-                        "    '' as TYPE_CAT,\n" +
-                        "    '' as TYPE_SCHEM,\n" +
-                        "    '' as TYPE_NAME,\n" +
-                        "    '' AS SELF_REFERENCING_COL_NAME,\n" +
-                        "    '' AS REF_GENERATION\n" +
-                        "FROM \n" +
-                        "    pg_catalog.pg_namespace n, \n" +
-                        "    pg_catalog.pg_class c  \n" +
-                        "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n" +
-                        "    LEFT JOIN pg_catalog.pg_class dc ON (d.classoid=dc.oid AND dc.relname='pg_class')\n" +
-                        "    LEFT JOIN pg_catalog.pg_namespace dn ON (dn.oid=dc.relnamespace AND dn.nspname='pg_catalog')\n" +
-                        "WHERE \n" +
-                        "    c.relnamespace = n.oid  \n" +
-                        "    AND c.relname LIKE 'quickstart-events2' \n" +
-                        "    AND (\n" +
-                        "        false  \n" +
-                        "        OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' ) \n" +
-                        "        ) \n" +
-                        "ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME"
-        );
-    }
-
-    @Test
     public void testAnalyticPartitionByMultiple() throws Exception {
         assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select [a, b, c] from xyz)",
@@ -168,56 +96,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "trades t ASOF JOIN quotes q WHERE tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
-        );
-    }
-
-    @Test
-    public void testCursorInSelect() throws SqlException {
-        assertQuery("select-virtual x1, x1 . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
-                "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).n from long_sequence(2)"
-        );
-    }
-
-
-    @Test
-    public void testCursorInSelectOneColumn() throws SqlException {
-        assertQuery("select-choose x1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
-                "select pg_catalog.pg_class() x from long_sequence(2)"
-        );
-    }
-
-    @Test
-    public void testCursorInSelectOneColumnSansAlias() throws SqlException {
-        assertQuery("select-choose pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
-                "select pg_catalog.pg_class() from long_sequence(2)"
-        );
-    }
-
-    @Test
-    public void testCursorMultiple() throws SqlException {
-        assertQuery("select-choose pg_class, pg_description from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() pg_description] pg_catalog.pg_description() pg_description from (pg_catalog.pg_description()) _xQdbA2)",
-                "select pg_catalog.pg_class(), pg_catalog.pg_description() from long_sequence(2)"
-        );
-    }
-
-    @Test
-    public void testCursorMultipleDuplicateAliases() throws SqlException {
-        assertQuery("select-choose cc, cc1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() cc] pg_catalog.pg_class() cc from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() cc1] pg_catalog.pg_description() cc1 from (pg_catalog.pg_description()) _xQdbA2)",
-                "select pg_catalog.pg_class() cc, pg_catalog.pg_description() cc from long_sequence(2)"
-        );
-    }
-
-    @Test
-    public void testCursorInSelectExprFirst() throws SqlException {
-        assertQuery("select-virtual pg_class . n column, pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
-                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
-        );
-    }
-
-    @Test
-    public void testCursorInSelectWithAggregation() throws SqlException {
-        assertQuery("select-virtual sum - 20 column, column1 from (select-group-by [sum(pg_class . n + 1) sum, column1] sum(pg_class . n + 1) sum, column1 from (select-virtual [pg_class, pg_class . y column1] pg_class, pg_class . y column1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)))",
-                "select sum((pg_catalog.pg_class()).n + 1) - 20, pg_catalog.pg_class().y from long_sequence(2)"
         );
     }
 
@@ -641,31 +519,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableForKafka() throws SqlException {
-        assertCreateTable(
-                "create table quickstart-events4 (" +
-                        "flag BOOLEAN, " +
-                        "id8 SHORT, " +
-                        "id16 SHORT, " +
-                        "id32 INT, " +
-                        "id64 LONG, " +
-                        "idFloat FLOAT, " +
-                        "idDouble DOUBLE, " +
-                        "idBytes STRING, " +
-                        "msg STRING)",
-                "CREATE TABLE \"quickstart-events4\" (\n" +
-                        "\"flag\" BOOLEAN NOT NULL,\n" +
-                        "\"id8\" SMALLINT NOT NULL,\n" +
-                        "\"id16\" SMALLINT NOT NULL,\n" +
-                        "\"id32\" INT NOT NULL,\n" +
-                        "\"id64\" BIGINT NOT NULL,\n" +
-                        "\"idFloat\" REAL NOT NULL,\n" +
-                        "\"idDouble\" DOUBLE PRECISION NOT NULL,\n" +
-                        "\"idBytes\" BYTEA NOT NULL,\n" +
-                        "\"msg\" TEXT NULL)");
-    }
-
-    @Test
     public void testCreateTableAsSelect() throws SqlException {
         assertCreateTable(
                 "create table X as (select-choose a, b, c from (select [a, b, c] from tab))",
@@ -954,6 +807,31 @@ public class SqlParserTest extends AbstractGriffinTest {
                 122,
                 "Duplicate column"
         );
+    }
+
+    @Test
+    public void testCreateTableForKafka() throws SqlException {
+        assertCreateTable(
+                "create table quickstart-events4 (" +
+                        "flag BOOLEAN, " +
+                        "id8 SHORT, " +
+                        "id16 SHORT, " +
+                        "id32 INT, " +
+                        "id64 LONG, " +
+                        "idFloat FLOAT, " +
+                        "idDouble DOUBLE, " +
+                        "idBytes STRING, " +
+                        "msg STRING)",
+                "CREATE TABLE \"quickstart-events4\" (\n" +
+                        "\"flag\" BOOLEAN NOT NULL,\n" +
+                        "\"id8\" SMALLINT NOT NULL,\n" +
+                        "\"id16\" SMALLINT NOT NULL,\n" +
+                        "\"id32\" INT NOT NULL,\n" +
+                        "\"id64\" BIGINT NOT NULL,\n" +
+                        "\"idFloat\" REAL NOT NULL,\n" +
+                        "\"idDouble\" DOUBLE PRECISION NOT NULL,\n" +
+                        "\"idBytes\" BYTEA NOT NULL,\n" +
+                        "\"msg\" TEXT NULL)");
     }
 
     @Test
@@ -1711,6 +1589,55 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCursorInSelect() throws SqlException {
+        assertQuery("select-virtual x1, x1 . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
+                "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).n from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectExprFirst() throws SqlException {
+        assertQuery("select-virtual pg_class . n column, pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
+                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectOneColumn() throws SqlException {
+        assertQuery("select-choose x1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
+                "select pg_catalog.pg_class() x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectOneColumnSansAlias() throws SqlException {
+        assertQuery("select-choose pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
+                "select pg_catalog.pg_class() from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectWithAggregation() throws SqlException {
+        assertQuery("select-virtual sum - 20 column, column1 from (select-group-by [sum(pg_class . n + 1) sum, column1] sum(pg_class . n + 1) sum, column1 from (select-virtual [pg_class, pg_class . y column1] pg_class, pg_class . y column1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)))",
+                "select sum((pg_catalog.pg_class()).n + 1) - 20, pg_catalog.pg_class().y from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorMultiple() throws SqlException {
+        assertQuery("select-choose pg_class, pg_description from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() pg_description] pg_catalog.pg_description() pg_description from (pg_catalog.pg_description()) _xQdbA2)",
+                "select pg_catalog.pg_class(), pg_catalog.pg_description() from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorMultipleDuplicateAliases() throws SqlException {
+        assertQuery("select-choose cc, cc1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() cc] pg_catalog.pg_class() cc from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() cc1] pg_catalog.pg_description() cc1 from (pg_catalog.pg_description()) _xQdbA2)",
+                "select pg_catalog.pg_class() cc, pg_catalog.pg_description() cc from long_sequence(2)"
+        );
+    }
+
+    @Test
     public void testDisallowDotInColumnAlias() throws Exception {
         assertSyntaxError("select x x.y, y from tab order by x", 10, "',' or 'from' expected");
     }
@@ -1906,43 +1833,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFailureForOrderByOnNonSelectedColumn() throws Exception {
-        assertFailure(
-                "select 2*y+x from tab order by x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                31,
-                "Invalid column: x"
-        );
-    }
-
-    @Test
-    public void testFailureForOrderByOnSelectedColumnThatHasNoAlias() throws Exception {
-        assertFailure(
-                "select 2*y+x, 3/x from tab order by x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                36,
-                "Invalid column: x"
-        );
-    }
-
-    @Test
-    public void testFailureOfOrderByOnMultipleColumnsWhenColumnIsMissing() throws Exception {
-        assertFailure(
-                "select y z  from tab order by z desc, x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                38, "Invalid column: x");
-    }
-
-    @Test
     public void testFailureOrderByGroupByColPrefixed() throws Exception {
         assertFailure(
                 "select a, sum(b) b from tab order by tab.b, a",
@@ -1995,6 +1885,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilter1() throws SqlException {
+        assertQuery(
+                "select-virtual x, cast(x + 10,timestamp) cast from (select [x, rnd_double() rnd] from (select-virtual [rnd_double() rnd, x] x, rnd_double() rnd from (select [x] from long_sequence(100000))) _xQdbA1 where rnd < 0.9999)",
+                "select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999"
+        );
+    }
+
+    @Test
     public void testFilter2() throws Exception {
         assertQuery("select-virtual customerId + 1 column, name, count from ((select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X'))) _xQdbA1)",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
@@ -2039,6 +1937,28 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select-choose tag, hi, lo from ((select-choose [a.tag tag, a.seq hi, b.seq lo] a.tag tag, a.seq hi, b.seq lo from (select [tag, seq] from tab a asof join select [seq, tag] from tab b on b.tag = a.tag post-join-where a.seq > b.seq + 1)) _xQdbA1)",
                 "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where hi > lo + 1",
                 modelOf("tab").col("tag", ColumnType.STRING).col("seq", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testForOrderByOnNonSelectedColumn() throws Exception {
+        assertQuery(
+                "select-choose column from (select-virtual [2 * y + x column, x] 2 * y + x column, x from (select-choose [x, y] x, y from (select [x, y] from tab)) order by x)",
+                "select 2*y+x from tab order by x",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testForOrderByOnSelectedColumnThatHasNoAlias() throws Exception {
+        assertQuery(
+                "select-choose column, column1 from (select-virtual [2 * y + x column, 3 / x column1, x] 2 * y + x column, 3 / x column1, x from (select-choose [x, y] x, y from (select [x, y] from tab)) order by x)",
+                "select 2*y+x, 3/x from tab order by x",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.DOUBLE)
         );
     }
 
@@ -2451,6 +2371,78 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
                 modelOf("tab3").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinClauseAlignmentBug() throws SqlException {
+        assertQuery(
+                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema',true,case(TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema',switch(relkind,'r','SYSTEM TABLE','v','SYSTEM VIEW','i','SYSTEM INDEX',NULL),TABLE_SCHEM = 'pg_toast',switch(relkind,'r','SYSTEM TOAST TABLE','i','SYSTEM TOAST INDEX',NULL),switch(relkind,'r','TEMPORARY TABLE','p','TEMPORARY TABLE','i','TEMPORARY INDEX','S','TEMPORARY SEQUENCE','v','TEMPORARY VIEW',NULL)),false,switch(relkind,'r','TABLE','p','PARTITIONED TABLE','i','INDEX','S','SEQUENCE','v','VIEW','c','TYPE','f','FOREIGN TABLE','m','MATERIALIZED VIEW',NULL),NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' join (select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d where objsubid = 0) d on d.objoid = c.oid join (select [oid, relname, relnamespace] from pg_catalog.pg_class() dc where relname = 'pg_class') dc on dc.oid = d.classoid join (select [oid, nspname] from pg_catalog.pg_namespace() dn where nspname = 'pg_catalog') dn on dn.oid = dc.relnamespace)) order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
+                "SELECT \n" +
+                        "     NULL AS TABLE_CAT, \n" +
+                        "     n.nspname AS TABLE_SCHEM, \n" +
+                        "     \n" +
+                        "     c.relname AS TABLE_NAME,  \n" +
+                        "     CASE n.nspname ~ '^pg_' OR n.nspname = 'information_schema'  \n" +
+                        "        WHEN true THEN \n" +
+                        "           CASE  \n" +
+                        "                WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN \n" +
+                        "                    CASE c.relkind   \n" +
+                        "                        WHEN 'r' THEN 'SYSTEM TABLE' \n" +
+                        "                        WHEN 'v' THEN 'SYSTEM VIEW'\n" +
+                        "                        WHEN 'i' THEN 'SYSTEM INDEX'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END\n" +
+                        "                WHEN n.nspname = 'pg_toast' THEN \n" +
+                        "                    CASE c.relkind   \n" +
+                        "                        WHEN 'r' THEN 'SYSTEM TOAST TABLE'\n" +
+                        "                        WHEN 'i' THEN 'SYSTEM TOAST INDEX'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END\n" +
+                        "                ELSE \n" +
+                        "                    CASE c.relkind\n" +
+                        "                        WHEN 'r' THEN 'TEMPORARY TABLE'\n" +
+                        "                        WHEN 'p' THEN 'TEMPORARY TABLE'\n" +
+                        "                        WHEN 'i' THEN 'TEMPORARY INDEX'\n" +
+                        "                        WHEN 'S' THEN 'TEMPORARY SEQUENCE'\n" +
+                        "                        WHEN 'v' THEN 'TEMPORARY VIEW'\n" +
+                        "                        ELSE NULL   \n" +
+                        "                    END  \n" +
+                        "            END  \n" +
+                        "        WHEN false THEN \n" +
+                        "            CASE c.relkind  \n" +
+                        "                WHEN 'r' THEN 'TABLE'  \n" +
+                        "                WHEN 'p' THEN 'PARTITIONED TABLE'  \n" +
+                        "                WHEN 'i' THEN 'INDEX'  \n" +
+                        "                WHEN 'S' THEN 'SEQUENCE'  \n" +
+                        "                WHEN 'v' THEN 'VIEW'  \n" +
+                        "                WHEN 'c' THEN 'TYPE'  \n" +
+                        "                WHEN 'f' THEN 'FOREIGN TABLE'  \n" +
+                        "                WHEN 'm' THEN 'MATERIALIZED VIEW'  \n" +
+                        "                ELSE NULL  \n" +
+                        "            END  \n" +
+                        "        ELSE NULL  \n" +
+                        "    END AS TABLE_TYPE, \n" +
+                        "    d.description AS REMARKS,\n" +
+                        "    '' as TYPE_CAT,\n" +
+                        "    '' as TYPE_SCHEM,\n" +
+                        "    '' as TYPE_NAME,\n" +
+                        "    '' AS SELF_REFERENCING_COL_NAME,\n" +
+                        "    '' AS REF_GENERATION\n" +
+                        "FROM \n" +
+                        "    pg_catalog.pg_namespace n, \n" +
+                        "    pg_catalog.pg_class c  \n" +
+                        "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n" +
+                        "    LEFT JOIN pg_catalog.pg_class dc ON (d.classoid=dc.oid AND dc.relname='pg_class')\n" +
+                        "    LEFT JOIN pg_catalog.pg_namespace dn ON (dn.oid=dc.relnamespace AND dn.nspname='pg_catalog')\n" +
+                        "WHERE \n" +
+                        "    c.relnamespace = n.oid  \n" +
+                        "    AND c.relname LIKE 'quickstart-events2' \n" +
+                        "    AND (\n" +
+                        "        false  \n" +
+                        "        OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' ) \n" +
+                        "        ) \n" +
+                        "ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME"
         );
     }
 
@@ -3110,14 +3102,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFilter1() throws SqlException {
-        assertQuery(
-                "select-virtual x, cast(x + 10,timestamp) cast from (select [x, rnd_double() rnd] from (select-virtual [rnd_double() rnd, x] x, rnd_double() rnd from (select [x] from long_sequence(100000))) _xQdbA1 where rnd < 0.9999)",
-                "select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999"
-        );
-    }
-
-    @Test
     public void testLineCommentAtEnd() throws Exception {
         assertQuery(
                 "select-choose x, a from ((select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a')",
@@ -3300,6 +3284,83 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select-choose a from ((select-distinct [a] a from (select-choose [a] a from (select [a] from tab)) where a = 10) _xQdbA1)",
                 "(select distinct a from tab) where a = 10",
                 modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testNullChecks() throws SqlException {
+        assertQuery(
+                "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z','2020-09-20T17:00:00.312334Z'))",
+                "SELECT \n" +
+                        "a\n" +
+                        "FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')\n" +
+                        "select *", // <-- dangling 'select *'
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.SYMBOL)
+                        .timestamp("time")
+        );
+    }
+
+    @Test
+    public void testOfOrderByOnMultipleColumnsWhenColumnIsMissing() throws Exception {
+        assertQuery(
+                "select-choose z from (select-choose [y z, x] y z, x from (select [y, x] from tab) order by z desc, x)",
+                "select y z  from tab order by z desc, x",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testOrderByPropagation() throws SqlException {
+        assertQuery(
+                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-distinct contactId from (select-choose [contactId] contactId from ((select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events timestamp (timestamp) latest by _id) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist)) except select-choose [_id contactId] _id contactId from ((select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts timestamp (timestamp) latest by _id) where notRealType = 'bot') contactlist)) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts timestamp (timestamp) latest by _id)) contactlist on contactlist._id = C.contactId) order by timestamp desc)",
+                "WITH \n" +
+                        "contactlist AS (SELECT * FROM contacts LATEST BY _id ORDER BY timestamp),\n" +
+                        "eventlist AS (SELECT * FROM contact_events LATEST BY _id ORDER BY timestamp),\n" +
+                        "C AS (\n" +
+                        "    SELECT DISTINCT contactId FROM eventlist WHERE groupId = 'qIqlX6qESMtTQXikQA46'\n" +
+                        "    EXCEPT\n" +
+                        "    SELECT _id as contactId FROM contactlist WHERE notRealType = 'bot'\n" +
+                        ")\n" +
+                        "  SELECT \n" +
+                        "    C.contactId as id, \n" +
+                        "    contactlist.customName,\n" +
+                        "    contactlist.name,\n" +
+                        "    contactlist.email,\n" +
+                        "    contactlist.country_name,\n" +
+                        "    contactlist.country_code,\n" +
+                        "    contactlist.city,\n" +
+                        "    contactlist.region,\n" +
+                        "    contactlist.emoji_flag,\n" +
+                        "    contactlist.latitude,\n" +
+                        "    contactlist.longitude,\n" +
+                        "    contactlist.isNotReal,\n" +
+                        "    contactlist.notRealType\n" +
+                        "  FROM C \n" +
+                        "  JOIN contactlist ON contactlist._id = C.contactId\n" +
+                        "  ORDER BY timestamp DESC\n",
+                modelOf("contacts")
+                .col("_id", ColumnType.SYMBOL)
+                        .col("customName", ColumnType.STRING)
+                .col("name", ColumnType.SYMBOL)
+                        .col("email", ColumnType.STRING)
+                        .col("country_name", ColumnType.SYMBOL)
+                        .col("country_code", ColumnType.SYMBOL)
+                        .col("city", ColumnType.SYMBOL)
+                        .col("region", ColumnType.SYMBOL)
+                        .col("emoji_flag", ColumnType.STRING)
+                        .col("latitude", ColumnType.DOUBLE)
+                        .col("longitude", ColumnType.DOUBLE)
+                        .col("isNotReal", ColumnType.SYMBOL)
+                        .col("notRealType", ColumnType.SYMBOL)
+                .timestamp(),
+                modelOf("contact_events")
+                .col("contactId", ColumnType.SYMBOL)
+                .col("groupId", ColumnType.SYMBOL)
+                .timestamp()
         );
     }
 
@@ -3626,13 +3687,13 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testOrderByOnNonSelectedColumn() throws Exception {
-        assertFailure(
+        assertQuery(
+                "select-choose y from (select-choose [y, x] y, x from (select [y, x] from tab) order by x)",
                 "select y from tab order by x",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")  partition by NONE",
-                27, "Invalid column: x");
+                modelOf("tab")
+                        .col("y", ColumnType.DOUBLE)
+                        .col("x", ColumnType.DOUBLE)
+        );
     }
 
     @Test
@@ -4317,6 +4378,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectDuplicateAlias() throws SqlException {
+        assertQuery(
+                "select-choose x, x x1 from (select-choose [x] x from (select [x] from long_sequence(1)))",
+                "select x x, x x from long_sequence(1)"
+        );
+    }
+
+    @Test
     public void testSelectEndsWithSemicolon() throws Exception {
         assertQuery("select-choose x from (select [x] from x)",
                 "select * from x;",
@@ -4490,6 +4559,14 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("d", ColumnType.INT)
                         .col("tip_amount", ColumnType.DOUBLE)
                         .col("e", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectSumSquared() throws SqlException {
+        assertQuery(
+                "select-virtual x, sum * sum x1 from (select-group-by [x, sum(x) sum] x, sum(x) sum from (select [x] from long_sequence(2)))",
+                "select x, sum(x)*sum(x) x from long_sequence(2)"
         );
     }
 
@@ -4844,21 +4921,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT),
                 modelOf("c").col("x", ColumnType.INT));
-    }
-
-    @Test
-    public void testNullChecks() throws SqlException {
-        assertQuery(
-                "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z','2020-09-20T17:00:00.312334Z'))",
-                "SELECT \n" +
-                        "a\n" +
-                        "FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')\n" +
-                        "select *", // <-- dangling 'select *'
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                .col("b", ColumnType.SYMBOL)
-                .timestamp("time")
-        );
     }
 
     @Test
@@ -5261,22 +5323,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " y as (select * from x)" +
                         " select * from y",
                 modelOf("tab").col("a", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testSelectSumSquared() throws SqlException {
-        assertQuery(
-                "select-virtual x, sum * sum x1 from (select-group-by [x, sum(x) sum] x, sum(x) sum from (select [x] from long_sequence(2)))",
-                "select x, sum(x)*sum(x) x from long_sequence(2)"
-        );
-    }
-
-    @Test
-    public void testSelectDuplicateAlias() throws SqlException {
-        assertQuery(
-                "select-choose x, x x1 from (select-choose [x] x from (select [x] from long_sequence(1)))",
-                "select x x, x x from long_sequence(1)"
         );
     }
 

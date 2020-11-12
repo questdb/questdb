@@ -170,7 +170,7 @@ class SqlOptimiser {
         if (validatingModel != null) {
             CharSequence refColumn = column.getAst().token;
             final int dot = Chars.indexOf(refColumn, '.');
-            getIndexOfTableForColumn(validatingModel, refColumn, dot, column.getAst().position);
+            validateColumnAndGetModelIndex(validatingModel, refColumn, dot, column.getAst().position);
             // when we have only one model, e.g. this is not a join
             // and there is table alias to lookup column
             // we will remove this alias as unneeded
@@ -673,8 +673,6 @@ class SqlOptimiser {
 
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
         final int n = orderBy.size();
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        final int m = columns.size();
         final QueryModel nestedModel = model.getNestedModel();
 
         if (n > 0) {
@@ -686,21 +684,6 @@ class SqlOptimiser {
 
         if (nestedModel != null) {
             createOrderHash(nestedModel);
-            if (m > 0) {
-                LowerCaseCharSequenceIntHashMap thatHash = nestedModel.getOrderHash();
-                if (thatHash.size() > 0) {
-                    for (int i = 0; i < m; i++) {
-                        QueryColumn column = columns.getQuick(i);
-                        ExpressionNode node = column.getAst();
-                        if (node.type == ExpressionNode.LITERAL) {
-                            int direction = thatHash.get(node.token);
-                            if (direction != -1) {
-                                hash.put(column.getName(), direction);
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         final ObjList<QueryModel> joinModels = model.getJoinModels();
@@ -1225,41 +1208,6 @@ class SqlOptimiser {
                 eraseColumnPrefixInWhereClauses(nested);
             }
         }
-    }
-
-    private int getIndexOfTableForColumn(QueryModel model, CharSequence column, int dot, int position) throws SqlException {
-        ObjList<QueryModel> joinModels = model.getJoinModels();
-        int index = -1;
-        if (dot == -1) {
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                if (joinModels.getQuick(i).getAliasToColumnMap().excludes(column)) {
-                    continue;
-                }
-
-                if (index != -1) {
-                    throw SqlException.ambiguousColumn(position);
-                }
-
-                index = i;
-            }
-
-            if (index == -1) {
-                throw SqlException.invalidColumn(position, column);
-            }
-
-        } else {
-            index = model.getAliasIndex(column, 0, dot);
-
-            if (index == -1) {
-                throw SqlException.$(position, "Invalid table name or alias");
-            }
-
-            if (joinModels.getQuick(index).getAliasToColumnMap().excludes(column, dot + 1, column.length())) {
-                throw SqlException.invalidColumn(position, column);
-            }
-
-        }
-        return index;
     }
 
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
@@ -2344,11 +2292,7 @@ class SqlOptimiser {
                 // is this a table reference?
                 if (dot > -1 || model.getAliasToColumnMap().excludes(column)) {
                     // validate column
-                    int indexOfTableForColumn = getIndexOfTableForColumn(base, column, dot, orderBy.position);
-                    if (dot < 0 && baseParent.getAliasToColumnNameMap().get(base.getBottomUpColumnNames().get(indexOfTableForColumn)) == null) {
-                        throw SqlException.invalidColumn(orderBy.position, column);
-                    }
-
+                    validateColumnAndGetModelIndex(base, column, dot, orderBy.position);
                     // good news, our column matched base model
                     // this condition is to ignore order by columns that are not in select and behind group by
                     if (ascendColumns && base != model) {
@@ -2912,6 +2856,41 @@ class SqlOptimiser {
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
     }
 
+    private int validateColumnAndGetModelIndex(QueryModel model, CharSequence column, int dot, int position) throws SqlException {
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        int index = -1;
+        if (dot == -1) {
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                if (joinModels.getQuick(i).getAliasToColumnMap().excludes(column)) {
+                    continue;
+                }
+
+                if (index != -1) {
+                    throw SqlException.ambiguousColumn(position);
+                }
+
+                index = i;
+            }
+
+            if (index == -1) {
+                throw SqlException.invalidColumn(position, column);
+            }
+
+        } else {
+            index = model.getAliasIndex(column, 0, dot);
+
+            if (index == -1) {
+                throw SqlException.$(position, "Invalid table name or alias");
+            }
+
+            if (joinModels.getQuick(index).getAliasToColumnMap().excludes(column, dot + 1, column.length())) {
+                throw SqlException.invalidColumn(position, column);
+            }
+
+        }
+        return index;
+    }
+
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
     }
@@ -3015,7 +2994,7 @@ class SqlOptimiser {
                     if (isNotBindVariable(node.token)) {
                         int dot = Chars.indexOf(node.token, '.');
                         CharSequence name = dot == -1 ? node.token : node.token.subSequence(dot + 1, node.token.length());
-                        indexes.add(getIndexOfTableForColumn(model, node.token, dot, node.position));
+                        indexes.add(validateColumnAndGetModelIndex(model, node.token, dot, node.position));
                         if (names != null) {
                             names.add(name);
                         }
