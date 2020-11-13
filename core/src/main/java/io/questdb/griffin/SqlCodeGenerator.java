@@ -30,6 +30,9 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.analytic.AnalyticFunction;
+import io.questdb.griffin.engine.analytic.AnalyticRecordRecordCursorFactory;
+import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
@@ -37,6 +40,7 @@ import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.*;
 import io.questdb.griffin.engine.join.*;
+import io.questdb.griffin.engine.orderby.RecordComparator;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -1406,8 +1410,144 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
+    private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
+
+    private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
+        // todo: pool
+        final IntList indices = new IntList();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            ExpressionNode tok = orderBy.getQuick(i);
+            int index = m.getColumnIndexQuiet(tok.token);
+            if (index == -1) {
+                throw SqlException.invalidColumn(tok.position, tok.token);
+            }
+
+            // shift index by 1 to use sign as sort direction
+            index++;
+
+            // negative column index means descending order of sort
+            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                index = -index;
+            }
+
+            indices.add(index);
+        }
+        return indices;
+    }
+
+
     private RecordCursorFactory generateSelectAnalytic(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return generateSubQuery(model, executionContext);
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        final RecordMetadata metadata = factory.getMetadata();
+                final ObjList<QueryColumn> columns = model.getColumns();
+        final int columnCount = columns.size();
+        grouppedAnalytic.clear();
+        ObjList<AnalyticFunction> naturalOrderFunctions = null;
+        boolean needCache = false;
+
+        for (int i = 0; i < columnCount; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (qc instanceof AnalyticColumn) {
+                final AnalyticColumn ac = (AnalyticColumn) qc;
+                final ExpressionNode ast = qc.getAst();
+                if (ast.paramCount > 1) {
+                    throw SqlException.$(ast.position, "Too many arguments");
+                }
+
+                Function valueColumn;
+                if (ast.paramCount == 1) {
+                    valueColumn = functionParser.parseFunction(ast.rhs, metadata, executionContext);
+//                    valueColumn.setName(col.getAlias());
+                } else {
+                    valueColumn = null;
+                }
+
+                ObjList<Function> partitionBy;
+                int psz = ac.getPartitionBy().size();
+                if (psz > 0) {
+                    partitionBy = new ObjList<>(psz);
+                    for (int j = 0; j < psz; j++) {
+                        partitionBy.add(
+                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), metadata, executionContext)
+                        );
+                    }
+                }
+
+                final int osz = ac.getOrderBy().size();
+                Function analyticFunction = functionParser.parseFunction(ac.getAst(), metadata, executionContext);
+
+//                AnalyticFunction f = AnalyticFunctionFactories.newInstance(
+//                        configuration,
+//                        ast.token,
+//                        valueColumn,
+//                        col.getAlias(),
+//                        partitionBy,
+//                        rs.supportsRowIdAccess(),
+//                        osz > 0
+//                );
+
+                if (analyticFunction instanceof AnalyticFunction) {
+
+                    final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+
+                    boolean dismissOrder;
+                    if (osz > 0 && orderHash.size() > 0) {
+                        dismissOrder = true;
+                        for (int j = 0; j < osz; j++) {
+                            ExpressionNode node = ac.getOrderBy().getQuick(j);
+                            int direction = ac.getOrderByDirection().getQuick(j);
+                            if (orderHash.get(node.token) != direction) {
+                                dismissOrder = false;
+                            }
+                        }
+                    } else {
+                        dismissOrder = false;
+                    }
+
+                    if (osz > 0 && !dismissOrder) {
+                        IntList order = toOrderIndices(metadata, ac.getOrderBy(), ac.getOrderByDirection());
+                        ObjList<AnalyticFunction> funcs = grouppedAnalytic.get(order);
+                        if (funcs == null) {
+                            grouppedAnalytic.put(order, funcs = new ObjList<>());
+                        }
+                        funcs.add((AnalyticFunction) analyticFunction);
+                        needCache = true;
+                    } else {
+                        if (naturalOrderFunctions == null) {
+                            naturalOrderFunctions = new ObjList<>();
+                        }
+                        needCache = needCache || analyticFunction.getType() != AnalyticFunction.STREAM;
+                        naturalOrderFunctions.add((AnalyticFunction) analyticFunction);
+                    }
+
+                }
+            }
+        }
+
+
+        if (needCache) {
+            final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
+            final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
+            for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
+                analyticComparators.add(                        recordComparatorCompiler.compile(metadata, e.key)                );
+                functionGroups.add(e.value);
+            }
+
+            if (naturalOrderFunctions != null) {
+                analyticComparators.add(null);
+                functionGroups.add(naturalOrderFunctions);
+            }
+
+            return new CachedAnalyticRecordCursorFactory(
+                    4096,
+                    4096, // todo: configuration
+                    factory,
+                    analyticComparators,
+                    functionGroups
+            );
+        } else {
+            return new AnalyticRecordRecordCursorFactory(factory, naturalOrderFunctions);
+        }
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1553,124 +1693,6 @@ public class SqlCodeGenerator implements Mutable {
             factory.close();
             throw e;
         }
-    }
-
-    private RecordCursorFactory compileAnalytic(QueryModel model, SqlExecutionContext executionContext) {
-/*
-        final int n = analyticColumns.size();
-        grouppedAnalytic.clear();
-        final RecordMetadata metadata = rs.getMetadata();
-        ObjList<AnalyticFunction> naturalOrderFunctions = null;
-        boolean needCache = false;
-
-        for (int i = 0; i < n; i++) {
-            AnalyticColumn col = analyticColumns.getQuick(i);
-
-            ObjList<VirtualColumn> partitionBy = null;
-            int psz = col.getPartitionBy().size();
-            if (psz > 0) {
-                partitionBy = new ObjList<>(psz);
-                for (int j = 0; j < psz; j++) {
-                    partitionBy.add(virtualColumnBuilder.createVirtualColumn(model, col.getPartitionBy().getQuick(j), metadata));
-                }
-            }
-
-            ExprNode ast = col.getAst();
-
-            if (ast.paramCount > 1) {
-                throw QueryError.$(col.getAst().position, "Too many arguments");
-            }
-
-            VirtualColumn valueColumn;
-            if (ast.paramCount == 1) {
-                valueColumn = virtualColumnBuilder.createVirtualColumn(model, col.getAst().rhs, metadata);
-                valueColumn.setName(col.getAlias());
-            } else {
-                valueColumn = null;
-            }
-
-            final int osz = col.getOrderBy().size();
-            AnalyticFunction f = AnalyticFunctionFactories.newInstance(
-                    configuration,
-                    ast.token,
-                    valueColumn,
-                    col.getAlias(),
-                    partitionBy,
-                    rs.supportsRowIdAccess(),
-                    osz > 0
-            );
-
-            if (f == null) {
-                Misc.free(rs);
-                throw QueryError.$(col.getAst().position, "Unknown function");
-            }
-            CharSequenceIntHashMap orderHash = model.getOrderHash();
-
-            boolean dismissOrder;
-            if (osz > 0 && orderHash.size() > 0) {
-                dismissOrder = true;
-                for (int j = 0; j < osz; j++) {
-                    ExprNode node = col.getOrderBy().getQuick(j);
-                    int direction = col.getOrderByDirection().getQuick(j);
-                    if (orderHash.get(node.token) != direction) {
-                        dismissOrder = false;
-                    }
-                }
-            } else {
-                dismissOrder = false;
-            }
-
-            if (osz > 0 && !dismissOrder) {
-                IntList order = toOrderIndices(metadata, col.getOrderBy(), col.getOrderByDirection());
-                ObjList<AnalyticFunction> funcs = grouppedAnalytic.get(order);
-                if (funcs == null) {
-                    grouppedAnalytic.put(order, funcs = new ObjList<>());
-                }
-                funcs.add(f);
-                needCache = true;
-            } else {
-                if (naturalOrderFunctions == null) {
-                    naturalOrderFunctions = new ObjList<>();
-                }
-                needCache = needCache || f.getType() != AnalyticFunction.STREAM;
-                naturalOrderFunctions.add(f);
-            }
-        }
-
-
-        if (needCache) {
-            final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
-            final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
-            for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
-                analyticComparators.add(cc.compile(metadata, e.key));
-                functionGroups.add(e.value);
-            }
-
-            if (naturalOrderFunctions != null) {
-                analyticComparators.add(null);
-                functionGroups.add(naturalOrderFunctions);
-            }
-
-            if (rs.supportsRowIdAccess()) {
-                return new CachedRowAnalyticRecordSource(
-                        configuration.getDbAnalyticWindowPage(),
-                        rs,
-                        analyticComparators,
-                        functionGroups);
-            }
-
-            return new CachedAnalyticRecordSource(
-                    configuration.getDbAnalyticWindowPage(),
-                    configuration.getDbSortKeyPage(),
-                    rs,
-                    analyticComparators,
-                    functionGroups
-            );
-        } else {
-            return new AnalyticRecordSource(rs, naturalOrderFunctions);
-        }
-*/
-        return null;
     }
 
     private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
