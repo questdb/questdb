@@ -159,7 +159,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                                 long fd = ff.openRO(path);
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                        intValues[1] = Unsafe.getUnsafe().getInt(tempMem);
+                                        intValues[0] = Unsafe.getUnsafe().getInt(tempMem);
                                         if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
                                             foundMetadataFile = true;
                                             columnCount = Unsafe.getUnsafe().getInt(tempMem);
@@ -185,7 +185,6 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                     for (int i = 0; i < columnCount; i++) {
                         if (columnIndex == i) {
                             diskReadingRecord.columnNumber = (short) (i + 1);
-                            intValues[0] = intValues[0] + 1;
                             columnIndex++;
                             if (columnIndex == columnCount) {
                                 readNextFileFromDisk = true;
@@ -203,8 +202,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
             findFileStruct = 0;
             hasNextFile = true;
             foundMetadataFile = false;
-            intValues[0] = 0;
-            intValues[1] = -1;
+            intValues[0] = -1;
             return false;
         }
 
@@ -241,7 +239,6 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("adrelid", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("adnum", ColumnType.SHORT, null));
         metadata.add(new TableColumnMetadata("adbin", ColumnType.STRING, null));
