@@ -48,20 +48,20 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new CursorFunction(
                 position,
-                new ClassCatalogueCursorFactory(configuration, METADATA)
+                new AttrDefCatalogueCursorFactory(configuration, METADATA)
         );
     }
 
-    private static class ClassCatalogueCursorFactory extends AbstractRecordCursorFactory {
+    private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
-        private final ClassCatalogueCursor cursor;
+        private final AttrDefCatalogueCursor cursor;
         private final long tempMem;
 
-        public ClassCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+        public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
             this.tempMem = Unsafe.malloc(Integer.BYTES);
-            this.cursor = new ClassCatalogueCursor(configuration, path, tempMem);
+            this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
         }
 
         @Override
@@ -82,10 +82,10 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ClassCatalogueCursor implements NoRandomAccessRecordCursor {
+    private static class AttrDefCatalogueCursor implements NoRandomAccessRecordCursor {
         private final Path path;
         private final FilesFacade ff;
-        private final ClassCatalogueCursor.DiskReadingRecord diskReadingRecord = new ClassCatalogueCursor.DiskReadingRecord();
+        private final AttrDefCatalogueCursor.DiskReadingRecord diskReadingRecord = new AttrDefCatalogueCursor.DiskReadingRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
         private final int[] intValues = new int[4];
@@ -97,7 +97,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         private boolean hasNextFile = true;
         private boolean foundMetadataFile = false;
 
-        public ClassCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
+        public AttrDefCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
