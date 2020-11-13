@@ -45,7 +45,7 @@ import io.questdb.std.time.DateLocale;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cutlass.pgwire.PGJobContext.*;
+import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.time.DateFormatUtils.PG_DATE_TIME_Z_FORMAT;
 import static io.questdb.std.time.DateFormatUtils.PG_DATE_Z_FORMAT;
 

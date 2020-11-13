@@ -31,7 +31,8 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 
-import static io.questdb.cutlass.pgwire.PGJobContext.PG_TYPE_OIDS;
+import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_OIDS;
+import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_NAME;
 
 class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
@@ -72,7 +73,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public CharSequence getStr(int col) {
-            return "";
+            return PG_TYPE_TO_NAME.get(PG_TYPE_OIDS.get(row));
         }
 
         @Override

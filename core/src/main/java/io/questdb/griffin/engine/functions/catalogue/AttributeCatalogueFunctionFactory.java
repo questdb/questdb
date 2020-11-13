@@ -33,7 +33,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cutlass.pgwire.PGJobContext.TYPE_OIDS;
+import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_INTERNAL_TYPE_MAP;
+import static io.questdb.cutlass.pgwire.PGOids.TYPE_OIDS;
 
 public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
@@ -210,7 +211,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public short getShort(int col) {
-                return col == 2 ? columnNumber : 0;
+                return col == 2 ? columnNumber : col == 6 ? getTypeSize() : 0;
             }
 
             @Override
@@ -241,6 +242,11 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             @Override
             public int getStrLen(int col) {
                 return getStr(col).length();
+            }
+
+            private short getTypeSize() {
+                short size = (short) ColumnType.sizeOf(PG_TYPE_TO_INTERNAL_TYPE_MAP.get(type));
+                return size > 0 ? size : -1;
             }
         }
     }

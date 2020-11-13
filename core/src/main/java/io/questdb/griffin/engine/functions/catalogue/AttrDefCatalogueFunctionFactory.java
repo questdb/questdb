@@ -161,13 +161,13 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
                                         intValues[1] = Unsafe.getUnsafe().getInt(tempMem);
-                                    } else {
-                                        LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                                        ff.close(fd);
-                                    }
-                                    if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
-                                        columnCount = Unsafe.getUnsafe().getInt(tempMem);
-                                        ff.close(fd);
+                                        if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
+                                            columnCount = Unsafe.getUnsafe().getInt(tempMem);
+                                            ff.close(fd);
+                                        } else {
+                                            LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+                                            ff.close(fd);
+                                        }
                                     } else {
                                         LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
                                         ff.close(fd);
