@@ -21,7 +21,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
-// TODO: Implement fine grain locking
 public class SlaveWriterImpl implements SlaveWriter, Closeable {
     private static final Log LOG = LogFactory.getLog(SlaveWriterImpl.class);
     private static final Timestamps.TimestampFloorMethod NO_PARTITIONING_FLOOR = (ts) -> Long.MIN_VALUE;
@@ -38,13 +37,13 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     private Path path = new Path();
     private int pathRootLen;
     private Timestamps.TimestampFloorMethod timestampFloorMethod;
-    private ObjList<ColumnDetails> columns = new ObjList<>();
     private LongObjHashMap<PartitionDetails> partitionByTimestamp = new LongObjHashMap<>();
     private ObjList<PartitionDetails> usedPartitions = new ObjList<>();
     private ObjList<PartitionDetails> partitionCache = new ObjList<>();
     private TableWriter writer;
     private TableBlockWriter blockWriter;
     private final AtomicInteger nRemainingFrames = new AtomicInteger();
+    private volatile PartitionDetails cachedPartition;
 
     public SlaveWriterImpl(CairoConfiguration configuration) {
         root = configuration.getRoot();
@@ -54,6 +53,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     }
 
     public SlaveWriterImpl of(TableWriter writer) {
+        assert usedPartitions.size() == 0; // Expect to be be cleared
         this.writer = writer;
         nRemainingFrames.set(0);
         path.of(root).concat(writer.getName());
@@ -75,23 +75,16 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 break;
         }
 
-        int columnCount = writer.getMetadata().getColumnCount();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            if (columns.size() <= columnIndex) {
-                columns.add(new ColumnDetails());
-            }
-            columns.get(columnIndex).of(columnIndex);
-        }
         return this;
     }
 
     @Override
     public void commit() {
-        lock();
+        lockWriter();
         try {
             blockWriter.commit();
         } finally {
-            unlock();
+            unlockWriter();
         }
     }
 
@@ -113,6 +106,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             blockWriter = null;
             writer.close();
             writer = null;
+            cachedPartition = null;
         }
     }
 
@@ -131,17 +125,12 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     }
 
     @Override
-    public long mapColumnData(long timestamp, int columnIndex, long offset, long size) {
-        return columns.get(columnIndex).mapColumnData(timestamp, offset, size);
-    }
-
-    private void mapColumnData(ColumnDetails column, long timestamp, long offset, long size, long minOffset) {
-        lock();
-        try {
-            getPartitionDetails(timestamp).mapColumnData(column, offset, size, minOffset);
-        } finally {
-            unlock();
+    public long getDataMap(long timestamp, int columnIndex, long offset, long size) {
+        PartitionDetails partition = cachedPartition;
+        if (null == partition || timestamp > partition.timestampHi || timestamp < partition.timestampLo) {
+            partition = getPartitionDetails(timestamp);
         }
+        return partition.getDataMap(timestamp, columnIndex, offset, size);
     }
 
     @Override
@@ -163,29 +152,24 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     }
 
     private void preCommit() {
-        lock();
+        lockWriter();
         try {
             PartitionDetails lastPartition = null;
             usedPartitions.sort(ORDER_PARTITIONS_IN_TIME_COMPARATOR);
-            int columnCount = writer.getMetadata().getColumnCount();
             int nPartitions = usedPartitions.size();
             int nPartition = 0;
             while (nPartition < nPartitions) {
-                PartitionDetails partitionDetails = usedPartitions.getQuick(nPartition++);
-                blockWriter.startPageFrame(partitionDetails.timestampLo);
+                PartitionDetails partition = usedPartitions.getQuick(nPartition++);
+                blockWriter.startPageFrame(partition.timestampLo);
                 boolean isLastPartition = nPartition == nPartitions;
-                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    ColumnDetails columnDetails = columns.getQuick(columnIndex);
-                    long dataFd = isLastPartition ? -1 : partitionDetails.partitionStruct.getColumnDataFd(columnIndex);
-                    blockWriter.appendCompletedPageFrameColumn(columnIndex, columnDetails.writtenSize, partitionDetails.partitionStruct.getColumnMappingStart(columnIndex), dataFd,
-                            partitionDetails.partitionStruct.getColumnMappingSize(columnIndex));
-                }
                 if (isLastPartition) {
-                    partitionDetails.preCommit(true);
-                    lastPartition = partitionDetails;
+                    partition.preCommit(true);
+                    lastPartition = partition;
                 } else {
-                    partitionDetails.preCommit(false);
-                    partitionCache.add(partitionDetails);
+                    LOG.info().$("closing partition [table=").$(writer.getName()).$(", path=").$(path).$(']').$();
+                    partition.preCommit(false);
+                    partition.clear();
+                    partitionCache.add(partition);
                 }
             }
             usedPartitions.clear();
@@ -196,7 +180,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             }
             LOG.info().$("pre-commit complete [table=").$(writer.getName()).$(']').$();
         } finally {
-            unlock();
+            unlockWriter();
         }
     }
 
@@ -217,60 +201,23 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 partitionByTimestamp.put(timestampHi, partitionDetails);
                 usedPartitions.add(partitionDetails);
             }
+            cachedPartition = partitionDetails;
             return partitionDetails;
         } finally {
             path.trimTo(pathRootLen);
         }
     }
 
-    private final AtomicBoolean lock = new AtomicBoolean(false);
+    private final AtomicBoolean writerLock = new AtomicBoolean(false);
 
-    private void lock() {
-        while (!lock.compareAndSet(false, true)) {
+    private void lockWriter() {
+        while (!writerLock.compareAndSet(false, true)) {
             ;
         }
     }
 
-    private void unlock() {
-        lock.set(false);
-    }
-
-    private class ColumnDetails implements Closeable {
-        private int columnIndex;
-        private long openTimestampLo;
-        private long openTimestampHi;
-        private long openMappingStart;
-        private long openMappingOffset;
-        private long openMappingEndOffset;
-        private long writtenMinOffset;;
-        private long writtenSize;;
-
-        private ColumnDetails of(int columnIndex) {
-            this.columnIndex = columnIndex;
-            openMappingOffset = -1;
-            resetWriting();
-            return this;
-        }
-
-        private void resetWriting() {
-            writtenMinOffset = Long.MAX_VALUE;
-            writtenSize = 0;
-        }
-
-        private long mapColumnData(long timestamp, long offset, long size) {
-            if (offset < writtenMinOffset) {
-                writtenMinOffset = offset;
-            }
-            writtenSize += size;
-            if (timestamp > openTimestampHi || timestamp < openTimestampLo || offset < openMappingOffset || (offset + size) > openMappingEndOffset) {
-                SlaveWriterImpl.this.mapColumnData(this, timestamp, offset, size, writtenMinOffset);
-            }
-            return openMappingStart - openMappingOffset + offset;
-        }
-
-        @Override
-        public void close() {
-        }
+    private void unlockWriter() {
+        writerLock.set(false);
     }
 
     private class PartitionDetails implements Closeable {
@@ -278,6 +225,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
         private long timestampLo;
         private long timestampHi;
         private int pathPartitionLen;
+        private ObjList<ColumnDetails> columns = new ObjList<>();
         private final PartitionStruct partitionStruct = new PartitionStruct();
 
         private PartitionDetails of(long timestampLo, long timestampHi, Path path) {
@@ -290,6 +238,14 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
             }
             LOG.info().$("opening partition [table=").$(writer.getName()).$(", path=").$(path).$(']').$();
+
+            int columnCount = writer.getMetadata().getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                if (columns.size() <= columnIndex) {
+                    columns.add(new ColumnDetails(columnIndex));
+                }
+                columns.get(columnIndex).of();
+            }
             return this;
         }
 
@@ -301,6 +257,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                         long mappingSize = partitionStruct.getColumnMappingSize(columnIndex);
                         TableBlockWriter.unmapFile(ff, mappingAddress, mappingSize);
                         ff.close(partitionStruct.getColumnDataFd(columnIndex));
+                        partitionStruct.setColumnMappingStart(columnIndex, 0);
                     }
                 }
                 partitionStruct.clear();
@@ -316,36 +273,8 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             }
         }
 
-        private void mapColumnData(ColumnDetails column, long offset, long size, long minOffset) {
-            long mappingAddress = partitionStruct.getColumnMappingStart(column.columnIndex);
-            long mappingOffset;
-            if (mappingAddress != 0) {
-                mappingOffset = partitionStruct.getColumnMappingStartOffset(column.columnIndex);
-                long mappingSize = partitionStruct.getColumnMappingSize(column.columnIndex);
-                if (mappingOffset <= offset) {
-                    long mappingEnd = mappingOffset + mappingSize;
-                    long requiredEnd = offset + size;
-                    if (requiredEnd <= mappingEnd) {
-                        return;
-                    }
-                }
-                partitionStruct.addAdditionalMapping(mappingAddress, mappingSize);
-            }
-
-            mappingOffset = minOffset;
-            long fd = partitionStruct.getColumnDataFd(column.columnIndex);
-            if (fd == -1) {
-                final CharSequence name = writer.getMetadata().getColumnName(column.columnIndex);
-                fd = TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(pathPartitionLen), name));
-                partitionStruct.setColumnDataFd(column.columnIndex, fd);
-            }
-
-            long mappingSize = pageSize * (size / pageSize + 1);
-            mappingAddress = TableBlockWriter.mapFile(ff, fd, mappingOffset, mappingSize);
-            partitionStruct.setColumnMappingStart(column.columnIndex, mappingAddress);
-            partitionStruct.setColumnMappingSize(column.columnIndex, mappingSize);
-            partitionStruct.setColumnMappingStartOffset(column.columnIndex, mappingOffset);
-            updateColumnDataMapping(column);
+        private long getDataMap(long timestamp, int columnIndex, long offset, long size) {
+            return columns.getQuick(columnIndex).getDataMap(timestamp, offset, size);
         }
 
         private void preCommit(boolean lastPartition) {
@@ -354,24 +283,109 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 TableBlockWriter.unmapFile(ff, partitionStruct.getAdditionalMappingStart(nMapping), partitionStruct.getAdditionalMappingSize(nMapping));
             }
             partitionStruct.clearAdditionalMappings();
-            if (lastPartition) {
-                for (int columnIndex = 0, sz = writer.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
-                    ColumnDetails column = columns.getQuick(columnIndex);
-                    updateColumnDataMapping(column);
+            for (int columnIndex = 0, sz = writer.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
+                ColumnDetails column = columns.getQuick(columnIndex);
+                long dataFd = lastPartition ? -1 : partitionStruct.getColumnDataFd(columnIndex);
+                blockWriter.appendCompletedPageFrameColumn(columnIndex, column.writtenSize, partitionStruct.getColumnMappingStart(columnIndex), dataFd,
+                        partitionStruct.getColumnMappingSize(columnIndex));
+                if (lastPartition) {
+                    column.updateColumnDataMapping();
                     column.resetWriting();
+                } else {
+                    // Mappings and file descriptors will be closed by the block writer on commit
+                    partitionStruct.setColumnMappingStart(columnIndex, 0);
                 }
-            } else {
-                LOG.info().$("closing partition [table=").$(writer.getName()).$(", path=").$(path).$(']').$();
-                clear();
             }
         }
 
-        private void updateColumnDataMapping(ColumnDetails column) {
-            column.openTimestampLo = timestampLo;
-            column.openTimestampHi = timestampHi;
-            column.openMappingStart = partitionStruct.getColumnMappingStart(column.columnIndex);
-            column.openMappingOffset = partitionStruct.getColumnMappingStartOffset(column.columnIndex);
-            column.openMappingEndOffset = column.openMappingOffset + partitionStruct.getColumnMappingSize(column.columnIndex);
+        private final AtomicBoolean partitionLock = new AtomicBoolean(false);
+
+        private void lockPartition() {
+            while (!partitionLock.compareAndSet(false, true)) {
+                ;
+            }
+        }
+
+        private void unlockPartition() {
+            partitionLock.set(false);
+        }
+
+        private class ColumnDetails {
+            private final int columnIndex;
+            private long openMappingStart;
+            private long openMappingOffset;
+            private long openMappingEndOffset;
+            private long writtenMinOffset;;
+            private long writtenSize;
+
+            private ColumnDetails(int columnIndex) {
+                this.columnIndex = columnIndex;
+            }
+
+            private ColumnDetails of() {
+                openMappingOffset = -1;
+                resetWriting();
+                return this;
+            }
+
+            private void resetWriting() {
+                writtenMinOffset = Long.MAX_VALUE;
+                writtenSize = 0;
+            }
+
+            private long getDataMap(long timestamp, long offset, long size) {
+                if (offset < writtenMinOffset) {
+                    writtenMinOffset = offset;
+                }
+                writtenSize += size;
+                if (offset < openMappingOffset || (offset + size) > openMappingEndOffset) {
+                    mapColumnData(offset, size, writtenMinOffset);
+                }
+                return openMappingStart - openMappingOffset + offset;
+            }
+
+            private void mapColumnData(long offset, long size, long minOffset) {
+                long mappingAddress = partitionStruct.getColumnMappingStart(columnIndex);
+                long mappingOffset;
+                if (mappingAddress != 0) {
+                    mappingOffset = partitionStruct.getColumnMappingStartOffset(columnIndex);
+                    long mappingSize = partitionStruct.getColumnMappingSize(columnIndex);
+                    if (mappingOffset <= offset) {
+                        long mappingEnd = mappingOffset + mappingSize;
+                        long requiredEnd = offset + size;
+                        if (requiredEnd <= mappingEnd) {
+                            return;
+                        }
+                    }
+                    lockPartition();
+                    try {
+                        partitionStruct.addAdditionalMapping(mappingAddress, mappingSize);
+                    } finally {
+                        unlockPartition();
+                    }
+                }
+
+                mappingOffset = minOffset;
+                long fd = partitionStruct.getColumnDataFd(columnIndex);
+                if (fd == -1) {
+                    final CharSequence name = writer.getMetadata().getColumnName(columnIndex);
+                    fd = TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(pathPartitionLen), name));
+                    partitionStruct.setColumnDataFd(columnIndex, fd);
+                }
+
+                long mappingSize = pageSize * (size / pageSize + 1);
+                mappingAddress = TableBlockWriter.mapFile(ff, fd, mappingOffset, mappingSize);
+                partitionStruct.setColumnMappingStart(columnIndex, mappingAddress);
+                partitionStruct.setColumnMappingSize(columnIndex, mappingSize);
+                partitionStruct.setColumnMappingStartOffset(columnIndex, mappingOffset);
+                updateColumnDataMapping();
+            }
+
+            private void updateColumnDataMapping() {
+                openMappingStart = partitionStruct.getColumnMappingStart(columnIndex);
+                openMappingOffset = partitionStruct.getColumnMappingStartOffset(columnIndex);
+                openMappingEndOffset = openMappingOffset + partitionStruct.getColumnMappingSize(columnIndex);
+            }
         }
     }
 

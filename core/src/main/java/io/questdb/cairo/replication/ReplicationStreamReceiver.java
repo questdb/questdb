@@ -167,7 +167,7 @@ public class ReplicationStreamReceiver implements Closeable {
         dataFrameColumnIndex = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_COLUMN_INDEX);
         dataFrameColumnOffset = Unsafe.getUnsafe().getLong(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_DATA_OFFSET);
 
-        frameMappingAddress = slaveWriter.mapColumnData(frameFirstTimestamp, dataFrameColumnIndex, dataFrameColumnOffset, frameDataNBytesRemaining);
+        frameMappingAddress = slaveWriter.getDataMap(frameFirstTimestamp, dataFrameColumnIndex, dataFrameColumnOffset, frameDataNBytesRemaining);
         frameMappingSize = frameDataNBytesRemaining;
         frameMappingOffset = 0;
     }

@@ -81,13 +81,26 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple1() throws Exception {
-        runTest("testSimple", () -> {
+        runTest("testSimple1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testPartitioned1() throws Exception {
+        runTest("testPartitioned1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(100)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY;",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 0, Long.MAX_VALUE);
             engine.releaseInactive();
         });
     }

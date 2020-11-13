@@ -24,7 +24,6 @@ public class ReplicationStreamGenerator implements Closeable {
     private PageFrame sourceFrame;
     private int atColumnIndex;
     private int nFrames;
-    private int nThread;
 
     public ReplicationStreamGenerator(CairoConfiguration configuration) {
     }
@@ -36,7 +35,7 @@ public class ReplicationStreamGenerator implements Closeable {
         this.cursor = cursor;
         this.metaData = metaData;
         this.nFrames = 0;
-        nThread = 0;
+        this.atColumnIndex = 0;
         columnCount = metaData.getColumnCount();
 
         while (resultByThread.size() < nConsumerThreads) {
@@ -48,14 +47,12 @@ public class ReplicationStreamGenerator implements Closeable {
     }
 
     public ReplicationStreamGeneratorResult nextDataFrame() {
-        ReplicationStreamGeneratorResult result = resultByThread.get(nThread % nConsumerThreads);
+        ReplicationStreamGeneratorResult result = resultByThread.get(atColumnIndex % nConsumerThreads);
         ReplicationStreamGeneratorFrame frame = result.getFrame();
         if (frame.isReady()) {
             if (null != sourceFrame) {
-                nThread++;
                 generateDataFrame(frame);
             } else {
-                nThread = 0;
                 sourceFrame = cursor.next();
                 if (null != sourceFrame) {
                     atColumnIndex = 0;
@@ -75,10 +72,9 @@ public class ReplicationStreamGenerator implements Closeable {
     }
 
     public ReplicationStreamGeneratorResult generateCommitBlockFrame() {
-        ReplicationStreamGeneratorResult result = resultByThread.get(nThread % nConsumerThreads);
+        ReplicationStreamGeneratorResult result = resultByThread.get(atColumnIndex % nConsumerThreads);
         ReplicationStreamGeneratorFrame frame = result.getFrame();
         if (frame.isReady()) {
-            nThread = 0;
             frame.frameDataSize = 0;
             frame.frameDataAddress = 0;
             frame.frameHeaderSize = TableReplicationStreamHeaderSupport.CB_HEADER_SIZE;

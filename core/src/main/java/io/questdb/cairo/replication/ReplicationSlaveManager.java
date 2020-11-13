@@ -8,7 +8,7 @@ public interface ReplicationSlaveManager {
     void releaseSlaveWriter(int masterTableId, SlaveWriter slaveWriter);
 
     public interface SlaveWriter extends Closeable {
-        long mapColumnData(long timestamp, int columnIndex, long offset, long size);
+        long getDataMap(long timestamp, int columnIndex, long offset, long size);
 
         boolean completeFrame();
 
