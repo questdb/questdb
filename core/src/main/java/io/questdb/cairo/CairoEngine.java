@@ -332,7 +332,7 @@ public class CairoEngine implements Closeable {
             }
         } else {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
-            throw CairoException.instance(0).put("Cannot lock [table=").put(tableName).put(']');
+            throw EntryUnavailableException.INSTANCE.put("Cannot lock [table=").put(tableName).put(']');
         }
     }
 

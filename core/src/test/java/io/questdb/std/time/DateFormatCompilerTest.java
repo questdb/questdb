@@ -628,7 +628,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testTimeZone1() throws Exception {
-        assertThat("dd-MM-yy HH:m z", "2010-09-03T22:54:00.000Z", "03-09-10 14:54 PST");
+        assertThat("dd-MM-yy HH:m z", "2010-09-03T11:54:00.000Z", "03-09-10 14:54 EAT");
     }
 
     @Test
