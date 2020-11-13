@@ -38,17 +38,17 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
 
     @Test
     public void testFailToReadInt_TableIdOfFirstTable() throws Exception {
-        String expected = "oid\tadrelid\tadnum\tadbin\n" +
-                "1\t2\t1\t\n" +
-                "2\t2\t2\t\n" +
-                "3\t2\t3\t\n" +
-                "4\t2\t4\t\n" +
-                "5\t2\t5\t\n" +
-                "6\t2\t1\t\n" +
-                "7\t2\t2\t\n" +
-                "8\t2\t3\t\n" +
-                "9\t2\t4\t\n" +
-                "10\t2\t5\t\n";
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(1, expected);
     }
@@ -56,34 +56,34 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
 
     @Test
     public void testFailToReadInt_ColumnCountOfFirstTable() throws Exception {
-        String expected = "oid\tadrelid\tadnum\tadbin\n" +
-                "1\t2\t1\t\n" +
-                "2\t2\t2\t\n" +
-                "3\t2\t3\t\n" +
-                "4\t2\t4\t\n" +
-                "5\t2\t5\t\n" +
-                "6\t2\t1\t\n" +
-                "7\t2\t2\t\n" +
-                "8\t2\t3\t\n" +
-                "9\t2\t4\t\n" +
-                "10\t2\t5\t\n";
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(2, expected);
     }
 
     @Test
     public void testFailToReadInt_TableIdOfSecondTable() throws Exception {
-        String expected = "oid\tadrelid\tadnum\tadbin\n" +
-                "1\t2\t1\t\n" +
-                "2\t2\t2\t\n" +
-                "3\t2\t3\t\n" +
-                "4\t2\t4\t\n" +
-                "5\t2\t5\t\n" +
-                "6\t2\t1\t\n" +
-                "7\t2\t2\t\n" +
-                "8\t2\t3\t\n" +
-                "9\t2\t4\t\n" +
-                "10\t2\t5\t\n";
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(3, expected);
     }
@@ -91,51 +91,51 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
 
     @Test
     public void testFailToReadInt_ColumnCountOfSecondTable() throws Exception {
-        String expected = "oid\tadrelid\tadnum\tadbin\n" +
-                "1\t2\t1\t\n" +
-                "2\t2\t2\t\n" +
-                "3\t2\t3\t\n" +
-                "4\t2\t4\t\n" +
-                "5\t2\t5\t\n" +
-                "6\t2\t1\t\n" +
-                "7\t2\t2\t\n" +
-                "8\t2\t3\t\n" +
-                "9\t2\t4\t\n" +
-                "10\t2\t5\t\n";
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(4, expected);
     }
 
     @Test
     public void testFailToReadInt_TableIdOfThirdTable() throws Exception {
-        String expected = "oid\tadrelid\tadnum\tadbin\n" +
-                "1\t2\t1\t\n" +
-                "2\t2\t2\t\n" +
-                "3\t2\t3\t\n" +
-                "4\t2\t4\t\n" +
-                "5\t2\t5\t\n" +
-                "6\t2\t1\t\n" +
-                "7\t2\t2\t\n" +
-                "8\t2\t3\t\n" +
-                "9\t2\t4\t\n" +
-                "10\t2\t5\t\n";
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(5, expected);
     }
 
     @Test
     public void testFailToReadInt_ColumnCountOfThirdTable() throws Exception {
-        String expected = "oid\tadrelid\tadnum\tadbin\n" +
-                "1\t2\t1\t\n" +
-                "2\t2\t2\t\n" +
-                "3\t2\t3\t\n" +
-                "4\t2\t4\t\n" +
-                "5\t2\t5\t\n" +
-                "6\t2\t1\t\n" +
-                "7\t2\t2\t\n" +
-                "8\t2\t3\t\n" +
-                "9\t2\t4\t\n" +
-                "10\t2\t5\t\n";
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
 
         testFailOnRead(6, expected);
     }
@@ -278,7 +278,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
 
         assertQuery(
                 expected,
-                "pg_catalog.pg_attrdef order by 1, 2, 3;",
+                "pg_catalog.pg_attrdef order by 1",
                 null,
                 null,
                 true,

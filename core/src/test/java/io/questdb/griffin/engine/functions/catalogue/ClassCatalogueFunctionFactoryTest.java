@@ -338,7 +338,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                         "pg_class\t11\tr\t0\t1259\n" +
                         "x\t2200\tr\t0\t1\n" +
                         "y\t2200\tr\t0\t2\n",
-                false,
+                true,
                 false,
                 false
         );
