@@ -42,4 +42,9 @@ public class PrefixedDescriptionCatalogueFunctionFactory implements FunctionFact
                 new DescriptionCatalogueFunctionFactory.DescriptionCatalogueCursorFactory(configuration, DescriptionCatalogueFunctionFactory.METADATA)
         );
     }
+
+    @Override
+    public boolean isCursor() {
+        return true;
+    }
 }
