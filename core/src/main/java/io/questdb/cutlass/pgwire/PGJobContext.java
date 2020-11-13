@@ -51,7 +51,8 @@ public class PGJobContext implements Closeable {
     public static final int PG_DATE = 1082;
     public static final int PG_BYTEA = 17;
     public static final int PG_UNSPECIFIED = 0;
-    public static final IntList typeOids = new IntList();
+    public static final IntList TYPE_OIDS = new IntList();
+    public static final IntHashSet PG_TYPE_OIDS = new IntHashSet();
     private final SqlCompiler compiler;
     private final AssociativeCache<Object> factoryCache;
     private final CharSequenceObjHashMap<PGConnectionContext.NamedStatementWrapper> namedStatementMap;
@@ -81,19 +82,22 @@ public class PGJobContext implements Closeable {
     }
 
     static {
-        typeOids.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        typeOids.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
-        typeOids.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
-        typeOids.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
-        typeOids.extendAndSet(ColumnType.INT, PG_INT4); // INT4
-        typeOids.extendAndSet(ColumnType.SHORT, PG_INT2); // INT2
-        typeOids.extendAndSet(ColumnType.CHAR, PG_CHAR);
-        typeOids.extendAndSet(ColumnType.SYMBOL, PG_VARCHAR); // NAME
-        typeOids.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
-        typeOids.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
-        typeOids.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        typeOids.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
-        typeOids.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
-        typeOids.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
+        TYPE_OIDS.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
+        TYPE_OIDS.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
+        TYPE_OIDS.extendAndSet(ColumnType.INT, PG_INT4); // INT4
+        TYPE_OIDS.extendAndSet(ColumnType.SHORT, PG_INT2); // INT2
+        TYPE_OIDS.extendAndSet(ColumnType.CHAR, PG_CHAR);
+        TYPE_OIDS.extendAndSet(ColumnType.SYMBOL, PG_VARCHAR); // NAME
+        TYPE_OIDS.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
+        TYPE_OIDS.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
+        TYPE_OIDS.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
+        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
+        TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
+        TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
+        for (int i = 0, n = TYPE_OIDS.size(); i < n; i++) {
+            PG_TYPE_OIDS.add(TYPE_OIDS.getQuick(i));
+        }
     }
 }

@@ -31,11 +31,11 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 
-import static io.questdb.cutlass.pgwire.PGJobContext.typeOids;
+import static io.questdb.cutlass.pgwire.PGJobContext.PG_TYPE_OIDS;
 
 class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
-    private static final int rowCount = typeOids.size();
+    private static final int rowCount = PG_TYPE_OIDS.size();
     private final TypeCatalogueRecord record = new TypeCatalogueRecord();
     private int row = -1;
 
@@ -67,22 +67,22 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     private class TypeCatalogueRecord implements Record {
         @Override
         public int getInt(int col) {
-            return col == 0 ? typeOids.getQuick(row) : col == 4 ? PgOIDs.PG_PUBLIC_OID : 0;
+            return col == 0 ? PG_TYPE_OIDS.get(row) : col == 4 ? PgOIDs.PG_PUBLIC_OID : 0;
         }
 
         @Override
         public CharSequence getStr(int col) {
-            return ColumnType.nameOf(row);
+            return "";
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return ColumnType.nameOf(row);
+            return getStr(col);
         }
 
         @Override
         public int getStrLen(int col) {
-            return ColumnType.nameOf(row).length();
+            return getStr(col).length();
         }
 
         @Override

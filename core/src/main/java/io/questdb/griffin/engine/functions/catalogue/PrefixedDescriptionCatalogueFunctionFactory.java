@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import io.questdb.std.ObjList;
 
 public class PrefixedDescriptionCatalogueFunctionFactory implements FunctionFactory {
@@ -40,11 +39,7 @@ public class PrefixedDescriptionCatalogueFunctionFactory implements FunctionFact
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new CursorFunction(
                 position,
-                new GenericRecordCursorFactory(
-                        DescriptionCatalogueCursor.METADATA,
-                        new DescriptionCatalogueCursor(),
-                        false
-                )
+                new DescriptionCatalogueFunctionFactory.DescriptionCatalogueCursorFactory(configuration, DescriptionCatalogueFunctionFactory.METADATA)
         );
     }
 }

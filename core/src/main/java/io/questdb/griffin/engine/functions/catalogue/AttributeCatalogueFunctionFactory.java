@@ -33,7 +33,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cutlass.pgwire.PGJobContext.typeOids;
+import static io.questdb.cutlass.pgwire.PGJobContext.TYPE_OIDS;
 
 public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
@@ -177,7 +177,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                     for (int i = 0; i < columnCount; i++) {
                         CharSequence name = metaMem.getStr(offset);
                         if (columnIndex == i) {
-                            diskReadingRecord.type = typeOids.get(TableUtils.getColumnType(metaMem, i));
+                            diskReadingRecord.type = TYPE_OIDS.get(TableUtils.getColumnType(metaMem, i));
                             diskReadingRecord.name = name;
                             diskReadingRecord.columnNumber = (short) (i + 1);
                             diskReadingRecord.tableId = tableId;

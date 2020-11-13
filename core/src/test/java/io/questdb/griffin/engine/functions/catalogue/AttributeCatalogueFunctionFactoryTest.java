@@ -305,13 +305,14 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 "        c.relkind in ('r','p','v','f','m') \n" +
                 "        and a.attnum > 0 \n" +
                 "        AND NOT a.attisdropped  \n" +
-                "        AND c.relname LIKE E'quickstart-events2'\n" +
+                " --       AND c.relname LIKE E'x'\n" +
                 "    ) c \n" +
                 "WHERE true  \n" +
                 "ORDER BY nspname,c.relname --,attnum";
 
         assertQuery(
-                "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n",
+                "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
+                        "public\tx\ta\t23\tfalse\t0\t0\t0\t\t\tcolumn\t0\tb\n",
                 query,
                 "create table x(a int)",
                 null,

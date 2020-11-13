@@ -33,20 +33,17 @@ public class TypeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testPgTypeFunc() throws Exception {
         assertQuery(
                 "oid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\n" +
-                        "16\tBOOLEAN\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "21\tBYTE\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "21\tSHORT\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "18\tCHAR\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "23\tINT\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "20\tLONG\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1114\tDATE\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "700\tFLOAT\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "701\tDOUBLE\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1043\tSTRING\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1043\tSYMBOL\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1700\tLONG256\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "17\tBINARY\t0\t0\t2200\tfalse\t0\tb\n",
+                        "16\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "21\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "18\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "23\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "20\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "1114\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "700\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "701\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "1043\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "1700\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "17\t\t0\t0\t2200\tfalse\t0\tb\n",
                 "pg_type;",
                 "create table x(a int)",
                 null,
@@ -60,20 +57,17 @@ public class TypeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testPrefixedPgTypeFunc() throws Exception {
         assertQuery(
                 "oid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\n" +
-                        "16\tBOOLEAN\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "21\tBYTE\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "21\tSHORT\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "18\tCHAR\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "23\tINT\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "20\tLONG\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1114\tDATE\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "700\tFLOAT\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "701\tDOUBLE\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1043\tSTRING\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1043\tSYMBOL\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1700\tLONG256\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "17\tBINARY\t0\t0\t2200\tfalse\t0\tb\n",
+                        "16\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "21\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "18\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "23\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "20\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "1114\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "700\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "701\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "1043\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "1700\t\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "17\t\t0\t0\t2200\tfalse\t0\tb\n",
                 "pg_catalog.pg_type;",
                 "create table x(a int)",
                 null,

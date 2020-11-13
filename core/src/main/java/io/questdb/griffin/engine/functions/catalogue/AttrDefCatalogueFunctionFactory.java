@@ -24,14 +24,22 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import io.questdb.std.ObjList;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.Path;
 
 public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
+
+    private static final Log LOG = LogFactory.getLog(DescriptionCatalogueFunctionFactory.class);
+    static final RecordMetadata METADATA;
+
     @Override
     public String getSignature() {
         return "pg_catalog.pg_attrdef()";
@@ -40,11 +48,203 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new CursorFunction(
                 position,
-                new GenericRecordCursorFactory(
-                        AttrDefCatalogueCursor.METADATA,
-                        new AttrDefCatalogueCursor(),
-                        false
-                )
+                new ClassCatalogueCursorFactory(configuration, METADATA)
         );
+    }
+
+    private static class ClassCatalogueCursorFactory extends AbstractRecordCursorFactory {
+
+        private final Path path = new Path();
+        private final ClassCatalogueCursor cursor;
+        private final long tempMem;
+
+        public ClassCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+            super(metadata);
+            this.tempMem = Unsafe.malloc(Integer.BYTES);
+            this.cursor = new ClassCatalogueCursor(configuration, path, tempMem);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(path);
+            Unsafe.free(tempMem, Integer.BYTES);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            cursor.toTop();
+            return cursor;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+    }
+
+    private static class ClassCatalogueCursor implements NoRandomAccessRecordCursor {
+        private final Path path;
+        private final FilesFacade ff;
+        private final ClassCatalogueCursor.DiskReadingRecord diskReadingRecord = new ClassCatalogueCursor.DiskReadingRecord();
+        private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+        private final int plimit;
+        private final int[] intValues = new int[4];
+        private final long tempMem;
+        private long findFileStruct = 0;
+        private int columnIndex = 0;
+        private boolean readNextFileFromDisk = true;
+        private int columnCount;
+        private boolean hasNextFile = true;
+        private boolean foundMetadataFile = false;
+
+        public ClassCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
+            this.ff = configuration.getFilesFacade();
+            this.path = path;
+            this.path.of(configuration.getRoot()).$();
+            this.plimit = this.path.length();
+            this.tempMem = tempMem;
+        }
+
+        @Override
+        public void close() {
+            if (findFileStruct != 0) {
+                ff.findClose(findFileStruct);
+                findFileStruct = 0;
+            }
+        }
+
+        @Override
+        public Record getRecord() {
+            return diskReadingRecord;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (findFileStruct == 0) {
+                findFileStruct = ff.findFirst(path.trimTo(plimit).$());
+                if (findFileStruct > 0) {
+                    return next0();
+                }
+
+                findFileStruct = 0;
+                return false;
+            }
+
+            return next0();
+        }
+
+        @Override
+        public void toTop() {
+            if (findFileStruct != 0) {
+                ff.findClose(findFileStruct);
+                findFileStruct = 0;
+            }
+        }
+
+        @Override
+        public long size() {
+            return -1;
+        }
+
+        private boolean next0() {
+            do {
+                if (readNextFileFromDisk) {
+                    foundMetadataFile = false;
+                    final long pname = ff.findName(findFileStruct);
+                    if (hasNextFile) {
+                        nativeLPSZ.of(pname);
+                        if (ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(nativeLPSZ)) {
+                            path.trimTo(plimit);
+                            if (ff.exists(path.concat(pname).concat(TableUtils.META_FILE_NAME).$())) {
+                                foundMetadataFile = true;
+                                long fd = ff.openRO(path);
+                                if (fd > -1) {
+                                    if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
+                                        intValues[1] = Unsafe.getUnsafe().getInt(tempMem);
+                                    } else {
+                                        LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+                                        ff.close(fd);
+                                    }
+                                    if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
+                                        columnCount = Unsafe.getUnsafe().getInt(tempMem);
+                                        ff.close(fd);
+                                    } else {
+                                        LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+                                        ff.close(fd);
+                                    }
+                                } else {
+                                    LOG.error().$("could not read metadata [file=").$(path).$(']').$();
+                                }
+                            }
+                        }
+                        hasNextFile = ff.findNext(findFileStruct) > 0;
+                    }
+                }
+
+                if (foundMetadataFile) {
+                    for (int i = 0; i < columnCount; i++) {
+                        if (columnIndex == i) {
+                            diskReadingRecord.columnNumber = (short) (i + 1);
+                            intValues[0] = intValues[0] + 1;
+                            columnIndex++;
+                            if (columnIndex == columnCount) {
+                                readNextFileFromDisk = true;
+                                columnIndex = 0;
+                            } else {
+                                readNextFileFromDisk = false;
+                            }
+                            return true;
+                        }
+                    }
+                }
+            } while (hasNextFile);
+
+            ff.findClose(findFileStruct);
+            findFileStruct = 0;
+            hasNextFile = true;
+            foundMetadataFile = false;
+            intValues[0] = 0;
+            intValues[1] = -1;
+            return false;
+        }
+
+        private class DiskReadingRecord implements Record {
+
+            public short columnNumber = 0;
+
+            @Override
+            public int getInt(int col) {
+                return intValues[col];
+            }
+
+            @Override
+            public short getShort(int col) {
+                return columnNumber;
+            }
+
+            @Override
+            public CharSequence getStr(int col) {
+                return "";
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return getStr(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return getStr(col).length();
+            }
+        }
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("adrelid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("adnum", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("adbin", ColumnType.STRING, null));
+        METADATA = metadata;
     }
 }

@@ -38,7 +38,40 @@ public class AttrDefCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 false,
                 false,
-                true
+                false
+        );
+    }
+
+    @Test
+    public void testPgAttrDefFuncWithOneTable() throws Exception {
+        assertQuery(
+                "oid\tadrelid\tadnum\tadbin\n" +
+                        "1\t1\t1\t\n",
+                "pg_catalog.pg_attrdef;",
+                "create table x(a int)",
+                null,
+                false,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testPgAttrDefFuncWith2Tables() throws Exception {
+        assertQuery(
+                "oid\tadrelid\tadnum\tadbin\n" +
+                        "1\t1\t1\t\n",
+                "pg_catalog.pg_attrdef order by 1;",
+                "create table x(a int)",
+                null,
+                "create table y(a double, b string)",
+                "oid\tadrelid\tadnum\tadbin\n" +
+                        "1\t1\t1\t\n" +
+                        "2\t2\t1\t\n" +
+                        "3\t2\t2\t\n",
+                true,
+                false,
+                false
         );
     }
 }
