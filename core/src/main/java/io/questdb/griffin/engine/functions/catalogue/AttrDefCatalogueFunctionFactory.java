@@ -156,16 +156,16 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                         if (ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(nativeLPSZ)) {
                             path.trimTo(plimit);
                             if (ff.exists(path.concat(pname).concat(TableUtils.META_FILE_NAME).$())) {
-                                foundMetadataFile = true;
                                 long fd = ff.openRO(path);
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
                                         intValues[1] = Unsafe.getUnsafe().getInt(tempMem);
                                         if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
+                                            foundMetadataFile = true;
                                             columnCount = Unsafe.getUnsafe().getInt(tempMem);
                                             ff.close(fd);
                                         } else {
-                                            LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+                                            LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
                                             ff.close(fd);
                                         }
                                     } else {

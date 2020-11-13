@@ -323,4 +323,24 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 false
         );
     }
+
+    @Test
+    public void testPgClassTwoTables() throws Exception {
+        assertQuery(
+                "relname\trelnamespace\trelkind\trelowner\toid\n" +
+                        "pg_class\t11\tr\t0\t1259\n" +
+                        "x\t2200\tr\t0\t1\n",
+                "pg_catalog.pg_class",
+                "create table x(a int)",
+                null,
+                "create table y(a int)",
+                "relname\trelnamespace\trelkind\trelowner\toid\n" +
+                        "pg_class\t11\tr\t0\t1259\n" +
+                        "x\t2200\tr\t0\t1\n" +
+                        "y\t2200\tr\t0\t2\n",
+                false,
+                false,
+                false
+        );
+    }
 }
