@@ -24,27 +24,11 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.ObjList;
+public class PrefixedDescriptionCatalogueFunctionFactory extends DescriptionCatalogueFunctionFactory {
 
-public class PrefixedDescriptionCatalogueFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "pg_catalog.pg_description()";
     }
 
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new CursorFunction(
-                position,
-                new DescriptionCatalogueFunctionFactory.DescriptionCatalogueCursorFactory(configuration, DescriptionCatalogueFunctionFactory.METADATA)
-        );
-    }
-
-    @Override
-    public boolean isCursor() {
-        return true;
-    }
 }

@@ -61,7 +61,7 @@ public class AttrDefCatalogueFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "oid\tadrelid\tadnum\tadbin\n" +
                         "1\t1\t1\t\n",
-                "pg_catalog.pg_attrdef order by 1;",
+                "pg_catalog.pg_attrdef order by 1, 2, 3;",
                 "create table x(a int)",
                 null,
                 "create table y(a double, b string)",
