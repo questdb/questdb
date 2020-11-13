@@ -39,25 +39,24 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
     }
 
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
-        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-            to.add(new TableColumnMetadata(
-                    from.getColumnName(i),
-                    from.getColumnType(i),
-                    from.isColumnIndexed(i),
-                    from.getIndexValueBlockCapacity(i),
-                    from.isSymbolTableStatic(i),
-                    GenericRecordMetadata.copyOf(from.getMetadata(i))
-            ));
-        }
-    }
+        if (from instanceof GenericRecordMetadata) {
+            final GenericRecordMetadata gm = (GenericRecordMetadata) from;
+            for (int i = 0, n = gm.getColumnCount(); i < n; i++) {
+                to.add(gm.getColumnQuick(i));
+            }
 
-    @Override
-    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-        final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
-        if (index < 0) {
-            return columnNameIndexMap.valueAt(index);
+        } else {
+            for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+                to.add(new TableColumnMetadata(
+                        from.getColumnName(i),
+                        from.getColumnType(i),
+                        from.isColumnIndexed(i),
+                        from.getIndexValueBlockCapacity(i),
+                        from.isSymbolTableStatic(i),
+                        GenericRecordMetadata.copyOf(from.getMetadata(i))
+                ));
+            }
         }
-        return -1;
     }
 
     public static GenericRecordMetadata copyOf(RecordMetadata that) {
@@ -110,6 +109,15 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         columnNameIndexMap.clear();
         columnCount = 0;
         timestampIndex = -1;
+    }
+
+    @Override
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+        final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
+        if (index < 0) {
+            return columnNameIndexMap.valueAt(index);
+        }
+        return -1;
     }
 
     public void setTimestampIndex(int index) {

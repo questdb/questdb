@@ -23,56 +23,20 @@
 
 package io.questdb.griffin.engine.analytic;
 
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.str.CharSink;
 
-public interface AnalyticFunction {
+public interface AnalyticFunction extends Function {
     int STREAM = 1;
     int TWO_PASS = 2;
     int THREE_PASS = 3;
 
     void add(Record record);
 
-    byte get();
-
-    boolean getBool();
-
-    long getDate();
-
-    double getDouble();
-
-    float getFloat();
-
-    CharSequence getStr();
-
-    CharSequence getStrB();
-
-    int getInt();
-
-    long getLong();
-
-    TableColumnMetadata getMetadata();
-
-    short getShort();
-
-    void getStr(CharSink sink);
-
-    int getStrLen();
-
-    String getSym();
-
-    SymbolTable getSymbolTable();
-
-    int getType();
-
     void prepare(RecordCursor cursor);
 
     void prepareFor(Record record);
 
     void reset();
-
-    void toTop();
 }

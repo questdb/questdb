@@ -57,37 +57,37 @@ public class AnalyticRecord implements Record {
 
     @Override
     public boolean getBool(int col) {
-        return col < split ? base.getBool(col) : functions.getQuick(col - split).getBool();
+        return col < split ? base.getBool(col) : functions.getQuick(col - split).getBool(base);
     }
 
     @Override
     public byte getByte(int col) {
-        return col < split ? base.getByte(col) : functions.getQuick(col - split).get();
+        return col < split ? base.getByte(col) : functions.getQuick(col - split).getByte(base);
     }
 
     @Override
     public long getDate(int col) {
-        return col < split ? base.getDate(col) : functions.getQuick(col - split).getDate();
+        return col < split ? base.getDate(col) : functions.getQuick(col - split).getDate(base);
     }
 
     @Override
     public double getDouble(int col) {
-        return col < split ? base.getDouble(col) : functions.getQuick(col - split).getDouble();
+        return col < split ? base.getDouble(col) : functions.getQuick(col - split).getDouble(base);
     }
 
     @Override
     public float getFloat(int col) {
-        return col < split ? base.getFloat(col) : functions.getQuick(col - split).getFloat();
+        return col < split ? base.getFloat(col) : functions.getQuick(col - split).getFloat(base);
     }
 
     @Override
     public int getInt(int col) {
-        return col < split ? base.getInt(col) : functions.getQuick(col - split).getInt();
+        return col < split ? base.getInt(col) : functions.getQuick(col - split).getInt(base);
     }
 
     @Override
     public long getLong(int col) {
-        return col < split ? base.getLong(col) : functions.getQuick(col - split).getLong();
+        return col < split ? base.getLong(col) : functions.getQuick(col - split).getLong(base);
     }
 
     @Override
@@ -97,12 +97,12 @@ public class AnalyticRecord implements Record {
 
     @Override
     public short getShort(int col) {
-        return col < split ? base.getShort(col) : functions.getQuick(col - split).getShort();
+        return col < split ? base.getShort(col) : functions.getQuick(col - split).getShort(base);
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return col < split ? base.getStr(col) : functions.getQuick(col - split).getStr();
+        return col < split ? base.getStr(col) : functions.getQuick(col - split).getStr(base);
     }
 
     @Override
@@ -110,23 +110,23 @@ public class AnalyticRecord implements Record {
         if (col < split) {
             base.getStr(col, sink);
         } else {
-            functions.getQuick(col - split).getStr(sink);
+            functions.getQuick(col - split).getStr(base, sink);
         }
     }
 
     @Override
     public CharSequence getStrB(int col) {
-        return col < split ? base.getStrB(col) : functions.getQuick(col - split).getStrB();
+        return col < split ? base.getStrB(col) : functions.getQuick(col - split).getStrB(base);
     }
 
     @Override
     public int getStrLen(int col) {
-        return col < split ? base.getStrLen(col) : functions.getQuick(col - split).getStrLen();
+        return col < split ? base.getStrLen(col) : functions.getQuick(col - split).getStrLen(base);
     }
 
     @Override
     public CharSequence getSym(int col) {
-        return col < split ? base.getSym(col) : functions.getQuick(col - split).getSym();
+        return col < split ? base.getSym(col) : functions.getQuick(col - split).getSymbol(base);
     }
 
     public void of(Record base) {

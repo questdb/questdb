@@ -1555,6 +1555,124 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
+    private RecordCursorFactory compileAnalytic(QueryModel model, SqlExecutionContext executionContext) {
+/*
+        final int n = analyticColumns.size();
+        grouppedAnalytic.clear();
+        final RecordMetadata metadata = rs.getMetadata();
+        ObjList<AnalyticFunction> naturalOrderFunctions = null;
+        boolean needCache = false;
+
+        for (int i = 0; i < n; i++) {
+            AnalyticColumn col = analyticColumns.getQuick(i);
+
+            ObjList<VirtualColumn> partitionBy = null;
+            int psz = col.getPartitionBy().size();
+            if (psz > 0) {
+                partitionBy = new ObjList<>(psz);
+                for (int j = 0; j < psz; j++) {
+                    partitionBy.add(virtualColumnBuilder.createVirtualColumn(model, col.getPartitionBy().getQuick(j), metadata));
+                }
+            }
+
+            ExprNode ast = col.getAst();
+
+            if (ast.paramCount > 1) {
+                throw QueryError.$(col.getAst().position, "Too many arguments");
+            }
+
+            VirtualColumn valueColumn;
+            if (ast.paramCount == 1) {
+                valueColumn = virtualColumnBuilder.createVirtualColumn(model, col.getAst().rhs, metadata);
+                valueColumn.setName(col.getAlias());
+            } else {
+                valueColumn = null;
+            }
+
+            final int osz = col.getOrderBy().size();
+            AnalyticFunction f = AnalyticFunctionFactories.newInstance(
+                    configuration,
+                    ast.token,
+                    valueColumn,
+                    col.getAlias(),
+                    partitionBy,
+                    rs.supportsRowIdAccess(),
+                    osz > 0
+            );
+
+            if (f == null) {
+                Misc.free(rs);
+                throw QueryError.$(col.getAst().position, "Unknown function");
+            }
+            CharSequenceIntHashMap orderHash = model.getOrderHash();
+
+            boolean dismissOrder;
+            if (osz > 0 && orderHash.size() > 0) {
+                dismissOrder = true;
+                for (int j = 0; j < osz; j++) {
+                    ExprNode node = col.getOrderBy().getQuick(j);
+                    int direction = col.getOrderByDirection().getQuick(j);
+                    if (orderHash.get(node.token) != direction) {
+                        dismissOrder = false;
+                    }
+                }
+            } else {
+                dismissOrder = false;
+            }
+
+            if (osz > 0 && !dismissOrder) {
+                IntList order = toOrderIndices(metadata, col.getOrderBy(), col.getOrderByDirection());
+                ObjList<AnalyticFunction> funcs = grouppedAnalytic.get(order);
+                if (funcs == null) {
+                    grouppedAnalytic.put(order, funcs = new ObjList<>());
+                }
+                funcs.add(f);
+                needCache = true;
+            } else {
+                if (naturalOrderFunctions == null) {
+                    naturalOrderFunctions = new ObjList<>();
+                }
+                needCache = needCache || f.getType() != AnalyticFunction.STREAM;
+                naturalOrderFunctions.add(f);
+            }
+        }
+
+
+        if (needCache) {
+            final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
+            final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
+            for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
+                analyticComparators.add(cc.compile(metadata, e.key));
+                functionGroups.add(e.value);
+            }
+
+            if (naturalOrderFunctions != null) {
+                analyticComparators.add(null);
+                functionGroups.add(naturalOrderFunctions);
+            }
+
+            if (rs.supportsRowIdAccess()) {
+                return new CachedRowAnalyticRecordSource(
+                        configuration.getDbAnalyticWindowPage(),
+                        rs,
+                        analyticComparators,
+                        functionGroups);
+            }
+
+            return new CachedAnalyticRecordSource(
+                    configuration.getDbAnalyticWindowPage(),
+                    configuration.getDbSortKeyPage(),
+                    rs,
+                    analyticComparators,
+                    functionGroups
+            );
+        } else {
+            return new AnalyticRecordSource(rs, naturalOrderFunctions);
+        }
+*/
+        return null;
+    }
+
     private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
 
         // fail fast if we cannot create timestamp sampler

@@ -34,7 +34,7 @@ public class AnalyticRecordRecordCursorFactory implements RecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final ObjList<AnalyticFunction> functions;
-    private final RecordMetadata metadata;
+    private final GenericRecordMetadata metadata;
     private final AnalyticRecordCursor cursor;
 
     public AnalyticRecordRecordCursorFactory(
@@ -42,17 +42,14 @@ public class AnalyticRecordRecordCursorFactory implements RecordCursorFactory {
             ObjList<AnalyticFunction> functionGroups
     ) {
         this.base = base;
-
         // create our metadata and also flatten functions for our record representation
-        GenericRecordMetadata funcMetadata = new GenericRecordMetadata();
         this.functions = functionGroups;
-        for (int j = 0; j < functionGroups.size(); j++) {
-            funcMetadata.add(functionGroups.getQuick(j).getMetadata());
-        }
-
-        this.metadata = new SplitRecordMetadata(base.getMetadata(), funcMetadata);
-        int split = base.getMetadata().getColumnCount();
-        this.cursor = new AnalyticRecordCursor(functions, split);
+        this.metadata = new GenericRecordMetadata();
+        GenericRecordMetadata.copyColumns(base.getMetadata(), metadata);
+//        for (int j = 0; j < functionGroups.size(); j++) {
+//            metadata.add(functionGroups.getQuick(j).getMetadata());
+//        }
+        this.cursor = new AnalyticRecordCursor(functions, base.getMetadata().getColumnCount());
     }
 
     @Override
@@ -103,14 +100,14 @@ public class AnalyticRecordRecordCursorFactory implements RecordCursorFactory {
             return record;
         }
 
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < split) {
-                return baseCursor.getSymbolTable(columnIndex);
-            }
-            return functions.get(columnIndex - split).getSymbolTable();
-        }
-
+//        @Override
+//        public SymbolTable getSymbolTable(int columnIndex) {
+//            if (columnIndex < split) {
+//                return baseCursor.getSymbolTable(columnIndex);
+//            }
+//            return functions.get(columnIndex - split).getSymbolTable();
+//        }
+//
         @Override
         public boolean hasNext() {
             if (baseCursor.hasNext()) {

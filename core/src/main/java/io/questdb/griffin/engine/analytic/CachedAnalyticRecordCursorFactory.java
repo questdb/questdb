@@ -43,7 +43,7 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     private final int orderGroupCount;
     private final ObjList<ObjList<AnalyticFunction>> functionGroups;
     private final ObjList<AnalyticFunction> functions;
-    private final RecordMetadata metadata;
+    private final GenericRecordMetadata metadata;
     private final AnalyticRecord record;
     private final CachedAnalyticRecordCursor cursor = new CachedAnalyticRecordCursor();
     private final ObjList<RecordComparator> comparators;
@@ -72,20 +72,37 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         }
 
         // create our metadata and also flatten functions for our record representation
-        GenericRecordMetadata funcMetadata = new GenericRecordMetadata();
+        this.metadata = new GenericRecordMetadata();
+        GenericRecordMetadata.copyColumns(base.getMetadata(), metadata);
         this.functions = new ObjList<>(orderGroupCount);
-        for (int i = 0; i < orderGroupCount; i++) {
-            ObjList<AnalyticFunction> l = functionGroups.getQuick(i);
-            for (int j = 0; j < l.size(); j++) {
-                AnalyticFunction f = l.getQuick(j);
-                funcMetadata.add(f.getMetadata());
-                functions.add(f);
-            }
-        }
+//        for (int i = 0; i < orderGroupCount; i++) {
+//            ObjList<AnalyticFunction> l = functionGroups.getQuick(i);
+//            for (int j = 0; j < l.size(); j++) {
+//                AnalyticFunction f = l.getQuick(j);
+//                metadata.add(f.getMetadata());
+//                functions.add(f);
+//            }
+//        }
 
-        this.metadata = new SplitRecordMetadata(base.getMetadata(), funcMetadata);
         int split = base.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
+    }
+
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        Misc.free(base);
+        Misc.free(recordChain);
+        for (int i = 0; i < orderGroupCount; i++) {
+            Misc.free(orderedSources.getQuick(i));
+        }
+
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Misc.free(functions.getQuick(i));
+        }
+        closed = true;
     }
 
     @Override
@@ -167,40 +184,17 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
-    public void close() {
-        if (closed) {
-            return;
-        }
-        Misc.free(base);
-        Misc.free(recordChain);
-        for (int i = 0; i < orderGroupCount; i++) {
-            Misc.free(orderedSources.getQuick(i));
-        }
-
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Misc.free(functions.getQuick(i));
-        }
-        closed = true;
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
 
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
     private class CachedAnalyticRecordCursor implements RecordCursor {
         private RecordCursor baseCursor;
-
-        void of(RecordCursor baseCursor) {
-            this.baseCursor = baseCursor;
-            record.of(baseCursor.getRecord());
-        }
-
 
         @Override
         public void close() {
@@ -230,7 +224,6 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void recordAt(Record record, long atRowId) {
-
         }
 
         @Override
@@ -244,6 +237,11 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         @Override
         public long size() {
             return baseCursor.size();
+        }
+
+        void of(RecordCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            record.of(baseCursor.getRecord());
         }
     }
 }
