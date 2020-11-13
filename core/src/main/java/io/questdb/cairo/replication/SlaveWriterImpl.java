@@ -7,7 +7,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableBlockWriter;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -37,10 +39,12 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     private Path path = new Path();
     private int pathRootLen;
     private Timestamps.TimestampFloorMethod timestampFloorMethod;
+    private ObjList<SymbolDetails> symbolDetailsByColumnIndex = new ObjList<>();
     private LongObjHashMap<PartitionDetails> partitionByTimestamp = new LongObjHashMap<>();
     private ObjList<PartitionDetails> usedPartitions = new ObjList<>();
     private ObjList<PartitionDetails> partitionCache = new ObjList<>();
     private TableWriter writer;
+    private int columnCount;
     private TableBlockWriter blockWriter;
     private final AtomicInteger nRemainingFrames = new AtomicInteger();
     private volatile PartitionDetails cachedPartition;
@@ -55,6 +59,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     public SlaveWriterImpl of(TableWriter writer) {
         assert usedPartitions.size() == 0; // Expect to be be cleared
         this.writer = writer;
+        columnCount = writer.getMetadata().getColumnCount();
         nRemainingFrames.set(0);
         path.of(root).concat(writer.getName());
         pathRootLen = path.length();
@@ -75,6 +80,21 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 break;
         }
 
+        for (int columnIndex = 0, sz = columnCount; columnIndex < sz; columnIndex++) {
+            SymbolDetails symDetails = columnIndex < symbolDetailsByColumnIndex.size() ? symbolDetailsByColumnIndex.getQuick(columnIndex) : null;
+            if (writer.getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
+                if (null == symDetails) {
+                    symDetails = new SymbolDetails();
+                    symbolDetailsByColumnIndex.extendAndSet(columnIndex, symDetails);
+
+                }
+                symDetails.of(writer.getMetadata().getColumnName(columnIndex), writer.getSymbolMapWriter(columnIndex).getCharMemSize());
+            } else {
+                if (null != symDetails) {
+                    symDetails.of(null, -1);
+                }
+            }
+        }
         return this;
     }
 
@@ -82,6 +102,12 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     public void commit() {
         lockWriter();
         try {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                SymbolDetails symbolDetails = columnIndex < symbolDetailsByColumnIndex.size() ? symbolDetailsByColumnIndex.get(columnIndex) : null;
+                if (null != symbolDetails) {
+                    symbolDetails.commit();
+                }
+            }
             blockWriter.commit();
         } finally {
             unlockWriter();
@@ -102,11 +128,17 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             }
             usedPartitions.clear();
             partitionByTimestamp.clear();
+            cachedPartition = null;
+            for (int columnIndex = 0, sz = symbolDetailsByColumnIndex.size(); columnIndex < sz; columnIndex++) {
+                SymbolDetails symDetails = symbolDetailsByColumnIndex.getQuick(columnIndex);
+                if (null != symDetails) {
+                    symDetails.clear();
+                }
+            }
             blockWriter.close();
             blockWriter = null;
             writer.close();
             writer = null;
-            cachedPartition = null;
         }
     }
 
@@ -131,6 +163,11 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             partition = getPartitionDetails(timestamp);
         }
         return partition.getDataMap(timestamp, columnIndex, offset, size);
+    }
+
+    @Override
+    public long getSymbolDataMap(int columnIndex, long offset, long size) {
+        return symbolDetailsByColumnIndex.get(columnIndex).getSymbolDataMap(offset, size);
     }
 
     @Override
@@ -233,13 +270,12 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             this.timestampHi = timestampHi;
             this.path.of(path);
             this.pathPartitionLen = path.length();
-            partitionStruct.of(writer.getMetadata().getColumnCount());
+            partitionStruct.of(columnCount);
             if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Could not create directory: ").put(path);
             }
             LOG.info().$("opening partition [table=").$(writer.getName()).$(", path=").$(path).$(']').$();
 
-            int columnCount = writer.getMetadata().getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (columns.size() <= columnIndex) {
                     columns.add(new ColumnDetails(columnIndex));
@@ -251,7 +287,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
 
         public void clear() {
             if (writer != null) {
-                for (int columnIndex = 0, sz = writer.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
+                for (int columnIndex = 0, sz = columnCount; columnIndex < sz; columnIndex++) {
                     long mappingAddress = partitionStruct.getColumnMappingStart(columnIndex);
                     if (mappingAddress != 0) {
                         long mappingSize = partitionStruct.getColumnMappingSize(columnIndex);
@@ -283,7 +319,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 TableBlockWriter.unmapFile(ff, partitionStruct.getAdditionalMappingStart(nMapping), partitionStruct.getAdditionalMappingSize(nMapping));
             }
             partitionStruct.clearAdditionalMappings();
-            for (int columnIndex = 0, sz = writer.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
+            for (int columnIndex = 0, sz = columnCount; columnIndex < sz; columnIndex++) {
                 ColumnDetails column = columns.getQuick(columnIndex);
                 long dataFd = lastPartition ? -1 : partitionStruct.getColumnDataFd(columnIndex);
                 blockWriter.appendCompletedPageFrameColumn(columnIndex, column.writtenSize, partitionStruct.getColumnMappingStart(columnIndex), dataFd,
@@ -513,6 +549,76 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
 
         private void setColumnMappingStartOffset(int columnIndex, long offset) {
             mappingData[getMappingDataIndex(columnIndex, 4)] = offset;
+        }
+    }
+
+    private class SymbolDetails {
+        private CharSequence name;
+        private long fd = -1;
+        private long originalCharSize;
+        private long charMappingAddress;
+        private long charMappingSize;
+        private long newCharSize;
+
+        private SymbolDetails of(CharSequence name, long charSize) {
+            assert fd == -1; // Should be cleared
+            this.name = name;
+            originalCharSize = charSize;
+            newCharSize = 0;
+            return this;
+        }
+
+        private long getSymbolDataMap(long offset, long size) {
+            long charSize = offset + size;
+            if (newCharSize < charSize) {
+                newCharSize = charSize;
+            }
+            if (fd != -1) {
+                assert charMappingAddress != 0;
+                if (charSize < originalCharSize + charMappingSize) {
+                    return charMappingAddress + offset - originalCharSize;
+                }
+                TableBlockWriter.unmapFile(ff, charMappingAddress, charMappingSize);
+            } else {
+                try {
+                    fd = ff.openRW(SymbolMapWriter.charFileName(path, name));
+                    if (fd < 0) {
+                        throw CairoException.instance(ff.errno()).put("could not open char file [table=").put(writer.getName()).put(", name=").put(name).put(", fd=").put(fd)
+                                .put(", size=").put(originalCharSize);
+                    }
+                } finally {
+                    path.trimTo(pathRootLen);
+                }
+            }
+            charMappingSize = offset + size - originalCharSize;
+            assert charMappingSize > 0;
+            charMappingSize = pageSize * (charMappingSize / pageSize + 1);
+            charMappingAddress = TableBlockWriter.mapFile(ff, fd, originalCharSize, charMappingSize);
+            return charMappingAddress + offset - originalCharSize;
+        }
+
+        private void commit() {
+            if (fd != -1 && newCharSize > originalCharSize) {
+                originalCharSize = newCharSize;
+            }
+        }
+
+        private void clear() {
+            if (fd != -1) {
+                if (charMappingAddress != 0) {
+                    TableBlockWriter.unmapFile(ff, charMappingAddress, charMappingSize);
+                    charMappingAddress = 0;
+                }
+                try {
+                    if (!ff.truncate(fd, originalCharSize)) {
+                        throw CairoException.instance(ff.errno()).put("could not truncate char file for clear [table=").put(writer.getName()).put(", name=").put(name).put(", fd=").put(fd)
+                                .put(", size=").put(originalCharSize);
+                    }
+                } finally {
+                    ff.close(fd);
+                    fd = -1;
+                }
+            }
         }
     }
 }

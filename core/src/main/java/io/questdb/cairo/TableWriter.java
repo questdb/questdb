@@ -1801,7 +1801,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    SymbolMapWriter getSymbolMapWriter(int columnIndex) {
+    public SymbolMapWriter getSymbolMapWriter(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex);
     }
 

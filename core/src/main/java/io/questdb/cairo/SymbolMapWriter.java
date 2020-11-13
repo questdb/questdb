@@ -153,6 +153,10 @@ public class SymbolMapWriter implements Closeable {
         nullValue = false;
     }
 
+    public long getCharMemSize() {
+        return charMem.getAppendOffset();
+    }
+
     public int getSymbolCount() {
         return offsetToKey(offsetMem.getAppendOffset());
     }

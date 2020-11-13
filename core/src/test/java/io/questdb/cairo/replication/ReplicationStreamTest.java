@@ -7,6 +7,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TablePageFrameCursor;
 import io.questdb.cairo.TableReader;
@@ -25,6 +26,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
@@ -120,13 +122,26 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
 
     @Test
     public void testString1() throws Exception {
-        runTest("testNoTimestamp", () -> {
+        runTest("testString1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(5,10,2) s FROM long_sequence(300)" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             replicateTable("source", "dest", expected, "(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testSymbol1() throws Exception {
+        runTest("testSymbol1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_symbol(60,2,16,2) sym FROM long_sequence(100)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY;",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", 0, Long.MAX_VALUE);
             engine.releaseInactive();
         });
     }
@@ -223,7 +238,16 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator(configuration);
                 ReplicationStreamReceiver streamWriter = new ReplicationStreamReceiver(configuration, recvMgr)) {
 
-            streamGenerator.of(reader.getMetadata().getId(), 1, cursor, reader.getMetadata(), null);
+            IntList initialSymbolCounts = new IntList();
+            for (int columnIndex = 0, sz = reader.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
+                if (reader.getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
+                    initialSymbolCounts.add(0);
+                } else {
+                    initialSymbolCounts.add(-1);
+                }
+            }
+
+            streamGenerator.of(reader.getMetadata().getId(), 1, cursor, reader.getMetadata(), initialSymbolCounts);
             streamWriter.of(STREAM_TARGET_FD);
 
             ReplicationStreamGeneratorResult streamResult;

@@ -10,6 +10,8 @@ public interface ReplicationSlaveManager {
     public interface SlaveWriter extends Closeable {
         long getDataMap(long timestamp, int columnIndex, long offset, long size);
 
+        long getSymbolDataMap(int columnIndex, long offset, long size);
+
         boolean completeFrame();
 
         boolean markBlockNFrames(int nFrames);

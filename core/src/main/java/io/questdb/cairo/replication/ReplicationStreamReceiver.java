@@ -93,6 +93,11 @@ public class ReplicationStreamReceiver implements Closeable {
                     break;
                 }
 
+                case TableReplicationStreamHeaderSupport.FRAME_TYPE_SYMBOL_STRINGS_FRAME: {
+                    handleSymbolDataFrameHeader();
+                    break;
+                }
+
                 case TableReplicationStreamHeaderSupport.FRAME_TYPE_END_OF_BLOCK: {
                     handleEndOfBlockHeader();
                     return IOContextResult.NEEDS_WRITE;
@@ -168,6 +173,15 @@ public class ReplicationStreamReceiver implements Closeable {
         dataFrameColumnOffset = Unsafe.getUnsafe().getLong(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_DATA_OFFSET);
 
         frameMappingAddress = slaveWriter.getDataMap(frameFirstTimestamp, dataFrameColumnIndex, dataFrameColumnOffset, frameDataNBytesRemaining);
+        frameMappingSize = frameDataNBytesRemaining;
+        frameMappingOffset = 0;
+    }
+
+    private void handleSymbolDataFrameHeader() {
+        dataFrameColumnIndex = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_SFF_COLUMN_INDEX);
+        dataFrameColumnOffset = Unsafe.getUnsafe().getLong(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_SFF_DATA_OFFSET);
+
+        frameMappingAddress = slaveWriter.getSymbolDataMap(dataFrameColumnIndex, dataFrameColumnOffset, frameDataNBytesRemaining);
         frameMappingSize = frameDataNBytesRemaining;
         frameMappingOffset = 0;
     }

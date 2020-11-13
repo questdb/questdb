@@ -4,6 +4,8 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -24,6 +26,7 @@ public class ReplicationStreamGenerator implements Closeable {
     private PageFrame sourceFrame;
     private int atColumnIndex;
     private int nFrames;
+    private boolean symbolDataFrame;
 
     public ReplicationStreamGenerator(CairoConfiguration configuration) {
     }
@@ -37,13 +40,20 @@ public class ReplicationStreamGenerator implements Closeable {
         this.nFrames = 0;
         this.atColumnIndex = 0;
         columnCount = metaData.getColumnCount();
+        symbolDataFrame = true;
 
         while (resultByThread.size() < nConsumerThreads) {
             ReplicationStreamGeneratorFrame frame = new ReplicationStreamGeneratorFrame(resultByThread.size());
             ReplicationStreamGeneratorResult result = new ReplicationStreamGeneratorResult(false, frame);
             resultByThread.add(result);
         }
-        // TODO: symbols
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            if (metaData.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+                symbolCounts.extendAndSet(columnIndex, initialSymbolCounts.get(columnIndex));
+            } else {
+                symbolCounts.extendAndSet(columnIndex, -1);
+            }
+        }
     }
 
     public ReplicationStreamGeneratorResult nextDataFrame() {
@@ -86,6 +96,21 @@ public class ReplicationStreamGenerator implements Closeable {
     }
 
     private void generateDataFrame(ReplicationStreamGeneratorFrame frame) {
+        if (symbolDataFrame) {
+            int symbolCount = symbolCounts.getQuick(atColumnIndex);
+            if (symbolCount >= 0) {
+                SymbolMapReader symReader = cursor.getSymbolMapReader(atColumnIndex);
+                int newSymbolCount = symReader.size();
+                if (newSymbolCount > symbolCount) {
+                    generateSymbolDataFrame(frame, symReader, symbolCount, newSymbolCount);
+                    symbolDataFrame = false;
+                    symbolCounts.set(atColumnIndex, newSymbolCount);
+                    return;
+                }
+            }
+        } else {
+            symbolDataFrame = true;
+        }
         frame.frameDataSize = sourceFrame.getPageSize(atColumnIndex);
         frame.frameDataAddress = sourceFrame.getPageAddress(atColumnIndex);
         frame.frameHeaderSize = TableReplicationStreamHeaderSupport.DF_HEADER_SIZE;
@@ -100,6 +125,20 @@ public class ReplicationStreamGenerator implements Closeable {
         if (atColumnIndex == columnCount) {
             sourceFrame = null;
         }
+    }
+
+    private void generateSymbolDataFrame(ReplicationStreamGeneratorFrame frame, SymbolMapReader symReader, int symbolCount, int newSymbolCount) {
+        long addressFrameStart = symReader.symbolCharsAddressOf(symbolCount);
+        long dataOffset = addressFrameStart - symReader.symbolCharsAddressOf(0);
+        long dataSize = symReader.symbolCharsAddressOf(newSymbolCount) - addressFrameStart;
+        frame.frameDataSize = dataSize;
+        frame.frameDataAddress = addressFrameStart;
+        frame.frameHeaderSize = TableReplicationStreamHeaderSupport.SFF_HEADER_SIZE;
+        long frameSize = frame.frameHeaderSize + frame.frameDataSize;
+        Unsafe.getUnsafe().putInt(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_SFF_COLUMN_INDEX, atColumnIndex);
+        Unsafe.getUnsafe().putLong(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_SFF_DATA_OFFSET, dataOffset);
+        updateGenericHeader(frame, TableReplicationStreamHeaderSupport.FRAME_TYPE_SYMBOL_STRINGS_FRAME, frameSize);
+        nFrames++;
     }
 
     private void generateEndOfBlock(ReplicationStreamGeneratorFrame frame) {
