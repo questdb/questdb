@@ -105,6 +105,32 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testNoTimestamp() throws Exception {
+        runTest("testNoTimestamp", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ");",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(l LONG)", 0, Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testString1() throws Exception {
+        runTest("testNoTimestamp", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(5,10,2) s FROM long_sequence(300)" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
         TestUtils.assertMemoryLeak(runnable);

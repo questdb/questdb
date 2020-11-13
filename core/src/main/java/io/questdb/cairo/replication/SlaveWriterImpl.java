@@ -345,40 +345,40 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             }
 
             private void mapColumnData(long offset, long size, long minOffset) {
-                long mappingAddress = partitionStruct.getColumnMappingStart(columnIndex);
-                long mappingOffset;
-                if (mappingAddress != 0) {
-                    mappingOffset = partitionStruct.getColumnMappingStartOffset(columnIndex);
-                    long mappingSize = partitionStruct.getColumnMappingSize(columnIndex);
-                    if (mappingOffset <= offset) {
-                        long mappingEnd = mappingOffset + mappingSize;
-                        long requiredEnd = offset + size;
-                        if (requiredEnd <= mappingEnd) {
-                            return;
+                lockPartition();
+                try {
+                    long mappingAddress = partitionStruct.getColumnMappingStart(columnIndex);
+                    long mappingOffset;
+                    if (mappingAddress != 0) {
+                        mappingOffset = partitionStruct.getColumnMappingStartOffset(columnIndex);
+                        long mappingSize = partitionStruct.getColumnMappingSize(columnIndex);
+                        if (mappingOffset <= offset) {
+                            long mappingEnd = mappingOffset + mappingSize;
+                            long requiredEnd = offset + size;
+                            if (requiredEnd <= mappingEnd) {
+                                return;
+                            }
                         }
-                    }
-                    lockPartition();
-                    try {
                         partitionStruct.addAdditionalMapping(mappingAddress, mappingSize);
-                    } finally {
-                        unlockPartition();
                     }
-                }
 
-                mappingOffset = minOffset;
-                long fd = partitionStruct.getColumnDataFd(columnIndex);
-                if (fd == -1) {
-                    final CharSequence name = writer.getMetadata().getColumnName(columnIndex);
-                    fd = TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(pathPartitionLen), name));
-                    partitionStruct.setColumnDataFd(columnIndex, fd);
-                }
+                    mappingOffset = minOffset;
+                    long fd = partitionStruct.getColumnDataFd(columnIndex);
+                    if (fd == -1) {
+                        final CharSequence name = writer.getMetadata().getColumnName(columnIndex);
+                        fd = TableUtils.openFileRWOrFail(ff, TableUtils.dFile(path.trimTo(pathPartitionLen), name));
+                        partitionStruct.setColumnDataFd(columnIndex, fd);
+                    }
 
-                long mappingSize = pageSize * (size / pageSize + 1);
-                mappingAddress = TableBlockWriter.mapFile(ff, fd, mappingOffset, mappingSize);
-                partitionStruct.setColumnMappingStart(columnIndex, mappingAddress);
-                partitionStruct.setColumnMappingSize(columnIndex, mappingSize);
-                partitionStruct.setColumnMappingStartOffset(columnIndex, mappingOffset);
-                updateColumnDataMapping();
+                    long mappingSize = pageSize * (size / pageSize + 1);
+                    mappingAddress = TableBlockWriter.mapFile(ff, fd, mappingOffset, mappingSize);
+                    partitionStruct.setColumnMappingStart(columnIndex, mappingAddress);
+                    partitionStruct.setColumnMappingSize(columnIndex, mappingSize);
+                    partitionStruct.setColumnMappingStartOffset(columnIndex, mappingOffset);
+                    updateColumnDataMapping();
+                } finally {
+                    unlockPartition();
+                }
             }
 
             private void updateColumnDataMapping() {
