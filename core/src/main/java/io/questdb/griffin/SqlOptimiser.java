@@ -2031,10 +2031,7 @@ class SqlOptimiser {
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
 
         if (modelIsFlex(union)) {
-            final ObjList<QueryColumn> columns = model.getColumns();
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                emitLiteralsTopDown(columns.getQuick(i).getAst(), union);
-            }
+            emitColumnLiteralsTopDown(model.getColumns(), union);
         }
 
         // process join models and their join conditions
@@ -2065,13 +2062,7 @@ class SqlOptimiser {
         }
 
         // latest by
-        final ObjList<ExpressionNode> latestBy = model.getLatestBy();
-        final int latestBySize = latestBy.size();
-        if (latestBySize > 0) {
-            for (int i = 0; i < latestBySize; i++) {
-                emitLiteralsTopDown(latestBy.getQuick(i), model);
-            }
-        }
+        emitLiteralsTopDown(model.getLatestBy(), model);
 
         // propagate explicit timestamp declaration
         if (model.getTimestamp() != null && nestedIsFlex) {
@@ -2088,20 +2079,11 @@ class SqlOptimiser {
 
         // propagate 'order by'
         if (!topLevel) {
-            final ObjList<ExpressionNode> orderBy = model.getOrderBy();
-            final int orderBySize = orderBy.size();
-            if (orderBySize > 0) {
-                for (int i = 0; i < orderBySize; i++) {
-                    emitLiteralsTopDown(orderBy.getQuick(i), model);
-                }
-            }
+            emitLiteralsTopDown(model.getOrderBy(), model);
         }
 
         if (nestedIsFlex) {
-            final ObjList<QueryColumn> columns = model.getColumns();
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                emitLiteralsTopDown(columns.getQuick(i).getAst(), nested);
-            }
+            emitColumnLiteralsTopDown(model.getColumns(), nested);
         }
 
         // go down the nested path
@@ -2112,6 +2094,24 @@ class SqlOptimiser {
         final QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
             propagateTopDownColumns(unionModel);
+        }
+    }
+
+    private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            emitLiteralsTopDown(qc.getAst(), target);
+            if (qc instanceof AnalyticColumn) {
+                final AnalyticColumn ac = (AnalyticColumn) qc;
+                emitLiteralsTopDown(ac.getPartitionBy(), target);
+                emitLiteralsTopDown(ac.getOrderBy(), target);
+            }
+        }
+    }
+
+    private void emitLiteralsTopDown(ObjList<ExpressionNode> list, QueryModel nested) {
+        for (int i = 0, m = list.size(); i < m; i++) {
+            emitLiteralsTopDown(list.getQuick(i), nested);
         }
     }
 
@@ -2544,6 +2544,8 @@ class SqlOptimiser {
         analyticModel.setSelectModelType(QueryModel.SELECT_MODEL_ANALYTIC);
         final QueryModel translatingModel = queryModelPool.next();
         translatingModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        final QueryModel analyticTranslatingModel = queryModelPool.next();
+        analyticTranslatingModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
         // this is dangling model, which isn't chained with any other
         // we use it to ensure expression and alias uniqueness
         final QueryModel cursorModel = queryModelPool.next();
@@ -2630,9 +2632,27 @@ class SqlOptimiser {
                 // we can add it to group-by model right away
                 if (qc.getAst().type == ExpressionNode.FUNCTION) {
                     if (analytic) {
+
+                        // Analytic model can be after either translation model directly
+                        // or after inner virtual model, which can be sandwiched between
+                        // translation model and analytic model.
+                        // To make sure columns, referenced by the analytic model
+                        // are rendered correctly we will emit them into a dedicated
+                        // translation model for the analytic model.
+                        // When we able to determine which combination of models precedes the
+                        // analytic model, we can copy columns from analytic_translation model to
+                        // either only to translation model or both translation model and the
+                        // inner virtual models
                         analyticModel.addBottomUpColumn(qc);
                         // ensure literals referenced by analytic column are present in nested models
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel);
+                        final AnalyticColumn ac = (AnalyticColumn) qc;
+                        final ObjList<ExpressionNode> list = ac.getPartitionBy();
+                        for (int j = 0, n = list.size(); j < n; j++) {
+                            final ExpressionNode node = list.getQuick(j);
+                            emitLiterals(list.getQuick(j), translatingModel, innerVirtualModel, baseModel);
+                            list.setQuick(j, replaceLiteral(node, translatingModel, innerVirtualModel, baseModel));
+                        }
                         useAnalyticModel = true;
                         continue;
                     } else if (functionParser.isGroupBy(qc.getAst().token)) {
@@ -2705,6 +2725,7 @@ class SqlOptimiser {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
                 if (!column.getAst().token.equals(column.getAlias())) {
                     translationIsRedundant = false;
+                    break;
                 }
             }
         }
