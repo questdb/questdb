@@ -110,6 +110,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringConcat() throws SqlException {
+        x("", "a||'b'||c||d");
+    }
+
+    @Test
     public void testCaseAsArrayIndex() throws SqlException {
         x(
                 "ab134case[]",
