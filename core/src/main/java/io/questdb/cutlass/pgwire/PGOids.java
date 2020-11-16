@@ -98,5 +98,8 @@ public class PGOids {
         PG_TYPE_TO_NAME[8] = "BOOL";
         PG_TYPE_TO_NAME[9] = "BINARY";
         PG_TYPE_TO_NAME[10] = "NUMERIC";
+
+        //PG_TYPE_TO_NAME & PG_TYPE_TO_SIZE_MAP are expected to be of same size
+        assert PG_TYPE_TO_NAME.length == PG_TYPE_TO_NAME.length;
     }
 }
