@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 public class SqlKeywords {
+    public static final String CONCAT_FUNC_NAME = "concat";
 
     public static boolean isAsKeyword(CharSequence tok) {
         if (tok.length() != 2) {
@@ -240,6 +241,23 @@ public class SqlKeywords {
         int i = 0;
         return (tok.charAt(i++) | 32) == '|'
                 && (tok.charAt(i) | 32) == '|';
+    }
+
+    public static boolean isConcatFunction(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        // Reference equal in case it's already replaced token name
+        if (tok == CONCAT_FUNC_NAME) return true;
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isCastKeyword(CharSequence tok) {

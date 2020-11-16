@@ -38,7 +38,6 @@ import static io.questdb.griffin.SqlKeywords.*;
 public final class SqlParser {
 
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
-    private static final String CONCAT_FUNC_NAME = "concat";
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
@@ -1453,23 +1452,6 @@ public final class SqlParser {
             args.add(leaf.rhs);
             args.add(leaf.lhs);
         }
-    }
-
-    private boolean isConcatFunction(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        // Reference equal in case it's already replaced token name
-        if (tok == CONCAT_FUNC_NAME) return true;
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i) | 32) == 't';
     }
 
     private ExpressionNode rewriteCount(ExpressionNode parent) throws SqlException {
