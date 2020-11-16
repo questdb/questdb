@@ -60,7 +60,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -71,7 +71,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -316,7 +316,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 throw new RuntimeException("oops");
             }
         });
@@ -333,7 +333,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -350,7 +350,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return new IntConstant(position, 0);
             }
         });
@@ -476,7 +476,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return function;
             }
         });
@@ -494,7 +494,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new BooleanFunction(position) {
                     @Override
                     public boolean getBool(Record rec) {
@@ -522,7 +522,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new ByteFunction(position) {
                     @Override
                     public byte getByte(Record rec) {
@@ -550,7 +550,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new DateFunction(position) {
                     @Override
                     public long getDate(Record rec) {
@@ -578,7 +578,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new DoubleFunction(position) {
                     @Override
                     public double getDouble(Record rec) {
@@ -606,7 +606,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new FloatFunction(position) {
                     @Override
                     public float getFloat(Record rec) {
@@ -634,7 +634,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new IntFunction(position) {
                     @Override
                     public int getInt(Record rec) {
@@ -662,7 +662,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new LongFunction(position) {
                     @Override
                     public long getLong(Record rec) {
@@ -690,7 +690,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new StrFunction(position) {
                     @Override
                     public CharSequence getStr(Record rec) {
@@ -723,7 +723,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new SymbolConstant(position, null, SymbolTable.VALUE_IS_NULL);
             }
         });
@@ -741,7 +741,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new ShortFunction(position) {
                     @Override
                     public short getShort(Record rec) {
@@ -769,7 +769,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new StrFunction(position) {
                     private final String x = "abc";
 
@@ -804,7 +804,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new SymbolConstant(position, "xyz", 0);
             }
         });
@@ -822,7 +822,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
                 return new TimestampFunction(position) {
                     @Override
                     public long getTimestamp(Record rec) {
@@ -962,7 +962,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -986,7 +986,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -1198,7 +1198,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return null;
             }
         });
@@ -1219,7 +1219,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
                 return constant;
             }
         });

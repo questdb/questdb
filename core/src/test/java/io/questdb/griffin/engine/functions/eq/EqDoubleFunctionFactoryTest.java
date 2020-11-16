@@ -75,7 +75,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         ObjList<Function> args = new ObjList<>();
         args.add(new FloatConstant(1, 3.4f));
         args.add(new DoubleConstant(2, Double.NaN));
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(null));
         Assert.assertTrue(function.isConstant());
     }
@@ -91,7 +91,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 return false;
             }
         });
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(null));
         Assert.assertFalse(function.isConstant());
     }
@@ -110,7 +110,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         ObjList<Function> args = new ObjList<>();
         args.add(new FloatConstant(1, Float.NaN));
         args.add(new DoubleConstant(2, Double.NaN));
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertTrue(function.getBool(null));
         Assert.assertTrue(function.isConstant());
     }
@@ -149,7 +149,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         ObjList<Function> args = new ObjList<>();
         args.add(new TimestampConstant(1, 20000L));
         args.add(new DoubleConstant(2, Double.NaN));
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(null));
     }
 
@@ -164,7 +164,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
             }
         });
         args.add(new DoubleConstant(2, Double.NaN));
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertTrue(function.getBool(null));
         Assert.assertFalse(function.isConstant());
     }
@@ -175,7 +175,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         ObjList<Function> args = new ObjList<>();
         args.add(new DoubleConstant(2, Double.NaN));
         args.add(new TimestampConstant(1, 20000L));
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(null));
         Assert.assertTrue(function.isConstant());
     }
@@ -186,7 +186,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         ObjList<Function> args = new ObjList<>();
         args.add(new DoubleConstant(2, Double.NaN));
         args.add(new DateConstant(1, 10000L));
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(null));
     }
 
@@ -196,7 +196,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         ObjList<Function> args = new ObjList<>();
         args.add(new DateConstant(1, 10000L));
         args.add(new DoubleConstant(2, Double.NaN));
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(null));
     }
 
@@ -206,7 +206,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         ObjList<Function> args = new ObjList<>();
         args.add(new DateConstant(1, Numbers.LONG_NaN));
         args.add(new DoubleConstant(2, Double.NaN));
-        Function function = factory.newInstance(args, 4, configuration);
+        Function function = factory.newInstance(args, 4, configuration, sqlExecutionContext);
         Assert.assertTrue(function.getBool(null));
         Assert.assertTrue(function.isConstant());
     }

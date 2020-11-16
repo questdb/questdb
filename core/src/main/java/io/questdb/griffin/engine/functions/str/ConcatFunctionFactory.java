@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Numbers;
@@ -120,7 +121,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final ObjList<Function> functions = new ObjList<>(args.size());
         functions.addAll(args);
         return new ConcatFunction(position, functions);

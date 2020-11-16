@@ -69,7 +69,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testAnalyticOrderDirection() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (select [a, b, c] from xyz)",
+                "select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (select [a, b, c, ts, x, y] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts desc, x asc, y) my from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -78,15 +78,20 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
+                        .timestamp("ts")
         );
     }
 
     @Test
     public void testAnalyticPartitionByMultiple() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select [a, b, c] from xyz)",
+                "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b, a order by ts) my, d(c) over() from xyz",
-                modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
         );
     }
 
@@ -1885,6 +1890,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilter1() throws SqlException {
+        assertQuery(
+                "select-virtual x, cast(x + 10,timestamp) cast from ((select-virtual [x, rnd_double() rnd] x, rnd_double() rnd from (select [x] from long_sequence(100000)) where rnd < 0.9999) _xQdbA1)",
+                "select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999"
+        );
+    }
+
+    @Test
     public void testFilter2() throws Exception {
         assertQuery("select-virtual customerId + 1 column, name, count from ((select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X'))) _xQdbA1)",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
@@ -3179,14 +3192,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFilter1() throws SqlException {
-        assertQuery(
-                "select-virtual x, cast(x + 10,timestamp) cast from ((select-virtual [x, rnd_double() rnd] x, rnd_double() rnd from (select [x] from long_sequence(100000)) where rnd < 0.9999) _xQdbA1)",
-                "select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999"
-        );
-    }
-
-    @Test
     public void testLineCommentAtEnd() throws Exception {
         assertQuery(
                 "select-choose x, a from ((select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a')",
@@ -3399,88 +3404,41 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByPropagation() throws SqlException {
-        assertQuery(
-                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-distinct contactId from (select-choose [contactId] contactId from ((select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events timestamp (timestamp) latest by _id) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist)) except select-choose [_id contactId] _id contactId from ((select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts timestamp (timestamp) latest by _id) where notRealType = 'bot') contactlist)) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts timestamp (timestamp) latest by _id)) contactlist on contactlist._id = C.contactId) order by timestamp desc)",
-                "WITH \n" +
-                        "contactlist AS (SELECT * FROM contacts LATEST BY _id ORDER BY timestamp),\n" +
-                        "eventlist AS (SELECT * FROM contact_events LATEST BY _id ORDER BY timestamp),\n" +
-                        "C AS (\n" +
-                        "    SELECT DISTINCT contactId FROM eventlist WHERE groupId = 'qIqlX6qESMtTQXikQA46'\n" +
-                        "    EXCEPT\n" +
-                        "    SELECT _id as contactId FROM contactlist WHERE notRealType = 'bot'\n" +
-                        ")\n" +
-                        "  SELECT \n" +
-                        "    C.contactId as id, \n" +
-                        "    contactlist.customName,\n" +
-                        "    contactlist.name,\n" +
-                        "    contactlist.email,\n" +
-                        "    contactlist.country_name,\n" +
-                        "    contactlist.country_code,\n" +
-                        "    contactlist.city,\n" +
-                        "    contactlist.region,\n" +
-                        "    contactlist.emoji_flag,\n" +
-                        "    contactlist.latitude,\n" +
-                        "    contactlist.longitude,\n" +
-                        "    contactlist.isNotReal,\n" +
-                        "    contactlist.notRealType\n" +
-                        "  FROM C \n" +
-                        "  JOIN contactlist ON contactlist._id = C.contactId\n" +
-                        "  ORDER BY timestamp DESC\n",
-                modelOf("contacts")
-                .col("_id", ColumnType.SYMBOL)
-                        .col("customName", ColumnType.STRING)
-                .col("name", ColumnType.SYMBOL)
-                        .col("email", ColumnType.STRING)
-                        .col("country_name", ColumnType.SYMBOL)
-                        .col("country_code", ColumnType.SYMBOL)
-                        .col("city", ColumnType.SYMBOL)
-                        .col("region", ColumnType.SYMBOL)
-                        .col("emoji_flag", ColumnType.STRING)
-                        .col("latitude", ColumnType.DOUBLE)
-                        .col("longitude", ColumnType.DOUBLE)
-                        .col("isNotReal", ColumnType.SYMBOL)
-                        .col("notRealType", ColumnType.SYMBOL)
-                .timestamp(),
-                modelOf("contact_events")
-                .col("contactId", ColumnType.SYMBOL)
-                .col("groupId", ColumnType.SYMBOL)
-                .timestamp()
-        );
-    }
-
-    @Test
     public void testOneAnalyticColumn() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c] from xyz)",
+                "select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("c", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testOneAnalyticColumnPrefixed() throws Exception {
-        assertQuery(
-                "select-analytic a, b, row_number() row_number over (partition by z.b order by z.ts) from (select [a, b] from xyz z)",
-                "select a,b, row_number() over (partition by z.b order by z.ts) from xyz z",
-                modelOf("xyz")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
         );
     }
 
     @Test
     public void testOneAnalyticColumnAndLimit() throws Exception {
-        assertQuery("select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c] from xyz) limit 200",
+        assertQuery("select-analytic a, b, f(c) f over (partition by b order by ts) from (select [a, b, c, ts] from xyz timestamp (ts)) limit 200",
                 "select a,b, f(c) over (partition by b order by ts) from xyz limit 200",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("c", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testOneAnalyticColumnPrefixed() throws Exception {
+        // extra model in the middle is because we reference "b" as both "b" and "z.b"
+        assertQuery(
+                "select-analytic a, b, row_number() row_number over (partition by b1 order by ts) from (select-choose [a, b, b b1, ts] a, b, b b1, ts from (select [a, b, ts] from xyz z timestamp (ts)))",
+                "select a,b, row_number() over (partition by z.b order by z.ts) from xyz z",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .timestamp("ts")
         );
     }
 
@@ -3889,6 +3847,57 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
 
+        );
+    }
+
+    @Test
+    public void testOrderByPropagation() throws SqlException {
+        assertQuery(
+                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-distinct contactId from (select-choose [contactId] contactId from ((select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events timestamp (timestamp) latest by _id) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist)) except select-choose [_id contactId] _id contactId from ((select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts timestamp (timestamp) latest by _id) where notRealType = 'bot') contactlist)) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts timestamp (timestamp) latest by _id)) contactlist on contactlist._id = C.contactId) order by timestamp desc)",
+                "WITH \n" +
+                        "contactlist AS (SELECT * FROM contacts LATEST BY _id ORDER BY timestamp),\n" +
+                        "eventlist AS (SELECT * FROM contact_events LATEST BY _id ORDER BY timestamp),\n" +
+                        "C AS (\n" +
+                        "    SELECT DISTINCT contactId FROM eventlist WHERE groupId = 'qIqlX6qESMtTQXikQA46'\n" +
+                        "    EXCEPT\n" +
+                        "    SELECT _id as contactId FROM contactlist WHERE notRealType = 'bot'\n" +
+                        ")\n" +
+                        "  SELECT \n" +
+                        "    C.contactId as id, \n" +
+                        "    contactlist.customName,\n" +
+                        "    contactlist.name,\n" +
+                        "    contactlist.email,\n" +
+                        "    contactlist.country_name,\n" +
+                        "    contactlist.country_code,\n" +
+                        "    contactlist.city,\n" +
+                        "    contactlist.region,\n" +
+                        "    contactlist.emoji_flag,\n" +
+                        "    contactlist.latitude,\n" +
+                        "    contactlist.longitude,\n" +
+                        "    contactlist.isNotReal,\n" +
+                        "    contactlist.notRealType\n" +
+                        "  FROM C \n" +
+                        "  JOIN contactlist ON contactlist._id = C.contactId\n" +
+                        "  ORDER BY timestamp DESC\n",
+                modelOf("contacts")
+                        .col("_id", ColumnType.SYMBOL)
+                        .col("customName", ColumnType.STRING)
+                        .col("name", ColumnType.SYMBOL)
+                        .col("email", ColumnType.STRING)
+                        .col("country_name", ColumnType.SYMBOL)
+                        .col("country_code", ColumnType.SYMBOL)
+                        .col("city", ColumnType.SYMBOL)
+                        .col("region", ColumnType.SYMBOL)
+                        .col("emoji_flag", ColumnType.STRING)
+                        .col("latitude", ColumnType.DOUBLE)
+                        .col("longitude", ColumnType.DOUBLE)
+                        .col("isNotReal", ColumnType.SYMBOL)
+                        .col("notRealType", ColumnType.SYMBOL)
+                        .timestamp(),
+                modelOf("contact_events")
+                        .col("contactId", ColumnType.SYMBOL)
+                        .col("groupId", ColumnType.SYMBOL)
+                        .timestamp()
         );
     }
 
@@ -5183,9 +5192,39 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testTwoAnalyticColumns() throws Exception {
         assertQuery(
-                "select-analytic a, b, f(c) my over (partition by b order by ts), d(c) d over () from (select [a, b, c] from xyz)",
+                "select-analytic a, b, f(c) my over (partition by b order by ts), d(c) d over () from (select [a, b, c, ts] from xyz timestamp (ts))",
                 "select a,b, f(c) over (partition by b order by ts) my, d(c) over() from xyz",
-                modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAnalyticFunctionReferencesSameColumnAsVirtual() throws Exception {
+        assertQuery(
+                "select-analytic a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts))))",
+                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts) from xyz k",
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAnalyticLiteralAfterFunction() throws Exception {
+        assertQuery(
+                "select-analytic a, b1, f(c) f over (partition by b11 order by ts), b1 b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts, b1 b from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts))))",
+                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
         );
     }
 

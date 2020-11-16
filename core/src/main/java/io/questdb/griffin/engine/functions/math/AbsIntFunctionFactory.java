@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjList;
@@ -42,8 +43,8 @@ public class AbsIntFunctionFactory implements FunctionFactory {
     public Function newInstance(
             ObjList<Function> args,
             int position,
-            CairoConfiguration configuration
-    ) {
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext) {
         return new AbsIntFunction(position, args.getQuick(0));
     }
 

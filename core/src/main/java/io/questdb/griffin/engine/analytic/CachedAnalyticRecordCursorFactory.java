@@ -26,13 +26,12 @@ package io.questdb.griffin.engine.analytic;
 
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordChain;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.orderby.LongTreeChain;
-import io.questdb.griffin.engine.orderby.RecordComparator;
+import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -42,19 +41,24 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     private final ObjList<LongTreeChain> orderedSources;
     private final int orderGroupCount;
     private final ObjList<ObjList<AnalyticFunction>> functionGroups;
-    private final ObjList<AnalyticFunction> functions;
-    private final GenericRecordMetadata metadata;
-    private final AnalyticRecord record;
+    private final ObjList<AnalyticFunction> analyticFunctions;
+    private final VirtualRecord record;
+    private final VirtualRecord recordB;
     private final CachedAnalyticRecordCursor cursor = new CachedAnalyticRecordCursor();
     private final ObjList<RecordComparator> comparators;
+    private final GenericRecordMetadata metadata;
+    private final Record recordChainRecord;
     private boolean closed = false;
 
     public CachedAnalyticRecordCursorFactory(
             int rowidPageSize,
             int keyPageSize,
             RecordCursorFactory base,
+            RecordSink baseRecordSink,
+            GenericRecordMetadata metadata,
             ObjList<RecordComparator> comparators,
-            ObjList<ObjList<AnalyticFunction>> functionGroups
+            ObjList<ObjList<AnalyticFunction>> functionGroups,
+            ObjList<Function> recordFunctions
     ) {
         this.base = base;
         this.orderGroupCount = comparators.size();
@@ -62,30 +66,27 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         this.orderedSources = new ObjList<>(orderGroupCount);
         this.functionGroups = functionGroups;
         this.comparators = comparators;
-
-        // todo: compile sink and limit pages from the configuration
-        this.recordChain = new RecordChain(base.getMetadata(), null, rowidPageSize, Integer.MAX_VALUE);
+        this.recordChain = new RecordChain(base.getMetadata(), baseRecordSink, rowidPageSize, Integer.MAX_VALUE);
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderGroupCount; i++) {
-            RecordComparator cmp = comparators.getQuick(i);
+            final RecordComparator cmp = comparators.getQuick(i);
             orderedSources.add(cmp == null ? null : new LongTreeChain(keyPageSize, Integer.MAX_VALUE, keyPageSize, Integer.MAX_VALUE));
         }
 
-        // create our metadata and also flatten functions for our record representation
-        this.metadata = new GenericRecordMetadata();
-        GenericRecordMetadata.copyColumns(base.getMetadata(), metadata);
-        this.functions = new ObjList<>(orderGroupCount);
-//        for (int i = 0; i < orderGroupCount; i++) {
-//            ObjList<AnalyticFunction> l = functionGroups.getQuick(i);
-//            for (int j = 0; j < l.size(); j++) {
-//                AnalyticFunction f = l.getQuick(j);
-//                metadata.add(f.getMetadata());
-//                functions.add(f);
-//            }
-//        }
+        // todo: we will tidy up structures later
+        //     for now copy functions over to dense list
+        this.analyticFunctions = new ObjList<>();
+        for (int i = 0, n = functionGroups.size(); i < n; i++) {
+            analyticFunctions.addAll(functionGroups.getQuick(i));
+        }
 
-        int split = base.getMetadata().getColumnCount();
-        this.record = new AnalyticRecord(split, functions);
+        // create our metadata and also flatten functions for our record representation
+        this.metadata = metadata;
+        this.record = new VirtualRecord(recordFunctions);
+        this.recordB = new VirtualRecord(recordFunctions);
+        this.recordChainRecord = recordChain.getRecord();
+        this.record.of(recordChainRecord);
+        this.recordB.of(recordChain.getRecordB());
     }
 
     @Override
@@ -95,13 +96,8 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         }
         Misc.free(base);
         Misc.free(recordChain);
-        for (int i = 0; i < orderGroupCount; i++) {
-            Misc.free(orderedSources.getQuick(i));
-        }
-
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Misc.free(functions.getQuick(i));
-        }
+        Misc.freeObjList(orderedSources);
+        Misc.freeObjList(analyticFunctions);
         closed = true;
     }
 
@@ -115,11 +111,12 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).reset();
+        for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
+            analyticFunctions.getQuick(i).reset();
         }
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
+
         // step #1: store source cursor in record list
         // - add record list' row ids to all trees, which will put these row ids in necessary order
         // for this we will be using out comparator, which helps tree compare long values
@@ -154,10 +151,9 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
                 // step #2: populate all analytic functions with records in order of respective tree
                 final LongTreeChain.TreeCursor cursor = tree.getCursor();
                 while (cursor.hasNext()) {
-//                    cancellationHandler.check();
-                    recordChain.recordAt(record, cursor.next());
+                    recordChain.recordAt(recordChainRecord, cursor.next());
                     for (int j = 0, n = functions.size(); j < n; j++) {
-                        functions.getQuick(j).add(record);
+                        functions.getQuick(j).add(recordChainRecord);
                     }
                 }
             } else {
@@ -166,9 +162,8 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
                     AnalyticFunction f = functions.getQuick(j);
                     if (f.getType() != AnalyticFunction.STREAM) {
                         recordChain.toTop();
-                        final Record rec = recordChain.getRecord();
                         while (recordChain.hasNext()) {
-                            f.add(rec);
+                            f.add(recordChainRecord);
                         }
                     }
                 }
@@ -176,10 +171,9 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         }
 
         recordChain.toTop();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).prepare(recordChain);
+        for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
+            analyticFunctions.getQuick(i).prepare(recordChain);
         }
-        this.cursor.of(recordChain);
         return cursor;
     }
 
@@ -190,15 +184,13 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return base.recordCursorSupportsRandomAccess();
     }
 
     private class CachedAnalyticRecordCursor implements RecordCursor {
-        private RecordCursor baseCursor;
 
         @Override
         public void close() {
-            Misc.free(baseCursor);
         }
 
         @Override
@@ -208,9 +200,9 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (baseCursor.hasNext()) {
-                for (int i = 0, n = functions.size(); i < n; i++) {
-                    functions.getQuick(i).prepareFor(record);
+            if (recordChain.hasNext()) {
+                for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
+                    analyticFunctions.getQuick(i).prepareFor(recordChainRecord);
                 }
                 return true;
             }
@@ -219,29 +211,23 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Record getRecordB() {
-            return null;
+            return recordB;
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
+            recordChain.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
         }
 
         @Override
         public void toTop() {
-            this.baseCursor.toTop();
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                functions.getQuick(i).toTop();
-            }
+            recordChain.toTop();
+            GroupByUtils.toTop(analyticFunctions);
         }
 
         @Override
         public long size() {
-            return baseCursor.size();
-        }
-
-        void of(RecordCursor baseCursor) {
-            this.baseCursor = baseCursor;
-            record.of(baseCursor.getRecord());
+            return recordChain.size();
         }
     }
 }

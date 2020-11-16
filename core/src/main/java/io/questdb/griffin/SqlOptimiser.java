@@ -275,7 +275,7 @@ class SqlOptimiser {
         final QueryColumn innerColumn = nextColumn(qc.getAlias());
 
         // pull literals only into translating model
-        emitLiterals(qc.getAst(), translatingModel, null, validatingModel);
+        emitLiterals(qc.getAst(), translatingModel, null, validatingModel, false);
         groupByModel.addBottomUpColumn(innerColumn);
         analyticModel.addBottomUpColumn(innerColumn);
         outerModel.addBottomUpColumn(innerColumn);
@@ -899,9 +899,41 @@ class SqlOptimiser {
     private ExpressionNode doReplaceLiteral(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
-            QueryModel innerModel,
+            @Nullable QueryModel innerModel,
+            QueryModel validatingModel,
+            boolean analyticCall
+    ) throws SqlException {
+        if (analyticCall) {
+            assert innerModel != null;
+            ExpressionNode n = doReplaceLiteral0(node, translatingModel, null, validatingModel);
+            LowerCaseCharSequenceObjHashMap<CharSequence> map = innerModel.getColumnNameToAliasMap();
+            int index = map.keyIndex(n.token);
+            if (index > -1) {
+                // column is not referenced by inner model
+                CharSequence alias = createColumnAlias(n.token, innerModel);
+                innerModel.addBottomUpColumn(queryColumnPool.next().of(alias, n));
+                // when alias is not the same as token, e.g. column aliases as "token" is already on the list
+                // we have to create a new expression node that uses this alias
+                if (alias != n.token) {
+                    return nextLiteral(alias);
+                } else {
+                    return n;
+                }
+            } else {
+                // column is already referenced
+                return nextLiteral(map.valueAt(index));
+            }
+        }
+        return doReplaceLiteral0(node, translatingModel, innerModel, validatingModel);
+    }
+
+    private ExpressionNode doReplaceLiteral0(
+            ExpressionNode node,
+            QueryModel translatingModel,
+            @Nullable QueryModel innerModel,
             QueryModel validatingModel
     ) throws SqlException {
+
         final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
         int index = map.keyIndex(node.token);
         if (index > -1) {
@@ -1003,6 +1035,18 @@ class SqlOptimiser {
         return replaced;
     }
 
+    private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            emitLiteralsTopDown(qc.getAst(), target);
+            if (qc instanceof AnalyticColumn) {
+                final AnalyticColumn ac = (AnalyticColumn) qc;
+                emitLiteralsTopDown(ac.getPartitionBy(), target);
+                emitLiteralsTopDown(ac.getOrderBy(), target);
+            }
+        }
+    }
+
     // This method will create CROSS join models in the "baseModel" for all unique cursor
     // function it finds on the node. The "model" is used to ensure uniqueness
     private boolean emitCursors(
@@ -1050,7 +1094,8 @@ class SqlOptimiser {
             @Transient ExpressionNode node,
             QueryModel translatingModel,
             QueryModel innerModel,
-            QueryModel validatingModel
+            QueryModel validatingModel,
+            boolean analyticCall
     ) throws SqlException {
 
         this.sqlNodeStack.clear();
@@ -1062,7 +1107,7 @@ class SqlOptimiser {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel);
+                        ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel, analyticCall);
                         if (node.rhs == n) {
                             this.sqlNodeStack.push(node.rhs);
                         } else {
@@ -1070,7 +1115,7 @@ class SqlOptimiser {
                         }
                     }
 
-                    ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel);
+                    ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel, analyticCall);
                     if (n == node.lhs) {
                         node = node.lhs;
                     } else {
@@ -1080,7 +1125,7 @@ class SqlOptimiser {
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel);
+                        ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, analyticCall);
                         if (e == n) {
                             this.sqlNodeStack.push(e);
                         } else {
@@ -1089,7 +1134,7 @@ class SqlOptimiser {
                     }
 
                     ExpressionNode e = node.args.getQuick(0);
-                    ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel);
+                    ExpressionNode n = replaceLiteral(e, translatingModel, innerModel, validatingModel, analyticCall);
                     if (e == n) {
                         node = e;
                     } else {
@@ -1137,6 +1182,12 @@ class SqlOptimiser {
             } else {
                 node = this.sqlNodeStack.poll();
             }
+        }
+    }
+
+    private void emitLiteralsTopDown(ObjList<ExpressionNode> list, QueryModel nested) {
+        for (int i = 0, m = list.size(); i < m; i++) {
+            emitLiteralsTopDown(list.getQuick(i), nested);
         }
     }
 
@@ -2097,24 +2148,6 @@ class SqlOptimiser {
         }
     }
 
-    private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, QueryModel target) {
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            emitLiteralsTopDown(qc.getAst(), target);
-            if (qc instanceof AnalyticColumn) {
-                final AnalyticColumn ac = (AnalyticColumn) qc;
-                emitLiteralsTopDown(ac.getPartitionBy(), target);
-                emitLiteralsTopDown(ac.getOrderBy(), target);
-            }
-        }
-    }
-
-    private void emitLiteralsTopDown(ObjList<ExpressionNode> list, QueryModel nested) {
-        for (int i = 0, m = list.size(); i < m; i++) {
-            emitLiteralsTopDown(list.getQuick(i), nested);
-        }
-    }
-
     /**
      * Identify joined tables without join clause and try to find other reversible join clauses
      * that may be applied to it. For example when these tables joined"
@@ -2195,10 +2228,22 @@ class SqlOptimiser {
     private ExpressionNode replaceLiteral(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
-            QueryModel innerModel,
-            QueryModel validatingModel
+            @Nullable QueryModel innerModel,
+            QueryModel validatingModel,
+            boolean analyticCall
     ) throws SqlException {
-        return node != null && node.type == ExpressionNode.LITERAL ? doReplaceLiteral(node, translatingModel, innerModel, validatingModel) : node;
+        if (node != null && node.type == ExpressionNode.LITERAL) {
+            return doReplaceLiteral(node, translatingModel, innerModel, validatingModel, analyticCall);
+        }
+        return node;
+    }
+
+    private void replaceLiteralList(QueryModel innerVirtualModel, QueryModel translatingModel, QueryModel baseModel, ObjList<ExpressionNode> list) throws SqlException {
+        for (int j = 0, n = list.size(); j < n; j++) {
+            final ExpressionNode node = list.getQuick(j);
+            emitLiterals(node, translatingModel, innerVirtualModel, baseModel, true);
+            list.setQuick(j, replaceLiteral(node, translatingModel, innerVirtualModel, baseModel, true));
+        }
     }
 
     private void resolveJoinColumns(QueryModel model) throws SqlException {
@@ -2331,7 +2376,7 @@ class SqlOptimiser {
                                     for (int j = 0, z = baseParent.getBottomUpColumns().size(); j < z; j++) {
                                         QueryColumn qc = baseParent.getBottomUpColumns().getQuick(j);
                                         if (qc.getAst().type == ExpressionNode.FUNCTION || qc.getAst().type == ExpressionNode.OPERATION) {
-                                            emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel());
+                                            emitLiterals(qc.getAst(), synthetic, null, baseParent.getNestedModel(), false);
                                         } else {
                                             synthetic.addBottomUpColumn(qc);
                                         }
@@ -2645,14 +2690,10 @@ class SqlOptimiser {
                         // inner virtual models
                         analyticModel.addBottomUpColumn(qc);
                         // ensure literals referenced by analytic column are present in nested models
-                        emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel);
+                        emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, true);
                         final AnalyticColumn ac = (AnalyticColumn) qc;
-                        final ObjList<ExpressionNode> list = ac.getPartitionBy();
-                        for (int j = 0, n = list.size(); j < n; j++) {
-                            final ExpressionNode node = list.getQuick(j);
-                            emitLiterals(list.getQuick(j), translatingModel, innerVirtualModel, baseModel);
-                            list.setQuick(j, replaceLiteral(node, translatingModel, innerVirtualModel, baseModel));
-                        }
+                        replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
+                        replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
                         useAnalyticModel = true;
                         continue;
                     } else if (functionParser.isGroupBy(qc.getAst().token)) {
@@ -2665,7 +2706,7 @@ class SqlOptimiser {
                         outerVirtualModel.addBottomUpColumn(ref);
                         distinctModel.addBottomUpColumn(ref);
                         // pull out literals
-                        emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel);
+                        emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false);
                         useGroupByModel = true;
                         continue;
                     } else if (functionParser.isCursor(qc.getAst().token)) {
@@ -2691,7 +2732,7 @@ class SqlOptimiser {
 
                     // pull literals from newly created group-by columns into both of underlying models
                     for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
-                        emitLiterals(groupByModel.getBottomUpColumns().getQuick(i).getAst(), translatingModel, innerVirtualModel, baseModel);
+                        emitLiterals(groupByModel.getBottomUpColumns().getQuick(i).getAst(), translatingModel, innerVirtualModel, baseModel, false);
                     }
 
                     useGroupByModel = true;

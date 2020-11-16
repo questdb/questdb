@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
@@ -41,7 +42,7 @@ public class ToLowercaseFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final ObjList<Function> args, final int position, final CairoConfiguration configuration) {
+    public Function newInstance(final ObjList<Function> args, final int position, final CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new ToLowercaseFunc(position, args.get(0));
     }
 

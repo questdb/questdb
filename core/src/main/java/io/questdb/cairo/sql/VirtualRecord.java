@@ -86,7 +86,7 @@ public class VirtualRecord implements Record, ColumnTypes {
 
     @Override
     public int getInt(int col) {
-        return getFunction(col).getInt(base);
+        return getFunction(col). getInt(base);
     }
 
     @Override

@@ -22,12 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.orderby;
+package io.questdb.griffin.engine.analytic;
 
-import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.VirtualRecord;
 
-public interface RecordComparator {
-    int compare(Record record);
+public interface AnalyticContext {
+    VirtualRecord getPartitionByRecord();
 
-    void setLeft(Record record);
+    RecordSink getPartitionBySink();
+
+    ColumnTypes getPartitionByKeyTypes();
+
+    boolean isOrdered();
+
+    boolean baseSupportsRandomAccess();
 }
