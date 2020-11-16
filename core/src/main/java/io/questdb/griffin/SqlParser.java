@@ -38,7 +38,7 @@ import static io.questdb.griffin.SqlKeywords.*;
 public final class SqlParser {
 
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
-    private static final String CONCAT_FUNC_NAME = "CONCAT";
+    private static final String CONCAT_FUNC_NAME = "concat";
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
@@ -1447,7 +1447,12 @@ public final class SqlParser {
         }
 
         // Nested CONCAT. Expand it from CONCAT(x, CONCAT(y, z)) into CONCAT(x, y, z).
-        args.addAll(leaf.args);
+        if (leaf.args.size() > 0) {
+            args.addAll(leaf.args);
+        } else {
+            args.add(leaf.rhs);
+            args.add(leaf.lhs);
+        }
     }
 
     private boolean isConcatFunction(CharSequence tok) {
@@ -1455,6 +1460,7 @@ public final class SqlParser {
             return false;
         }
 
+        // Reference equal in case it's already replaced token name
         if (tok == CONCAT_FUNC_NAME) return true;
 
         int i = 0;
