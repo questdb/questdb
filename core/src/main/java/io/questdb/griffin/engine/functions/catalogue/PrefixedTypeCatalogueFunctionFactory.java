@@ -24,12 +24,6 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import io.questdb.std.ObjList;
-
 public class PrefixedTypeCatalogueFunctionFactory extends TypeCatalogueFunctionFactory {
 
     @Override
@@ -37,15 +31,4 @@ public class PrefixedTypeCatalogueFunctionFactory extends TypeCatalogueFunctionF
         return "pg_catalog.pg_type()";
     }
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new CursorFunction(
-                position,
-                new GenericRecordCursorFactory(
-                        TypeCatalogueCursor.METADATA,
-                        new TypeCatalogueCursor(),
-                        false
-                )
-        );
-    }
 }

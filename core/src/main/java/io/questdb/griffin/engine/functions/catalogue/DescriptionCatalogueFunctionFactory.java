@@ -174,15 +174,14 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
                                             foundMetadataFile = true;
                                             columnCount = Unsafe.getUnsafe().getInt(tempMem);
                                             diskReadingRecord.columnNumber = 0;
-                                            ff.close(fd);
+                                            diskReadingRecord.description = "table";
                                         } else {
                                             LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                                            ff.close(fd);
                                         }
                                     } else {
                                         LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                                        ff.close(fd);
                                     }
+                                    ff.close(fd);
                                 } else {
                                     LOG.error().$("could not read metadata [file=").$(path).$(']').$();
                                 }
@@ -200,6 +199,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
                     for (int i = 0; i < columnCount + 1; i++) {
                         if (columnIndex == i) {
                             diskReadingRecord.columnNumber = (short) (i + 1);
+                            diskReadingRecord.description = "column";
                             columnIndex++;
                             if (columnIndex == columnCount) {
                                 readNextFileFromDisk = true;
@@ -224,6 +224,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
         private class DiskReadingRecord implements Record {
 
             public short columnNumber = 0;
+            public String description;
 
             @Override
             public int getInt(int col) {
@@ -237,7 +238,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStr(int col) {
-                return columnNumber == 0 ? "table" : "column";
+                return description;
             }
 
             @Override
@@ -256,6 +257,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("classoid", ColumnType.INT, null));
+        //TODO the below column was downgraded to short. We need to support type downgrading of compatible types when joining
         metadata.add(new TableColumnMetadata("objsubid", ColumnType.SHORT, null));
         metadata.add(new TableColumnMetadata("description", ColumnType.STRING, null));
         METADATA = metadata;

@@ -38,7 +38,12 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
     private static final int rowCount = PG_TYPE_OIDS.size();
     private final TypeCatalogueRecord record = new TypeCatalogueRecord();
+    public int[] intValues = new int[8];
     private int row = -1;
+
+    public TypeCatalogueCursor() {
+        this.intValues[4] = PgOIDs.PG_PUBLIC_OID;
+    }
 
     @Override
     public void close() {
@@ -52,7 +57,11 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
-        return ++row < rowCount;
+        if (++row < rowCount) {
+            intValues[0] = PG_TYPE_OIDS.get(row);
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -65,15 +74,16 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         return rowCount;
     }
 
-    private class TypeCatalogueRecord implements Record {
+    class TypeCatalogueRecord implements Record {
+
         @Override
         public int getInt(int col) {
-            return col == 0 ? PG_TYPE_OIDS.get(row) : col == 4 ? PgOIDs.PG_PUBLIC_OID : 0;
+            return intValues[col];
         }
 
         @Override
         public CharSequence getStr(int col) {
-            return PG_TYPE_TO_NAME.get(PG_TYPE_OIDS.get(row));
+            return PG_TYPE_TO_NAME[row];
         }
 
         @Override

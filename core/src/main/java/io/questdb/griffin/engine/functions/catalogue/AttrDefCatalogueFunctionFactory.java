@@ -88,8 +88,8 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         private final AttrDefCatalogueCursor.DiskReadingRecord diskReadingRecord = new AttrDefCatalogueCursor.DiskReadingRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
-        private final int[] intValues = new int[4];
         private final long tempMem;
+        private int tableId = -1;
         private long findFileStruct = 0;
         private int columnIndex = 0;
         private boolean readNextFileFromDisk = true;
@@ -159,19 +159,17 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                                 long fd = ff.openRO(path);
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                        intValues[0] = Unsafe.getUnsafe().getInt(tempMem);
+                                        tableId = Unsafe.getUnsafe().getInt(tempMem);
                                         if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
                                             foundMetadataFile = true;
                                             columnCount = Unsafe.getUnsafe().getInt(tempMem);
-                                            ff.close(fd);
                                         } else {
                                             LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                                            ff.close(fd);
                                         }
                                     } else {
                                         LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                                        ff.close(fd);
                                     }
+                                    ff.close(fd);
                                 } else {
                                     LOG.error().$("could not read metadata [file=").$(path).$(']').$();
                                 }
@@ -202,7 +200,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
             findFileStruct = 0;
             hasNextFile = true;
             foundMetadataFile = false;
-            intValues[0] = -1;
+            tableId = -1;
             return false;
         }
 
@@ -212,7 +210,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public int getInt(int col) {
-                return intValues[col];
+                return tableId;
             }
 
             @Override

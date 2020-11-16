@@ -49,4 +49,9 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
                 )
         );
     }
+
+    @Override
+    public boolean isCursor() {
+        return true;
+    }
 }

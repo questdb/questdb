@@ -25,10 +25,9 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Long256;
 
 public class PGOids {
 
@@ -47,9 +46,9 @@ public class PGOids {
     public static final int PG_BYTEA = 17;
     public static final int PG_UNSPECIFIED = 0;
     public static final IntList TYPE_OIDS = new IntList();
-    public static final IntHashSet PG_TYPE_OIDS = new IntHashSet();
-    public static final IntIntHashMap PG_TYPE_TO_INTERNAL_TYPE_MAP = new IntIntHashMap();
-    public static final IntObjHashMap<CharSequence> PG_TYPE_TO_NAME = new IntObjHashMap<>();
+    public static final IntList PG_TYPE_OIDS = new IntList();
+    public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[11];
 
     static {
         TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
@@ -67,33 +66,37 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
         TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
 
-        for (int i = 0, n = TYPE_OIDS.size(); i < n; i++) {
-            PG_TYPE_OIDS.add(TYPE_OIDS.getQuick(i));
-        }
+        PG_TYPE_OIDS.add(PG_VARCHAR);
+        PG_TYPE_OIDS.add(PG_TIMESTAMP);
+        PG_TYPE_OIDS.add(PG_FLOAT8);
+        PG_TYPE_OIDS.add(PG_FLOAT4);
+        PG_TYPE_OIDS.add(PG_INT4);
+        PG_TYPE_OIDS.add(PG_INT2);
+        PG_TYPE_OIDS.add(PG_CHAR);
+        PG_TYPE_OIDS.add(PG_INT8);
+        PG_TYPE_OIDS.add(PG_BOOL);
+        PG_TYPE_OIDS.add(PG_BYTEA);
+        PG_TYPE_OIDS.add(PG_NUMERIC);
 
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_VARCHAR, ColumnType.STRING);
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_TIMESTAMP, ColumnType.TIMESTAMP); // TIMESTAMP
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_FLOAT8, ColumnType.DOUBLE); // FLOAT8
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_FLOAT4, ColumnType.FLOAT); // FLOAT4
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_INT4, ColumnType.INT); // INT4
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_INT2, ColumnType.SHORT); // INT2
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_CHAR, ColumnType.CHAR);
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_INT8, ColumnType.LONG); // INT8
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_INT2, ColumnType.BYTE); // INT2
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_BOOL, ColumnType.BOOLEAN); // BOOL
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_BYTEA, ColumnType.BINARY); // BYTEA
-        PG_TYPE_TO_INTERNAL_TYPE_MAP.put(PG_NUMERIC, ColumnType.LONG256);
+        PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Double.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, Float.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_INT4, Integer.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_INT2, Short.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_CHAR, Character.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_INT8, Long.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_BOOL, Byte.BYTES);
+        PG_TYPE_TO_SIZE_MAP.put(PG_NUMERIC, Long256.BYTES);
 
-        PG_TYPE_TO_NAME.put(PG_VARCHAR, "VARCHAR");
-        PG_TYPE_TO_NAME.put(PG_TIMESTAMP, "TIMESTAMP"); // TIMESTAMP
-        PG_TYPE_TO_NAME.put(PG_FLOAT8, "FLOAT8"); // FLOAT8
-        PG_TYPE_TO_NAME.put(PG_FLOAT4, "FLOAT4"); // FLOAT4
-        PG_TYPE_TO_NAME.put(PG_INT4, "INT8"); // INT4
-        PG_TYPE_TO_NAME.put(PG_INT2, "INT2"); // INT2
-        PG_TYPE_TO_NAME.put(PG_CHAR, "CHAR");
-        PG_TYPE_TO_NAME.put(PG_INT8, "INT8"); // INT8
-        PG_TYPE_TO_NAME.put(PG_BOOL, "BOOL"); // BOOL
-        PG_TYPE_TO_NAME.put(PG_BYTEA, "BINARY"); // BYTEA
-        PG_TYPE_TO_NAME.put(PG_NUMERIC, "NUMERIC"); // NUMERIC
+        PG_TYPE_TO_NAME[0] = "VARCHAR";
+        PG_TYPE_TO_NAME[1] = "TIMESTAMP";
+        PG_TYPE_TO_NAME[2] = "FLOAT8";
+        PG_TYPE_TO_NAME[3] = "FLOAT4";
+        PG_TYPE_TO_NAME[4] = "INT4";
+        PG_TYPE_TO_NAME[5] = "INT2";
+        PG_TYPE_TO_NAME[6] = "CHAR";
+        PG_TYPE_TO_NAME[7] = "INT8";
+        PG_TYPE_TO_NAME[8] = "BOOL";
+        PG_TYPE_TO_NAME[9] = "BINARY";
+        PG_TYPE_TO_NAME[10] = "NUMERIC";
     }
 }
