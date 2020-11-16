@@ -2538,6 +2538,52 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConcat3Args() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, CONCAT('2',x,'3') CONCAT from (select [x] from tab)",
+                "select 1, x, CONCAT('2', x, '3') from tab",
+                modelOf("tab").col("x", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    @Ignore
+    public void testConcatNested3() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, CONCAT('2',x,'3') CONCAT from (select [x] from tab)",
+                "select 1, x, CONCAT('2', Concat(x, '3')) from tab",
+                modelOf("tab").col("x", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testPipeConcatNested() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, CONCAT('2',x,'3') CONCAT from (select [x] from tab)",
+                "select 1, x, '2' || x || '3' from tab",
+                modelOf("tab").col("x", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testPipeConcatNested4() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, CONCAT('2',x,'3',y) CONCAT from (select [x, y] from tab)",
+                "select 1, x, '2' || x || '3' || y from tab",
+                modelOf("tab").col("x", ColumnType.STRING).col("y", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testConcatSimple() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, CONCAT('2',x) CONCAT from (select [x] from tab)",
+                "select 1, x, '2' || x from tab",
+                modelOf("tab").col("x", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testJoinFunction() throws SqlException {
         assertQuery(
                 "select-choose tab.x x, t.y y, t1.z z from (select [x] from tab join select [y] from t on f(y) = f(x) join select [z] from t1 on z = f(x) const-where 1 = 1)",

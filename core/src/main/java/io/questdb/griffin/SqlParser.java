@@ -38,6 +38,7 @@ import static io.questdb.griffin.SqlKeywords.*;
 public final class SqlParser {
 
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
+    private static final String CONCAT_FUNC_NAME = "CONCAT";
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
@@ -1430,9 +1431,39 @@ public final class SqlParser {
     }
 
     private void rewriteConcat0(ExpressionNode node) {
-        if (node.type == ExpressionNode.FUNCTION && isConcatOperator(node.token)) {
-            System.out.println("ok");
+        if (node.type == ExpressionNode.OPERATION && isConcatOperator(node.token)) {
+            node.type = ExpressionNode.FUNCTION;
+            node.token = CONCAT_FUNC_NAME;
+            addConcatArgs(node.args, node.rhs);
+            addConcatArgs(node.args, node.lhs);
+            node.paramCount = node.args.size();
         }
+    }
+
+    private void addConcatArgs(ObjList<ExpressionNode> args, ExpressionNode leaf) {
+        if (leaf.type != ExpressionNode.FUNCTION || !isConcatFunction(leaf.token)) {
+            args.add(leaf);
+            return;
+        }
+
+        // Nested CONCAT. Expand it from CONCAT(x, CONCAT(y, z)) into CONCAT(x, y, z).
+        args.addAll(leaf.args);
+    }
+
+    private boolean isConcatFunction(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        if (tok == CONCAT_FUNC_NAME) return true;
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i) | 32) == 't';
     }
 
     private ExpressionNode rewriteCount(ExpressionNode parent) throws SqlException {
