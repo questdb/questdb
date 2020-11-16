@@ -111,7 +111,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testStringConcat() throws SqlException {
-        x("", "a||'b'||c||d");
+        x("a'b'||c||d||", "a||'b'||c||d");
     }
 
     @Test
