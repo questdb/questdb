@@ -24,11 +24,21 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedDescriptionCatalogueFunctionFactory extends DescriptionCatalogueFunctionFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.ObjList;
+
+public class GetExprCatalogueFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_description()";
+        return "pg_catalog.pg_get_expr(SI)";
     }
 
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new StrConstant(position, "");
+    }
 }

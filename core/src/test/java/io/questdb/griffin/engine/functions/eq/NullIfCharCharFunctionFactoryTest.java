@@ -22,13 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.eq;
 
-public class PrefixedDescriptionCatalogueFunctionFactory extends DescriptionCatalogueFunctionFactory {
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_description()";
+public class NullIfCharCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testNullIfWhenDifferent() throws SqlException {
+        call('A', 'B').andAssert('A');
     }
 
+    @Test
+    public void testNullIfWhenEquals() throws SqlException {
+        call('A', 'A').andAssert(Character.MIN_VALUE);
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new NullIfCharCharFunctionFactory();
+    }
 }

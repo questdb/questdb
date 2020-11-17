@@ -24,11 +24,36 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedDescriptionCatalogueFunctionFactory extends DescriptionCatalogueFunctionFactory {
+import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Test;
 
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_description()";
+public class DescriptionCatalogueFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testPgDescriptionFunc() throws Exception {
+        assertQuery(
+                "objoid\tclassoid\tobjsubid\tdescription\n" +
+                        "1\t1259\t0\ttable\n" +
+                        "1\t1259\t1\tcolumn\n",
+                "pg_catalog.pg_description;",
+                "create table x(a int)",
+                null,
+                false,
+                false
+        );
     }
 
+    @Test
+    public void testNoPrefixPgDescriptionFunc() throws Exception {
+        assertQuery(
+                "objoid\tclassoid\tobjsubid\tdescription\n" +
+                        "1\t1259\t0\ttable\n" +
+                        "1\t1259\t1\tcolumn\n",
+                "pg_description;",
+                "create table x(a int)",
+                null,
+                false,
+                false
+        );
+    }
 }

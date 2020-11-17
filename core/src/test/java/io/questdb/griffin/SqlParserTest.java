@@ -1885,14 +1885,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFilter1() throws SqlException {
-        assertQuery(
-                "select-virtual x, cast(x + 10,timestamp) cast from (select [x, rnd_double() rnd] from (select-virtual [rnd_double() rnd, x] x, rnd_double() rnd from (select [x] from long_sequence(100000))) _xQdbA1 where rnd < 0.9999)",
-                "select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999"
-        );
-    }
-
-    @Test
     public void testFilter2() throws Exception {
         assertQuery("select-virtual customerId + 1 column, name, count from ((select-group-by [customerId, name, count() count] customerId, name, count() count from (select-choose [customerId, customerName name] customerId, customerName name from (select [customerId, customerName] from customers where customerName = 'X'))) _xQdbA1)",
                 "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
@@ -1904,7 +1896,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnGroupBy() throws SqlException {
         assertQuery(
-                "select-choose hash, count from (select [hash, count() count] from (select-group-by [count() count, hash] hash, count() count from (select [hash] from transactions.csv)) _xQdbA1 where count > 1)",
+                "select-choose hash, count from ((select-group-by [hash, count() count] hash, count() count from (select [hash] from transactions.csv) where count > 1) _xQdbA1)",
                 "select * from (select hash, count() from 'transactions.csv') where count > 1;",
                 modelOf("transactions.csv").col("hash", ColumnType.LONG256)
         );
@@ -1913,7 +1905,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnSubQuery() throws Exception {
         assertQuery(
-                "select-choose c.customerId customerId, c.customerName customerName, c.count count, o.orderId orderId, o.customerId customerId1 from (select [customerId, customerName, count] from (select-group-by [count() count, customerId, customerName] customerId, customerName, count() count from (select [customerId, customerName] from customers where customerId > 400 and customerId < 1200)) c outer join select [orderId, customerId] from orders o on o.customerId = c.customerId post-join-where o.orderId = NaN where count > 1) order by customerId",
+                "select-choose c.customerId customerId, c.customerName customerName, c.count count, o.orderId orderId, o.customerId customerId1 from (select [customerId, customerName, count] from (select-group-by [customerId, customerName, count() count] customerId, customerName, count() count from (select [customerId, customerName] from customers where customerId > 400 and customerId < 1200) where count > 1) c outer join select [orderId, customerId] from orders o on o.customerId = c.customerId post-join-where o.orderId = NaN) order by customerId",
                 "(select customerId, customerName, count() count from customers) c" +
                         " outer join orders o on c.customerId = o.customerId " +
                         " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 and count > 1 order by c.customerId",
@@ -2564,7 +2556,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoinGroupByFilter() throws Exception {
         assertQuery(
-                "select-choose country, sum from (select [country, sum(quantity) sum] from (select-group-by [sum(quantity) sum, country] country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId)) _xQdbA1 where sum > 2)",
+                "select-choose country, sum from ((select-group-by [country, sum(quantity) sum] country, sum(quantity) sum from (select [quantity, customerId, orderId] from orders o join (select [country, customerId] from customers c where country ~ '^Z') c on c.customerId = o.customerId join select [orderId] from orderDetails d on d.orderId = o.orderId) where sum > 2) _xQdbA1)",
                 "(select country, sum(quantity) sum from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -3102,6 +3094,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilter1() throws SqlException {
+        assertQuery(
+                "select-virtual x, cast(x + 10,timestamp) cast from ((select-virtual [x, rnd_double() rnd] x, rnd_double() rnd from (select [x] from long_sequence(100000)) where rnd < 0.9999) _xQdbA1)",
+                "select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999"
+        );
+    }
+
+    @Test
     public void testLineCommentAtEnd() throws Exception {
         assertQuery(
                 "select-choose x, a from ((select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a')",
@@ -3175,7 +3175,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMixedFieldsSubQuery() throws Exception {
         assertQuery(
-                "select-choose x, y from (select [x, z + x y] from (select-virtual [z + x y, x] x, z + x y from (select [x, z] from tab t2 latest by x where x > 100)) t1 where y > 0)",
+                "select-choose x, y from ((select-virtual [x, z + x y] x, z + x y from (select [x, z] from tab t2 latest by x where x > 100) where y > 0) t1)",
                 "select x, y from (select x,z + x y from tab t2 latest by x where x > 100) t1 where y > 0",
                 modelOf("tab").col("x", ColumnType.INT).col("z", ColumnType.INT));
     }
@@ -3975,7 +3975,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testRegexOnFunction() throws SqlException {
         assertQuery(
-                "select-choose a from (select [rnd_str() a] from (select-virtual [rnd_str() a] rnd_str() a from (long_sequence(100))) _xQdbA1 where a ~ '^W')",
+                "select-choose a from ((select-virtual [rnd_str() a] rnd_str() a from (long_sequence(100)) where a ~ '^W') _xQdbA1)",
                 "(select rnd_str() a from long_sequence(100)) where a ~ '^W'"
         );
     }
@@ -4516,7 +4516,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectOrderByWhereOnCount() throws SqlException {
-        assertQuery("select-choose a, c from (select [a, count() c] from (select-group-by [count() c, a] a, count() c from (select [a] from tab) order by a) _xQdbA1 where c > 0)",
+        assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0 order by a) _xQdbA1)",
                 "(select a, count() c from tab order by 1) where c > 0",
                 modelOf("tab").col("a", ColumnType.SYMBOL)
         );
@@ -4572,7 +4572,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectWhereOnCount() throws SqlException {
-        assertQuery("select-choose a, c from (select [a, count() c] from (select-group-by [count() c, a] a, count() c from (select [a] from tab)) _xQdbA1 where c > 0)",
+        assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0) _xQdbA1)",
                 "(select a, count() c from tab) where c > 0",
                 modelOf("tab").col("a", ColumnType.SYMBOL)
         );

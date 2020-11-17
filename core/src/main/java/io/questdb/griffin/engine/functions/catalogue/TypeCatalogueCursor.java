@@ -31,25 +31,23 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 
-class DescriptionCatalogueCursor implements NoRandomAccessRecordCursor {
+import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_OIDS;
+import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_NAME;
+
+class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
+    private static final int rowCount = PG_TYPE_OIDS.size();
+    private final TypeCatalogueRecord record = new TypeCatalogueRecord();
+    public int[] intValues = new int[8];
     private int row = -1;
-    private static final int[] objOids = {0};
-    private static final int[] classOids = {PgOIDs.PG_CLASS_OID};
-    private static final int[] objSubIds = {0};
-    private static final String[] descriptions = {"table"};
-    private static final  int objOidsLen = objOids.length;
-    private final DescriptionCatalogueRecord record = new DescriptionCatalogueRecord();
-    private static final int[][] intColumns = {
-            objOids,
-            classOids,
-            objSubIds,
-            null
-    };
+
+    public TypeCatalogueCursor() {
+        this.intValues[4] = PgOIDs.PG_PUBLIC_OID;
+    }
 
     @Override
     public void close() {
-        row = 0;
+        row = -1;
     }
 
     @Override
@@ -59,7 +57,11 @@ class DescriptionCatalogueCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
-        return ++row < objOidsLen;
+        if (++row < rowCount) {
+            intValues[0] = PG_TYPE_OIDS.get(row);
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -69,28 +71,52 @@ class DescriptionCatalogueCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public long size() {
-        return 1;
+        return rowCount;
     }
 
-    private class DescriptionCatalogueRecord implements Record {
+    class TypeCatalogueRecord implements Record {
 
         @Override
         public int getInt(int col) {
-            return intColumns[col][row];
+            return intValues[col];
         }
 
         @Override
         public CharSequence getStr(int col) {
-            return descriptions[row];
+            return PG_TYPE_TO_NAME[row];
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return getStr(col);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return getStr(col).length();
+        }
+
+        @Override
+        public char getChar(int col) {
+            return 'b';
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            return false;
         }
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("objsubid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("description", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typarray", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR, null));
         METADATA = metadata;
     }
 }
