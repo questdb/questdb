@@ -53,6 +53,7 @@ public class RecordSinkFactory {
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
         //
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
+        final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
         final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
         final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
@@ -83,17 +84,20 @@ public class RecordSinkFactory {
         int n = columnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
 
-            int index = columnFilter.getColumnIndex(i);
-            asm.aload(2);
-            asm.aload(1);
-            asm.iconst(index);
-
-            switch (columnTypes.getColumnType(index)) {
+            final int index = columnFilter.getColumnIndex(i);
+            final int factor = (index >> 31) | 0x01;
+            switch (factor * columnTypes.getColumnType(index * factor)) {
                 case ColumnType.INT:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetInt, 1);
                     asm.invokeInterface(wPutInt, 1);
                     break;
                 case ColumnType.SYMBOL:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     if (symAsString) {
                         asm.invokeInterface(rGetSym, 1);
                         asm.invokeInterface(wPutStr, 1);
@@ -103,56 +107,100 @@ public class RecordSinkFactory {
                     }
                     break;
                 case ColumnType.LONG:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetLong, 1);
                     asm.invokeInterface(wPutLong, 2);
                     break;
                 case ColumnType.DATE:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetDate, 1);
                     asm.invokeInterface(wPutDate, 2);
                     break;
                 case ColumnType.TIMESTAMP:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetTimestamp, 1);
                     asm.invokeInterface(wPutTimestamp, 2);
                     break;
                 case ColumnType.BYTE:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetByte, 1);
                     asm.invokeInterface(wPutByte, 1);
                     break;
                 case ColumnType.SHORT:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetShort, 1);
                     asm.invokeInterface(wPutShort, 1);
                     break;
                 case ColumnType.CHAR:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetChar, 1);
                     asm.invokeInterface(wPutChar, 1);
                     break;
                 case ColumnType.BOOLEAN:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetBool, 1);
                     asm.invokeInterface(wPutBool, 1);
                     break;
                 case ColumnType.FLOAT:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetFloat, 1);
                     asm.invokeInterface(wPutFloat, 1);
                     break;
                 case ColumnType.DOUBLE:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetDouble, 1);
                     asm.invokeInterface(wPutDouble, 2);
                     break;
                 case ColumnType.STRING:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetStr, 1);
                     asm.invokeInterface(wPutStr, 1);
                     break;
                 case ColumnType.BINARY:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetBin, 1);
                     asm.invokeInterface(wPutBin, 1);
                     break;
                 case ColumnType.LONG256:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetLong256, 1);
                     asm.invokeInterface(wPutLong256, 1);
                     break;
                 case ColumnType.RECORD:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(index);
                     asm.invokeInterface(rGetRecord, 1);
                     asm.invokeInterface(wPutRecord, 1);
+                    break;
+                case -ColumnType.INT:
+                    asm.aload(2);
+                    asm.iconst(Integer.BYTES);
+                    asm.invokeInterface(wSkip, 1);
                     break;
                 default:
                     break;

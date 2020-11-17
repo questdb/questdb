@@ -86,7 +86,7 @@ public class VirtualRecord implements Record, ColumnTypes {
 
     @Override
     public int getInt(int col) {
-        return getFunction(col). getInt(base);
+        return getFunction(col).getInt(base);
     }
 
     @Override
@@ -110,6 +110,11 @@ public class VirtualRecord implements Record, ColumnTypes {
     }
 
     @Override
+    public Record getRecord(int col) {
+        return getFunction(col).getRecord(base);
+    }
+
+    @Override
     public long getRowId() {
         return base.getRowId();
     }
@@ -127,11 +132,6 @@ public class VirtualRecord implements Record, ColumnTypes {
     @Override
     public void getStr(int col, CharSink sink) {
         getFunction(col).getStr(base, sink);
-    }
-
-    @Override
-    public Record getRecord(int col) {
-        return getFunction(col).getRecord(base);
     }
 
     @Override
