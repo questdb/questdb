@@ -45,7 +45,7 @@ import io.questdb.std.time.DateLocale;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cutlass.pgwire.PGJobContext.*;
+import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.time.DateFormatUtils.PG_DATE_TIME_Z_FORMAT;
 import static io.questdb.std.time.DateFormatUtils.PG_DATE_Z_FORMAT;
 
@@ -73,7 +73,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
-    private static final IntList typeOids = new IntList();
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
@@ -936,7 +935,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         for (int i = 0; i < typeManager.getProbeCount(); i++) {
             TypeAdapter typeAdapter = typeManager.getProbe(i);
             if (typeAdapter.probe(parameterHolder.of(lo, lo + valueLen))) {
-                return typeOids.get(typeAdapter.getType());
+                return TYPE_OIDS.get(typeAdapter.getType());
             }
         }
         return PG_VARCHAR;
@@ -1204,7 +1203,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             sink.encodeUtf8Z(metadata.getColumnName(i));
             sink.putNetworkInt(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
-            sink.putNetworkInt(typeOids.get(columnType)); // type
+            sink.putNetworkInt(TYPE_OIDS.get(columnType)); // type
             if (columnType < ColumnType.STRING) {
                 //type size
                 sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
@@ -1678,7 +1677,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 RecordMetadata metadata = writer.getMetadata();
                 responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    responseAsciiSink.putNetworkShort((short) typeOids.get(metadata.getColumnType(i)));
+                    responseAsciiSink.putNetworkShort((short) TYPE_OIDS.get(metadata.getColumnType(i)));
                 }
             }
             responseAsciiSink.putLen(addr);
@@ -1983,22 +1982,5 @@ public class PGConnectionContext implements IOContext, Mutable {
             sendBufferPtr += Integer.BYTES;
             return checkpoint;
         }
-    }
-
-    static {
-        typeOids.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
-        typeOids.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
-        typeOids.extendAndSet(ColumnType.DOUBLE, PG_FLOAT8); // FLOAT8
-        typeOids.extendAndSet(ColumnType.FLOAT, PG_FLOAT4); // FLOAT4
-        typeOids.extendAndSet(ColumnType.INT, PG_INT4); // INT4
-        typeOids.extendAndSet(ColumnType.SHORT, PG_INT2); // INT2
-        typeOids.extendAndSet(ColumnType.CHAR, PG_CHAR);
-        typeOids.extendAndSet(ColumnType.SYMBOL, PG_VARCHAR); // NAME
-        typeOids.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
-        typeOids.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
-        typeOids.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        typeOids.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
-        typeOids.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
-        typeOids.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
     }
 }

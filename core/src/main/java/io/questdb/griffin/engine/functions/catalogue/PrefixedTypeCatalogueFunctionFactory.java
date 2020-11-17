@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedDescriptionCatalogueFunctionFactory extends DescriptionCatalogueFunctionFactory {
+public class PrefixedTypeCatalogueFunctionFactory extends TypeCatalogueFunctionFactory {
 
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_description()";
+        return "pg_catalog.pg_type()";
     }
 
 }

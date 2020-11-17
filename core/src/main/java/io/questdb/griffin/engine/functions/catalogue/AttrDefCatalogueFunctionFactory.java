@@ -35,41 +35,33 @@ import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
-public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
+public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
+
     private static final Log LOG = LogFactory.getLog(DescriptionCatalogueFunctionFactory.class);
     static final RecordMetadata METADATA;
 
     @Override
     public String getSignature() {
-        return "pg_description()";
+        return "pg_catalog.pg_attrdef()";
     }
 
-    @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new CursorFunction(
                 position,
-                new DescriptionCatalogueCursorFactory(
-                        configuration,
-                        METADATA
-                )
+                new AttrDefCatalogueCursorFactory(configuration, METADATA)
         );
     }
 
-    @Override
-    public boolean isCursor() {
-        return true;
-    }
-
-    static class DescriptionCatalogueCursorFactory extends AbstractRecordCursorFactory {
+    private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
-        private final DescriptionCatalogueCursor cursor;
+        private final AttrDefCatalogueCursor cursor;
         private final long tempMem;
 
-        public DescriptionCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+        public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
             this.tempMem = Unsafe.malloc(Integer.BYTES);
-            this.cursor = new DescriptionCatalogueCursor(configuration, path, tempMem);
+            this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
         }
 
         @Override
@@ -90,14 +82,14 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class DescriptionCatalogueCursor implements NoRandomAccessRecordCursor {
+    private static class AttrDefCatalogueCursor implements NoRandomAccessRecordCursor {
         private final Path path;
         private final FilesFacade ff;
-        private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
+        private final AttrDefCatalogueCursor.DiskReadingRecord diskReadingRecord = new AttrDefCatalogueCursor.DiskReadingRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
-        private final int[] intValues = new int[4];
         private final long tempMem;
+        private int tableId = -1;
         private long findFileStruct = 0;
         private int columnIndex = 0;
         private boolean readNextFileFromDisk = true;
@@ -105,13 +97,11 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
         private boolean hasNextFile = true;
         private boolean foundMetadataFile = false;
 
-        public DescriptionCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
+        public AttrDefCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
-            this.intValues[1] = PgOIDs.PG_CLASS_OID; // classoid
-            this.intValues[2] = 0; // objsubid
             this.tempMem = tempMem;
         }
 
@@ -169,12 +159,10 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
                                 long fd = ff.openRO(path);
                                 if (fd > -1) {
                                     if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                        intValues[0] = Unsafe.getUnsafe().getInt(tempMem);
+                                        tableId = Unsafe.getUnsafe().getInt(tempMem);
                                         if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
                                             foundMetadataFile = true;
                                             columnCount = Unsafe.getUnsafe().getInt(tempMem);
-                                            diskReadingRecord.columnNumber = 0;
-                                            diskReadingRecord.description = "table";
                                         } else {
                                             LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
                                         }
@@ -188,18 +176,13 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
                             }
                         }
                         hasNextFile = ff.findNext(findFileStruct) > 0;
-                        if (foundMetadataFile) {
-                            readNextFileFromDisk = false;
-                            return true;
-                        }
                     }
                 }
 
                 if (foundMetadataFile) {
-                    for (int i = 0; i < columnCount + 1; i++) {
+                    for (int i = 0; i < columnCount; i++) {
                         if (columnIndex == i) {
                             diskReadingRecord.columnNumber = (short) (i + 1);
-                            diskReadingRecord.description = "column";
                             columnIndex++;
                             if (columnIndex == columnCount) {
                                 readNextFileFromDisk = true;
@@ -217,18 +200,17 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
             findFileStruct = 0;
             hasNextFile = true;
             foundMetadataFile = false;
-            intValues[0] = -1;
+            tableId = -1;
             return false;
         }
 
         private class DiskReadingRecord implements Record {
 
             public short columnNumber = 0;
-            public String description;
 
             @Override
             public int getInt(int col) {
-                return intValues[col];
+                return tableId;
             }
 
             @Override
@@ -238,7 +220,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStr(int col) {
-                return description;
+                return "";
             }
 
             @Override
@@ -255,11 +237,9 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT, null));
-        //TODO the below column was downgraded to short. We need to support type downgrading of compatible types when joining
-        metadata.add(new TableColumnMetadata("objsubid", ColumnType.SHORT, null));
-        metadata.add(new TableColumnMetadata("description", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("adrelid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("adnum", ColumnType.SHORT, null));
+        metadata.add(new TableColumnMetadata("adbin", ColumnType.STRING, null));
         METADATA = metadata;
     }
 }

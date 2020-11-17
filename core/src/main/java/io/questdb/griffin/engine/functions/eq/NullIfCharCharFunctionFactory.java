@@ -22,36 +22,54 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.ObjList;
 
-public class TypeCatalogueFunctionFactory implements FunctionFactory {
-
+public class NullIfCharCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_type()";
+        return "nullif(AA)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new CursorFunction(
-                position,
-                new GenericRecordCursorFactory(
-                        TypeCatalogueCursor.METADATA,
-                        new TypeCatalogueCursor(),
-                        false
-                )
-        );
+
+        Function chrFunc1 = args.getQuick(0);
+        Function chrFunc2 = args.getQuick(1);
+
+        return new Func(position, chrFunc1, chrFunc2);
     }
 
-    @Override
-    public boolean isCursor() {
-        return true;
+    private static class Func extends CharFunction implements BinaryFunction {
+        private final Function chrFunc1;
+        private final Function chrFunc2;
+
+        public Func(int position, Function chrFunc1, Function chrFunc2) {
+            super(position);
+            this.chrFunc1 = chrFunc1;
+            this.chrFunc2 = chrFunc2;
+        }
+
+        @Override
+        public Function getLeft() {
+            return chrFunc1;
+        }
+
+        @Override
+        public Function getRight() {
+            return chrFunc2;
+        }
+
+        @Override
+        public char getChar(Record rec) {
+            return chrFunc1.getChar(rec) == chrFunc2.getChar(rec) ? Character.MIN_VALUE : chrFunc1.getChar(rec);
+        }
     }
 }

@@ -24,11 +24,25 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedDescriptionCatalogueFunctionFactory extends DescriptionCatalogueFunctionFactory {
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_description()";
+public class GetExprCatalogueFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testGetExprCatalogueNoop1() throws SqlException {
+        call("AAA", 0).andAssert("");
     }
 
+    @Test
+    public void testGetExprCatalogueNoop2() throws SqlException {
+        call("", 0).andAssert("");
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new GetExprCatalogueFunctionFactory();
+    }
 }
