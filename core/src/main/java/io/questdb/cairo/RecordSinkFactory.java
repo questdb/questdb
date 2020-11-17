@@ -84,9 +84,10 @@ public class RecordSinkFactory {
         int n = columnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
 
-            final int index = columnFilter.getColumnIndex(i);
-            final int factor = (index >> 31) | 0x01;
-            switch (factor * columnTypes.getColumnType(index * factor)) {
+            int index = columnFilter.getColumnIndex(i);
+            final int factor = columnFilter.getIndexFactor(index);
+            index = (index * factor - 1);
+            switch (factor * columnTypes.getColumnType(index)) {
                 case ColumnType.INT:
                     asm.aload(2);
                     asm.aload(1);

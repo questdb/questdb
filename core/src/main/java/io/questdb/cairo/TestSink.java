@@ -24,20 +24,13 @@
 
 package io.questdb.cairo;
 
-public class EntityColumnFilter implements ColumnFilter {
-    private int columnCount;
+import io.questdb.cairo.sql.Record;
 
+public class TestSink implements RecordSink {
     @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    @Override
-    public int getColumnIndex(int position) {
-        return position + 1;
-    }
-
-    public void of(int columnCount) {
-        this.columnCount = columnCount;
+    public void copy(Record r, RecordSinkSPI w) {
+        w.putLong(r.getLong(1));
+        w.skip(4);
+        w.putInt(r.getInt(2));
     }
 }

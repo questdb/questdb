@@ -162,7 +162,7 @@ public class GroupByUtils {
                 type = metadata.getColumnType(index);
                 if (index != timestampIndex || timestampUnimportant) {
                     if (lastIndex != index) {
-                        listColumnFilter.add(index);
+                        listColumnFilter.add(index + 1);
                         keyTypes.add(type);
                         keyColumnIndex++;
                         lastIndex = index;

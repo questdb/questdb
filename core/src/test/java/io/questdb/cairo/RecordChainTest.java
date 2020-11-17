@@ -120,9 +120,9 @@ public class RecordChainTest extends AbstractCairoTest {
             metadata.add(new TableColumnMetadata("z", ColumnType.INT, null));
 
             ListColumnFilter filter = new ListColumnFilter();
-            filter.add(0);
-            filter.add(-1);
-            filter.add(2);
+            filter.add(1);
+            filter.add(-2);
+            filter.add(3);
 
             RecordSink sink = RecordSinkFactory.getInstance(
                     asm,

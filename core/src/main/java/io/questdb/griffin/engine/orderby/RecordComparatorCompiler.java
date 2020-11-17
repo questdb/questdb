@@ -198,7 +198,8 @@ public class RecordComparatorCompiler {
             int thisClassIndex,
             int recordClassIndex,
             ColumnTypes columnTypes,
-            IntList keyColumnIndices) {
+            IntList keyColumnIndices
+    ) {
         typeMap.clear();
         fieldIndices.clear();
         fieldNameIndices.clear();

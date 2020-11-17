@@ -30,6 +30,7 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.analytic.AnalyticRecordRecordCursorFactory;
 import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
@@ -40,7 +41,6 @@ import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.*;
 import io.questdb.griffin.engine.join.*;
-import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -294,7 +294,7 @@ public class SqlCodeGenerator implements Mutable {
         // create hash set of key columns to easily find them
         intHashSet.clear();
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            intHashSet.add(listColumnFilterA.getColumnIndex(i));
+            intHashSet.add(listColumnFilterA.getColumnIndexFactored(i));
         }
 
 
@@ -356,7 +356,7 @@ public class SqlCodeGenerator implements Mutable {
                         slaveMetadata.isSymbolTableStatic(i),
                         slaveMetadata.getMetadata(i)
                 );
-                listColumnFilterB.add(i);
+                listColumnFilterB.add(i + 1);
                 columnIndex.add(i);
                 valueTypes.add(type);
                 slaveTypes.add(type);
@@ -365,7 +365,7 @@ public class SqlCodeGenerator implements Mutable {
 
         // now add key columns to metadata
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            int index = listColumnFilterA.getColumnIndex(i);
+            int index = listColumnFilterA.getColumnIndexFactored(i);
             int type = slaveMetadata.getColumnType(index);
             if (type == ColumnType.SYMBOL) {
                 type = ColumnType.STRING;
@@ -875,7 +875,7 @@ public class SqlCodeGenerator implements Mutable {
         model.setWhereClause(null);
 
         if (listColumnFilterA.size() == 1) {
-            final int latestByIndex = listColumnFilterA.getColumnIndex(0);
+            final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
             final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
             if (intrinsicModel.keyColumn != null) {
@@ -2168,7 +2168,7 @@ public class SqlCodeGenerator implements Mutable {
                     // keyTypes are types of columns we collect 'latest by' for
                     keyTypes.add(myMeta.getColumnType(index));
                     // columnFilterA are indexes of columns we collect 'latest by' for
-                    listColumnFilterA.add(index);
+                    listColumnFilterA.add(index + 1);
                 }
             }
 
@@ -2440,12 +2440,12 @@ public class SqlCodeGenerator implements Mutable {
                 );
             }
 
-            if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getQuick(0))) {
+            if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
                 return new LatestByAllIndexedFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
-                        columnIndexes.getQuick(listColumnFilterA.getQuick(0)),
+                        columnIndexes.getQuick(listColumnFilterA.getColumnIndexFactored(0)),
                         null,
                         columnIndexes
                 );
@@ -2563,13 +2563,13 @@ public class SqlCodeGenerator implements Mutable {
             final CharSequence columnName = columnNames.getQuick(i).token;
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
             if (columnIndex > -1) {
-                filter.add(columnIndex);
+                filter.add(columnIndex + 1);
             } else {
                 int dot = Chars.indexOf(columnName, '.');
                 if (dot > -1) {
                     columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
                     if (columnIndex > -1) {
-                        filter.add(columnIndex);
+                        filter.add(columnIndex + 1);
                         return;
                     }
                 }
@@ -2585,7 +2585,7 @@ public class SqlCodeGenerator implements Mutable {
     ) {
         filter.clear();
         for (int i = 0, n = columnNames.size(); i < n; i++) {
-            filter.add(metadata.getColumnIndex(columnNames.getQuick(i)));
+            filter.add(metadata.getColumnIndex(columnNames.getQuick(i)) + 1);
         }
     }
 
@@ -2605,8 +2605,8 @@ public class SqlCodeGenerator implements Mutable {
         // compare types and populate keyTypes
         keyTypes.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            int columnType = masterMetadata.getColumnType(listColumnFilterB.getColumnIndex(k));
-            if (columnType != slaveMetadata.getColumnType(listColumnFilterA.getColumnIndex(k))) {
+            int columnType = masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k));
+            if (columnType != slaveMetadata.getColumnType(listColumnFilterA.getColumnIndexFactored(k))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
             }
