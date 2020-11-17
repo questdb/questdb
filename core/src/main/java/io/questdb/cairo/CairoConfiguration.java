@@ -188,4 +188,8 @@ public interface CairoConfiguration {
     long getAppendPageSize();
 
     int getTableBlockWriterQueueSize();
+
+    default boolean isOutOfOrderEnabled() {
+        return false;
+    }
 }

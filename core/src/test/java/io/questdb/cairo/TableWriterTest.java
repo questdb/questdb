@@ -731,21 +731,26 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAppendOutOfOrder() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.NONE, N);
-        testOutOfOrderRecords(N);
+        testOutOfOrderRecordsFail(N);
     }
 
     @Test
     public void testAppendOutOfOrderPartitioned() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
-        testOutOfOrderRecords(N);
+        testOutOfOrderRecordsFail(N);
     }
 
     @Test
     public void testAppendOutOfOrderPartitionedNewerFirst() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
-        testOutOfOrderRecordsNewerThanOlder(N);
+        testOutOfOrderRecordsNewerThanOlder(N, new DefaultCairoConfiguration(root) {
+            @Override
+            public boolean isOutOfOrderEnabled() {
+                return true;
+            }
+        });
     }
 
     @Test
@@ -3365,6 +3370,49 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
+    private void testOutOfOrderRecordsFail(int N) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+
+                long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+                Rnd rnd = new Rnd();
+                int i = 0;
+                long failureCount = 0;
+                while (i < N) {
+                    TableWriter.Row r;
+                    boolean fail = rnd.nextBoolean();
+                    if (fail) {
+                        try {
+                            writer.newRow();
+                            Assert.fail();
+                        } catch (CairoException ignore) {
+                            failureCount++;
+                        }
+                        continue;
+                    } else {
+                        ts += 60 * 6000L * 1000L;
+                        r = writer.newRow(ts);
+                    }
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.append();
+                    i++;
+                }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+                Assert.assertTrue(failureCount > 0);
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N, writer.size());
+            }
+        });
+    }
+
     private void testOutOfOrderRecords(int N) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
@@ -3404,7 +3452,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testOutOfOrderRecordsNewerThanOlder(int N) throws Exception {
+    private void testOutOfOrderRecordsNewerThanOlder(int N, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
 
