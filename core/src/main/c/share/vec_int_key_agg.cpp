@@ -474,7 +474,7 @@ Java_io_questdb_std_Rosti_keyedIntMinDoubleMerge(JNIEnv *env, jclass cl, jlong p
                 *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MAX : d;
             } else {
                 const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-                *reinterpret_cast<jdouble *>(pVal) = std::min((std::isnan(d) ? D_MAX : d), old);
+                *reinterpret_cast<jdouble *>(pVal) = MIN((std::isnan(d) ? D_MAX : d), old);
             }
         }
     }
@@ -500,7 +500,7 @@ Java_io_questdb_std_Rosti_keyedIntMinDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jdouble *>(dest + value_offset) = std::min(valueAtNull,
+            *reinterpret_cast<jdouble *>(dest + value_offset) = MIN(valueAtNull,
                                                                          *reinterpret_cast<jdouble *>(dest +
                                                                                                       value_offset));
         }
@@ -558,7 +558,7 @@ Java_io_questdb_std_Rosti_keyedIntMaxDoubleMerge(JNIEnv *env, jclass cl, jlong p
                 *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MIN : d;
             } else {
                 const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-                *reinterpret_cast<jdouble *>(pVal) = std::max(std::isnan(d) ? D_MIN : d, old);
+                *reinterpret_cast<jdouble *>(pVal) = MAX(std::isnan(d) ? D_MIN : d, old);
             }
         }
     }
@@ -583,7 +583,7 @@ Java_io_questdb_std_Rosti_keyedIntMaxDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jdouble *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jdouble *>(dest + value_offset) = std::max(valueAtNull,
+            *reinterpret_cast<jdouble *>(dest + value_offset) = MAX(valueAtNull,
                                                                          *reinterpret_cast<jdouble *>(dest +
                                                                                                       value_offset));
         }
@@ -780,7 +780,7 @@ Java_io_questdb_std_Rosti_keyedIntMinIntMerge(JNIEnv *env, jclass cl, jlong pRos
             } else {
                 if (val != I_MIN) {
                     const jint old = *reinterpret_cast<jint *>(pVal);
-                    *reinterpret_cast<jint *>(pVal) = std::min(val, old);
+                    *reinterpret_cast<jint *>(pVal) = MIN(val, old);
                 }
             }
         }
@@ -817,7 +817,7 @@ Java_io_questdb_std_Rosti_keyedIntMinIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jint *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jint *>(dest + value_offset) = std::min(valueAtNull,
+            *reinterpret_cast<jint *>(dest + value_offset) = MIN(valueAtNull,
                                                                       *reinterpret_cast<jint *>(dest + value_offset));
         }
     }
@@ -863,7 +863,7 @@ Java_io_questdb_std_Rosti_keyedIntMaxIntMerge(JNIEnv *env, jclass cl, jlong pRos
                 *reinterpret_cast<jint *>(pVal) = val;
             } else {
                 const jint old = *reinterpret_cast<jint *>(pVal);
-                *reinterpret_cast<jint *>(pVal) = std::max(val, old);
+                *reinterpret_cast<jint *>(pVal) = MAX(val, old);
             }
         }
     }
@@ -1004,7 +1004,7 @@ Java_io_questdb_std_Rosti_keyedIntMinLongMerge(JNIEnv *env, jclass cl, jlong pRo
             } else {
                 if (val != L_MIN) {
                     const jlong old = *reinterpret_cast<jlong *>(pVal);
-                    *reinterpret_cast<jlong *>(pVal) = std::min(val, old);
+                    *reinterpret_cast<jlong *>(pVal) = MIN(val, old);
                 }
             }
         }
@@ -1042,7 +1042,7 @@ Java_io_questdb_std_Rosti_keyedIntMinLongWrapUp(JNIEnv *env, jclass cl, jlong pR
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jlong *>(dest + value_offset) = std::min(valueAtNull,
+            *reinterpret_cast<jlong *>(dest + value_offset) = MIN(valueAtNull,
                                                                        *reinterpret_cast<jlong *>(dest + value_offset));
         }
     }
@@ -1064,7 +1064,7 @@ Java_io_questdb_std_Rosti_keyedIntMaxLongWrapUp(JNIEnv *env, jclass cl, jlong pR
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jlong *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jlong *>(dest + value_offset) = std::max(valueAtNull,
+            *reinterpret_cast<jlong *>(dest + value_offset) = MAX(valueAtNull,
                                                                        *reinterpret_cast<jlong *>(dest + value_offset));
         }
     }
@@ -1086,7 +1086,7 @@ Java_io_questdb_std_Rosti_keyedIntMaxIntWrapUp(JNIEnv *env, jclass cl, jlong pRo
             *reinterpret_cast<int32_t *>(dest) = nullKey;
             *reinterpret_cast<jint *>(dest + value_offset) = valueAtNull;
         } else {
-            *reinterpret_cast<jint *>(dest + value_offset) = std::max(valueAtNull,
+            *reinterpret_cast<jint *>(dest + value_offset) = MAX(valueAtNull,
                                                                       *reinterpret_cast<jint *>(dest + value_offset));
         }
     }
@@ -1132,7 +1132,7 @@ Java_io_questdb_std_Rosti_keyedIntMaxLongMerge(JNIEnv *env, jclass cl, jlong pRo
                 *reinterpret_cast<jlong *>(pVal) = val;
             } else {
                 const jlong old = *reinterpret_cast<jlong *>(pVal);
-                *reinterpret_cast<jlong *>(pVal) = std::max(val, old);
+                *reinterpret_cast<jlong *>(pVal) = MAX(val, old);
             }
         }
     }
@@ -1157,7 +1157,7 @@ void kIntMaxInt(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong cou
             *reinterpret_cast<jint *>(pVal) = val;
         } else {
             const jint old = *reinterpret_cast<jint *>(pVal);
-            *reinterpret_cast<jint *>(pVal) = std::max(val, old);
+            *reinterpret_cast<jint *>(pVal) = MAX(val, old);
         }
     }
 }
@@ -1179,7 +1179,7 @@ void kIntMaxLong(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
             *reinterpret_cast<jlong *>(pVal) = val;
         } else {
             const jlong old = *reinterpret_cast<jlong *>(pVal);
-            *reinterpret_cast<jlong *>(pVal) = std::max(val, old);
+            *reinterpret_cast<jlong *>(pVal) = MAX(val, old);
         }
     }
 }
@@ -1201,7 +1201,7 @@ void kIntMaxDouble(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlo
             *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MIN : d;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-            *reinterpret_cast<jdouble *>(pVal) = std::max(std::isnan(d) ? D_MIN : d, old);
+            *reinterpret_cast<jdouble *>(pVal) = MAX(std::isnan(d) ? D_MIN : d, old);
         }
     }
 }
@@ -1225,7 +1225,7 @@ void kIntMinInt(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pInt, jlong cou
             }
         } else if (val != I_MIN) {
             const jint old = *reinterpret_cast<jint *>(pVal);
-            *reinterpret_cast<jint *>(pVal) = std::min(val, old);
+            *reinterpret_cast<jint *>(pVal) = MIN(val, old);
         }
     }
 }
@@ -1249,7 +1249,7 @@ void kIntMinLong(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
             }
         } else if (val != L_MIN) {
             const jlong old = *reinterpret_cast<jlong *>(pVal);
-            *reinterpret_cast<jlong *>(pVal) = std::min(val, old);
+            *reinterpret_cast<jlong *>(pVal) = MIN(val, old);
         }
     }
 }
@@ -1271,7 +1271,7 @@ void kIntMinDouble(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlo
             *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MAX : d;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-            *reinterpret_cast<jdouble *>(pVal) = std::min((std::isnan(d) ? D_MAX : d), old);
+            *reinterpret_cast<jdouble *>(pVal) = MIN((std::isnan(d) ? D_MAX : d), old);
         }
     }
 }
