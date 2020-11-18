@@ -66,7 +66,7 @@ auto.create=true
 To publish a message
 K
 ```shell
-bin/windows/kafka-console-producer.bat --topic quickstart-events --bootstrap-server localhost:9092
+bin/windows/kafka-console-producer.bat --topic quickstart-events2 --bootstrap-server localhost:9092
 ```
 
 Paste this message (as one line) to create a table. The table name will be topic used in the kafka-console-producer

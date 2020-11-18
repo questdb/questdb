@@ -1420,7 +1420,10 @@ public class SqlCodeGenerator implements Mutable {
         ObjList<AnalyticFunction> naturalOrderFunctions = null;
         boolean needCache = false;
 
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        valueTypes.clear();
+        ArrayColumnTypes chainTypes = valueTypes;
+        GenericRecordMetadata chainMetadata = new GenericRecordMetadata();
+        GenericRecordMetadata factoryMetadata = new GenericRecordMetadata();
 
         listColumnFilterA.clear();
         listColumnFilterB.clear();
@@ -1429,31 +1432,70 @@ public class SqlCodeGenerator implements Mutable {
         // the analytical function must reference the metadata of "this" factory.
 
         // pass #1 assembles metadata of non-analytic columns
+
+        // set of column indexes in the base metadata that has already been added to the main
+        // metadata instance
+        // todo: reuse this set
+        IntHashSet columnSet = new IntHashSet();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
             if (!(qc instanceof AnalyticColumn)) {
                 final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                final TableColumnMetadata m;
                 if (baseMetadata instanceof GenericRecordMetadata) {
-                    metadata.add(i, ((GenericRecordMetadata) baseMetadata).getColumnQuick(columnIndex));
+                    m = ((GenericRecordMetadata) baseMetadata).getColumnQuick(columnIndex);
                 } else {
-                    metadata.add(
-                            i,
-                            new TableColumnMetadata(
-                                    baseMetadata.getColumnName(columnIndex),
-                                    baseMetadata.getColumnType(columnIndex),
-                                    baseMetadata.isColumnIndexed(columnIndex),
-                                    baseMetadata.getIndexValueBlockCapacity(columnIndex),
-                                    baseMetadata.isSymbolTableStatic(columnIndex),
-                                    baseMetadata.getMetadata(columnIndex)
-                            )
+                    m = new TableColumnMetadata(
+                            baseMetadata.getColumnName(columnIndex),
+                            baseMetadata.getColumnType(columnIndex),
+                            baseMetadata.isColumnIndexed(columnIndex),
+                            baseMetadata.getIndexValueBlockCapacity(columnIndex),
+                            baseMetadata.isSymbolTableStatic(columnIndex),
+                            baseMetadata.getMetadata(columnIndex)
                     );
                 }
+
+                chainMetadata.add(i, m);
+                factoryMetadata.add(i, m);
+                chainTypes.add(i, m.getType());
                 listColumnFilterA.extendAndSet(i, i + 1);
                 listColumnFilterB.extendAndSet(i, columnIndex);
+                columnSet.add(columnIndex);
             }
         }
 
-        // pass #2 assembles analytic column metadata into a list
+        // pass #2 - add remaining base metadata column that are not in columnSet already
+        // we need to pay attention to stepping over analytic column slots
+        // Chain metadata is assembled in such way that all columns the factory
+        // needs to provide are at the beginning of the metadata so the record the factory cursor
+        // returns can be chain record, because it chain record is always longer than record needed out of the
+        // cursor and relevant columns are 0..n limited by factory metadata
+
+        int addAt = columnCount;
+        for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+            if (columnSet.excludes(i)) {
+                final TableColumnMetadata m;
+                if (baseMetadata instanceof GenericRecordMetadata) {
+                    m = ((GenericRecordMetadata) baseMetadata).getColumnQuick(i);
+                } else {
+                    m = new TableColumnMetadata(
+                            baseMetadata.getColumnName(i),
+                            baseMetadata.getColumnType(i),
+                            baseMetadata.isColumnIndexed(i),
+                            baseMetadata.getIndexValueBlockCapacity(i),
+                            baseMetadata.isSymbolTableStatic(i),
+                            baseMetadata.getMetadata(i)
+                    );
+                }
+                chainMetadata.add(addAt, m);
+                chainTypes.add(addAt, m.getType());
+                listColumnFilterA.extendAndSet(addAt, addAt + 1);
+                listColumnFilterB.extendAndSet(addAt, i);
+                addAt++;
+            }
+        }
+
+        // pass #3 assembles analytic column metadata into a list
         // not main metadata to avoid partitionBy functions accidentally looking up
         // analytic columns recursively
 
@@ -1475,7 +1517,7 @@ public class SqlCodeGenerator implements Mutable {
                     partitionBy = new ObjList<>(psz);
                     for (int j = 0; j < psz; j++) {
                         partitionBy.add(
-                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext)
+                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext)
                         );
                     }
                 }
@@ -1536,7 +1578,7 @@ public class SqlCodeGenerator implements Mutable {
                 }
 
                 if (osz > 0 && !dismissOrder) {
-                    IntList order = toOrderIndices(metadata, ac.getOrderBy(), ac.getOrderByDirection());
+                    IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
                     ObjList<AnalyticFunction> funcs = grouppedAnalytic.get(order);
                     if (funcs == null) {
                         grouppedAnalytic.put(order, funcs = new ObjList<>());
@@ -1553,7 +1595,7 @@ public class SqlCodeGenerator implements Mutable {
 
                 analyticFunction.setColumnIndex(i);
 
-                deferredAnalyticMetadata.extendAndSet(i,  new TableColumnMetadata(
+                deferredAnalyticMetadata.extendAndSet(i, new TableColumnMetadata(
                         Chars.toString(qc.getAlias()),
                         analyticFunction.getType(),
                         false,
@@ -1570,7 +1612,8 @@ public class SqlCodeGenerator implements Mutable {
         for (int i = 0, n = deferredAnalyticMetadata.size(); i < n; i++) {
             TableColumnMetadata m = deferredAnalyticMetadata.getQuick(i);
             if (m != null) {
-                metadata.add(i, m);
+                chainTypes.add(i, m.getType());
+                factoryMetadata.add(i, m);
             }
         }
 
@@ -1578,7 +1621,7 @@ public class SqlCodeGenerator implements Mutable {
             final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
             final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
             for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
-                analyticComparators.add(recordComparatorCompiler.compile(metadata, e.key));
+                analyticComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
                 functionGroups.add(e.value);
             }
 
@@ -1589,7 +1632,7 @@ public class SqlCodeGenerator implements Mutable {
 
             final RecordSink recordSink = RecordSinkFactory.getInstance(
                     asm,
-                    metadata,
+                    chainTypes,
                     listColumnFilterA,
                     false,
                     listColumnFilterB
@@ -1600,7 +1643,8 @@ public class SqlCodeGenerator implements Mutable {
                     4096, // todo: configuration
                     base,
                     recordSink,
-                    metadata,
+                    factoryMetadata,
+                    chainTypes,
                     analyticComparators,
                     functionGroups
             );

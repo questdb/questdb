@@ -24,6 +24,7 @@
 package io.questdb.griffin.engine.analytic;
 
 
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
@@ -34,6 +35,7 @@ import io.questdb.griffin.engine.orderby.LongTreeChain;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     private final RecordChain recordChain;
@@ -54,6 +56,7 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
             RecordCursorFactory base,
             RecordSink recordSink,
             GenericRecordMetadata metadata,
+            @Transient ColumnTypes chainMetadata,
             ObjList<RecordComparator> comparators,
             ObjList<ObjList<AnalyticFunction>> functionGroups
     ) {
@@ -63,7 +66,7 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         this.orderedSources = new ObjList<>(orderGroupCount);
         this.functionGroups = functionGroups;
         this.comparators = comparators;
-        this.recordChain = new RecordChain(metadata, recordSink, rowidPageSize, Integer.MAX_VALUE);
+        this.recordChain = new RecordChain(chainMetadata, recordSink, rowidPageSize, Integer.MAX_VALUE);
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderGroupCount; i++) {
             final RecordComparator cmp = comparators.getQuick(i);

@@ -215,6 +215,11 @@ public class RecordSinkFactory {
                     asm.iconst(Integer.BYTES);
                     asm.invokeInterface(wSkip, 1);
                     break;
+                case -ColumnType.LONG:
+                    asm.aload(2);
+                    asm.iconst(Long.BYTES);
+                    asm.invokeInterface(wSkip, 1);
+                    break;
                 default:
                     break;
             }
