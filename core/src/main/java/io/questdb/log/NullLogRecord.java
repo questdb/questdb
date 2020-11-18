@@ -120,6 +120,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord microTime(long x) {
+        return this;
+    }
+
+    @Override
     public LogRecord utf8(CharSequence sequence) {
         return this;
     }

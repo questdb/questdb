@@ -25,6 +25,9 @@ extern "C" {
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeMicros
         (JNIEnv *, jclass);
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeNanos
+        (JNIEnv *e, jclass cl);
+
 /*
  * Class:     com_questdb_std_Os
  * Method:    errno

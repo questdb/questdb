@@ -63,6 +63,31 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNullToBinary() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a binary)",
+                null,
+                "insert into tab select cast(null as binary) from long_sequence(10)",
+                "a\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testBooleanToByte() throws Exception {
         assertQuery(
                 "a\n",

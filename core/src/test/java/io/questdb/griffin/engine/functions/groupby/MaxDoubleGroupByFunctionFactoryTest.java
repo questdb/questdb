@@ -304,7 +304,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n",
                 "select b, max(a), k from " +
-                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) " +
+                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
                         "sample by 3h fill(linear) order by 3, 2, 1",
                 "create table x as " +
                         "(" +

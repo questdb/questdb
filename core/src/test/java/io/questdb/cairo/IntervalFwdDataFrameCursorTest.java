@@ -271,6 +271,30 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalSpansPartitions() throws Exception {
+        // day partition
+        // two hour interval between timestamps
+        long increment = 1000000L * 3600 * 2;
+        // 3 days
+        int N = 36;
+
+        intervals.clear();
+        intervals.add(TimestampFormatUtils.parseDateTime("1980-01-03T23:59:59.000Z"));
+        intervals.add(TimestampFormatUtils.parseDateTime("1983-01-04T15:00:00.002Z"));
+
+        final String expected = "1983-01-04T00:00:00.000000Z\n" +
+                "1983-01-04T02:00:00.000000Z\n" +
+                "1983-01-04T04:00:00.000000Z\n" +
+                "1983-01-04T06:00:00.000000Z\n" +
+                "1983-01-04T08:00:00.000000Z\n" +
+                "1983-01-04T10:00:00.000000Z\n" +
+                "1983-01-04T12:00:00.000000Z\n" +
+                "1983-01-04T14:00:00.000000Z\n";
+
+        testIntervals(PartitionBy.DAY, increment, N, expected, 8);
+    }
+
+    @Test
     public void testIntervalCursorNoTimestamp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).

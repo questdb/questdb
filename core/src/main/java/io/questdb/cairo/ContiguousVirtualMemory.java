@@ -32,14 +32,12 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
 /**
  * A version of {@link VirtualMemory} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will grow in page sizes.
  *
  * @author Patrick Mackinlay
  */
-public class ContiguousVirtualMemory implements Closeable {
+public class ContiguousVirtualMemory implements BigMem, Mutable {
     static final int STRING_LENGTH_BYTES = 4;
     private static final Log LOG = LogFactory.getLog(ContiguousVirtualMemory.class);
     private final ByteSequenceView bsview = new ByteSequenceView();
@@ -68,8 +66,21 @@ public class ContiguousVirtualMemory implements Closeable {
     }
 
     public long addressOf(long offset) {
-        checkLimits(offset, 1);
         return baseAddress + offset;
+    }
+
+    public long getAllocatedSize() {
+        return baseAddressHi - baseAddress;
+    }
+
+    public void replacePage(long address, long size) {
+        this.baseAddress = this.appendAddress = address;
+        this.baseAddressHi = baseAddress + size;
+    }
+
+    @Override
+    public void clear() {
+        releaseMemory();
     }
 
     @Override
@@ -80,126 +91,7 @@ public class ContiguousVirtualMemory implements Closeable {
         appendAddress = 0;
     }
 
-    public final long getAppendOffset() {
-        return appendAddress - baseAddress;
-    }
-
-    public final BinarySequence getBin(long offset) {
-        final long len = getLong(offset);
-        if (len > -1) {
-            return bsview.of(offset + 8, len);
-        }
-        return null;
-    }
-
-    public final long getBinLen(long offset) {
-        return getLong(offset);
-    }
-
-    public boolean getBool(long offset) {
-        return getByte(offset) == 1;
-    }
-
-    public final byte getByte(long offset) {
-        return Unsafe.getUnsafe().getByte(addressOf(offset));
-    }
-
-    public final char getChar(long offset) {
-        return Unsafe.getUnsafe().getChar(addressOf(offset));
-    }
-
-    public final double getDouble(long offset) {
-        return Unsafe.getUnsafe().getDouble(addressOf(offset));
-    }
-
-    public final float getFloat(long offset) {
-        return Unsafe.getUnsafe().getFloat(addressOf(offset));
-    }
-
-    public final int getInt(long offset) {
-        return Unsafe.getUnsafe().getInt(addressOf(offset));
-    }
-
-    public long getLong(long offset) {
-        return Unsafe.getUnsafe().getLong(addressOf(offset));
-    }
-
-    public void getLong256(long offset, CharSink sink) {
-        final long a, b, c, d;
-        a = getLong(offset);
-        b = getLong(offset + Long.BYTES);
-        c = getLong(offset + Long.BYTES * 2);
-        d = getLong(offset + Long.BYTES * 3);
-        Numbers.appendLong256(a, b, c, d, sink);
-    }
-
-    public void getLong256(long offset, Long256Sink sink) {
-        sink.setLong0(getLong(offset));
-        sink.setLong1(getLong(offset + Long.BYTES));
-        sink.setLong2(getLong(offset + Long.BYTES * 2));
-        sink.setLong3(getLong(offset + Long.BYTES * 3));
-    }
-
-    public Long256 getLong256A(long offset) {
-        getLong256(offset, long256);
-        return long256;
-    }
-
-    public Long256 getLong256B(long offset) {
-        getLong256(offset, long256B);
-        return long256B;
-    }
-
-    public final short getShort(long offset) {
-        return Unsafe.getUnsafe().getShort(addressOf(offset));
-    }
-
-    public final CharSequence getStr(long offset) {
-        return getStr0(offset, csview);
-    }
-
-    public final CharSequence getStr0(long offset, CharSequenceView view) {
-        final int len = getInt(offset);
-        if (len != TableUtils.NULL_LEN) {
-            return view.of(offset + STRING_LENGTH_BYTES, len);
-        }
-        return null;
-
-    }
-
-    public final CharSequence getStr2(long offset) {
-        return getStr0(offset, csview2);
-    }
-
-    public final int getStrLen(long offset) {
-        return getInt(offset);
-    }
-
-    public long hash(long offset, long size) {
-        long n = size - (size & 7);
-        long h = 179426491L;
-        for (long i = 0; i < n; i += 8) {
-            h = (h << 5) - h + getLong(offset + i);
-        }
-
-        for (; n < size; n++) {
-            h = (h << 5) - h + getByte(offset + n);
-        }
-        return h;
-    }
-
-    /**
-     * Updates append pointer with address for the given offset. All put* functions will be
-     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
-     * unaffected until the moment memory has to be extended.
-     *
-     * @param offset position from 0 in virtual memory.
-     */
-    public void jumpTo(long offset) {
-        checkLimits(offset, 0);
-        appendAddress = baseAddress + offset;
-    }
-
+    @Override
     public final long putBin(BinarySequence value) {
         final long offset = getAppendOffset();
         if (value != null) {
@@ -409,6 +301,126 @@ public class ContiguousVirtualMemory implements Closeable {
         copyStrChars(value, pos, len, baseAddress + offset + STRING_LENGTH_BYTES);
     }
 
+    public final long getAppendOffset() {
+        return appendAddress - baseAddress;
+    }
+
+    public final BinarySequence getBin(long offset) {
+        final long len = getLong(offset);
+        if (len > -1) {
+            return bsview.of(offset + 8, len);
+        }
+        return null;
+    }
+
+    public final long getBinLen(long offset) {
+        return getLong(offset);
+    }
+
+    public boolean getBool(long offset) {
+        return getByte(offset) == 1;
+    }
+
+    public final byte getByte(long offset) {
+        return Unsafe.getUnsafe().getByte(addressOf(offset));
+    }
+
+    public final char getChar(long offset) {
+        return Unsafe.getUnsafe().getChar(addressOf(offset));
+    }
+
+    public final double getDouble(long offset) {
+        return Unsafe.getUnsafe().getDouble(addressOf(offset));
+    }
+
+    public final float getFloat(long offset) {
+        return Unsafe.getUnsafe().getFloat(addressOf(offset));
+    }
+
+    public final int getInt(long offset) {
+        return Unsafe.getUnsafe().getInt(addressOf(offset));
+    }
+
+    public long getLong(long offset) {
+        return Unsafe.getUnsafe().getLong(addressOf(offset));
+    }
+
+    public void getLong256(long offset, CharSink sink) {
+        final long a, b, c, d;
+        a = getLong(offset);
+        b = getLong(offset + Long.BYTES);
+        c = getLong(offset + Long.BYTES * 2);
+        d = getLong(offset + Long.BYTES * 3);
+        Numbers.appendLong256(a, b, c, d, sink);
+    }
+
+    public void getLong256(long offset, Long256Sink sink) {
+        sink.setLong0(getLong(offset));
+        sink.setLong1(getLong(offset + Long.BYTES));
+        sink.setLong2(getLong(offset + Long.BYTES * 2));
+        sink.setLong3(getLong(offset + Long.BYTES * 3));
+    }
+
+    public Long256 getLong256A(long offset) {
+        getLong256(offset, long256);
+        return long256;
+    }
+
+    public Long256 getLong256B(long offset) {
+        getLong256(offset, long256B);
+        return long256B;
+    }
+
+    public final short getShort(long offset) {
+        return Unsafe.getUnsafe().getShort(addressOf(offset));
+    }
+
+    public final CharSequence getStr(long offset) {
+        return getStr0(offset, csview);
+    }
+
+    public final CharSequence getStr0(long offset, CharSequenceView view) {
+        final int len = getInt(offset);
+        if (len != TableUtils.NULL_LEN) {
+            return view.of(offset + STRING_LENGTH_BYTES, len);
+        }
+        return null;
+
+    }
+
+    public final CharSequence getStr2(long offset) {
+        return getStr0(offset, csview2);
+    }
+
+    public final int getStrLen(long offset) {
+        return getInt(offset);
+    }
+
+    public long hash(long offset, long size) {
+        long n = size - (size & 7);
+        long h = 179426491L;
+        for (long i = 0; i < n; i += 8) {
+            h = (h << 5) - h + getLong(offset + i);
+        }
+
+        for (; n < size; n++) {
+            h = (h << 5) - h + getByte(offset + n);
+        }
+        return h;
+    }
+
+    /**
+     * Updates append pointer with address for the given offset. All put* functions will be
+     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
+     * unaffected until the moment memory has to be extended.
+     *
+     * @param offset position from 0 in virtual memory.
+     */
+    public void jumpTo(long offset) {
+        checkLimits(offset, 0);
+        appendAddress = baseAddress + offset;
+    }
+
     /**
      * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
      * no memory write takes place.
@@ -454,11 +466,11 @@ public class ContiguousVirtualMemory implements Closeable {
         long nPages = (newSize / pageSize) + 1;
         newSize = nPages * pageSize;
         long oldSize = getMemorySize();
-        LOG.info().$("extending [oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
         if (nPages > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
         long newBaseAddress = reallocateMemory(baseAddress, getMemorySize(), newSize);
+        LOG.info().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
         handleMemoryReallocation(newBaseAddress, newSize);
     }
 

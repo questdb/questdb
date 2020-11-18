@@ -45,6 +45,7 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
 
     public ExceptRecordCursorFactory(
             CairoConfiguration configuration,
+            RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             RecordSink recordSink,

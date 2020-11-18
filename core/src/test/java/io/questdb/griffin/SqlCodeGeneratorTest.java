@@ -639,7 +639,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFilterConstantTrue() throws Exception {
         final String expected = "sum\n" +
-                "551.3822454600645\n";
+                "551.3822454600646\n";
 
         assertQuery(expected,
                 "(select sum(a) from x) where 1=1",

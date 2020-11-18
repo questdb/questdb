@@ -22,9 +22,8 @@
  *
  ******************************************************************************/
 
-#include <cfloat>
-#include <cmath>
 #include "vec_agg.h"
+#include "util.h"
 
 #define MAX_VECTOR_SIZE 512
 
@@ -127,14 +126,14 @@ bool HAS_NULL(int32_t *pi, int64_t count) {
     for (; pi < vec_lim; pi += step) {
         _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
-        if (horizontal_find_first(vec == INT_MIN) > -1) {
+        if (horizontal_find_first(vec == I_MIN) > -1) {
             return true;
         }
     }
 
     if (remainder > 0) {
         vec.load_partial(remainder, pi);
-        return horizontal_find_first(vec == INT_MIN) > -1;
+        return horizontal_find_first(vec == I_MIN) > -1;
     }
     return false;
 }
@@ -154,7 +153,7 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
-        bVec = vec == LLONG_MIN;
+        bVec = vec == L_MIN;
         vecsum = if_add(!bVec, vecsum, vec);
         nancount = if_add(bVec, nancount, 1);
     }
@@ -163,7 +162,7 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
     int n = 0;
     for (; i < count; i++) {
         int64_t x = *(pl + i);
-        if (x != LLONG_MIN) {
+        if (x != L_MIN) {
             sum += x;
         } else {
             n++;
@@ -174,41 +173,41 @@ int64_t SUM_LONG(int64_t *pl, int64_t count) {
         return horizontal_add(vecsum) + sum;
     }
 
-    return LLONG_MIN;
+    return L_MIN;
 }
 
 int64_t MIN_LONG(int64_t *pl, int64_t count) {
     Vec8q vec;
     const int step = 8;
-    Vec8q vecMin = LLONG_MAX;
+    Vec8q vecMin = L_MAX;
     Vec8qb bVec;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
-        bVec = vec == LLONG_MIN;
+        bVec = vec == L_MIN;
         vecMin = select(bVec, vecMin, min(vecMin, vec));
     }
 
     int64_t min = horizontal_min(vecMin);
     for (; i < count; i++) {
         int64_t x = *(pl + i);
-        if (x != LLONG_MIN && x < min) {
+        if (x != L_MIN && x < min) {
             min = x;
         }
     }
 
-    if (min < LLONG_MAX) {
+    if (min < L_MAX) {
         return min;
     }
 
-    return LLONG_MIN;
+    return L_MIN;
 }
 
 int64_t MAX_LONG(int64_t *pl, int64_t count) {
     const int step = 8;
     Vec8q vec;
-    Vec8q vecMax = LLONG_MIN;
+    Vec8q vecMax = L_MIN;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
@@ -236,7 +235,7 @@ double AVG_LONG(int64_t *pl, int64_t count) {
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
-        bVec = vec == LLONG_MIN;
+        bVec = vec == L_MIN;
         vecsum = if_add(!bVec, vecsum, vec);
         nancount = if_add(bVec, nancount, 1);
     }
@@ -245,7 +244,7 @@ double AVG_LONG(int64_t *pl, int64_t count) {
     int n = 0;
     for (; i < count; i++) {
         int64_t x = *(pl + i);
-        if (x != LLONG_MIN) {
+        if (x != L_MIN) {
             sum += x;
         } else {
             n++;
@@ -277,7 +276,7 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     for (; pi < vec_lim; pi += step) {
         _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
-        bVec = vec != INT_MIN;
+        bVec = vec != I_MIN;
         hasData = hasData || horizontal_count(bVec) > 0;
         result += horizontal_add_x(select(bVec, vec, 0));
     }
@@ -285,48 +284,48 @@ int64_t SUM_INT(int32_t *pi, int64_t count) {
     if (pi < lim) {
         for (; pi < lim; pi++) {
             int32_t v = *pi;
-            if (v != INT_MIN) {
+            if (PREDICT_TRUE(v != I_MIN)) {
                 result += v;
                 hasData = true;
             }
         }
     }
 
-    return hasData > 0 ? result : LLONG_MIN;
+    return hasData > 0 ? result : L_MIN;
 }
 
 int32_t MIN_INT(int32_t *pi, int64_t count) {
     Vec16i vec;
     const int step = 16;
-    Vec16i vecMin = INT_MAX;
+    Vec16i vecMin = I_MAX;
     Vec16ib bVec;
     int i;
     for (i = 0; i < count - 15; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
-        bVec = vec == INT_MIN;
+        bVec = vec == I_MIN;
         vecMin = select(bVec, vecMin, min(vecMin, vec));
     }
 
     int32_t min = horizontal_min(vecMin);
     for (; i < count; i++) {
         int32_t x = *(pi + i);
-        if (x != INT_MIN && x < min) {
+        if (x != I_MIN && x < min) {
             min = x;
         }
     }
 
-    if (min < INT_MAX) {
+    if (min < I_MAX) {
         return min;
     }
 
-    return INT_MIN;
+    return I_MIN;
 }
 
 int32_t MAX_INT(int32_t *pi, int64_t count) {
     const int step = 16;
     Vec16i vec;
-    Vec16i vecMax = INT_MIN;
+    Vec16i vecMax = I_MIN;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
@@ -357,7 +356,7 @@ double AVG_INT(int32_t *pi, int64_t count) {
     for (; pi < vec_lim; pi += step) {
         _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
         vec.load(pi);
-        bVec = vec != INT_MIN;
+        bVec = vec != I_MIN;
         sumCount += horizontal_count(bVec);
         sum += horizontal_add_x(select(bVec, vec, 0));
     }
@@ -365,7 +364,7 @@ double AVG_INT(int32_t *pi, int64_t count) {
     if (pi < lim) {
         for (; pi < lim; pi++) {
             int v = *pi;
-            if (v != INT_MIN) {
+            if (v != I_MIN) {
                 sum += v;
                 sumCount++;
             }
@@ -393,20 +392,20 @@ double SUM_DOUBLE(double *d, int64_t count) {
         nancount = if_add(bVec, nancount, 1);
     }
 
-    double sum = 0;
-    int n = 0;
+    _mm_prefetch(d, _MM_HINT_T0);
+    double sum = horizontal_add(vecsum);
+    int64_t n = horizontal_add(nancount);
     for (; i < count; i++) {
         double x = *(d + i);
-        if (std::isfinite(x)) {
+        if (PREDICT_TRUE(std::isfinite(x))) {
             sum += x;
         } else {
             n++;
         }
     }
 
-    const int64_t nans = horizontal_add(nancount) + n;
-    if (nans < count) {
-        return (horizontal_add(vecsum) + sum);
+    if (n < count) {
+        return sum;
     }
     return NAN;
 }
@@ -435,6 +434,7 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
         sumVec = tVec;
     }
 
+    _mm_prefetch(d, _MM_HINT_T0);
     double sum = horizontal_add(sumVec);
     double c = horizontal_add(cVec);
     int64_t nans = horizontal_add(nancount);
@@ -481,12 +481,15 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
         sumVec = tVec;
     }
 
+    _mm_prefetch(d, _MM_HINT_T0);
     double sum = horizontal_add(sumVec);
     double c = horizontal_add(cVec);
     int64_t nans = horizontal_add(nancount);
     for (; d < lim; d++) {
         double input = *d;
-        if (input == input) {
+        if (PREDICT_FALSE(std::isnan(input))) {
+            nans++;
+        } else {
             auto t = sum + input;
             if (abs(sum) >= abs(input)) {
                 c += (sum - t) + input;
@@ -494,8 +497,6 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
                 c += (input - t) + sum;
             }
             sum = t;
-        } else {
-            nans++;
         }
     }
 
@@ -503,7 +504,7 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
         return sum + c;
     }
 
-    return NAN;
+    return D_NAN;
 }
 
 double AVG_DOUBLE(double *d, int64_t count) {
@@ -521,23 +522,22 @@ double AVG_DOUBLE(double *d, int64_t count) {
         nancount = if_add(bVec, nancount, 1);
     }
 
-    double sum = 0;
-    int n = 0;
+    double sum = horizontal_add(vecsum);
+    int64_t n = horizontal_add(nancount);
     for (; i < count; i++) {
         double x = *(d + i);
-        if (x == x) {
+        if (PREDICT_TRUE(std::isfinite(x))) {
             sum += x;
         } else {
             n++;
         }
     }
 
-    const int64_t nans = horizontal_add(nancount) + n;
-    if (nans < count) {
-        return (horizontal_add(vecsum) + sum) / (double) (count - nans);
+    if (n < count) {
+        return sum / (double) (count - n);
     }
 
-    return NAN;
+    return D_NAN;
 }
 
 double MIN_DOUBLE(double *d, int64_t count) {
@@ -545,7 +545,7 @@ double MIN_DOUBLE(double *d, int64_t count) {
     const int step = 8;
     const double *lim = d + count;
     const double *lim_vec = lim - step + 1;
-    Vec8d vecMin = INFINITY;
+    Vec8d vecMin = D_MAX;
     Vec8db bVec;
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
@@ -557,12 +557,12 @@ double MIN_DOUBLE(double *d, int64_t count) {
     double min = horizontal_min(vecMin);
     for (; d < lim; d++) {
         double x = *d;
-        if (x == x && x < min) {
+        if (std::isfinite(x) && x < min) {
             min = x;
         }
     }
 
-    if (min < INFINITY) {
+    if (min < D_MAX) {
         return min;
     }
 
@@ -574,7 +574,7 @@ double MAX_DOUBLE(double *d, int64_t count) {
     const int step = 8;
     const double *lim = d + count;
     const double *lim_vec = lim - step + 1;
-    Vec8d vecMax = -INFINITY;
+    Vec8d vecMax = D_MIN;
     Vec8db bVec;
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
@@ -586,12 +586,12 @@ double MAX_DOUBLE(double *d, int64_t count) {
     double max = horizontal_max(vecMax);
     for (; d < lim; d++) {
         double x = *d;
-        if (x == x && x > max) {
+        if (std::isfinite(x) && x > max) {
             max = x;
         }
     }
 
-    if (max > -INFINITY) {
+    if (max > D_MIN) {
         return max;
     }
 
@@ -625,5 +625,6 @@ extern "C" {
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
     return instrset_detect();
 }
+
 }
 #endif  // INSTRSET == 2
