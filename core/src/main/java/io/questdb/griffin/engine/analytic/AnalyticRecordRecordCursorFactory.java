@@ -112,7 +112,7 @@ public class AnalyticRecordRecordCursorFactory implements RecordCursorFactory {
         public boolean hasNext() {
             if (baseCursor.hasNext()) {
                 for (int i = 0; i < functionCount; i++) {
-                    functions.getQuick(i).prepareFor(record);
+                    functions.getQuick(i).pass2(record);
                 }
                 return true;
             }
@@ -138,7 +138,7 @@ public class AnalyticRecordRecordCursorFactory implements RecordCursorFactory {
             for (int i = 0; i < functionCount; i++) {
                 final AnalyticFunction f = functions.getQuick(i);
                 f.reset();
-                f.prepare(baseCursor);
+                f.preparePass2(baseCursor);
             }
         }
     }

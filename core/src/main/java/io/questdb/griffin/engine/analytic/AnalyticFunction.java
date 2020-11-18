@@ -23,6 +23,7 @@
 
 package io.questdb.griffin.engine.analytic;
 
+import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -32,11 +33,13 @@ public interface AnalyticFunction extends Function {
     int TWO_PASS = 2;
     int THREE_PASS = 3;
 
-    void add(Record record);
+    void pass1(Record record, long recordOffset, AnalyticSPI spi);
 
-    void prepare(RecordCursor cursor);
+    void preparePass2(RecordCursor cursor);
 
-    void prepareFor(Record record);
+    void pass2(Record record);
 
     void reset();
+
+    void setColumnIndex(int columnIndex);
 }

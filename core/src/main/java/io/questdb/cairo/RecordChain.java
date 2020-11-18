@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
@@ -34,7 +35,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI {
+public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI {
 
     private final long[] columnOffsets;
     private final ContiguousVirtualMemory mem;
@@ -171,6 +172,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             varAppendOffset = mem.getAppendOffset();
             mem.jumpTo(offset);
         }
+    }
+
+    @Override
+    public long getAddress(long recordOffset, int columnIndex) {
+        return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
     }
 
     @Override

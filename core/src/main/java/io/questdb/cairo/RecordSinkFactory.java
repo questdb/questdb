@@ -26,11 +26,23 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 
 public class RecordSinkFactory {
 
     public static RecordSink getInstance(BytecodeAssembler asm, ColumnTypes columnTypes, @Transient ColumnFilter columnFilter, boolean symAsString) {
+        return getInstance(asm, columnTypes, columnFilter, symAsString, null);
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient ColumnFilter columnFilter,
+            boolean symAsString,
+            @Transient @Nullable IntList skewIndex
+    ) {
         asm.init(RecordSink.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/sink"));
@@ -91,14 +103,14 @@ public class RecordSinkFactory {
                 case ColumnType.INT:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetInt, 1);
                     asm.invokeInterface(wPutInt, 1);
                     break;
                 case ColumnType.SYMBOL:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     if (symAsString) {
                         asm.invokeInterface(rGetSym, 1);
                         asm.invokeInterface(wPutStr, 1);
@@ -110,91 +122,91 @@ public class RecordSinkFactory {
                 case ColumnType.LONG:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetLong, 1);
                     asm.invokeInterface(wPutLong, 2);
                     break;
                 case ColumnType.DATE:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetDate, 1);
                     asm.invokeInterface(wPutDate, 2);
                     break;
                 case ColumnType.TIMESTAMP:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetTimestamp, 1);
                     asm.invokeInterface(wPutTimestamp, 2);
                     break;
                 case ColumnType.BYTE:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetByte, 1);
                     asm.invokeInterface(wPutByte, 1);
                     break;
                 case ColumnType.SHORT:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetShort, 1);
                     asm.invokeInterface(wPutShort, 1);
                     break;
                 case ColumnType.CHAR:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetChar, 1);
                     asm.invokeInterface(wPutChar, 1);
                     break;
                 case ColumnType.BOOLEAN:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetBool, 1);
                     asm.invokeInterface(wPutBool, 1);
                     break;
                 case ColumnType.FLOAT:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetFloat, 1);
                     asm.invokeInterface(wPutFloat, 1);
                     break;
                 case ColumnType.DOUBLE:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetDouble, 1);
                     asm.invokeInterface(wPutDouble, 2);
                     break;
                 case ColumnType.STRING:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetStr, 1);
                     asm.invokeInterface(wPutStr, 1);
                     break;
                 case ColumnType.BINARY:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetBin, 1);
                     asm.invokeInterface(wPutBin, 1);
                     break;
                 case ColumnType.LONG256:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetLong256, 1);
                     asm.invokeInterface(wPutLong256, 1);
                     break;
                 case ColumnType.RECORD:
                     asm.aload(2);
                     asm.aload(1);
-                    asm.iconst(index);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetRecord, 1);
                     asm.invokeInterface(wPutRecord, 1);
                     break;
@@ -226,5 +238,12 @@ public class RecordSinkFactory {
         asm.putShort(0);
 
         return asm.newInstance();
+    }
+
+    private static int getSkewedIndex(int src, @Transient @Nullable IntList skewIndex) {
+        if (skewIndex == null) {
+            return src;
+        }
+        return skewIndex.getQuick(src);
     }
 }

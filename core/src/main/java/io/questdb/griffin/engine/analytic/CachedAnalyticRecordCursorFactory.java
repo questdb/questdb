@@ -42,8 +42,6 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     private final int orderGroupCount;
     private final ObjList<ObjList<AnalyticFunction>> functionGroups;
     private final ObjList<AnalyticFunction> analyticFunctions;
-    private final VirtualRecord record;
-    private final VirtualRecord recordB;
     private final CachedAnalyticRecordCursor cursor = new CachedAnalyticRecordCursor();
     private final ObjList<RecordComparator> comparators;
     private final GenericRecordMetadata metadata;
@@ -54,11 +52,10 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
             int rowidPageSize,
             int keyPageSize,
             RecordCursorFactory base,
-            RecordSink baseRecordSink,
+            RecordSink recordSink,
             GenericRecordMetadata metadata,
             ObjList<RecordComparator> comparators,
-            ObjList<ObjList<AnalyticFunction>> functionGroups,
-            ObjList<Function> recordFunctions
+            ObjList<ObjList<AnalyticFunction>> functionGroups
     ) {
         this.base = base;
         this.orderGroupCount = comparators.size();
@@ -66,7 +63,7 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         this.orderedSources = new ObjList<>(orderGroupCount);
         this.functionGroups = functionGroups;
         this.comparators = comparators;
-        this.recordChain = new RecordChain(base.getMetadata(), baseRecordSink, rowidPageSize, Integer.MAX_VALUE);
+        this.recordChain = new RecordChain(metadata, recordSink, rowidPageSize, Integer.MAX_VALUE);
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderGroupCount; i++) {
             final RecordComparator cmp = comparators.getQuick(i);
@@ -82,11 +79,7 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
 
         // create our metadata and also flatten functions for our record representation
         this.metadata = metadata;
-        this.record = new VirtualRecord(recordFunctions);
-        this.recordB = new VirtualRecord(recordFunctions);
         this.recordChainRecord = recordChain.getRecord();
-        this.record.of(recordChainRecord);
-        this.recordB.of(recordChain.getRecordB());
     }
 
     @Override
@@ -121,13 +114,13 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         // - add record list' row ids to all trees, which will put these row ids in necessary order
         // for this we will be using out comparator, which helps tree compare long values
         // based on record these values are addressing
-        long rowid = -1;
+        long offset = -1;
         final Record record = baseCursor.getRecord();
         final Record chainLeftRecord = recordChain.getRecord();
         final Record chainRightRecord = recordChain.getRecordB();
         while (baseCursor.hasNext()) {
-            rowid = recordChain.put(record, rowid);
-            recordChain.recordAt(chainLeftRecord, rowid);
+            offset = recordChain.put(record, offset);
+            recordChain.recordAt(chainLeftRecord, offset);
 
             if (orderGroupCount > 0) {
                 for (int i = 0; i < orderGroupCount; i++) {
@@ -151,9 +144,10 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
                 // step #2: populate all analytic functions with records in order of respective tree
                 final LongTreeChain.TreeCursor cursor = tree.getCursor();
                 while (cursor.hasNext()) {
-                    recordChain.recordAt(recordChainRecord, cursor.next());
+                    offset = cursor.next();
+                    recordChain.recordAt(recordChainRecord,offset);
                     for (int j = 0, n = functions.size(); j < n; j++) {
-                        functions.getQuick(j).add(recordChainRecord);
+                        functions.getQuick(j).pass1(recordChainRecord, offset, recordChain);
                     }
                 }
             } else {
@@ -163,7 +157,7 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
                     if (f.getType() != AnalyticFunction.STREAM) {
                         recordChain.toTop();
                         while (recordChain.hasNext()) {
-                            f.add(recordChainRecord);
+                            f.pass1(recordChainRecord, recordChainRecord.getRowId(), recordChain);
                         }
                     }
                 }
@@ -172,7 +166,7 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
 
         recordChain.toTop();
         for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
-            analyticFunctions.getQuick(i).prepare(recordChain);
+            analyticFunctions.getQuick(i).preparePass2(recordChain);
         }
         return cursor;
     }
@@ -195,14 +189,14 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Record getRecord() {
-            return record;
+            return recordChainRecord;
         }
 
         @Override
         public boolean hasNext() {
             if (recordChain.hasNext()) {
                 for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
-                    analyticFunctions.getQuick(i).prepareFor(recordChainRecord);
+                    analyticFunctions.getQuick(i).pass2(recordChainRecord);
                 }
                 return true;
             }
@@ -211,12 +205,12 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Record getRecordB() {
-            return recordB;
+            return recordChain.getRecordB();
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
-            recordChain.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+            recordChain.recordAt(record, atRowId);
         }
 
         @Override

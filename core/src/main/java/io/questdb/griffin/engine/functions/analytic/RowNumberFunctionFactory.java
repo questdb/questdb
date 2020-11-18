@@ -28,7 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -37,6 +40,7 @@ import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
@@ -71,7 +75,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
-        private long row;
+        private int columnIndex;
 
         public RowNumberFunction(int position, Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink) {
             super(position);
@@ -81,30 +85,32 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void add(Record record) {
+        public long getLong(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
-            if (!value.isNew()) {
-                return;
+            long x;
+            if (value.isNew()) {
+                x = 0;
+            } else {
+                x = value.getLong(0);
             }
-            value.putLong(0, 0);
+            value.putLong(0, x + 1);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), x);
         }
 
         @Override
-        public void prepare(RecordCursor cursor) {
-
+        public void preparePass2(RecordCursor cursor) {
         }
 
         @Override
-        public void prepareFor(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.createValue();
-            this.row = value.getLong(0);
-            value.putLong(0, row + 1);
+        public void pass2(Record record) {
         }
 
         @Override
@@ -113,8 +119,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong(Record rec) {
-            return row;
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
         }
     }
 }

@@ -22,24 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.ObjList;
-
-public class GetExprCatalogueFunctionFactory implements FunctionFactory {
-
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_get_expr(SI)";
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new StrConstant(position, "");
-    }
+public interface AnalyticSPI {
+    long getAddress(long recordAddress, int columnIndex);
 }

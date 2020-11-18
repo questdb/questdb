@@ -1421,7 +1421,44 @@ public class SqlCodeGenerator implements Mutable {
         boolean needCache = false;
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        ObjList<Function> recordFunctions = new ObjList<>();
+
+        listColumnFilterA.clear();
+        listColumnFilterB.clear();
+
+        // we need two passes over columns because partitionBy and orderBy clauses of
+        // the analytical function must reference the metadata of "this" factory.
+
+        // pass #1 assembles metadata of non-analytic columns
+        for (int i = 0; i < columnCount; i++) {
+            final QueryColumn qc = columns.getQuick(i);
+            if (!(qc instanceof AnalyticColumn)) {
+                final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                if (baseMetadata instanceof GenericRecordMetadata) {
+                    metadata.add(i, ((GenericRecordMetadata) baseMetadata).getColumnQuick(columnIndex));
+                } else {
+                    metadata.add(
+                            i,
+                            new TableColumnMetadata(
+                                    baseMetadata.getColumnName(columnIndex),
+                                    baseMetadata.getColumnType(columnIndex),
+                                    baseMetadata.isColumnIndexed(columnIndex),
+                                    baseMetadata.getIndexValueBlockCapacity(columnIndex),
+                                    baseMetadata.isSymbolTableStatic(columnIndex),
+                                    baseMetadata.getMetadata(columnIndex)
+                            )
+                    );
+                }
+                listColumnFilterA.add(i, i + 1);
+                listColumnFilterB.extendAndSet(i, columnIndex);
+            }
+        }
+
+        // pass #2 assembles analytic column metadata into a list
+        // not main metadata to avoid partitionBy functions accidentally looking up
+        // analytic columns recursively
+
+        // todo: these ar transient list, we can cache and reuse
+        final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
 
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -1438,7 +1475,7 @@ public class SqlCodeGenerator implements Mutable {
                     partitionBy = new ObjList<>(psz);
                     for (int j = 0; j < psz; j++) {
                         partitionBy.add(
-                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext)
+                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), metadata, executionContext)
                         );
                     }
                 }
@@ -1477,17 +1514,12 @@ public class SqlCodeGenerator implements Mutable {
                         base.recordCursorSupportsRandomAccess()
                 );
 
-                Function f = functionParser.parseFunction(ac.getAst(), baseMetadata, executionContext);
-
+                final Function f = functionParser.parseFunction(ac.getAst(), baseMetadata, executionContext);
                 // todo: throw an error when non-analytic function is called in analytic context
-
                 assert f instanceof AnalyticFunction;
                 AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
-                recordFunctions.add(f);
-
                 final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-
                 boolean dismissOrder;
                 if (osz > 0 && orderHash.size() > 0) {
                     dismissOrder = true;
@@ -1504,7 +1536,7 @@ public class SqlCodeGenerator implements Mutable {
                 }
 
                 if (osz > 0 && !dismissOrder) {
-                    IntList order = toOrderIndices(baseMetadata, ac.getOrderBy(), ac.getOrderByDirection());
+                    IntList order = toOrderIndices(metadata, ac.getOrderBy(), ac.getOrderByDirection());
                     ObjList<AnalyticFunction> funcs = grouppedAnalytic.get(order);
                     if (funcs == null) {
                         grouppedAnalytic.put(order, funcs = new ObjList<>());
@@ -1519,7 +1551,9 @@ public class SqlCodeGenerator implements Mutable {
                     naturalOrderFunctions.add(analyticFunction);
                 }
 
-                metadata.add(new TableColumnMetadata(
+                analyticFunction.setColumnIndex(i);
+
+                deferredAnalyticMetadata.extendAndSet(i,  new TableColumnMetadata(
                         Chars.toString(qc.getAlias()),
                         analyticFunction.getType(),
                         false,
@@ -1527,23 +1561,16 @@ public class SqlCodeGenerator implements Mutable {
                         false,
                         null
                 ));
-            } else {
-                final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
-                if (baseMetadata instanceof GenericRecordMetadata) {
-                    metadata.add(((GenericRecordMetadata) baseMetadata).getColumnQuick(columnIndex));
-                } else {
-                    metadata.add(
-                            new TableColumnMetadata(
-                                    baseMetadata.getColumnName(columnIndex),
-                                    baseMetadata.getColumnType(columnIndex),
-                                    baseMetadata.isColumnIndexed(columnIndex),
-                                    baseMetadata.getIndexValueBlockCapacity(columnIndex),
-                                    baseMetadata.isSymbolTableStatic(columnIndex),
-                                    baseMetadata.getMetadata(columnIndex)
-                            )
-                    );
-                }
-                recordFunctions.add(functionParser.parseFunction(qc.getAst(), baseMetadata, executionContext));
+
+                listColumnFilterA.add(i, -i - 1);
+            }
+        }
+
+        // after all columns are processed we can re-insert deferred metadata
+        for (int i = 0, n = deferredAnalyticMetadata.size(); i < n; i++) {
+            TableColumnMetadata m = deferredAnalyticMetadata.getQuick(i);
+            if (m != null) {
+                metadata.add(i, m);
             }
         }
 
@@ -1551,7 +1578,7 @@ public class SqlCodeGenerator implements Mutable {
             final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
             final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
             for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
-                analyticComparators.add(recordComparatorCompiler.compile(baseMetadata, e.key));
+                analyticComparators.add(recordComparatorCompiler.compile(metadata, e.key));
                 functionGroups.add(e.value);
             }
 
@@ -1560,23 +1587,22 @@ public class SqlCodeGenerator implements Mutable {
                 functionGroups.add(naturalOrderFunctions);
             }
 
-            entityColumnFilter.of(baseMetadata.getColumnCount());
-            final RecordSink baseRecordSink = RecordSinkFactory.getInstance(
+            final RecordSink recordSink = RecordSinkFactory.getInstance(
                     asm,
-                    baseMetadata,
-                    entityColumnFilter,
-                    false
+                    metadata,
+                    listColumnFilterA,
+                    false,
+                    listColumnFilterB
             );
 
             return new CachedAnalyticRecordCursorFactory(
                     4096,
                     4096, // todo: configuration
                     base,
-                    baseRecordSink,
+                    recordSink,
                     metadata,
                     analyticComparators,
-                    functionGroups,
-                    recordFunctions
+                    functionGroups
             );
         } else {
             return new AnalyticRecordRecordCursorFactory(base, naturalOrderFunctions);
