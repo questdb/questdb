@@ -3330,6 +3330,98 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByFillNoneEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillNullEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillValueEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillPrevEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillLinearEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testOrderByLong256AndChar() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\t1970-01-12T13:46:40.000000Z\n" +
