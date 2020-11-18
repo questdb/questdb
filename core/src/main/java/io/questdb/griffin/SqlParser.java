@@ -110,6 +110,7 @@ public final class SqlParser {
     private final SqlOptimiser optimiser;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
     private boolean subQueryMode = false;
 
     SqlParser(
@@ -246,7 +247,7 @@ public final class SqlParser {
         try {
             expressionTreeBuilder.pushModel(model);
             expressionParser.parseExpr(lexer, expressionTreeBuilder);
-            return rewriteCase(rewriteCount(expressionTreeBuilder.poll()));
+            return rewriteKnownStatements(expressionTreeBuilder.poll());
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
             throw e;
@@ -1194,7 +1195,7 @@ public final class SqlParser {
                                     joinModel.addJoinColumn(expr);
                                 } while ((expr = expressionTreeBuilder.poll()) != null);
                             } else {
-                                joinModel.setJoinCriteria(rewriteCase(rewriteCount(expr)));
+                                joinModel.setJoinCriteria(rewriteKnownStatements(expr));
                             }
                             break;
                         default:
@@ -1313,8 +1314,17 @@ public final class SqlParser {
         } while (true);
     }
 
+    private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
+        return rewriteConcat(rewriteCase(rewriteCount(parent)));
+    }
+
     private ExpressionNode rewriteCase(ExpressionNode parent) throws SqlException {
         traversalAlgo.traverse(parent, rewriteCase0Ref);
+        return parent;
+    }
+
+    private ExpressionNode rewriteConcat(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, rewriteConcat0Ref);
         return parent;
     }
 
@@ -1416,6 +1426,31 @@ public final class SqlParser {
                 node.args.remove(paramCount - 1);
                 node.paramCount = paramCount - 1;
             }
+        }
+    }
+
+    private void rewriteConcat0(ExpressionNode node) {
+        if (node.type == ExpressionNode.OPERATION && isConcatOperator(node.token)) {
+            node.type = ExpressionNode.FUNCTION;
+            node.token = CONCAT_FUNC_NAME;
+            addConcatArgs(node.args, node.rhs);
+            addConcatArgs(node.args, node.lhs);
+            node.paramCount = node.args.size();
+        }
+    }
+
+    private void addConcatArgs(ObjList<ExpressionNode> args, ExpressionNode leaf) {
+        if (leaf.type != ExpressionNode.FUNCTION || !isConcatFunction(leaf.token)) {
+            args.add(leaf);
+            return;
+        }
+
+        // Nested CONCAT. Expand it from CONCAT(x, CONCAT(y, z)) into CONCAT(x, y, z).
+        if (leaf.args.size() > 0) {
+            args.addAll(leaf.args);
+        } else {
+            args.add(leaf.rhs);
+            args.add(leaf.lhs);
         }
     }
 

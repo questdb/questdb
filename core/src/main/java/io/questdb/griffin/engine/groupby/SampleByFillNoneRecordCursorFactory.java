@@ -98,10 +98,10 @@ public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory 
                 map.clear();
                 return initFunctionsAndCursor(executionContext, baseCursor);
             }
-
+            Misc.free(baseCursor);
             return EmptyTableNoSizeRecordCursor.INSTANCE;
         } catch (CairoException ex) {
-            baseCursor.close();
+            Misc.free(baseCursor);
             throw ex;
         }
     }

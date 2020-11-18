@@ -63,4 +63,12 @@ public final class Misc {
             }
         }
     }
+
+    public static <T> void freeObjListAndKeepObjects(ObjList<T> list) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                free(list.getQuick(i));
+            }
+        }
+    }
 }

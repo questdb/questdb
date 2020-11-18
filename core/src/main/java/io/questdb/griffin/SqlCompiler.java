@@ -1432,6 +1432,7 @@ public class SqlCompiler implements Closeable {
             try {
                 return copyTableData(model.getName().token, cursor, metadata);
             } catch (CairoException e) {
+                LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
                 if (removeTableDirectory(model)) {
                     throw e;
                 }
@@ -1457,7 +1458,7 @@ public class SqlCompiler implements Closeable {
      * has to be defined as reference to TIMESTAMP (type) column.
      *
      * @param executionModel   created from parsed sql.
-     * @param executionContext provides access to bind variables and athorization module
+     * @param executionContext provides access to bind variables and authorization module
      * @throws SqlException contains text of error and error position in SQL text.
      */
     private CompiledQuery createTableWithRetries(

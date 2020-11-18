@@ -25,8 +25,6 @@
 #ifndef VECT_VANILLA_H
 #define VECT_VANILLA_H
 
-#include <climits>
-
 double sumDouble_Vanilla(double *d, int64_t count);
 
 double sumDoubleKahan_Vanilla(double *d, int64_t count);

@@ -63,5 +63,7 @@ public interface LogRecord {
 
     LogRecord ts();
 
+    LogRecord microTime(long x);
+
     LogRecord utf8(CharSequence sequence);
 }

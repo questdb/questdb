@@ -54,6 +54,8 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_TABLE_ID = 16;
+    public static final String FILE_SUFFIX_I = ".i";
+    public static final String FILE_SUFFIX_D = ".d";
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -96,7 +98,6 @@ public final class TableUtils {
     static final long META_OFFSET_COLUMN_TYPES = 128;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
-
     static final String TODO_FILE_NAME = "_todo";
     private static final int MIN_SYMBOL_CAPACITY = 2;
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
@@ -512,7 +513,7 @@ public final class TableUtils {
     }
 
     static LPSZ dFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(".d").$();
+        return path.concat(columnName).put(FILE_SUFFIX_D).$();
     }
 
     static LPSZ topFile(Path path, CharSequence columnName) {
@@ -520,7 +521,7 @@ public final class TableUtils {
     }
 
     static LPSZ iFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(".i").$();
+        return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
     static long getColumnFlags(ReadOnlyColumn metaMem, int columnIndex) {
