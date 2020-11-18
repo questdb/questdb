@@ -1544,7 +1544,7 @@ class SqlOptimiser {
                         int tableExpressionReference = literalCollectorAIndexes.getQuick(j);
                         int position = tempList.binarySearch(tableExpressionReference);
                         if (position < 0) {
-                            tempList.add(-(position + 1), tableExpressionReference);
+                            tempList.extendAndSet(-(position + 1), tableExpressionReference);
                         }
                     }
 

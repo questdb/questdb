@@ -1448,7 +1448,7 @@ public class SqlCodeGenerator implements Mutable {
                             )
                     );
                 }
-                listColumnFilterA.add(i, i + 1);
+                listColumnFilterA.extendAndSet(i, i + 1);
                 listColumnFilterB.extendAndSet(i, columnIndex);
             }
         }
@@ -1475,7 +1475,7 @@ public class SqlCodeGenerator implements Mutable {
                     partitionBy = new ObjList<>(psz);
                     for (int j = 0; j < psz; j++) {
                         partitionBy.add(
-                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), metadata, executionContext)
+                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext)
                         );
                     }
                 }
@@ -1562,7 +1562,7 @@ public class SqlCodeGenerator implements Mutable {
                         null
                 ));
 
-                listColumnFilterA.add(i, -i - 1);
+                listColumnFilterA.extendAndSet(i, -i - 1);
             }
         }
 
