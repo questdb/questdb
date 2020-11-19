@@ -228,16 +228,20 @@ public class GroupByUtils {
                 }
 
                 // and finish with populating metadata for this factory
-                groupByMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(column.getName()),
-                                type,
-                                metadata.isColumnIndexed(index),
-                                metadata.getIndexValueBlockCapacity(index),
-                                metadata.isSymbolTableStatic(index),
-                                metadata.getMetadata(index)
-                        )
-                );
+                if (column.getAlias() == null) {
+                    groupByMetadata.add(BaseRecordMetadata.copyOf(metadata, index));
+                } else {
+                    groupByMetadata.add(
+                            new TableColumnMetadata(
+                                    Chars.toString(column.getAlias()),
+                                    type,
+                                    metadata.isColumnIndexed(index),
+                                    metadata.getIndexValueBlockCapacity(index),
+                                    metadata.isSymbolTableStatic(index),
+                                    metadata.getMetadata(index)
+                            )
+                    );
+                }
                 groupByColumnCount++;
 
             } else {

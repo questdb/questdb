@@ -39,12 +39,11 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
     }
 
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
-        if (from instanceof GenericRecordMetadata) {
-            final GenericRecordMetadata gm = (GenericRecordMetadata) from;
+        if (from instanceof BaseRecordMetadata) {
+            final BaseRecordMetadata gm = (BaseRecordMetadata) from;
             for (int i = 0, n = gm.getColumnCount(); i < n; i++) {
                 to.add(gm.getColumnQuick(i));
             }
-
         } else {
             for (int i = 0, n = from.getColumnCount(); i < n; i++) {
                 to.add(new TableColumnMetadata(

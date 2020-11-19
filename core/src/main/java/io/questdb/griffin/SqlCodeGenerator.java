@@ -344,44 +344,80 @@ public class SqlCodeGenerator implements Mutable {
         listColumnFilterB.clear();
         valueTypes.clear();
         ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
-        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-            if (intHashSet.excludes(i)) {
-                int type = slaveMetadata.getColumnType(i);
+        if (slaveMetadata instanceof BaseRecordMetadata) {
+            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                if (intHashSet.excludes(i)) {
+                    final TableColumnMetadata m = ((BaseRecordMetadata) slaveMetadata).getColumnQuick(i);
+                    metadata.add(slaveAlias, m);
+                    listColumnFilterB.add(i + 1);
+                    columnIndex.add(i);
+                    valueTypes.add(m.getType());
+                    slaveTypes.add(m.getType());
+                }
+            }
+
+            // now add key columns to metadata
+            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+                int index = listColumnFilterA.getColumnIndexFactored(i);
+                final TableColumnMetadata m = ((BaseRecordMetadata) slaveMetadata).getColumnQuick(index);
+                if (m.getType() == ColumnType.SYMBOL) {
+                    metadata.add(
+                            slaveAlias,
+                            m.getName(),
+                            ColumnType.STRING,
+                            false,
+                            0,
+                            false,
+                            null
+                    );
+                    slaveTypes.add(ColumnType.STRING);
+                } else {
+                    metadata.add(slaveAlias, m);
+                    slaveTypes.add(m.getType());
+                }
+                columnIndex.add(index);
+            }
+        } else {
+            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                if (intHashSet.excludes(i)) {
+                    int type = slaveMetadata.getColumnType(i);
+                    metadata.add(
+                            slaveAlias,
+                            slaveMetadata.getColumnName(i),
+                            type,
+                            slaveMetadata.isColumnIndexed(i),
+                            slaveMetadata.getIndexValueBlockCapacity(i),
+                            slaveMetadata.isSymbolTableStatic(i),
+                            slaveMetadata.getMetadata(i)
+                    );
+                    listColumnFilterB.add(i + 1);
+                    columnIndex.add(i);
+                    valueTypes.add(type);
+                    slaveTypes.add(type);
+                }
+            }
+
+            // now add key columns to metadata
+            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+                int index = listColumnFilterA.getColumnIndexFactored(i);
+                int type = slaveMetadata.getColumnType(index);
+                if (type == ColumnType.SYMBOL) {
+                    type = ColumnType.STRING;
+                }
                 metadata.add(
                         slaveAlias,
-                        slaveMetadata.getColumnName(i),
+                        slaveMetadata.getColumnName(index),
                         type,
                         slaveMetadata.isColumnIndexed(i),
                         slaveMetadata.getIndexValueBlockCapacity(i),
                         slaveMetadata.isSymbolTableStatic(i),
                         slaveMetadata.getMetadata(i)
                 );
-                listColumnFilterB.add(i + 1);
-                columnIndex.add(i);
-                valueTypes.add(type);
+                columnIndex.add(index);
                 slaveTypes.add(type);
             }
         }
 
-        // now add key columns to metadata
-        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            int index = listColumnFilterA.getColumnIndexFactored(i);
-            int type = slaveMetadata.getColumnType(index);
-            if (type == ColumnType.SYMBOL) {
-                type = ColumnType.STRING;
-            }
-            metadata.add(
-                    slaveAlias,
-                    slaveMetadata.getColumnName(index),
-                    type,
-                    slaveMetadata.isColumnIndexed(i),
-                    slaveMetadata.getIndexValueBlockCapacity(i),
-                    slaveMetadata.isSymbolTableStatic(i),
-                    slaveMetadata.getMetadata(i)
-            );
-            columnIndex.add(index);
-            slaveTypes.add(type);
-        }
 
         if (masterMetadata.getTimestampIndex() != -1) {
             metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
@@ -1441,20 +1477,7 @@ public class SqlCodeGenerator implements Mutable {
             final QueryColumn qc = columns.getQuick(i);
             if (!(qc instanceof AnalyticColumn)) {
                 final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
-                final TableColumnMetadata m;
-                if (baseMetadata instanceof GenericRecordMetadata) {
-                    m = ((GenericRecordMetadata) baseMetadata).getColumnQuick(columnIndex);
-                } else {
-                    m = new TableColumnMetadata(
-                            baseMetadata.getColumnName(columnIndex),
-                            baseMetadata.getColumnType(columnIndex),
-                            baseMetadata.isColumnIndexed(columnIndex),
-                            baseMetadata.getIndexValueBlockCapacity(columnIndex),
-                            baseMetadata.isSymbolTableStatic(columnIndex),
-                            baseMetadata.getMetadata(columnIndex)
-                    );
-                }
-
+                final TableColumnMetadata m = BaseRecordMetadata.copyOf(baseMetadata, columnIndex);
                 chainMetadata.add(i, m);
                 factoryMetadata.add(i, m);
                 chainTypes.add(i, m.getType());
@@ -1474,19 +1497,7 @@ public class SqlCodeGenerator implements Mutable {
         int addAt = columnCount;
         for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
             if (columnSet.excludes(i)) {
-                final TableColumnMetadata m;
-                if (baseMetadata instanceof GenericRecordMetadata) {
-                    m = ((GenericRecordMetadata) baseMetadata).getColumnQuick(i);
-                } else {
-                    m = new TableColumnMetadata(
-                            baseMetadata.getColumnName(i),
-                            baseMetadata.getColumnType(i),
-                            baseMetadata.isColumnIndexed(i),
-                            baseMetadata.getIndexValueBlockCapacity(i),
-                            baseMetadata.isSymbolTableStatic(i),
-                            baseMetadata.getMetadata(i)
-                    );
-                }
+                final TableColumnMetadata m = BaseRecordMetadata.copyOf(baseMetadata, i);
                 chainMetadata.add(addAt, m);
                 chainTypes.add(addAt, m.getType());
                 listColumnFilterA.extendAndSet(addAt, addAt + 1);
@@ -1699,16 +1710,20 @@ public class SqlCodeGenerator implements Mutable {
             assert index > -1 : "wtf? " + queryColumn.getAst().token;
             columnCrossIndex.add(index);
 
-            selectMetadata.add(
-                    new TableColumnMetadata(
-                            Chars.toString(queryColumn.getName()),
-                            metadata.getColumnType(index),
-                            metadata.isColumnIndexed(index),
-                            metadata.getIndexValueBlockCapacity(index),
-                            metadata.isSymbolTableStatic(index),
-                            metadata.getMetadata(index)
-                    )
-            );
+            if (queryColumn.getAlias() == null) {
+                selectMetadata.add(BaseRecordMetadata.copyOf(metadata, index));
+            } else {
+                selectMetadata.add(
+                        new TableColumnMetadata(
+                                Chars.toString(queryColumn.getAlias()),
+                                metadata.getColumnType(index),
+                                metadata.isColumnIndexed(index),
+                                metadata.getIndexValueBlockCapacity(index),
+                                metadata.isSymbolTableStatic(index),
+                                metadata.getMetadata(index)
+                        )
+                );
+            }
 
             if (index == timestampIndex) {
                 selectMetadata.setTimestampIndex(i);
@@ -1717,16 +1732,7 @@ public class SqlCodeGenerator implements Mutable {
         }
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
-            selectMetadata.add(
-                    new TableColumnMetadata(
-                            Chars.toString(metadata.getColumnName(timestampIndex)),
-                            metadata.getColumnType(timestampIndex),
-                            metadata.isColumnIndexed(timestampIndex),
-                            metadata.getIndexValueBlockCapacity(timestampIndex),
-                            metadata.isSymbolTableStatic(timestampIndex),
-                            metadata.getMetadata(timestampIndex)
-                    )
-            );
+            selectMetadata.add(BaseRecordMetadata.copyOf(metadata, timestampIndex));
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
         }
 
@@ -1762,23 +1768,13 @@ public class SqlCodeGenerator implements Mutable {
                 int columnType = readerMetadata.getColumnType(columnIndex);
                 if (readerMetadata.getVersion() >= 416 && columnType == ColumnType.SYMBOL) {
                     final GenericRecordMetadata distinctSymbolMetadata = new GenericRecordMetadata();
-                    long tableVersion = reader.getVersion();
-                    distinctSymbolMetadata.add(
-                            new TableColumnMetadata(
-                                    Chars.toString(columnName),
-                                    readerMetadata.getColumnType(columnIndex),
-                                    readerMetadata.isColumnIndexed(columnIndex),
-                                    readerMetadata.getIndexValueBlockCapacity(columnIndex),
-                                    readerMetadata.isSymbolTableStatic(columnIndex),
-                                    readerMetadata.getMetadata(columnIndex)
-                            )
-                    );
+                    distinctSymbolMetadata.add(BaseRecordMetadata.copyOf(readerMetadata, columnIndex));
                     return new DistinctSymbolRecordCursorFactory(
                             engine,
                             distinctSymbolMetadata,
                             Chars.toString(tableName),
                             columnIndex,
-                            tableVersion
+                            reader.getVersion()
                     );
                 }
             }
