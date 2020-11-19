@@ -884,7 +884,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     break;
             }
             sendCurrentCursorTail = TAIL_SUCCESS;
-            prepareExecuteTail(false);
+            prepareExecuteTail(true);
         } catch (CairoException e) {
             LOG.error().$(e.getFlyweightMessage()).$();
             if (transactionState == IN_TRANSACTION) {
@@ -1096,7 +1096,11 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
             long addr = responseAsciiSink.skip();
             if (addRowCount) {
-                responseAsciiSink.encodeUtf8(queryTag).put(' ').put(rowCount).put((char) 0);
+                if (Chars.equals(queryTag, TAG_INSERT)) {
+                    responseAsciiSink.encodeUtf8(queryTag).put(" 0 ").put(rowCount).put((char) 0);
+                } else {
+                    responseAsciiSink.encodeUtf8(queryTag).put(' ').put(rowCount).put((char) 0);
+                }
             } else {
                 responseAsciiSink.encodeUtf8(queryTag).put((char) 0);
             }
