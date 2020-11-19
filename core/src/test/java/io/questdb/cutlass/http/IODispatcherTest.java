@@ -5072,7 +5072,8 @@ public class IODispatcherTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run(engine -> {
-                    // create table
+                    // select 1 as "select"
+                    // with select being the column name to check double quote parsing
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
                             "67\r\n"
