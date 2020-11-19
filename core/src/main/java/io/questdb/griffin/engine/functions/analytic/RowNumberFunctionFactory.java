@@ -39,8 +39,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+
+import java.io.Closeable;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
@@ -71,7 +74,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         return null;
     }
 
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction {
+    private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Closeable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -85,8 +88,15 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            Misc.free(map);
+            Misc.free(partitionByRecord.getFunctions());
+        }
+
+        @Override
         public long getLong(Record rec) {
-            return 0;
+            // not called
+            throw new UnsupportedOperationException();
         }
 
         @Override

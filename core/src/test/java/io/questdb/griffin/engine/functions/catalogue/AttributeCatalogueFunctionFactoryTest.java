@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
@@ -168,49 +169,65 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testKafkaQuery3() throws Exception {
-        assertQuery(
-                "",
-                "SELECT * FROM (\n" +
-                        "    SELECT \n" +
-                        "        n.nspname,\n" +
-                        "        c.relname,\n" +
-                        "        a.attname,\n" +
-                        "        a.atttypid,\n" +
-                        "        a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,\n" +
-                        "        a.atttypmod,\n" +
-                        "        a.attlen,\n" +
-                        "        t.typtypmod,\n" +
-                        "        row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum, \n" +
-                        "        nullif(a.attidentity, '') as attidentity,\n" +
-                        "        pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,\n" +
-                        "        dsc.description,\n" +
-                        "        t.typbasetype,\n" +
-                        "        t.typtype  \n" +
-                        "    FROM pg_catalog.pg_namespace n  \n" +
-                        "        JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)  \n" +
-                        "        JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)  \n" +
-                        "        JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)  \n" +
-                        "        LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)  \n" +
-                        "        LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)  \n" +
-                        "        LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')  \n" +
-                        "        LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')  \n" +
-                        "    WHERE \n" +
-                        "        c.relkind in ('r','p','v','f','m') \n" +
-                        "        and a.attnum > 0 \n" +
-                        "        AND NOT a.attisdropped  \n" +
-                        "        AND c.relname LIKE E'x'\n" +
-                        "    ) c \n" +
-                        "WHERE true  \n" +
-                        "ORDER BY \n" +
-                        "    nspname,\n" +
-                        "    c.relname,\n" +
-                        "    attnum",
-                "create table x(a int)",
-                null,
-                true,
-                false,
-                false
-        );
+        assertMemoryLeak(() -> {
+            compiler.compile("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)", sqlExecutionContext);
+
+            assertQuery(
+                    "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattnum\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
+                            "public\ty\ta\t23\tfalse\t0\t4\t0\t0\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tb\t21\tfalse\t0\t2\t0\t1\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tc\t21\tfalse\t0\t2\t0\t2\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\td\t20\tfalse\t0\t8\t0\t3\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\te\t18\tfalse\t0\t2\t0\t4\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tf\t1043\tfalse\t0\t-1\t0\t5\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tg\t16\tfalse\t0\t1\t0\t6\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\th\t1700\tfalse\t0\t32\t0\t7\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\ti\t700\tfalse\t0\t4\t0\t8\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tj\t701\tfalse\t0\t8\t0\t9\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tk\t1114\tfalse\t0\t-1\t0\t10\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tl\t1114\tfalse\t0\t-1\t0\t11\t\t\tcolumn\t0\tb\n",
+                    "SELECT * FROM (\n" +
+                            "    SELECT \n" +
+                            "        n.nspname,\n" +
+                            "        c.relname,\n" +
+                            "        a.attname,\n" +
+                            "        a.atttypid,\n" +
+                            "        a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull,\n" +
+                            "        a.atttypmod,\n" +
+                            "        a.attlen,\n" +
+                            "        t.typtypmod,\n" +
+                            "        row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum, \n" +
+                            "        nullif(a.attidentity, '') as attidentity,\n" +
+                            "        pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc,\n" +
+                            "        dsc.description,\n" +
+                            "        t.typbasetype,\n" +
+                            "        t.typtype  \n" +
+                            "    FROM pg_catalog.pg_namespace n  \n" +
+                            "        JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)  \n" +
+                            "        JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)  \n" +
+                            "        JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)  \n" +
+                            "        LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)  \n" +
+                            "        LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)  \n" +
+                            "        LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')  \n" +
+                            "        LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')  \n" +
+                            "    WHERE \n" +
+                            "        c.relkind in ('r','p','v','f','m') \n" +
+                            "        and a.attnum > 0 \n" +
+                            "        AND NOT a.attisdropped  \n" +
+                            "        AND c.relname LIKE E'y'\n" +
+                            "    ) c \n" +
+                            "WHERE true  \n" +
+                            "ORDER BY \n" +
+                            "    nspname,\n" +
+                            "    c.relname,\n" +
+                            "    attnum",
+                    "create table x(a int)",
+                    null,
+                    true,
+                    false,
+                    false
+            );
+        });
     }
 
     @Test
