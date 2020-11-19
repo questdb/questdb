@@ -29,8 +29,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
-import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -5064,6 +5062,25 @@ public class IODispatcherTest {
             }
             Assert.assertEquals(N * senderCount, requestsReceived.get());
         });
+    }
+
+    @Test
+    public void queryWithDoubleQuotesParsedCorrecly() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    // create table
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
+                            "67\r\n"
+                                    + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
+                                    + "00\r\n"
+                                    + "\r\n"
+                    );
+                });
     }
 
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
