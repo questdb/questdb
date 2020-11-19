@@ -814,17 +814,22 @@ public class SqlCompiler implements Closeable {
 
     private void alterTableAddColumn(int tableNamePosition, TableWriter writer) throws SqlException {
         // add columns to table
-        expectKeyword(lexer, "column");
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        //ignoring `column`
+        if (tok != null && !SqlKeywords.isColumnKeyword(tok)) {
+            lexer.unparse();
+        }
 
         do {
-            CharSequence tok = expectToken(lexer, "column name");
+            tok = expectToken(lexer, "'column' or column name");
 
             int index = writer.getMetadata().getColumnIndexQuiet(tok);
             if (index != -1) {
                 throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
             }
 
-            CharSequence columnName = GenericLexer.immutableOf(tok);
+            CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
 
             if (!TableUtils.isValidColumnName(columnName)) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
@@ -906,6 +911,16 @@ public class SqlCompiler implements Closeable {
                     indexValueBlockCapacity = configuration.getIndexValueBlockSize();
                 }
             } else {
+
+                //ignoring `NULL` and `NOT NULL`
+                if (tok != null && SqlKeywords.isNotKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+
+                if (tok != null && SqlKeywords.isNullKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+
                 cache = configuration.getDefaultSymbolCacheFlag();
                 indexValueBlockCapacity = configuration.getIndexValueBlockSize();
                 symbolCapacity = configuration.getDefaultSymbolCapacity();
