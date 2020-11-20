@@ -28,6 +28,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
@@ -63,6 +65,32 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
                 modelOf("orders").col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testAnalyticFunctionReferencesSameColumnAsVirtual() throws Exception {
+        assertQuery(
+                "select-analytic a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts))))",
+                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts) from xyz k",
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAnalyticLiteralAfterFunction() throws Exception {
+        assertQuery(
+                "select-analytic a, b1, f(c) f over (partition by b11 order by ts), b1 b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts, b1 b from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts))))",
+                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
+                modelOf("xyz")
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
         );
     }
 
@@ -359,6 +387,24 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testColumnsOfSimpleSelectWithSemicolon() throws SqlException {
         assertColumnNames("select 1;", "1");
         assertColumnNames("select 1, 1, 1;", "1", "11", "12");
+    }
+
+    @Test
+    public void testConcat3Args() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2',x,'3') concat from (select [x] from tab)",
+                "select 1, x, concat('2', x, '3') from tab",
+                modelOf("tab").col("x", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testConcatSimple() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2',x) concat from (select [x] from tab)",
+                "select 1, x, '2' || x from tab",
+                modelOf("tab").col("x", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -2543,91 +2589,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConcat3Args() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x, concat('2',x,'3') concat from (select [x] from tab)",
-                "select 1, x, concat('2', x, '3') from tab",
-                modelOf("tab").col("x", ColumnType.STRING)
-        );
-    }
-
-    @Test
-    public void testPipeConcatNested() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x, concat('2',x,'3') concat from (select [x] from tab)",
-                "select 1, x, '2' || x || '3' from tab",
-                modelOf("tab").col("x", ColumnType.STRING)
-        );
-    }
-
-    @Test
-    public void testPipeConcatNested4() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x, concat('2',x,'3',y) concat from (select [x, y] from tab)",
-                "select 1, x, '2' || x || '3' || y from tab",
-                modelOf("tab").col("x", ColumnType.STRING).col("y", ColumnType.STRING)
-        );
-    }
-
-    @Test
-    public void testPipeConcatWithNestedCast() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x, concat('2',cast(x + 1,string),'3') concat from (select [x] from tab)",
-                "select 1, x, '2' || cast(x + 1 as string) || '3' from tab",
-                modelOf("tab").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testPipeConcatInWhere() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x from (select [x, z, y] from tab where concat(x,'-',y) = z)",
-                "select 1, x from tab where x || '-' || y = z",
-                modelOf("tab").col("x", ColumnType.STRING)
-                        .col("y", ColumnType.STRING)
-                        .col("z", ColumnType.STRING)
-        );
-    }
-
-    @Test
-    public void testPipeConcatInJoin() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x from (select [x] from tab join select [y] from bap on " +
-                        "concat('2',substring(bap.y,0,5)) = concat(tab.x,'1'))",
-                "select 1, x from tab join bap on tab.x || '1' = '2' || substring(bap.y, 0, 5)",
-                modelOf("tab").col("x", ColumnType.STRING),
-                modelOf("bap").col("y", ColumnType.STRING)
-        );
-    }
-
-    @Test
-    public void testPipeConcatWithFunctionConcatOnRight() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x, concat('2',cast(x + 1,string),'3') concat from (select [x] from tab)",
-                "select 1, x, '2' || concat(cast(x + 1 as string), '3') from tab",
-                modelOf("tab").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testPipeConcatWithFunctionConcatOnLeft() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x, concat('2',cast(x + 1,string),'3') concat from (select [x] from tab)",
-                "select 1, x, concat('2', cast(x + 1 as string)) || '3' from tab",
-                modelOf("tab").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testConcatSimple() throws SqlException {
-        assertQuery(
-                "select-virtual 1 1, x, concat('2',x) concat from (select [x] from tab)",
-                "select 1, x, '2' || x from tab",
-                modelOf("tab").col("x", ColumnType.STRING)
-        );
-    }
-
-    @Test
     public void testJoinFunction() throws SqlException {
         assertQuery(
                 "select-choose tab.x x, t.y y, t1.z z from (select [x] from tab join select [y] from t on f(y) = f(x) join select [z] from t1 on z = f(x) const-where 1 = 1)",
@@ -4025,6 +3986,73 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPipeConcatInJoin() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x from (select [x] from tab join select [y] from bap on " +
+                        "concat('2',substring(bap.y,0,5)) = concat(tab.x,'1'))",
+                "select 1, x from tab join bap on tab.x || '1' = '2' || substring(bap.y, 0, 5)",
+                modelOf("tab").col("x", ColumnType.STRING),
+                modelOf("bap").col("y", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testPipeConcatInWhere() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x from (select [x, z, y] from tab where concat(x,'-',y) = z)",
+                "select 1, x from tab where x || '-' || y = z",
+                modelOf("tab").col("x", ColumnType.STRING)
+                        .col("y", ColumnType.STRING)
+                        .col("z", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testPipeConcatNested() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2',x,'3') concat from (select [x] from tab)",
+                "select 1, x, '2' || x || '3' from tab",
+                modelOf("tab").col("x", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testPipeConcatNested4() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2',x,'3',y) concat from (select [x, y] from tab)",
+                "select 1, x, '2' || x || '3' || y from tab",
+                modelOf("tab").col("x", ColumnType.STRING).col("y", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testPipeConcatWithFunctionConcatOnLeft() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2',cast(x + 1,string),'3') concat from (select [x] from tab)",
+                "select 1, x, concat('2', cast(x + 1 as string)) || '3' from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPipeConcatWithFunctionConcatOnRight() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2',cast(x + 1,string),'3') concat from (select [x] from tab)",
+                "select 1, x, '2' || concat(cast(x + 1 as string), '3') from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPipeConcatWithNestedCast() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2',cast(x + 1,string),'3') concat from (select [x] from tab)",
+                "select 1, x, '2' || cast(x + 1 as string) || '3' from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testQueryExceptQuery() throws SqlException {
         assertQuery(
                 "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) except select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
@@ -4677,6 +4705,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectVirtualAliasClash() throws SqlException {
+        assertQuery(
+                "select-virtual x + x x, x x1 from (select [x] from long_sequence(1) z)",
+                "select x+x x, x from long_sequence(1) z"
+        );
+    }
+
+    @Test
     public void testSelectWhereOnCount() throws SqlException {
         assertQuery("select-choose a, c from ((select-group-by [a, count() c] a, count() c from (select [a] from tab) where c > 0) _xQdbA1)",
                 "(select a, count() c from tab) where c > 0",
@@ -5203,32 +5239,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticFunctionReferencesSameColumnAsVirtual() throws Exception {
-        assertQuery(
-                "select-analytic a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts))))",
-                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts) from xyz k",
-                modelOf("xyz")
-                        .col("c", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("a", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testAnalyticLiteralAfterFunction() throws Exception {
-        assertQuery(
-                "select-analytic a, b1, f(c) f over (partition by b11 order by ts), b1 b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts, b1 b from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts))))",
-                "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
-                modelOf("xyz")
-                        .col("c", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("a", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
     public void testUnbalancedBracketInSubQuery() throws Exception {
         assertSyntaxError("select x from (tab where x > 10 t1", 32, "expected");
     }
@@ -5585,6 +5595,26 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError(compiler, query, position, contains, tableModels);
     }
 
+    private static void checkLiteralIsInSet(ExpressionNode node, CharSequenceHashSet nameSet) {
+        if (node.type == ExpressionNode.LITERAL) {
+            Assert.assertTrue(nameSet.contains(node.token));
+        } else {
+            if (node.paramCount < 3) {
+                if (node.lhs != null) {
+                    checkLiteralIsInSet(node.lhs, nameSet);
+                }
+
+                if (node.rhs != null) {
+                    checkLiteralIsInSet(node.rhs, nameSet);
+                }
+            } else {
+                for (int j = 0, k = node.args.size(); j < k; j++) {
+                    checkLiteralIsInSet(node.args.getQuick(j), nameSet);
+                }
+            }
+        }
+    }
+
     private void assertColumnNames(SqlCompiler compiler, String query, String... columns) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordMetadata metadata = cc.getRecordCursorFactory().getMetadata();
@@ -5608,6 +5638,9 @@ public class SqlParserTest extends AbstractGriffinTest {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
+//            if (model instanceof QueryModel) {
+//                validateTopDownColumns((QueryModel) model);
+//            }
             TestUtils.assertEquals(expected, sink);
         }, tableModels);
     }
@@ -5635,6 +5668,36 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     private TableModel modelOf(String tableName) {
         return new TableModel(configuration, tableName, PartitionBy.NONE);
+    }
+
+    private void validateTopDownColumns(QueryModel model) {
+        ObjList<QueryColumn> columns = model.getColumns();
+        final CharSequenceHashSet nameSet = new CharSequenceHashSet();
+
+        QueryModel nested = model.getNestedModel();
+        while (nested != null) {
+            nameSet.clear();
+
+            // create hash set of nested column names
+            // ensure their uniqueness
+            for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
+                addColumnNames(nameSet, nested.getJoinModels().getQuick(i).getTopDownColumns());
+            }
+
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final ExpressionNode node = columns.getQuick(i).getAst();
+                checkLiteralIsInSet(node, nameSet);
+            }
+
+            columns = nested.getColumns();
+            nested = nested.getNestedModel();
+        }
+    }
+
+    private void addColumnNames(CharSequenceHashSet nameSet, ObjList<QueryColumn> nestedColumns) {
+        for (int i = 0, n = nestedColumns.size(); i < n; i++) {
+            Assert.assertTrue(nameSet.add(nestedColumns.getQuick(i).getName()));
+        }
     }
 
     @FunctionalInterface

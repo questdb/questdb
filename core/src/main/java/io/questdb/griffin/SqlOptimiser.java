@@ -717,11 +717,15 @@ class SqlOptimiser {
         if (index < 0) {
             // column is already being referenced by translating model
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
-            final CharSequence alias = createColumnAlias(columnName, groupByModel);
-            final QueryColumn translatedColumn = nextColumn(alias, translatedColumnName);
+            final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
+            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
             innerModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
-            analyticModel.addBottomUpColumn(translatedColumn);
+
+            // analytic model is used together with inner model
+            final CharSequence analyticAlias = createColumnAlias(innerAlias, analyticModel);
+            final QueryColumn analyticColumn = nextColumn(analyticAlias, innerAlias);
+            analyticModel.addBottomUpColumn(analyticColumn);
             outerModel.addBottomUpColumn(translatedColumn);
             distinctModel.addBottomUpColumn(translatedColumn);
         } else {
@@ -2632,6 +2636,7 @@ class SqlOptimiser {
 
             if (qc.getAst().type == ExpressionNode.LITERAL) {
                 if (!isNotBindVariable(qc.getAst().token)) {
+                    // bind variable
                     addFunction(
                             qc,
                             baseModel,

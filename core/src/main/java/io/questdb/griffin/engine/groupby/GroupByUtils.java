@@ -53,7 +53,7 @@ public class GroupByUtils {
         for (int i = 0; i < selectColumnCount; i++) {
             for (int j = 0; j < groupBySize; j++) {
                 ExpressionNode groupByNode = groupBys.getQuick(j);
-                QueryColumn selectColumn = selectColumns.get(i);
+                QueryColumn selectColumn = selectColumns.getQuick(i);
                 ExpressionNode selectNode = selectColumn.getAst();
                 if (groupByNode.type == ExpressionNode.LITERAL && selectNode.type == ExpressionNode.LITERAL) {
                     if (Chars.equals(groupByNode.token, selectNode.token) || Chars.equals(groupByNode.token, selectColumn.getAlias())) {
