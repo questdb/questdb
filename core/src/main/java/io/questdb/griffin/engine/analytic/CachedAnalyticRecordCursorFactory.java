@@ -24,65 +24,79 @@
 package io.questdb.griffin.engine.analytic;
 
 
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.RecordChain;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.griffin.engine.orderby.LongTreeChain;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.orderby.LongTreeChain;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 
 public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     private final RecordChain recordChain;
     private final RecordCursorFactory base;
     private final ObjList<LongTreeChain> orderedSources;
-    private final int orderGroupCount;
-    private final ObjList<ObjList<AnalyticFunction>> functionGroups;
-    private final ObjList<AnalyticFunction> analyticFunctions;
-    private final CachedAnalyticRecordCursor cursor = new CachedAnalyticRecordCursor();
+    private final int orderedGroupCount;
+    private final ObjList<ObjList<AnalyticFunction>> orderedFunctions;
+    @Nullable private final ObjList<AnalyticFunction> unorderedFunctions;
+    private final ObjList<AnalyticFunction> allFunctions;
     private final ObjList<RecordComparator> comparators;
     private final GenericRecordMetadata metadata;
     private final Record recordChainRecord;
     private boolean closed = false;
 
     public CachedAnalyticRecordCursorFactory(
-            int rowidPageSize,
-            int keyPageSize,
+            CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordSink recordSink,
             GenericRecordMetadata metadata,
             @Transient ColumnTypes chainMetadata,
             ObjList<RecordComparator> comparators,
-            ObjList<ObjList<AnalyticFunction>> functionGroups
+            ObjList<ObjList<AnalyticFunction>> orderedFunctions,
+            @Nullable ObjList<AnalyticFunction> unorderedFunctions
     ) {
         this.base = base;
-        this.orderGroupCount = comparators.size();
-        assert orderGroupCount == functionGroups.size();
-        this.orderedSources = new ObjList<>(orderGroupCount);
-        this.functionGroups = functionGroups;
+        this.orderedGroupCount = comparators.size();
+        assert orderedGroupCount == orderedFunctions.size();
+        this.orderedSources = new ObjList<>(orderedGroupCount);
+        this.orderedFunctions = orderedFunctions;
         this.comparators = comparators;
-        this.recordChain = new RecordChain(chainMetadata, recordSink, rowidPageSize, Integer.MAX_VALUE);
+        this.recordChain = new RecordChain(
+                chainMetadata,
+                recordSink,
+                configuration.getSqlAnalyticStorePageSize(),
+                configuration.getSqlAnalyticStoreMaxPages()
+        );
+
         // red&black trees, one for each comparator where comparator is not null
-        for (int i = 0; i < orderGroupCount; i++) {
-            final RecordComparator cmp = comparators.getQuick(i);
-            orderedSources.add(cmp == null ? null : new LongTreeChain(keyPageSize, Integer.MAX_VALUE, keyPageSize, Integer.MAX_VALUE));
+        for (int i = 0; i < orderedGroupCount; i++) {
+            orderedSources.add(
+                    new LongTreeChain(
+                            configuration.getSqlAnalyticTreeKeyPageSize(),
+                            configuration.getSqlAnalyticTreeKeyMaxPages(),
+                            configuration.getSqlAnalyticRowIdPageSize(),
+                            configuration.getSqlAnalyticRowIdMaxPages()
+                    )
+            );
         }
 
-        // todo: we will tidy up structures later
-        //     for now copy functions over to dense list
-        this.analyticFunctions = new ObjList<>();
-        for (int i = 0, n = functionGroups.size(); i < n; i++) {
-            analyticFunctions.addAll(functionGroups.getQuick(i));
+        this.allFunctions = new ObjList<>();
+        for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
+            allFunctions.addAll(orderedFunctions.getQuick(i));
+        }
+        if (unorderedFunctions != null) {
+            allFunctions.addAll(unorderedFunctions);
         }
 
         // create our metadata and also flatten functions for our record representation
         this.metadata = metadata;
         this.recordChainRecord = recordChain.getRecord();
+        this.unorderedFunctions = unorderedFunctions;
     }
 
     @Override
@@ -93,23 +107,15 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         Misc.free(base);
         Misc.free(recordChain);
         Misc.freeObjList(orderedSources);
-        Misc.freeObjList(analyticFunctions);
+        Misc.freeObjList(allFunctions);
         closed = true;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         recordChain.clear();
-        for (int i = 0; i < orderGroupCount; i++) {
-            final LongTreeChain tree = orderedSources.getQuick(i);
-            if (tree != null) {
-                tree.clear();
-            }
-        }
-
-        for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
-            analyticFunctions.getQuick(i).reset();
-        }
+        clearTrees();
+        resetFunctions();
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
@@ -119,59 +125,63 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         // based on record these values are addressing
         long offset = -1;
         final Record record = baseCursor.getRecord();
-        final Record chainLeftRecord = recordChain.getRecord();
         final Record chainRightRecord = recordChain.getRecordB();
-        while (baseCursor.hasNext()) {
-            offset = recordChain.put(record, offset);
-            recordChain.recordAt(chainLeftRecord, offset);
+        if (orderedGroupCount > 0) {
+            while (baseCursor.hasNext()) {
+                offset = recordChain.put(record, offset);
+                recordChain.recordAt(recordChainRecord, offset);
+                for (int i = 0; i < orderedGroupCount; i++) {
+                    orderedSources.getQuick(i).put(recordChainRecord, recordChain, chainRightRecord, comparators.getQuick(i));
+                }
+            }
+        } else {
+            while (baseCursor.hasNext()) {
+                offset = recordChain.put(record, offset);
+            }
+        }
 
-            if (orderGroupCount > 0) {
-                for (int i = 0; i < orderGroupCount; i++) {
-                    LongTreeChain tree = orderedSources.getQuick(i);
-                    if (tree != null) {
-                        tree.put(
-                                chainLeftRecord,
-                                recordChain,
-                                chainRightRecord,
-                                comparators.getQuick(i)
-                        );
+        if (orderedGroupCount > 0) {
+            for (int i = 0; i < orderedGroupCount; i++) {
+                final LongTreeChain tree = orderedSources.getQuick(i);
+                final ObjList<AnalyticFunction> functions = orderedFunctions.getQuick(i);
+                // step #2: populate all analytic functions with records in order of respective tree
+                final LongTreeChain.TreeCursor cursor = tree.getCursor();
+                final int functionCount = functions.size();
+                while (cursor.hasNext()) {
+                    offset = cursor.next();
+                    recordChain.recordAt(recordChainRecord, offset);
+                    for (int j = 0; j < functionCount; j++) {
+                        functions.getQuick(j).pass1(recordChainRecord, offset, recordChain);
                     }
                 }
             }
         }
 
-        for (int i = 0; i < orderGroupCount; i++) {
-            LongTreeChain tree = orderedSources.getQuick(i);
-            ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
-            if (tree != null) {
-                // step #2: populate all analytic functions with records in order of respective tree
-                final LongTreeChain.TreeCursor cursor = tree.getCursor();
-                while (cursor.hasNext()) {
-                    offset = cursor.next();
-                    recordChain.recordAt(recordChainRecord,offset);
-                    for (int j = 0, n = functions.size(); j < n; j++) {
-                        functions.getQuick(j).pass1(recordChainRecord, offset, recordChain);
-                    }
-                }
-            } else {
-                // step #2: alternatively run record list through two-pass functions
-                for (int j = 0, n = functions.size(); j < n; j++) {
-                    AnalyticFunction f = functions.getQuick(j);
-                    if (f.getType() != AnalyticFunction.STREAM) {
-                        recordChain.toTop();
-                        while (recordChain.hasNext()) {
-                            f.pass1(recordChainRecord, recordChainRecord.getRowId(), recordChain);
-                        }
-                    }
+        // run pass1 for all unordered functions
+        if (unorderedFunctions != null) {
+            for (int j = 0, n = unorderedFunctions.size(); j < n; j++) {
+                final AnalyticFunction f = unorderedFunctions.getQuick(j);
+                recordChain.toTop();
+                while (recordChain.hasNext()) {
+                    f.pass1(recordChainRecord, recordChainRecord.getRowId(), recordChain);
                 }
             }
         }
 
         recordChain.toTop();
-        for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
-            analyticFunctions.getQuick(i).preparePass2(recordChain);
+        return recordChain;
+    }
+
+    private void resetFunctions() {
+        for (int i = 0, n = allFunctions.size(); i < n; i++) {
+            allFunctions.getQuick(i).reset();
         }
-        return cursor;
+    }
+
+    private void clearTrees() {
+        for (int i = 0; i < orderedGroupCount; i++) {
+            orderedSources.getQuick(i).clear();
+        }
     }
 
     @Override
@@ -182,49 +192,5 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
-    }
-
-    private class CachedAnalyticRecordCursor implements RecordCursor {
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return recordChainRecord;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (recordChain.hasNext()) {
-                for (int i = 0, n = analyticFunctions.size(); i < n; i++) {
-                    analyticFunctions.getQuick(i).pass2(recordChainRecord);
-                }
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return recordChain.getRecordB();
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            recordChain.recordAt(record, atRowId);
-        }
-
-        @Override
-        public void toTop() {
-            recordChain.toTop();
-            GroupByUtils.toTop(analyticFunctions);
-        }
-
-        @Override
-        public long size() {
-            return recordChain.size();
-        }
     }
 }

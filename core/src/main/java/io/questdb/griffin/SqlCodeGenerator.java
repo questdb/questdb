@@ -32,7 +32,6 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
-import io.questdb.griffin.engine.analytic.AnalyticRecordRecordCursorFactory;
 import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -1454,7 +1453,6 @@ public class SqlCodeGenerator implements Mutable {
         final int columnCount = columns.size();
         grouppedAnalytic.clear();
         ObjList<AnalyticFunction> naturalOrderFunctions = null;
-        boolean needCache = false;
 
         valueTypes.clear();
         ArrayColumnTypes chainTypes = valueTypes;
@@ -1572,6 +1570,8 @@ public class SqlCodeGenerator implements Mutable {
                 assert f instanceof AnalyticFunction;
                 AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
+                // analyze order by clause on the current model and optimise out
+                // order by on analytic function if it matches the one on the model
                 final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
                 boolean dismissOrder;
                 if (osz > 0 && orderHash.size() > 0) {
@@ -1595,12 +1595,10 @@ public class SqlCodeGenerator implements Mutable {
                         grouppedAnalytic.put(order, funcs = new ObjList<>());
                     }
                     funcs.add(analyticFunction);
-                    needCache = true;
                 } else {
                     if (naturalOrderFunctions == null) {
                         naturalOrderFunctions = new ObjList<>();
                     }
-                    needCache = needCache || analyticFunction.getType() != AnalyticFunction.STREAM;
                     naturalOrderFunctions.add(analyticFunction);
                 }
 
@@ -1628,40 +1626,31 @@ public class SqlCodeGenerator implements Mutable {
             }
         }
 
-        if (needCache) {
-            final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
-            final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
-            for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
-                analyticComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
-                functionGroups.add(e.value);
-            }
-
-            if (naturalOrderFunctions != null) {
-                analyticComparators.add(null);
-                functionGroups.add(naturalOrderFunctions);
-            }
-
-            final RecordSink recordSink = RecordSinkFactory.getInstance(
-                    asm,
-                    chainTypes,
-                    listColumnFilterA,
-                    false,
-                    listColumnFilterB
-            );
-
-            return new CachedAnalyticRecordCursorFactory(
-                    4096,
-                    4096, // todo: configuration
-                    base,
-                    recordSink,
-                    factoryMetadata,
-                    chainTypes,
-                    analyticComparators,
-                    functionGroups
-            );
-        } else {
-            return new AnalyticRecordRecordCursorFactory(base, naturalOrderFunctions);
+        final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
+        final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
+        for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
+            analyticComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
+            functionGroups.add(e.value);
         }
+
+        final RecordSink recordSink = RecordSinkFactory.getInstance(
+                asm,
+                chainTypes,
+                listColumnFilterA,
+                false,
+                listColumnFilterB
+        );
+
+        return new CachedAnalyticRecordCursorFactory(
+                configuration,
+                base,
+                recordSink,
+                factoryMetadata,
+                chainTypes,
+                analyticComparators,
+                functionGroups,
+                naturalOrderFunctions
+        );
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {

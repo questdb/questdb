@@ -283,6 +283,36 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAnalyticStorePageSize() {
+        return 4 * 1024;
+    }
+
+    @Override
+    public int getSqlAnalyticStoreMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlAnalyticRowIdPageSize() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlAnalyticRowIdMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlAnalyticTreeKeyPageSize() {
+        return 4 * 1024;
+    }
+
+    @Override
+    public int getSqlAnalyticTreeKeyMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public long getSqlLatestByRowCount() {
         return 1000;
     }
