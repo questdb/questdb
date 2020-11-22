@@ -128,33 +128,6 @@ class SqlOptimiser {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
-    private static boolean isNotBindVariable(CharSequence token) {
-        int len = token.length();
-        if (len < 1) {
-            return true;
-        }
-
-        final char first = token.charAt(0);
-        if (first == ':') {
-            return false;
-        }
-
-        if (first == '?' && len == 1) {
-            return false;
-        }
-
-        if (first == '$') {
-            try {
-                Numbers.parseInt(token, 1, len);
-                return false;
-            } catch (NumericException e) {
-                return true;
-            }
-        }
-
-        return true;
-    }
-
     private static boolean modelIsFlex(QueryModel model) {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
@@ -1216,11 +1189,12 @@ class SqlOptimiser {
                 openReaderAndEnumerateColumns(executionContext, model);
             }
         } else {
-            if (model.getNestedModel() != null) {
-                enumerateTableColumns(model.getNestedModel(), executionContext);
+            final QueryModel nested = model.getNestedModel();
+            if (nested != null) {
+                enumerateTableColumns(nested, executionContext);
                 // copy columns of nested model onto parent one
                 // we must treat sub-query just like we do a table
-                model.copyColumnsFrom(model.getNestedModel(), queryColumnPool, expressionNodePool);
+                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
             }
         }
         for (int i = 1, n = jm.size(); i < n; i++) {
@@ -2081,6 +2055,7 @@ class SqlOptimiser {
 
         // skip over NONE model that does not have table name
         final QueryModel nested = skipNoneTypeModels(model.getNestedModel());
+        model.setNestedModel(nested);
         final boolean nestedIsFlex = modelIsFlex(nested);
 
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
@@ -2599,7 +2574,6 @@ class SqlOptimiser {
         // we use it to ensure expression and alias uniqueness
         final QueryModel cursorModel = queryModelPool.next();
 
-
         boolean useInnerModel = false;
         boolean useAnalyticModel = false;
         boolean useGroupByModel = false;
@@ -2635,7 +2609,7 @@ class SqlOptimiser {
             }
 
             if (qc.getAst().type == ExpressionNode.LITERAL) {
-                if (!isNotBindVariable(qc.getAst().token)) {
+                if (!SqlUtil.isNotBindVariable(qc.getAst().token)) {
                     // bind variable
                     addFunction(
                             qc,
@@ -2715,8 +2689,9 @@ class SqlOptimiser {
                         useGroupByModel = true;
                         continue;
                     } else if (functionParser.isCursor(qc.getAst().token)) {
-                        qc = addCursorFunctionAsCrossJoin(qc.getAst(), qc.getAlias(), cursorModel, baseModel, sqlExecutionContext);
-                        QueryColumn ref = nextColumn(qc.getAlias());
+                        final CharSequence alias = qc.getAlias();
+                        qc = addCursorFunctionAsCrossJoin(qc.getAst(), alias, cursorModel, baseModel, sqlExecutionContext);
+                        QueryColumn ref = nextColumn(alias, qc.getAlias());
                         translatingModel.addBottomUpColumn(ref);
                         innerVirtualModel.addBottomUpColumn(ref);
                         continue;
@@ -2787,11 +2762,13 @@ class SqlOptimiser {
             limitSource = translatingModel;
             translatingModel.setNestedModel(baseModel);
             translatingModel.moveLimitFrom(model);
+            translatingModel.moveAliasFrom(model);
         }
 
         if (useInnerModel) {
             innerVirtualModel.setNestedModel(root);
             innerVirtualModel.moveLimitFrom(limitSource);
+            innerVirtualModel.moveAliasFrom(limitSource);
             root = innerVirtualModel;
             limitSource = innerVirtualModel;
         }
@@ -2799,11 +2776,13 @@ class SqlOptimiser {
         if (useAnalyticModel) {
             analyticModel.setNestedModel(root);
             analyticModel.moveLimitFrom(limitSource);
+            analyticModel.moveAliasFrom(limitSource);
             root = analyticModel;
             limitSource = analyticModel;
         } else if (useGroupByModel) {
             groupByModel.setNestedModel(root);
             groupByModel.moveLimitFrom(limitSource);
+            groupByModel.moveAliasFrom(limitSource);
             root = groupByModel;
             limitSource = groupByModel;
         }
@@ -2811,10 +2790,12 @@ class SqlOptimiser {
         if (useOuterModel) {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
+            outerVirtualModel.moveAliasFrom(limitSource);
             root = outerVirtualModel;
         } else if (root != outerVirtualModel && root.getBottomUpColumns().size() < outerVirtualModel.getBottomUpColumns().size()) {
             outerVirtualModel.setNestedModel(root);
             outerVirtualModel.moveLimitFrom(limitSource);
+            outerVirtualModel.moveAliasFrom(limitSource);
             // in this case outer model should be of "choose" type
             outerVirtualModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
             root = outerVirtualModel;
@@ -2969,7 +2950,7 @@ class SqlOptimiser {
         public void visit(ExpressionNode node) {
             if (node.type == ExpressionNode.LITERAL) {
                 final int len = node.token.length();
-                if (isNotBindVariable(node.token)) {
+                if (SqlUtil.isNotBindVariable(node.token)) {
                     final int dot = Chars.indexOf(node.token, 0, len, '.');
                     int index = nameTypeMap.keyIndex(node.token, dot + 1, len);
                     // these columns are pre-validated
@@ -3058,7 +3039,7 @@ class SqlOptimiser {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
                     // ignore bind variables
-                    if (isNotBindVariable(node.token)) {
+                    if (SqlUtil.isNotBindVariable(node.token)) {
                         int dot = Chars.indexOf(node.token, '.');
                         CharSequence name = dot == -1 ? node.token : node.token.subSequence(dot + 1, node.token.length());
                         indexes.add(validateColumnAndGetModelIndex(model, node.token, dot, node.position));

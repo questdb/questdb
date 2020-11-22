@@ -32,12 +32,6 @@ public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
 
-    static {
-        for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
-            SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
-        }
-    }
-
     public static CharSequence fetchNext(GenericLexer lexer) {
         int blockCount = 0;
         boolean lineComment = false;
@@ -71,6 +65,33 @@ public class SqlUtil {
             }
         }
         return null;
+    }
+
+    public static boolean isNotBindVariable(CharSequence token) {
+        int len = token.length();
+        if (len < 1) {
+            return true;
+        }
+
+        final char first = token.charAt(0);
+        if (first == ':') {
+            return false;
+        }
+
+        if (first == '?' && len == 1) {
+            return false;
+        }
+
+        if (first == '$') {
+            try {
+                Numbers.parseInt(token, 1, len);
+                return false;
+            } catch (NumericException e) {
+                return true;
+            }
+        }
+
+        return true;
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
@@ -129,5 +150,11 @@ public class SqlUtil {
             CharSequence column
     ) {
         return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, 0));
+    }
+
+    static {
+        for (int i = 0, n = OperatorExpression.operators.size(); i < n; i++) {
+            SqlUtil.disallowedAliases.add(OperatorExpression.operators.getQuick(i).token);
+        }
     }
 }

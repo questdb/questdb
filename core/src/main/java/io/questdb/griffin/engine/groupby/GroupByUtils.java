@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -43,51 +44,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByUtils {
-    public static void checkGroupBy(ObjList<ExpressionNode> groupBys, ObjList<QueryColumn> selectColumns, int groupByColumnCount, ExpressionNode alias) throws SqlException {
-        int matchingColumnCount = 0;
-        int groupBySize = groupBys.size();
-        if (groupBySize == 0) {
-            return;
-        }
-        int selectColumnCount = selectColumns.size();
-        for (int i = 0; i < selectColumnCount; i++) {
-            for (int j = 0; j < groupBySize; j++) {
-                ExpressionNode groupByNode = groupBys.getQuick(j);
-                QueryColumn selectColumn = selectColumns.getQuick(i);
-                ExpressionNode selectNode = selectColumn.getAst();
-                if (groupByNode.type == ExpressionNode.LITERAL && selectNode.type == ExpressionNode.LITERAL) {
-                    if (Chars.equals(groupByNode.token, selectNode.token) || Chars.equals(groupByNode.token, selectColumn.getAlias())) {
-                        matchingColumnCount++;
-                        break;
-                    }
-
-                    int dotIndex = Chars.indexOf(groupByNode.token, '.');
-                    if (dotIndex > -1) {
-                        if (alias != null
-                                && Chars.equals(alias.token, groupByNode.token, 0, dotIndex)
-                                && (
-                                Chars.equals(selectNode.token, groupByNode.token, dotIndex + 1, groupByNode.token.length())
-                                        ||
-                                        Chars.equals(selectColumn.getAlias(), groupByNode.token, dotIndex + 1, groupByNode.token.length())
-                        )
-                        ) {
-                            matchingColumnCount++;
-                            break;
-                        }
-                    }
-                } else {
-                    if (ExpressionNode.compareNodesGroupBy(groupByNode, selectNode)) {
-                        matchingColumnCount++;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (matchingColumnCount != groupBySize || matchingColumnCount != groupByColumnCount) {
-            throw SqlException.$(0, "group by column does not match key column is select statement ");
-        }
-    }
 
     public static void prepareGroupByFunctions(
             QueryModel model,
@@ -142,7 +98,7 @@ public class GroupByUtils {
 
         ObjList<QueryColumn> columns = model.getColumns();
         int valueColumnIndex = 0;
-        int groupByColumnCount = 0;
+        int inferredKeyColumnCount = 0;
 
         // when we have same column several times in a row
         // we only add it once to map keys
@@ -242,7 +198,7 @@ public class GroupByUtils {
                             )
                     );
                 }
-                groupByColumnCount++;
+                inferredKeyColumnCount++;
 
             } else {
                 // add group-by function as a record function as well
@@ -264,7 +220,7 @@ public class GroupByUtils {
                 );
             }
         }
-        validateGroupByColumns(model, columns, groupByColumnCount);
+        validateGroupByColumns(model, inferredKeyColumnCount);
     }
 
     public static void toTop(ObjList<? extends Function> args) {
@@ -285,19 +241,87 @@ public class GroupByUtils {
         }
     }
 
-    public static void validateGroupByColumns(@NotNull QueryModel model, ObjList<QueryColumn> columns, int groupByColumnCount) throws SqlException {
-        final ObjList<ExpressionNode> groupBys = model.getGroupBy();
-        QueryModel next = model.getNestedModel();
-        while (next.getSelectModelType() != QueryModel.SELECT_MODEL_NONE) {
-            if (next.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL) {
-                columns = next.getColumns();
-                break;
-            }
-            next = next.getNestedModel();
+    public static void validateGroupByColumns(@NotNull QueryModel model, int inferredKeyColumnCount) throws SqlException {
+        final ObjList<ExpressionNode> groupByColumns = model.getGroupBy();
+        int explicitKeyColumnCount = groupByColumns.size();
+        if (explicitKeyColumnCount == 0) {
+            return;
         }
-        //
-        ExpressionNode alias = next.getAlias();
-        GroupByUtils.checkGroupBy(groupBys, columns, groupByColumnCount, alias);
+
+        final QueryModel nested = model.getNestedModel();
+        QueryModel chooseModel = model;
+        while (chooseModel != null && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_NONE) {
+            chooseModel = chooseModel.getNestedModel();
+        }
+
+        for (int i = 0; i < explicitKeyColumnCount; i++) {
+            final ExpressionNode key = groupByColumns.getQuick(i);
+            if (key.type == ExpressionNode.LITERAL) {
+                if (SqlUtil.isNotBindVariable(key.token)) {
+                    final int dotIndex = Chars.indexOf(key.token, '.');
+
+                    if (dotIndex > -1) {
+                        int aliasIndex = model.getAliasIndex(key.token, 0, dotIndex);
+                        if (aliasIndex > -1) {
+                            // we should now check against main model
+                            int refColumn = model.getAliasToColumnMap().keyIndex(key.token);
+                            if (refColumn > -1) {
+                                // a.x not found, look for "x"
+                                refColumn = model.getAliasToColumnMap().keyIndex(key.token, dotIndex + 1, key.token.length());
+                            }
+
+                            if (refColumn > -1) {
+                                throw SqlException.$(key.position, "group by column does not match any key column is select statement");
+                            }
+
+                        } else {
+
+                            // the table alias could be referencing join model
+                            // we need to descend down to first NONE model and see if that can resolve columns we are
+                            // looking for
+
+                            if (chooseModel != null && chooseModel.getColumnNameToAliasMap().keyIndex(key.token) < 0) {
+                                continue;
+                            }
+                            throw SqlException.$(key.position, "invalid column reference");
+                        }
+                    } else {
+                        int refColumn = model.getAliasToColumnMap().keyIndex(key.token);
+                        if (refColumn > -1) {
+                            throw SqlException.$(key.position, "group by column does not match any key column is select statement");
+                        }
+                        QueryColumn qc = model.getAliasToColumnMap().valueAt(refColumn);
+                        if (qc.getAst().type != ExpressionNode.LITERAL && qc.getAst().type != ExpressionNode.CONSTANT) {
+                            throw SqlException.$(key.position, "group by column references aggregate expression");
+                        }
+                    }
+                } else {
+                    throw SqlException.$(key.position, "bind variable is not allowed here");
+                }
+            } else if (key.type == ExpressionNode.FUNCTION || key.type == ExpressionNode.OPERATION || key.type == ExpressionNode.CONSTANT) {
+                final ObjList<QueryColumn> availableColumns = nested.getTopDownColumns();
+                boolean invalid = true;
+                for (int j = 0, n = availableColumns.size(); j < n; j++) {
+                    final QueryColumn qc = availableColumns.getQuick(j);
+                    if (qc.getAst().type == key.type) {
+                        if (ExpressionNode.compareNodesGroupBy(key, qc.getAst(), chooseModel)) {
+                            invalid = false;
+                            break;
+                        }
+                    }
+                }
+                if (invalid) {
+                    throw SqlException.$(key.position, "group by expression does not match anything select in statement");
+                }
+            } else {
+                throw SqlException.$(key.position, "unsupported type of expression");
+            }
+        }
+
+
+        if (explicitKeyColumnCount < inferredKeyColumnCount) {
+            throw SqlException.$(model.getModelPosition(), "not enough columns in group by");
+        }
     }
 
     static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {

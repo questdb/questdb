@@ -303,6 +303,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return alias;
     }
 
+    public void moveAliasFrom(QueryModel that) {
+        final ExpressionNode alias = that.alias;
+        if (alias != null && !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {
+            setAlias(alias);
+            addAliasIndex(alias, 0);
+        }
+    }
+
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }

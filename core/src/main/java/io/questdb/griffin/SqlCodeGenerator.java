@@ -1244,7 +1244,6 @@ public class SqlCodeGenerator implements Mutable {
             final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
             final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
 
-            assert model.getNestedModel() != null;
             final int fillCount = sampleByFill.size();
             try {
                 keyTypes.clear();
@@ -1654,7 +1653,6 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        assert model.getNestedModel() != null;
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         final RecordMetadata metadata = factory.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();
@@ -1931,7 +1929,7 @@ public class SqlCodeGenerator implements Mutable {
                         tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
                     }
 
-                    GroupByUtils.validateGroupByColumns(model, model.getColumns(), 1);
+                    GroupByUtils.validateGroupByColumns(model, 1);
 
                     return new GroupByRecordCursorFactory(
                             configuration,
@@ -2012,14 +2010,13 @@ public class SqlCodeGenerator implements Mutable {
                     recordFunctions
             );
 
-        } catch (CairoException e) {
+        } catch (CairoException | SqlException e) {
             Misc.free(factory);
             throw e;
         }
     }
 
     private RecordCursorFactory generateSelectVirtual(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        assert model.getNestedModel() != null;
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
         try {
