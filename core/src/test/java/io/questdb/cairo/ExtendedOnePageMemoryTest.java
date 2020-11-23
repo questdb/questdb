@@ -1,22 +1,17 @@
 package io.questdb.cairo;
 
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.Path;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.str.Path;
-
-public class ExtendendOnePageMemoryTest {
+public class ExtendedOnePageMemoryTest {
     private static final int FILE_SIZE = 1024;
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();

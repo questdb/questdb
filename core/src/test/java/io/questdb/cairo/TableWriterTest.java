@@ -39,6 +39,8 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableUtils.ARCHIVE_FILE_NAME;
+
 public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
@@ -729,14 +731,26 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAppendOutOfOrder() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.NONE, N);
-        testOutOfOrderRecords(N);
+        testOutOfOrderRecordsFail(N);
     }
 
     @Test
     public void testAppendOutOfOrderPartitioned() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
-        testOutOfOrderRecords(N);
+        testOutOfOrderRecordsFail(N);
+    }
+
+    @Test
+    public void testAppendOutOfOrderPartitionedNewerFirst() throws Exception {
+        int N = 10000;
+        create(FF, PartitionBy.DAY, N);
+        testOutOfOrderRecordsNewerThanOlder(N, new DefaultCairoConfiguration(root) {
+            @Override
+            public boolean isOutOfOrderEnabled() {
+                return true;
+            }
+        });
     }
 
     @Test
@@ -1642,11 +1656,11 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testFailureToOpenArchiveFile() throws Exception {
         testCommitRetryAfterFailure(new CountingFilesFacade() {
             @Override
-            public long openAppend(LPSZ name) {
-                if (--count < 1L) {
+            public long openRW(LPSZ name) {
+                if (Chars.contains(name, ARCHIVE_FILE_NAME) && --count < 1L) {
                     return -1;
                 }
-                return super.openAppend(name);
+                return super.openRW(name);
             }
         });
     }
@@ -1657,11 +1671,11 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long openAppend(LPSZ name) {
-                if (--count < 1L) {
-                    return fd = super.openAppend(name);
+            public long openRW(LPSZ name) {
+                if (Chars.contains(name, ARCHIVE_FILE_NAME) && --count < 1L) {
+                    return fd = super.openRW(name);
                 }
-                return super.openAppend(name);
+                return super.openRW(name);
             }
 
             @Override
@@ -3314,7 +3328,8 @@ public class TableWriterTest extends AbstractCairoTest {
                                 // out transaction size is random after all
                                 // if this happens return count to non-failing state
                                 ff.count = Long.MAX_VALUE;
-                            } catch (CairoException ignore) {
+                            } catch (CairoException e) {
+                                e.printStackTrace();
                                 failureCount++;
                                 ff.count = Long.MAX_VALUE;
                                 writer.commit();
@@ -3355,7 +3370,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testOutOfOrderRecords(int N) throws Exception {
+    private void testOutOfOrderRecordsFail(int N) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
 
@@ -3390,6 +3405,83 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
                 Assert.assertTrue(failureCount > 0);
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N, writer.size());
+            }
+        });
+    }
+
+    private void testOutOfOrderRecords(int N) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+
+                long ts;
+                long ts1 = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts2 = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+                Rnd rnd = new Rnd();
+                int i = 0;
+                while (i < N) {
+                    TableWriter.Row r;
+                    boolean fail = rnd.nextBoolean();
+                    if (fail) {
+                        ts2 += 60 * 6000L * 1000L;
+                        ts = ts2;
+                    } else {
+                        ts1 += 60 * 6000L * 1000L;
+                        ts = ts1;
+                    }
+                    r = writer.newRow(ts);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.append();
+                    i++;
+                }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N, writer.size());
+            }
+        });
+    }
+
+    private void testOutOfOrderRecordsNewerThanOlder(int N, CairoConfiguration configuration) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+
+                long ts;
+                long ts1 = TimestampFormatUtils.parseDateTime("2013-03-04T04:00:00.000Z");
+                long ts2 = TimestampFormatUtils.parseDateTime("2013-03-04T02:00:00.000Z");
+
+                Rnd rnd = new Rnd();
+                int i = 0;
+                while (i < N) {
+                    TableWriter.Row r;
+                    if (i > N / 2) {
+                        ts2 += 60 * 1000L;
+                        ts = ts2;
+                    } else {
+                        ts1 += 60 * 1000L;
+                        ts = ts1;
+                    }
+                    r = writer.newRow(ts);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.append();
+                    i++;
+                }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
             }
 
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {

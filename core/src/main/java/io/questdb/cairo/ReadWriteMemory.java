@@ -73,7 +73,7 @@ public class ReadWriteMemory extends VirtualMemory {
     }
 
     @Override
-    protected long getPageAddress(int page) {
+    public long getPageAddress(int page) {
         return mapWritePage(page);
     }
 
@@ -105,6 +105,24 @@ public class ReadWriteMemory extends VirtualMemory {
         } catch (CairoException e) {
             ff.close(fd);
             fd = -1;
+            throw e;
+        }
+    }
+
+    public final void of(FilesFacade ff, long fd, long pageSize) {
+        close();
+        this.ff = ff;
+        this.fd = fd;
+        long size = ff.length(fd);
+        setPageSize(pageSize);
+        ensurePagesListCapacity(size);
+        try {
+            // we may not be able to map page here
+            // make sure we close file before bailing out
+            jumpTo(size);
+        } catch (CairoException e) {
+            ff.close(fd);
+            this.fd = -1;
             throw e;
         }
     }

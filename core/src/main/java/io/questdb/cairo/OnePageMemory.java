@@ -46,11 +46,11 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     protected long size = 0;
     protected long absolutePointer;
 
-    public OnePageMemory(FilesFacade ff, LPSZ name, long size) {
-        of(ff, name, 0, size);
+    public OnePageMemory() {
     }
 
-    public OnePageMemory() {
+    public OnePageMemory(FilesFacade ff, LPSZ name, long size) {
+        of(ff, name, 0, size);
     }
 
     public long addressOf(long offset) {
@@ -86,6 +86,15 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         }
 
         map(ff, name, size);
+    }
+
+    public void of(FilesFacade ff, long fd, LPSZ name, long size) {
+        close();
+        this.ff = ff;
+        this.fd = fd;
+        if (fd != -1) {
+            map(ff, name, size);
+        }
     }
 
     protected void map(FilesFacade ff, LPSZ name, long size) {
@@ -236,6 +245,15 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         return absolutePointer;
     }
 
+    public void detach() {
+        if (page != -1) {
+            ff.munmap(page, size);
+            page = -1;
+        }
+        fd = -1;
+        this.size = 0;
+    }
+
     public void getLong256(long offset, Long256Sink sink) {
         sink.setLong0(Unsafe.getUnsafe().getLong(addressOf(offset)));
         sink.setLong1(Unsafe.getUnsafe().getLong(addressOf(offset + Long.BYTES)));
@@ -252,7 +270,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         if (len == TableUtils.NULL_LEN) {
             return null;
         }
-        throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(']');
+        throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size).put(", fd=").put(fd).put(']');
     }
 
     public long size() {

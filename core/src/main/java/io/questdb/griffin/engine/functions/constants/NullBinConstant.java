@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
 
 public final class NullBinConstant extends BinFunction implements ConstantFunction {
-    NullBinConstant() {
+    public NullBinConstant() {
         super(0);
     }
 

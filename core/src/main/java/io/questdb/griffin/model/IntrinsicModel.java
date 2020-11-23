@@ -37,13 +37,6 @@ public class IntrinsicModel implements Mutable {
     public static final int FALSE = 2;
     public static final int UNDEFINED = 0;
     private static final LongList INFINITE_INTERVAL;
-
-    static {
-        INFINITE_INTERVAL = new LongList();
-        INFINITE_INTERVAL.add(Long.MIN_VALUE);
-        INFINITE_INTERVAL.add(Long.MAX_VALUE);
-    }
-
     public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
     public final CharSequenceHashSet keyExcludedValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
@@ -63,6 +56,282 @@ public class IntrinsicModel implements Mutable {
 
     public static long getIntervalLo(LongList intervals, int pos) {
         return intervals.getQuick(pos << 1);
+    }
+
+    public static long parseCCPartialDate(CharSequence seq) throws NumericException {
+        return parseCCPartialDate(seq, 0, seq.length());
+    }
+
+    public static long parseCCPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
+        long ts;
+        if (lim - pos < 4) {
+            throw NumericException.INSTANCE;
+        }
+        int p = pos;
+        int year = Numbers.parseInt(seq, p, p += 4);
+        boolean l = Timestamps.isLeapYear(year);
+        if (checkLen(p, lim)) {
+            checkChar(seq, p++, lim, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, lim)) {
+                checkChar(seq, p++, lim, '-');
+                int day = Numbers.parseInt(seq, p, p += 2);
+                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
+                if (checkLen(p, lim)) {
+                    checkChar(seq, p++, lim, 'T');
+                    int hour = Numbers.parseInt(seq, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, lim)) {
+                        checkChar(seq, p++, lim, ':');
+                        int min = Numbers.parseInt(seq, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, lim)) {
+                            checkChar(seq, p++, lim, ':');
+                            int sec = Numbers.parseInt(seq, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (lim - p > 3) {
+                                checkChar(seq, p++, lim, '.');
+                                int ms = Numbers.parseInt(seq, p, p += 3);
+                                if (lim - p > 2) {
+                                    // micros
+                                    ts = Timestamps.yearMicros(year, l)
+                                            + Timestamps.monthOfYearMicros(month, l)
+                                            + (day - 1) * Timestamps.DAY_MICROS
+                                            + hour * Timestamps.HOUR_MICROS
+                                            + min * Timestamps.MINUTE_MICROS
+                                            + sec * Timestamps.SECOND_MICROS
+                                            + ms * Timestamps.MILLI_MICROS
+                                            + Numbers.parseInt(seq, p, p + 3) + 1;
+                                } else {
+                                    // millis
+                                    ts = Timestamps.yearMicros(year, l)
+                                            + Timestamps.monthOfYearMicros(month, l)
+                                            + (day - 1) * Timestamps.DAY_MICROS
+                                            + hour * Timestamps.HOUR_MICROS
+                                            + min * Timestamps.MINUTE_MICROS
+                                            + sec * Timestamps.SECOND_MICROS
+                                            + (ms + 1) * Timestamps.MILLI_MICROS;
+                                }
+                            } else {
+                                // seconds
+                                ts = Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + (sec + 1) * Timestamps.SECOND_MICROS;
+                            }
+                        } else {
+                            // minute
+                            ts = Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + (min + 1) * Timestamps.MINUTE_MICROS;
+
+                        }
+                    } else {
+                        // year + month + day + hour
+                        ts = Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (day - 1) * Timestamps.DAY_MICROS
+                                + (hour + 1) * Timestamps.HOUR_MICROS;
+
+                    }
+                } else {
+                    // year + month + day
+                    ts = Timestamps.addDays(Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(month, l)
+                            + (day - 1) * Timestamps.DAY_MICROS, 1);
+                }
+            } else {
+                // year + month
+                ts = Timestamps.addMonths(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l), 1);
+            }
+        } else {
+            // year
+            ts = Timestamps.yearMicros(year + 1, Timestamps.isLeapYear(year + 1));
+        }
+        return ts;
+    }
+
+    public static long parseFloorPartialDate(CharSequence seq) throws NumericException {
+        return parseFloorPartialDate(seq, 0, seq.length());
+    }
+
+    public static long parseFloorPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
+        long ts;
+        if (lim - pos < 4) {
+            throw NumericException.INSTANCE;
+        }
+        int p = pos;
+        int year = Numbers.parseInt(seq, p, p += 4);
+        boolean l = Timestamps.isLeapYear(year);
+        if (checkLen(p, lim)) {
+            checkChar(seq, p++, lim, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, lim)) {
+                checkChar(seq, p++, lim, '-');
+                int day = Numbers.parseInt(seq, p, p += 2);
+                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
+                if (checkLen(p, lim)) {
+                    checkChar(seq, p++, lim, 'T');
+                    int hour = Numbers.parseInt(seq, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, lim)) {
+                        checkChar(seq, p++, lim, ':');
+                        int min = Numbers.parseInt(seq, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, lim)) {
+                            checkChar(seq, p++, lim, ':');
+                            int sec = Numbers.parseInt(seq, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (lim - p > 3) {
+                                checkChar(seq, p++, lim, '.');
+                                int ms = Numbers.parseInt(seq, p, p += 3);
+                                if (lim - p > 2) {
+                                    // micros
+                                    ts = Timestamps.yearMicros(year, l)
+                                            + Timestamps.monthOfYearMicros(month, l)
+                                            + (day - 1) * Timestamps.DAY_MICROS
+                                            + hour * Timestamps.HOUR_MICROS
+                                            + min * Timestamps.MINUTE_MICROS
+                                            + sec * Timestamps.SECOND_MICROS
+                                            + ms * Timestamps.MILLI_MICROS
+                                            + Numbers.parseInt(seq, p, p + 3);
+                                } else {
+                                    // millis
+                                    ts = Timestamps.yearMicros(year, l)
+                                            + Timestamps.monthOfYearMicros(month, l)
+                                            + (day - 1) * Timestamps.DAY_MICROS
+                                            + hour * Timestamps.HOUR_MICROS
+                                            + min * Timestamps.MINUTE_MICROS
+                                            + sec * Timestamps.SECOND_MICROS
+                                            + ms * Timestamps.MILLI_MICROS;
+                                }
+                            } else {
+                                // seconds
+                                ts = Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS;
+                            }
+                        } else {
+                            // minute
+                            ts = Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS;
+
+                        }
+                    } else {
+                        // year + month + day + hour
+                        ts = Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (day - 1) * Timestamps.DAY_MICROS
+                                + hour * Timestamps.HOUR_MICROS;
+
+                    }
+                } else {
+                    // year + month + day
+                    ts = Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(month, l)
+                            + (day - 1) * Timestamps.DAY_MICROS;
+                }
+            } else {
+                // year + month
+                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+            }
+        } else {
+            // year
+            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+        }
+        return ts;
+    }
+
+    @Override
+    public void clear() {
+        keyColumn = null;
+        keyValues.clear();
+        keyExcludedValues.clear();
+        keyValuePositions.clear();
+        keyExcludedValuePositions.clear();
+        clearInterval();
+        filter = null;
+        intervals = null;
+        intrinsicValue = UNDEFINED;
+        keySubQuery = null;
+    }
+
+    public void clearInterval() {
+        this.intervals = null;
+    }
+
+    public void excludeValue(ExpressionNode val) {
+
+        final int index;
+        if (isNullKeyword(val.token)) {
+            index = keyValues.removeNull();
+            if (index > -1) {
+                keyValuePositions.removeIndex(index);
+            }
+        } else {
+            int keyIndex = Chars.isQuoted(val.token) ? keyValues.keyIndex(val.token, 1, val.token.length() - 1) : keyValues.keyIndex(val.token);
+            if (keyIndex < 0) {
+                index = keyValues.getListIndexAt(keyIndex);
+                keyValues.removeAt(keyIndex);
+            } else {
+                index = -1;
+            }
+        }
+
+        if (index > -1) {
+            keyValuePositions.removeIndex(index);
+        }
+
+        if (keyValues.size() == 0) {
+            intrinsicValue = FALSE;
+        }
+    }
+
+    public void intersectIntervals(long lo, long hi) {
+        LongList temp = shuffleTemp(intervals, null);
+        temp.add(lo);
+        temp.add(hi);
+        intersectIntervals(temp);
+    }
+
+    public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        LongList temp = shuffleTemp(intervals, null);
+        parseIntervalEx(seq, lo, lim, position, temp);
+        intersectIntervals(temp);
+    }
+
+    public void subtractIntervals(long lo, long hi) {
+        LongList temp = shuffleTemp(intervals, null);
+        temp.add(lo);
+        temp.add(hi);
+        subtractIntervals(temp);
+    }
+
+    public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        LongList temp = shuffleTemp(intervals, null);
+        parseIntervalEx(seq, lo, lim, position, temp);
+        subtractIntervals(temp);
+    }
+
+    @Override
+    public String toString() {
+        return "IntrinsicModel{" +
+                "keyValues=" + keyValues +
+                ", keyColumn='" + keyColumn + '\'' +
+                ", filter=" + filter +
+                '}';
     }
 
     /**
@@ -320,173 +589,6 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    public static long parseFloorPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
-        long ts;
-        if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
-        }
-        int p = pos;
-        int year = Numbers.parseInt(seq, p, p += 4);
-        boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, lim)) {
-            checkChar(seq, p++, lim, '-');
-            int month = Numbers.parseInt(seq, p, p += 2);
-            checkRange(month, 1, 12);
-            if (checkLen(p, lim)) {
-                checkChar(seq, p++, lim, '-');
-                int day = Numbers.parseInt(seq, p, p += 2);
-                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T');
-                    int hour = Numbers.parseInt(seq, p, p += 2);
-                    checkRange(hour, 0, 23);
-                    if (checkLen(p, lim)) {
-                        checkChar(seq, p++, lim, ':');
-                        int min = Numbers.parseInt(seq, p, p += 2);
-                        checkRange(min, 0, 59);
-                        if (checkLen(p, lim)) {
-                            checkChar(seq, p++, lim, ':');
-                            int sec = Numbers.parseInt(seq, p, p += 2);
-                            checkRange(sec, 0, 59);
-                            if (p < lim) {
-                                throw NumericException.INSTANCE;
-                            } else {
-                                // seconds
-                                ts = (Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS);
-                            }
-                        } else {
-                            // minute
-                            ts = (Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS);
-
-                        }
-                    } else {
-                        // year + month + day + hour
-                        ts = (Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS);
-
-                    }
-                } else {
-                    // year + month + day
-                    ts = (Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + (day - 1) * Timestamps.DAY_MICROS);
-                }
-            } else {
-                // year + month
-                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
-
-            }
-        } else {
-            // year
-            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
-        }
-        return ts;
-    }
-
-    public static long parseCeilingPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
-        long ts;
-        if (lim - pos < 4) {
-            throw NumericException.INSTANCE;
-        }
-        int p = pos;
-        int year = Numbers.parseInt(seq, p, p += 4);
-        boolean l = Timestamps.isLeapYear(year);
-        if (checkLen(p, lim)) {
-            checkChar(seq, p++, lim, '-');
-            int month = Numbers.parseInt(seq, p, p += 2);
-            checkRange(month, 1, 12);
-            if (checkLen(p, lim)) {
-                checkChar(seq, p++, lim, '-');
-                int day = Numbers.parseInt(seq, p, p += 2);
-                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
-                if (checkLen(p, lim)) {
-                    checkChar(seq, p++, lim, 'T');
-                    int hour = Numbers.parseInt(seq, p, p += 2);
-                    checkRange(hour, 0, 23);
-                    if (checkLen(p, lim)) {
-                        checkChar(seq, p++, lim, ':');
-                        int min = Numbers.parseInt(seq, p, p += 2);
-                        checkRange(min, 0, 59);
-                        if (checkLen(p, lim)) {
-                            checkChar(seq, p++, lim, ':');
-                            int sec = Numbers.parseInt(seq, p, p += 2);
-                            checkRange(sec, 0, 59);
-                            if (p < lim) {
-                                throw NumericException.INSTANCE;
-                            } else {
-                                // seconds
-                                ts = (Timestamps.yearMicros(year, l)
-                                        + Timestamps.monthOfYearMicros(month, l)
-                                        + (day - 1) * Timestamps.DAY_MICROS
-                                        + hour * Timestamps.HOUR_MICROS
-                                        + min * Timestamps.MINUTE_MICROS
-                                        + sec * Timestamps.SECOND_MICROS
-                                        + 999999);
-                            }
-                        } else {
-                            // minute
-                            ts = (Timestamps.yearMicros(year, l)
-                                    + Timestamps.monthOfYearMicros(month, l)
-                                    + (day - 1) * Timestamps.DAY_MICROS
-                                    + hour * Timestamps.HOUR_MICROS
-                                    + min * Timestamps.MINUTE_MICROS
-                                    + 59 * Timestamps.SECOND_MICROS
-                                    + 999999);
-                        }
-                    } else {
-                        // year + month + day + hour
-                        ts = (Timestamps.yearMicros(year, l)
-                                + Timestamps.monthOfYearMicros(month, l)
-                                + (day - 1) * Timestamps.DAY_MICROS
-                                + hour * Timestamps.HOUR_MICROS
-                                + 59 * Timestamps.MINUTE_MICROS
-                                + 59 * Timestamps.SECOND_MICROS
-                                + 999999);
-                    }
-                } else {
-                    // year + month + day
-                    ts = (Timestamps.yearMicros(year, l)
-                            + Timestamps.monthOfYearMicros(month, l)
-                            + +(day - 1) * Timestamps.DAY_MICROS
-                            + 23 * Timestamps.HOUR_MICROS
-                            + 59 * Timestamps.MINUTE_MICROS
-                            + 59 * Timestamps.SECOND_MICROS
-                            + 999999);
-                }
-            } else {
-                // year + month
-                ts = (Timestamps.yearMicros(year, l)
-                        + Timestamps.monthOfYearMicros(month, l)
-                        + (Timestamps.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
-                        + 23 * Timestamps.HOUR_MICROS
-                        + 59 * Timestamps.MINUTE_MICROS
-                        + 59 * Timestamps.SECOND_MICROS
-                        + 999999);
-            }
-        } else {
-            // year
-            ts = (Timestamps.yearMicros(year, l)
-                    + Timestamps.monthOfYearMicros(12, l)
-                    + (Timestamps.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
-                    + 23 * Timestamps.HOUR_MICROS
-                    + 59 * Timestamps.MINUTE_MICROS
-                    + 59 * Timestamps.SECOND_MICROS
-                    + 999999);
-        }
-        return ts;
-    }
-
     static void append(LongList list, long lo, long hi) {
         int n = list.size();
         if (n > 0) {
@@ -584,86 +686,6 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    @Override
-    public void clear() {
-        keyColumn = null;
-        keyValues.clear();
-        keyExcludedValues.clear();
-        keyValuePositions.clear();
-        keyExcludedValuePositions.clear();
-        clearInterval();
-        filter = null;
-        intervals = null;
-        intrinsicValue = UNDEFINED;
-        keySubQuery = null;
-    }
-
-    public void clearInterval() {
-        this.intervals = null;
-    }
-
-    public void excludeValue(ExpressionNode val) {
-
-        final int index;
-        if (isNullKeyword(val.token)) {
-            index = keyValues.removeNull();
-            if (index > -1) {
-                keyValuePositions.removeIndex(index);
-            }
-        } else {
-            int keyIndex = Chars.isQuoted(val.token) ? keyValues.keyIndex(val.token, 1, val.token.length() - 1) : keyValues.keyIndex(val.token);
-            if (keyIndex < 0) {
-                index = keyValues.getListIndexAt(keyIndex);
-                keyValues.removeAt(keyIndex);
-            } else {
-                index = -1;
-            }
-        }
-
-        if (index > -1) {
-            keyValuePositions.removeIndex(index);
-        }
-
-        if (keyValues.size() == 0) {
-            intrinsicValue = FALSE;
-        }
-    }
-
-    public void intersectIntervals(long lo, long hi) {
-        LongList temp = shuffleTemp(intervals, null);
-        temp.add(lo);
-        temp.add(hi);
-        intersectIntervals(temp);
-    }
-
-    public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        LongList temp = shuffleTemp(intervals, null);
-        parseIntervalEx(seq, lo, lim, position, temp);
-        intersectIntervals(temp);
-    }
-
-    public void subtractIntervals(long lo, long hi) {
-        LongList temp = shuffleTemp(intervals, null);
-        temp.add(lo);
-        temp.add(hi);
-        subtractIntervals(temp);
-    }
-
-    public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        LongList temp = shuffleTemp(intervals, null);
-        parseIntervalEx(seq, lo, lim, position, temp);
-        subtractIntervals(temp);
-    }
-
-    @Override
-    public String toString() {
-        return "IntrinsicModel{" +
-                "keyValues=" + keyValues +
-                ", keyColumn='" + keyColumn + '\'' +
-                ", filter=" + filter +
-                '}';
-    }
-
     private void intersectIntervals(LongList intervals) {
         if (this.intervals == null) {
             this.intervals = intervals;
@@ -711,6 +733,12 @@ public class IntrinsicModel implements Mutable {
         if (this.intervals.size() == 0) {
             intrinsicValue = FALSE;
         }
+    }
+
+    static {
+        INFINITE_INTERVAL = new LongList();
+        INFINITE_INTERVAL.add(Long.MIN_VALUE);
+        INFINITE_INTERVAL.add(Long.MAX_VALUE);
     }
 
 }

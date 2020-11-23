@@ -752,7 +752,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 String expected = "s1\tsum\n" +
                         "\t26636.385784265905\n" +
                         "s1\t26427.49917110396\n" +
-                        "s2\t26891.053965922987\n" +
+                        "s2\t26891.01010744082\n" +
                         "s3\t26459.102633238483\n";
 
                 sink.clear();
@@ -775,7 +775,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 String expected = "s2\tsum\n" +
-                        "\t106414.04155453121\n";
+                        "\t106413.99769604905\n";
 
                 sink.clear();
                 printer.print(cursor, factory.getMetadata(), true);

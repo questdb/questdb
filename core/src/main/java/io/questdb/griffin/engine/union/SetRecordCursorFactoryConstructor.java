@@ -28,11 +28,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 
 @FunctionalInterface
 public interface SetRecordCursorFactoryConstructor {
     RecordCursorFactory create(
             CairoConfiguration configuration,
+            RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             RecordSink recordSink,

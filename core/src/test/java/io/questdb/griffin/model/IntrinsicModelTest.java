@@ -26,7 +26,9 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
+import io.questdb.std.NumericException;
 import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -36,21 +38,108 @@ import static io.questdb.griffin.GriffinParserTestUtils.intervalToString;
 
 public class IntrinsicModelTest {
 
+    private static final StringSink sink = new StringSink();
     private final LongList a = new LongList();
     private final LongList b = new LongList();
     private final LongList out = new LongList();
-
-    private static void assertShortInterval(String expected, String interval) throws SqlException {
-        LongList out = new LongList();
-        IntrinsicModel.parseIntervalEx(interval, 0, interval.length(), 0, out);
-        TestUtils.assertEquals(expected, intervalToString(out));
-    }
 
     @Before
     public void setUp() {
         a.clear();
         b.clear();
         out.clear();
+    }
+
+    @Test
+    public void testDateCeilYYYY() throws NumericException {
+        assertDateCeil("2016-01-01T00:00:00.000000Z", "2015");
+    }
+
+    @Test
+    public void testDateCeilYYYYMM() throws NumericException {
+        assertDateCeil("2015-03-01T00:00:00.000000Z", "2015-02");
+    }
+
+    @Test
+    public void testDateCeilYYYYMMDD() throws NumericException {
+        assertDateCeil("2016-02-29T00:00:00.000000Z", "2016-02-28");
+    }
+
+    @Test
+    public void testDateCeilYYYYMMDDH() throws NumericException {
+        assertDateCeil("2015-02-28T08:00:00.000000Z", "2015-02-28T07");
+    }
+
+    @Test
+    public void testDateCeilYYYYMMDDHm() throws NumericException {
+        assertDateCeil("2015-02-28T07:22:00.000000Z", "2015-02-28T07:21");
+    }
+
+    @Test
+    public void testDateCeilYYYYMMDDHms() throws NumericException {
+        assertDateCeil("2015-02-28T07:21:45.000000Z", "2015-02-28T07:21:44");
+    }
+
+    @Test
+    public void testDateCeilYYYYMMDDHmsS() throws NumericException {
+        assertDateCeil("2015-02-28T07:21:44.557000Z", "2015-02-28T07:21:44.556");
+    }
+
+    @Test
+    public void testDateCeilYYYYMMDDHmsSU() throws NumericException {
+        assertDateCeil("2015-02-28T07:21:44.556012Z", "2015-02-28T07:21:44.556011");
+    }
+
+    //////////////////////////////
+
+    @Test
+    public void testDateCeilYYYYMMDDNonLeap() throws NumericException {
+        assertDateCeil("2017-03-01T00:00:00.000000Z", "2017-02-28");
+    }
+
+    @Test
+    public void testDateCeilYYYYMMOverflow() throws NumericException {
+        assertDateCeil("2016-01-01T00:00:00.000000Z", "2015-12");
+    }
+
+    @Test
+    public void testDateFloorYYYY() throws NumericException {
+        assertDateFloor("2015-01-01T00:00:00.000000Z", "2015");
+    }
+
+    @Test
+    public void testDateFloorYYYYMM() throws NumericException {
+        assertDateFloor("2015-02-01T00:00:00.000000Z", "2015-02");
+    }
+
+    @Test
+    public void testDateFloorYYYYMMDD() throws NumericException {
+        assertDateFloor("2015-02-28T00:00:00.000000Z", "2015-02-28");
+    }
+
+    @Test
+    public void testDateFloorYYYYMMDDH() throws NumericException {
+        assertDateFloor("2015-02-28T07:00:00.000000Z", "2015-02-28T07");
+    }
+
+    @Test
+    public void testDateFloorYYYYMMDDHm() throws NumericException {
+        assertDateFloor("2015-02-28T07:21:00.000000Z", "2015-02-28T07:21");
+    }
+
+    @Test
+    public void testDateFloorYYYYMMDDHms() throws NumericException {
+        assertDateFloor("2015-02-28T07:21:44.000000Z", "2015-02-28T07:21:44");
+    }
+
+    @Test
+    public void testDateFloorYYYYMMDDHmsS() throws NumericException {
+        assertDateFloor("2015-02-28T07:21:44.556000Z", "2015-02-28T07:21:44.556");
+    }
+
+    @Test
+    public void testDateFloorYYYYMMDDHmsSU() throws NumericException {
+        assertDateFloor("2015-02-28T07:21:44.556011Z", "2015-02-28T07:21:44.556011");
     }
 
     @Test
@@ -257,6 +346,26 @@ public class IntrinsicModelTest {
         assertIntervalError("201");
     }
 
+    private static void assertShortInterval(String expected, String interval) throws SqlException {
+        LongList out = new LongList();
+        IntrinsicModel.parseIntervalEx(interval, 0, interval.length(), 0, out);
+        TestUtils.assertEquals(expected, intervalToString(out));
+    }
+
+    private void assertDateCeil(String expected, String value) throws NumericException {
+        sink.clear();
+        long t = IntrinsicModel.parseCCPartialDate(value);
+        TimestampFormatUtils.appendDateTimeUSec(sink, t);
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    private void assertDateFloor(String expected, String value) throws NumericException {
+        sink.clear();
+        long t = IntrinsicModel.parseFloorPartialDate(value);
+        TimestampFormatUtils.appendDateTimeUSec(sink, t);
+        TestUtils.assertEquals(expected, sink);
+    }
+
     private void assertIntersect(String expected) {
         IntrinsicModel.intersect(a, b, out);
         TestUtils.assertEquals(expected, intervalToString(out));
@@ -269,5 +378,4 @@ public class IntrinsicModelTest {
         } catch (SqlException ignore) {
         }
     }
-
 }

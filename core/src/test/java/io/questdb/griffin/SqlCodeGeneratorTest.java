@@ -639,7 +639,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFilterConstantTrue() throws Exception {
         final String expected = "sum\n" +
-                "551.3822454600645\n";
+                "551.3822454600646\n";
 
         assertQuery(expected,
                 "(select sum(a) from x) where 1=1",
@@ -3327,6 +3327,98 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "WUG\t58.912164838797885\t1970-01-04T06:00:00.000000Z\n" +
                         "XIO\t14.830552335848957\t1970-01-04T09:00:00.000000Z\n",
                 true);
+    }
+
+    @Test
+    public void testSampleByFillNoneEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillNullEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillValueEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillPrevEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillLinearEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Test

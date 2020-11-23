@@ -117,7 +117,7 @@ class ExpressionParser {
             char thisChar;
             int prevBranch;
             int thisBranch = BRANCH_NONE;
-
+            boolean asPoppedNull = false;
             OUT:
             while ((tok = SqlUtil.fetchNext(lexer)) != null) {
                 thisChar = tok.charAt(0);
@@ -327,7 +327,7 @@ class ExpressionParser {
                                     // validate type
                                     final int columnType = ColumnType.columnTypeOf(node.token);
 
-                                    if (columnType < 0 || columnType > ColumnType.LONG256) {
+                                    if ((columnType < 0 || columnType > ColumnType.LONG256) && !asPoppedNull) {
                                         throw SqlException.$(node.position, "invalid type");
                                     }
 
@@ -389,8 +389,15 @@ class ExpressionParser {
                                 thisBranch = BRANCH_CAST_AS;
 
                                 // push existing args to the listener
+                                int nodeCount = 0;
                                 while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
+                                    nodeCount++;
+                                    asPoppedNull = SqlKeywords.isNullKeyword(node.token);
                                     argStackDepth = onNode(listener, node, argStackDepth);
+                                }
+
+                                if (nodeCount != 1) {
+                                    asPoppedNull = false;
                                 }
 
                                 if (node != null) {
