@@ -3814,7 +3814,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByPropagation() throws SqlException {
         assertQuery(
-                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-distinct contactId from (select-choose [contactId] contactId from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events timestamp (timestamp) latest by _id) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts timestamp (timestamp) latest by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts timestamp (timestamp) latest by _id)) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
+                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-distinct [contactId] contactId from (select-choose [contactId] contactId from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events timestamp (timestamp) latest by _id) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts timestamp (timestamp) latest by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts timestamp (timestamp) latest by _id)) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
                 "WITH \n" +
                         "contactlist AS (SELECT * FROM contacts LATEST BY _id ORDER BY timestamp),\n" +
                         "eventlist AS (SELECT * FROM contact_events LATEST BY _id ORDER BY timestamp),\n" +
@@ -4499,7 +4499,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectDistinctUnion() throws SqlException {
-        assertQuery("select-choose c from (select-distinct c, b from (select-choose [a c, b] a c, b from (select [a, b] from trips)) union select-distinct c, b from (select-choose [c, d b] c, d b from (select [c, d] from trips)))",
+        assertQuery("select-choose c from (select-distinct [c] c, b from (select-choose [a c] a c, b from (select [a] from trips)) union select-distinct [c] c, b from (select-choose [c] c, d b from (select [c] from trips)))",
                 "select c from (select distinct a c, b from trips union all select distinct c, d b from trips)",
                 modelOf("trips")
                         .col("a", ColumnType.INT)
@@ -5559,29 +5559,46 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError(compiler, query, position, contains, tableModels);
     }
 
-    private static void checkLiteralIsInSet(ExpressionNode node, CharSequenceHashSet nameSet) {
+    private static void checkLiteralIsInSet(
+            ExpressionNode node,
+            ObjList<LowerCaseCharSequenceHashSet> nameSets,
+            LowerCaseCharSequenceIntHashMap modelAliasSet
+    ) {
         if (node.type == ExpressionNode.LITERAL) {
-            Assert.assertTrue(nameSet.contains(node.token));
+            final CharSequence tok = node.token;
+            final int dot = Chars.indexOf(tok, '.');
+            if (dot == -1) {
+                boolean found = false;
+                for (int i = 0, n = nameSets.size(); i < n; i++) {
+                    boolean f = nameSets.getQuick(i).contains(tok);
+                    if (f) {
+                        Assert.assertFalse(found);
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    Assert.fail("column: " + tok);
+                }
+            } else {
+                int index = modelAliasSet.keyIndex(tok, 0, dot);
+                Assert.assertTrue(index < 0);
+                LowerCaseCharSequenceHashSet set = nameSets.getQuick(modelAliasSet.valueAt(index));
+                Assert.assertFalse(set.excludes(tok, dot + 1, tok.length()));
+            }
         } else {
             if (node.paramCount < 3) {
                 if (node.lhs != null) {
-                    checkLiteralIsInSet(node.lhs, nameSet);
+                    checkLiteralIsInSet(node.lhs, nameSets, modelAliasSet);
                 }
 
                 if (node.rhs != null) {
-                    checkLiteralIsInSet(node.rhs, nameSet);
+                    checkLiteralIsInSet(node.rhs, nameSets, modelAliasSet);
                 }
             } else {
                 for (int j = 0, k = node.args.size(); j < k; j++) {
-                    checkLiteralIsInSet(node.args.getQuick(j), nameSet);
+                    checkLiteralIsInSet(node.args.getQuick(j), nameSets, modelAliasSet);
                 }
             }
-        }
-    }
-
-    private void addColumnNames(CharSequenceHashSet nameSet, ObjList<QueryColumn> nestedColumns) {
-        for (int i = 0, n = nestedColumns.size(); i < n; i++) {
-            Assert.assertTrue(nameSet.add(nestedColumns.getQuick(i).getName()));
         }
     }
 
@@ -5608,9 +5625,9 @@ public class SqlParserTest extends AbstractGriffinTest {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
-//            if (model instanceof QueryModel) {
-//                validateTopDownColumns((QueryModel) model);
-//            }
+            if (model instanceof QueryModel) {
+                validateTopDownColumns((QueryModel) model);
+            }
             TestUtils.assertEquals(expected, sink);
         }, tableModels);
     }
@@ -5642,24 +5659,28 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     private void validateTopDownColumns(QueryModel model) {
         ObjList<QueryColumn> columns = model.getColumns();
-        final CharSequenceHashSet nameSet = new CharSequenceHashSet();
+        final ObjList<LowerCaseCharSequenceHashSet> nameSets = new ObjList<>();
 
         QueryModel nested = model.getNestedModel();
         while (nested != null) {
-            nameSet.clear();
+            nameSets.clear();
 
-            // create hash set of nested column names
-            // ensure their uniqueness
             for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
-                addColumnNames(nameSet, nested.getJoinModels().getQuick(i).getTopDownColumns());
+                LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
+                final QueryModel m = nested.getJoinModels().getQuick(i);
+                final ObjList<QueryColumn> cols = m.getTopDownColumns();
+                for (int j = 0, k = cols.size(); j < k; j++) {
+                    QueryColumn qc = cols.getQuick(j);
+                    Assert.assertTrue(set.add(qc.getName()));
+                }
+                nameSets.add(set);
             }
 
             for (int i = 0, n = columns.size(); i < n; i++) {
-                final ExpressionNode node = columns.getQuick(i).getAst();
-                checkLiteralIsInSet(node, nameSet);
+                checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getAliasIndexes());
             }
 
-            columns = nested.getColumns();
+            columns = nested.getTopDownColumns();
             nested = nested.getNestedModel();
         }
     }

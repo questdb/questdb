@@ -323,6 +323,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return -1;
     }
 
+    public LowerCaseCharSequenceIntHashMap getAliasIndexes() {
+        return aliasIndexes;
+    }
+
     public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
         return aliasToColumnMap;
     }
