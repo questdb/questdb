@@ -42,6 +42,14 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
+    public void testAggregateFunctionExpr() throws SqlException {
+        assertQuery(
+                "select-group-by sum(max(x) + 2) sum, f from (select-virtual [x, f(x) f] x, f(x) f from (select [x] from long_sequence(10)))",
+                "select sum(max(x) + 2), f(x) from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testAliasWithSpace() throws Exception {
         assertQuery("select-choose x from (select [x] from x 'b a' where x > 1) 'b a'",
                 "x 'b a' where x > 1",
@@ -1656,22 +1664,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectAliasIgnoreColumn() throws SqlException {
-        assertQuery(
-                "select-virtual 3 x from (long_sequence(2))",
-                "select 3 x from long_sequence(2)"
-        );
-    }
-
-    @Test
-    public void testCursorInSelectNotAliased() throws SqlException {
-        assertQuery(
-                "select-virtual pg_class, pg_class . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
-                "select pg_catalog.pg_class(), (pg_catalog.pg_class()).n from long_sequence(2)"
-        );
-    }
-
-    @Test
     public void testCursorInSelect() throws SqlException {
         assertQuery(
                 "select-virtual x1, x1 . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() x1] pg_catalog.pg_class() x1 from (pg_catalog.pg_class()) _xQdbA1)",
@@ -1680,18 +1672,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCursorInSelectReverseOrder() throws SqlException {
-        assertQuery(
-                "select-virtual pg_class . n column, pg_class x from (select-choose [pg_class] pg_class, pg_class x from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1))",
-                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
-        );
-    }
-
-    @Test
-    public void testCursorInSelectReverseOrderRepeatAlias() throws SqlException {
-        assertQuery(
-                "select-virtual pg_class . n column, pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
-                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() pg_class from long_sequence(2)"
+    public void testCursorInSelectConfusingAliases() throws Exception {
+        assertFailure(
+                "select (pg_catalog.pg_class()).n, (pg_catalog.pg_description()).z, pg_catalog.pg_class() x, pg_catalog.pg_description() x from long_sequence(2)",
+                null,
+                92,
+                "duplicate alias"
         );
     }
 
@@ -1700,6 +1686,14 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertQuery(
                 "select-virtual pg_class . n column, pg_class x from (select-choose [pg_class] pg_class, pg_class x from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1))",
                 "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectNotAliased() throws SqlException {
+        assertQuery(
+                "select-virtual pg_class, pg_class . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
+                "select pg_catalog.pg_class(), (pg_catalog.pg_class()).n from long_sequence(2)"
         );
     }
 
@@ -1720,26 +1714,33 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAggregateFunctionExpr() throws SqlException {
+    public void testCursorInSelectReverseOrder() throws SqlException {
         assertQuery(
-                "select-group-by sum(max(x) + 2) sum, f from (select-virtual [x, f(x) f] x, f(x) f from (select [x] from long_sequence(10)))",
-                "select sum(max(x) + 2), f(x) from long_sequence(10)"
+                "select-virtual pg_class . n column, pg_class x from (select-choose [pg_class] pg_class, pg_class x from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1))",
+                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectReverseOrderRepeatAlias() throws SqlException {
+        assertQuery(
+                "select-virtual pg_class . n column, pg_class from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
+                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() pg_class from long_sequence(2)"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectSameTwice() throws SqlException {
+        assertQuery(
+                "select-virtual pg_class . n column, pg_class x, pg_class x from (select-choose [pg_class] pg_class, pg_class x from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1))",
+                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x, pg_catalog.pg_class() x from long_sequence(2)"
         );
     }
 
     @Test
     public void testCursorInSelectWithAggregation() throws SqlException {
         assertQuery(
-                "select-virtual" +
-                        " sum - 20 column," +
-                        " column1 " +
-                        "from (" +
-                        "select-group-by" +
-                        " [sum(pg_class . n + 1) sum, column1]" +
-                        " sum(pg_class . n + 1) sum," +
-                        " column1 from (" +
-                        "select-virtual" +
-                        " [pg_class, pg_class . y column1] pg_class, pg_class . y column1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)))",
+                "select-virtual sum - 20 column, column1 from (select-group-by [sum(pg_catalog.pg_class() . n + 1) sum, column1] sum(pg_catalog.pg_class() . n + 1) sum, column1 from (select-virtual [pg_class . y column1] pg_class . y column1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)))",
                 "select sum((pg_catalog.pg_class()).n + 1) - 20, pg_catalog.pg_class().y from long_sequence(2)"
         );
     }
@@ -4435,6 +4436,14 @@ public class SqlParserTest extends AbstractGriffinTest {
                 15,
                 "',', 'from' or 'over' expected",
                 modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectAliasIgnoreColumn() throws SqlException {
+        assertQuery(
+                "select-virtual 3 x from (long_sequence(2))",
+                "select 3 x from long_sequence(2)"
         );
     }
 

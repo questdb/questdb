@@ -168,6 +168,7 @@ class SqlOptimiser {
             ExpressionNode node,
             @Nullable CharSequence alias,
             QueryModel cursorModel,
+            @Nullable QueryModel innerVirtualModel,
             QueryModel translatingModel,
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
@@ -215,7 +216,11 @@ class SqlOptimiser {
 
             qc = queryColumnPool.next().of(translatingAlias, nextLiteral(baseAlias));
             translatingModel.addBottomUpColumn(qc);
-            return qc;
+
+            if (innerVirtualModel != null) {
+                innerVirtualModel.addBottomUpColumn(qc);
+            }
+
         } else {
             final CharSequence al = translatingModel.getColumnNameToAliasMap().get(qc.getAlias());
             if (alias != null && !Chars.equals(al, alias)) {
@@ -224,12 +229,28 @@ class SqlOptimiser {
                     // create new column
                     qc = nextColumn(alias, al);
                     translatingModel.addBottomUpColumn(qc);
+
+                    if (innerVirtualModel != null) {
+                        innerVirtualModel.addBottomUpColumn(qc);
+                    }
+
                     return qc;
                 }
-                return existing;
+
+                if (ExpressionNode.compareNodesExact(node, existing.getAst())) {
+                    return existing;
+                }
+
+                throw SqlException.invalidColumn(node.position, "duplicate alias");
             }
-            return translatingModel.getAliasToColumnMap().get(al);
+
+            // check if column is in inner virtual model as requested
+            qc = translatingModel.getAliasToColumnMap().get(al);
+            if (innerVirtualModel != null/* && innerVirtualModel.getAliasToColumnMap().excludes(al)*/) {
+                innerVirtualModel.addBottomUpColumn(qc);
+            }
         }
+        return qc;
     }
 
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExpressionNode ao, int bi, CharSequence bn, ExpressionNode bo) {
@@ -1066,6 +1087,7 @@ class SqlOptimiser {
     private boolean emitCursors(
             @Transient ExpressionNode node,
             QueryModel cursorModel,
+            @Nullable QueryModel innerVirtualModel,
             QueryModel translatingModel,
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
@@ -1084,6 +1106,7 @@ class SqlOptimiser {
                     final ExpressionNode n = replaceIfCursor(
                             node.rhs,
                             cursorModel,
+                            innerVirtualModel,
                             translatingModel,
                             baseModel,
                             sqlExecutionContext
@@ -1099,6 +1122,7 @@ class SqlOptimiser {
                 final ExpressionNode n = replaceIfCursor(
                         node.lhs,
                         cursorModel,
+                        innerVirtualModel,
                         translatingModel,
                         baseModel,
                         sqlExecutionContext
@@ -2245,12 +2269,23 @@ class SqlOptimiser {
     private ExpressionNode replaceIfCursor(
             @Transient ExpressionNode node,
             QueryModel cursorModel,
+            @Nullable QueryModel innerVirtualModel,
             QueryModel translatingModel,
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (node != null && functionParser.isCursor(node.token)) {
-            return nextLiteral(addCursorFunctionAsCrossJoin(node, null, cursorModel, translatingModel, baseModel, sqlExecutionContext).getAlias());
+            return nextLiteral(
+                    addCursorFunctionAsCrossJoin(
+                            node,
+                            null,
+                            cursorModel,
+                            innerVirtualModel,
+                            translatingModel,
+                            baseModel,
+                            sqlExecutionContext
+                    ).getAlias()
+            );
         }
         return node;
     }
@@ -2740,20 +2775,25 @@ class SqlOptimiser {
                         useGroupByModel = true;
                         continue;
                     } else if (functionParser.isCursor(qc.getAst().token)) {
-                        final CharSequence alias = qc.getAlias();
-                        innerVirtualModel.addBottomUpColumn(addCursorFunctionAsCrossJoin(qc.getAst(), alias, cursorModel, translatingModel, baseModel, sqlExecutionContext));
+                        addCursorFunctionAsCrossJoin(
+                                qc.getAst(),
+                                qc.getAlias(),
+                                cursorModel,
+                                innerVirtualModel,
+                                translatingModel,
+                                baseModel,
+                                sqlExecutionContext
+                        );
                         continue;
                     }
                 }
 
-                if (emitCursors(qc.getAst(), cursorModel, translatingModel, baseModel, sqlExecutionContext)) {
-                    qc = ensureAliasUniqueness(innerVirtualModel, qc);
-                }
                 // this is not a direct call to aggregation function, in which case
                 // we emit aggregation function into group-by model and leave the
                 // rest in outer model
                 final int beforeSplit = groupByModel.getBottomUpColumns().size();
                 if (emitAggregates(qc.getAst(), groupByModel)) {
+                    emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext);
                     qc = ensureAliasUniqueness(outerVirtualModel, qc);
                     outerVirtualModel.addBottomUpColumn(qc);
                     distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
@@ -2766,6 +2806,9 @@ class SqlOptimiser {
                     useGroupByModel = true;
                     useOuterModel = true;
                 } else {
+                    if (emitCursors(qc.getAst(), cursorModel, null, translatingModel, baseModel, sqlExecutionContext)) {
+                        qc = ensureAliasUniqueness(innerVirtualModel, qc);
+                    }
                     addFunction(
                             qc,
                             baseModel,
