@@ -95,6 +95,7 @@ class SqlOptimiser {
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
     private final Path path;
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
+    private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -166,17 +167,28 @@ class SqlOptimiser {
     private QueryColumn addCursorFunctionAsCrossJoin(
             ExpressionNode node,
             @Nullable CharSequence alias,
+            QueryModel cursorModel,
             QueryModel translatingModel,
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        QueryColumn qc = translatingModel.findBottomUpColumnByAst(node);
+        QueryColumn qc = cursorModel.findBottomUpColumnByAst(node);
         if (qc == null) {
+
+            // we are about to add new column as a join model to the base model
+            // the name of this column must not clash with any name of the base mode
+            CharSequence baseAlias;
             if (alias != null) {
-                qc = queryColumnPool.next().of(createColumnAlias(alias, translatingModel), node);
+                baseAlias = createColumnAlias(alias, baseModel);
             } else {
-                qc = queryColumnPool.next().of(createColumnAlias(node, translatingModel), node);
+                baseAlias = createColumnAlias(node, baseModel);
             }
+
+            // add to temp aliases so that two cursors cannot use the same alias!
+            baseAlias = SqlUtil.createColumnAlias(characterStore, baseAlias, -1, tmpCursorAliases);
+
+            final QueryColumn crossColumn = queryColumnPool.next().of(baseAlias, node);
+
             final QueryModel cross = queryModelPool.next();
             cross.setJoinType(QueryModel.JOIN_CROSS);
             cross.setSelectModelType(QueryModel.SELECT_MODEL_CURSOR);
@@ -187,13 +199,37 @@ class SqlOptimiser {
             parseFunctionAndEnumerateColumns(crossInner, sqlExecutionContext);
             cross.setNestedModel(crossInner);
 
-            // add here for uniqueness tracking
-            translatingModel.addBottomUpColumn(qc);
-            // also add column to the cross, so that each cross join has exactly one column
-            cross.addBottomUpColumn(qc);
+            cross.addBottomUpColumn(crossColumn);
             baseModel.addJoinModel(cross);
+
+            // keep track of duplicates
+            tmpCursorAliases.put(baseAlias, crossColumn);
+
+            // now we need to make alias in the translating column
+
+            CharSequence translatingAlias;
+            translatingAlias = createColumnAlias(baseAlias, translatingModel);
+
+            // add trackable expression to cursor model
+            cursorModel.addBottomUpColumn(queryColumnPool.next().of(baseAlias, node));
+
+            qc = queryColumnPool.next().of(translatingAlias, nextLiteral(baseAlias));
+            translatingModel.addBottomUpColumn(qc);
+            return qc;
+        } else {
+            final CharSequence al = translatingModel.getColumnNameToAliasMap().get(qc.getAlias());
+            if (alias != null && !Chars.equals(al, alias)) {
+                QueryColumn existing = translatingModel.getAliasToColumnMap().get(alias);
+                if (existing == null) {
+                    // create new column
+                    qc = nextColumn(alias, al);
+                    translatingModel.addBottomUpColumn(qc);
+                    return qc;
+                }
+                return existing;
+            }
+            return translatingModel.getAliasToColumnMap().get(al);
         }
-        return qc;
     }
 
     private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExpressionNode ao, int bi, CharSequence bn, ExpressionNode bo) {
@@ -560,6 +596,7 @@ class SqlOptimiser {
         characterStore.clear();
         tablesSoFar.clear();
         clausesToSteal.clear();
+        tmpCursorAliases.clear();
     }
 
     private void collectAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
@@ -1025,10 +1062,11 @@ class SqlOptimiser {
     }
 
     // This method will create CROSS join models in the "baseModel" for all unique cursor
-    // function it finds on the node. The "model" is used to ensure uniqueness
+    // function it finds on the node. The "translatingModel" is used to ensure uniqueness
     private boolean emitCursors(
             @Transient ExpressionNode node,
-            QueryModel model,
+            QueryModel cursorModel,
+            QueryModel translatingModel,
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -1043,7 +1081,13 @@ class SqlOptimiser {
             if (node != null) {
 
                 if (node.rhs != null) {
-                    ExpressionNode n = replaceIfCursor(node.rhs, model, baseModel, sqlExecutionContext);
+                    final ExpressionNode n = replaceIfCursor(
+                            node.rhs,
+                            cursorModel,
+                            translatingModel,
+                            baseModel,
+                            sqlExecutionContext
+                    );
                     if (node.rhs == n) {
                         this.sqlNodeStack.push(node.rhs);
                     } else {
@@ -1052,7 +1096,13 @@ class SqlOptimiser {
                     }
                 }
 
-                ExpressionNode n = replaceIfCursor(node.lhs, model, baseModel, sqlExecutionContext);
+                final ExpressionNode n = replaceIfCursor(
+                        node.lhs,
+                        cursorModel,
+                        translatingModel,
+                        baseModel,
+                        sqlExecutionContext
+                );
                 if (n == node.lhs) {
                     node = node.lhs;
                 } else {
@@ -2194,12 +2244,13 @@ class SqlOptimiser {
 
     private ExpressionNode replaceIfCursor(
             @Transient ExpressionNode node,
-            QueryModel model,
+            QueryModel cursorModel,
+            QueryModel translatingModel,
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (node != null && functionParser.isCursor(node.token)) {
-            return nextLiteral(addCursorFunctionAsCrossJoin(node, null, model, baseModel, sqlExecutionContext).getAlias());
+            return nextLiteral(addCursorFunctionAsCrossJoin(node, null, cursorModel, translatingModel, baseModel, sqlExecutionContext).getAlias());
         }
         return node;
     }
@@ -2690,15 +2741,12 @@ class SqlOptimiser {
                         continue;
                     } else if (functionParser.isCursor(qc.getAst().token)) {
                         final CharSequence alias = qc.getAlias();
-                        qc = addCursorFunctionAsCrossJoin(qc.getAst(), alias, cursorModel, baseModel, sqlExecutionContext);
-                        QueryColumn ref = nextColumn(alias, qc.getAlias());
-                        translatingModel.addBottomUpColumn(ref);
-                        innerVirtualModel.addBottomUpColumn(ref);
+                        innerVirtualModel.addBottomUpColumn(addCursorFunctionAsCrossJoin(qc.getAst(), alias, cursorModel, translatingModel, baseModel, sqlExecutionContext));
                         continue;
                     }
                 }
 
-                if (emitCursors(qc.getAst(), cursorModel, baseModel, sqlExecutionContext)) {
+                if (emitCursors(qc.getAst(), cursorModel, translatingModel, baseModel, sqlExecutionContext)) {
                     qc = ensureAliasUniqueness(innerVirtualModel, qc);
                 }
                 // this is not a direct call to aggregation function, in which case
@@ -2740,7 +2788,7 @@ class SqlOptimiser {
 
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = useInnerModel || useGroupByModel || useAnalyticModel;
+        boolean translationIsRedundant = /*cursorModel.getBottomUpColumns().size() == 0 &&*/ (useInnerModel || useGroupByModel || useAnalyticModel);
         if (translationIsRedundant) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
