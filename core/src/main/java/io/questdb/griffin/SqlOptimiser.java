@@ -96,6 +96,7 @@ class SqlOptimiser {
     private final Path path;
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
+    private final ObjList<Function> functionsInFlight = new ObjList<>();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -217,10 +218,6 @@ class SqlOptimiser {
             qc = queryColumnPool.next().of(translatingAlias, nextLiteral(baseAlias));
             translatingModel.addBottomUpColumn(qc);
 
-            if (innerVirtualModel != null) {
-                innerVirtualModel.addBottomUpColumn(qc);
-            }
-
         } else {
             final CharSequence al = translatingModel.getColumnNameToAliasMap().get(qc.getAlias());
             if (alias != null && !Chars.equals(al, alias)) {
@@ -246,9 +243,9 @@ class SqlOptimiser {
 
             // check if column is in inner virtual model as requested
             qc = translatingModel.getAliasToColumnMap().get(al);
-            if (innerVirtualModel != null/* && innerVirtualModel.getAliasToColumnMap().excludes(al)*/) {
-                innerVirtualModel.addBottomUpColumn(qc);
-            }
+        }
+        if (innerVirtualModel != null) {
+            innerVirtualModel.addBottomUpColumn(qc);
         }
         return qc;
     }
@@ -618,6 +615,7 @@ class SqlOptimiser {
         tablesSoFar.clear();
         clausesToSteal.clear();
         tmpCursorAliases.clear();
+        functionsInFlight.clear();
     }
 
     private void collectAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
@@ -1755,29 +1753,37 @@ class SqlOptimiser {
     }
 
     QueryModel optimise(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        optimiseExpressionModels(model, sqlExecutionContext);
-        enumerateTableColumns(model, sqlExecutionContext);
-        resolveJoinColumns(model);
-        optimiseBooleanNot(model);
-        final QueryModel rewrittenModel = rewriteOrderBy(
-                rewriteOrderByPositionForUnionModels(
-                        rewriteOrderByPosition(
-                                rewriteSelectClause(
-                                        model,
-                                        true,
-                                        sqlExecutionContext
-                                )
-                        )
-                )
-        );
-        optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
-        createOrderHash(rewrittenModel);
-        optimiseJoins(rewrittenModel);
-        moveWhereInsideSubQueries(rewrittenModel);
-        eraseColumnPrefixInWhereClauses(rewrittenModel);
-        moveTimestampToChooseModel(rewrittenModel);
-        propagateTopDownColumns(rewrittenModel);
-        return rewrittenModel;
+        final QueryModel rewrittenModel;
+        try {
+            optimiseExpressionModels(model, sqlExecutionContext);
+            enumerateTableColumns(model, sqlExecutionContext);
+            resolveJoinColumns(model);
+            optimiseBooleanNot(model);
+            rewrittenModel = rewriteOrderBy(
+                    rewriteOrderByPositionForUnionModels(
+                            rewriteOrderByPosition(
+                                    rewriteSelectClause(
+                                            model,
+                                            true,
+                                            sqlExecutionContext
+                                    )
+                            )
+                    )
+            );
+            optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            createOrderHash(rewrittenModel);
+            optimiseJoins(rewrittenModel);
+            moveWhereInsideSubQueries(rewrittenModel);
+            eraseColumnPrefixInWhereClauses(rewrittenModel);
+            moveTimestampToChooseModel(rewrittenModel);
+            propagateTopDownColumns(rewrittenModel);
+            return rewrittenModel;
+        } catch (SqlException e) {
+            // at this point models may have functions than need to be freed
+            Misc.freeObjList(functionsInFlight);
+            functionsInFlight.clear();
+            throw e;
+        }
     }
 
     private ExpressionNode optimiseBooleanNot(final ExpressionNode node, boolean reverse) {
@@ -2032,6 +2038,7 @@ class SqlOptimiser {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
         model.setTableNameFunction(function);
+        functionsInFlight.add(function);
         copyColumnsFromMetadata(model, function.getRecordCursorFactory().getMetadata());
     }
 
