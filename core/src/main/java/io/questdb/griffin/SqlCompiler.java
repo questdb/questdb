@@ -233,6 +233,10 @@ public class SqlCompiler implements Closeable {
         return engine;
     }
 
+    public FunctionFactoryCache getFunctionFactoryCache() {
+        return functionParser.getFunctionFactoryCache();
+    }
+
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
     private static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {

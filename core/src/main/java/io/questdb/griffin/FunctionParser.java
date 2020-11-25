@@ -90,6 +90,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return functionFactoryCache.getFunctionCount();
     }
 
+    public FunctionFactoryCache getFunctionFactoryCache() {
+        return functionFactoryCache;
+    }
+
     public boolean isCursor(CharSequence token) {
         return functionFactoryCache.isCursor(token);
     }
