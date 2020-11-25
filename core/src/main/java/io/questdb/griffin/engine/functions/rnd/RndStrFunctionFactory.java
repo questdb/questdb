@@ -43,7 +43,7 @@ public class RndStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
 
         int lo = args.getQuick(0).getInt(null);
         int hi = args.getQuick(1).getInt(null);

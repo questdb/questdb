@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -43,7 +44,7 @@ public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory imp
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)

@@ -70,6 +70,7 @@ public interface FunctionFactory {
     Function newInstance(
             @Transient ObjList<Function> args,
             int position,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException;
 }

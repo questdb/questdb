@@ -536,6 +536,13 @@ public class FastMap implements Map {
         }
 
         @Override
+        public void skip(int bytes) {
+            checkSize(bytes);
+            appendAddress += bytes;
+            writeOffset();
+        }
+
+        @Override
         public void putShort(short value) {
             checkSize(2);
             Unsafe.getUnsafe().putShort(appendAddress, value);

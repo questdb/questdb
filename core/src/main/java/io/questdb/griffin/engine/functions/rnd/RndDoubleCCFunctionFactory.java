@@ -43,7 +43,7 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int nanRate = args.getQuick(0).getInt(null);
         if (nanRate < 0) {
             throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");

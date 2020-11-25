@@ -716,7 +716,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             }
                         }
                     }
-                    colIndexMappings.add(n, colIndex);
+                    colIndexMappings.set(n, colIndex);
                 }
             }
 
@@ -728,7 +728,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     } else {
                         colType = CairoLineProtoParserSupport.getValueType(event.getValue(n));
                     }
-                    colTypes.add(n, colType);
+                    colTypes.set(n, colType);
                 }
             }
 
@@ -765,7 +765,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         tableStructureAdapter.of(event, this));
                 int nValues = event.getNValues();
                 for (int n = 0; n < nValues; n++) {
-                    colIndexMappings.add(n, n);
+                    colIndexMappings.set(n, n);
                 }
                 writer = engine.getWriter(securityContext, event.getTableName());
                 addRow(event);

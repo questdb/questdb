@@ -634,7 +634,7 @@ public class FastMapTest extends AbstractCairoTest {
             try (TableReader reader = new TableReader(configuration, "x")) {
                 ListColumnFilter listColumnFilter = new ListColumnFilter();
                 for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
-                    listColumnFilter.add(i);
+                    listColumnFilter.add(i+1);
                 }
 
                 try (FastMap map = new FastMap(

@@ -35,6 +35,11 @@ public class ArrayColumnTypes implements ColumnTypes, Mutable {
         return this;
     }
 
+    public ArrayColumnTypes add(int index, int type) {
+        types.extendAndSet(index, type);
+        return this;
+    }
+
     @Override
     public int getColumnCount() {
         return types.size();

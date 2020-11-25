@@ -25,16 +25,18 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.engine.analytic.AnalyticContext;
+import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
@@ -48,6 +50,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Nullable
     private final MessageBus messageBus;
     private final MicrosecondClock clock;
+    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private RingQueue<TelemetryTask> telemetryQueue;
     private Sequence telemetryPubSeq;
     private TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
@@ -143,23 +146,26 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         telemetryMethod.store(event, origin);
     }
 
-    private void doStoreTelemetry(short event, short origin) {
-        long cursor = telemetryPubSeq.next();
-        while (cursor == -2) {
-            cursor = telemetryPubSeq.next();
-        }
-
-        if (cursor > -1) {
-            TelemetryTask row = telemetryQueue.get(cursor);
-
-            row.created = clock.getTicks();
-            row.event = event;
-            row.origin = origin;
-            telemetryPubSeq.done(cursor);
-        }
+    @Override
+    public AnalyticContext getAnalyticContext() {
+        return analyticContext;
     }
 
-    private void storeTelemetryNoop(short event, short origin) {
+    @Override
+    public void configureAnalyticContext(
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Transient @Nullable ColumnTypes partitionByKeyTypes,
+            boolean ordered,
+            boolean baseSupportsRandomAccess
+    ) {
+        analyticContext.of(
+                partitionByRecord,
+                partitionBySink,
+                partitionByKeyTypes,
+                ordered,
+                baseSupportsRandomAccess
+        );
     }
 
     public SqlExecutionContextImpl with(
@@ -193,6 +199,25 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.requestFd = requestFd;
         this.interruptor = null == interruptor ? SqlExecutionInterruptor.NOP_INTERRUPTOR : interruptor;
         return this;
+    }
+
+    private void doStoreTelemetry(short event, short origin) {
+        long cursor = telemetryPubSeq.next();
+        while (cursor == -2) {
+            cursor = telemetryPubSeq.next();
+        }
+
+        if (cursor > -1) {
+            TelemetryTask row = telemetryQueue.get(cursor);
+
+            row.created = clock.getTicks();
+            row.event = event;
+            row.origin = origin;
+            telemetryPubSeq.done(cursor);
+        }
+    }
+
+    private void storeTelemetryNoop(short event, short origin) {
     }
 
     @FunctionalInterface

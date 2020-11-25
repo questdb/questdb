@@ -24,12 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.LongList;
-import io.questdb.std.Rnd;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,16 +36,6 @@ public class RecordChainTest extends AbstractCairoTest {
     public static final long SIZE_4M = 4 * 1024 * 1024L;
     private static final BytecodeAssembler asm = new BytecodeAssembler();
     private static final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
-
-    private static void populateChain(RecordChain chain, TableReader reader) {
-        RecordCursor cursor = reader.getCursor();
-        final Record record = cursor.getRecord();
-        chain.setSymbolTableResolver(cursor);
-        long o = -1L;
-        while (cursor.hasNext()) {
-            o = chain.put(record, o);
-        }
-    }
 
     @Test
     public void testClear() throws Exception {
@@ -124,6 +112,74 @@ public class RecordChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipAndRefill() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG, null));
+            metadata.add(new TableColumnMetadata("y", ColumnType.INT, null));
+            metadata.add(new TableColumnMetadata("z", ColumnType.INT, null));
+
+            ListColumnFilter filter = new ListColumnFilter();
+            filter.add(1);
+            filter.add(-2);
+            filter.add(3);
+
+            RecordSink sink = RecordSinkFactory.getInstance(
+                    asm,
+                    metadata,
+                    filter,
+                    false
+            );
+
+            long[] cols = new long[metadata.columnCount];
+
+            final ObjList<Function> funcs = new ObjList<>();
+            funcs.add(new LongFunction(0) {
+                @Override
+                public long getLong(Record rec) {
+                    return cols[0];
+                }
+            });
+
+            funcs.add(null);
+            funcs.add(new IntFunction(0) {
+                @Override
+                public int getInt(Record rec) {
+                    return (int) cols[2];
+                }
+            });
+
+            final VirtualRecord rec = new VirtualRecord(funcs);
+            try (RecordChain chain = new RecordChain(metadata, sink, SIZE_4M, Integer.MAX_VALUE)) {
+                long o = -1;
+                cols[0] = 100;
+                cols[2] = 200;
+                o = chain.put(rec, o);
+
+                // out of band update of column
+                Unsafe.getUnsafe().putInt(chain.addressOf(chain.getOffsetOfColumn(o, 1)), 55);
+
+                cols[0] = 110;
+                cols[2] = 210;
+                o = chain.put(rec, o);
+                Unsafe.getUnsafe().putInt(chain.getAddress(o, 1), 66);
+
+                AbstractCairoTest.sink.clear();
+                chain.toTop();
+                final Record r = chain.getRecord();
+                while (chain.hasNext()) {
+                    printer.print(r, metadata);
+                }
+
+                String expected = "100\t55\t200\n" +
+                        "110\t66\t210\n";
+
+                TestUtils.assertEquals(expected, AbstractCairoTest.sink);
+            }
+        });
+    }
+
+    @Test
     public void testWriteAndRead() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
@@ -133,7 +189,7 @@ public class RecordChainTest extends AbstractCairoTest {
                         entityColumnFilter.of(reader.getMetadata().getColumnCount());
                         RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
 
-                                try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
+                        try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
                             populateChain(chain, reader);
                             assertChain(chain, N, reader);
                             assertChain(chain, N, reader);
@@ -141,6 +197,16 @@ public class RecordChainTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    private static void populateChain(RecordChain chain, TableReader reader) {
+        RecordCursor cursor = reader.getCursor();
+        final Record record = cursor.getRecord();
+        chain.setSymbolTableResolver(cursor);
+        long o = -1L;
+        while (cursor.hasNext()) {
+            o = chain.put(record, o);
+        }
     }
 
     private void assertChain(RecordChain chain, long expectedCount, TableReader reader) {
