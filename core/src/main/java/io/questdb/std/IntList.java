@@ -47,12 +47,6 @@ public class IntList implements Mutable {
         buffer[pos++] = value;
     }
 
-    public void add(int index, int element) {
-        ensureCapacity(++pos);
-        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
-        buffer[index] = element;
-    }
-
     public void addAll(IntList that) {
         int p = pos;
         int s = that.size();
@@ -103,6 +97,12 @@ public class IntList implements Mutable {
     public void ensureCapacity(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;
+    }
+
+    public void insert(int index, int element) {
+        ensureCapacity(++pos);
+        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
+        buffer[index] = element;
     }
 
     public void extendAndSet(int index, int value) {

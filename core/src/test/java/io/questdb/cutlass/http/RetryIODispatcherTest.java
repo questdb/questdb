@@ -47,25 +47,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class RetryIODispatcherTest {
     private static final Log LOG = LogFactory.getLog(RetryIODispatcherTest.class);
 
-    private final String RequestHeaders = "Host: localhost:9000\r\n" +
-            "Connection: keep-alive\r\n" +
-            "Accept: */*\r\n" +
-            "X-Requested-With: XMLHttpRequest\r\n" +
-            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-            "Sec-Fetch-Site: same-origin\r\n" +
-            "Sec-Fetch-Mode: cors\r\n" +
-            "Referer: http://localhost:9000/index.html\r\n" +
-            "Accept-Encoding: gzip, deflate, br\r\n" +
-            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-            "\r\n";
-    private final String ResponseHeaders =
-            "HTTP/1.1 200 OK\r\n" +
-                    "Server: questDB/1.0\r\n" +
-                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                    "Transfer-Encoding: chunked\r\n" +
-                    "Content-Type: application/json; charset=utf-8\r\n" +
-                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                    "\r\n";
     private static final String ValidImportRequest = "POST /upload HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -313,11 +294,9 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> {
                     // create table
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
-                            ResponseHeaders +
-                                    "0c\r\n" +
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                            "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
@@ -333,11 +312,9 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().execute(
-                                                "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                                        RequestHeaders,
-                                                ResponseHeaders +
-                                                        "0c\r\n" +
+                                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                                "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                                                "0c\r\n" +
                                                         "{\"ddl\":\"OK\"}\r\n" +
                                                         "00\r\n" +
                                                         "\r\n"
@@ -362,11 +339,9 @@ public class RetryIODispatcherTest {
                     countDownLatch.await();
 
                     // check if we have parallelCount x insertCount  records
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
-                            ResponseHeaders +
-                                    "71\r\n" +
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n",
+                            "71\r\n" +
                                     "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount * insertCount + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
@@ -384,11 +359,9 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> {
                     // create table
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
-                            ResponseHeaders +
-                                    "0c\r\n" +
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                            "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
@@ -405,11 +378,9 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().execute(
-                                                "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                                        RequestHeaders,
-                                                ResponseHeaders +
-                                                        "0c\r\n" +
+                                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                                "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                                                "0c\r\n" +
                                                         "{\"ddl\":\"OK\"}\r\n" +
                                                         "00\r\n" +
                                                         "\r\n"
@@ -435,11 +406,9 @@ public class RetryIODispatcherTest {
                     }
 
                     // check if we have parallelCount x insertCount  records
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
-                            ResponseHeaders +
-                                    "71\r\n" +
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n",
+                            "71\r\n" +
                                     "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount - fails.get()) + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
@@ -457,11 +426,9 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> {
                     // create table
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
-                            ResponseHeaders +
-                                    "0c\r\n" +
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                            "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
@@ -475,12 +442,14 @@ public class RetryIODispatcherTest {
                         threads[i] = new Thread(() -> {
                             try {
                                 // insert one record
+                                // await nothing
                                 try {
                                     Thread.sleep(finalI * 5);
                                     new SendAndReceiveRequestBuilder()
                                             .withPauseBetweenSendAndReceive(200)
-                                            .execute("GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                                            RequestHeaders,
+                                            .execute(
+                                                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n"
+                                                            + SendAndReceiveRequestBuilder.RequestHeaders,
                                                     ""
                                             );
                                 } catch (Exception e) {
@@ -494,8 +463,6 @@ public class RetryIODispatcherTest {
                     }
 
                     countDownLatch.await();
-
-                    // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
                     writer.close();
 
                     // check if we have parallelCount x insertCount  records
@@ -503,11 +470,9 @@ public class RetryIODispatcherTest {
                     for (int i = 0; i < waitCount; i++) {
 
                         try {
-                            new SendAndReceiveRequestBuilder().execute(
-                                    "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n" +
-                                            RequestHeaders,
-                                    ResponseHeaders +
-                                            "6f\r\n" +
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
+                                    "6f\r\n" +
                                             "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
                                             "00\r\n" +
                                             "\r\n"
@@ -594,11 +559,9 @@ public class RetryIODispatcherTest {
                     // check if we have parallelCount x insertCount  records
                     LOG.info().$("Requesting row count").$();
                     int rowsExpected = (successRequests.get() + 1) * validRequestRecordCount;
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
-                            ResponseHeaders +
-                                    (rowsExpected < 100 ? "83" : "84") + "\r\n" +
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                            (rowsExpected < 100 ? "83" : "84") + "\r\n" +
                                     "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + rowsExpected + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
@@ -650,11 +613,9 @@ public class RetryIODispatcherTest {
 
                         try {
                             // check if we have parallelCount x insertCount  records
-                            new SendAndReceiveRequestBuilder().execute(
-                                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" +
-                                            RequestHeaders,
-                                    ResponseHeaders +
-                                            "83\r\n" +
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                                    "83\r\n" +
                                             "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                                             "00\r\n" +
                                             "\r\n");
@@ -725,9 +686,9 @@ public class RetryIODispatcherTest {
 
                     // check if we have parallelCount x insertCount  records
                     LOG.info().$("Requesting row count").$();
-                    new SendAndReceiveRequestBuilder().execute("GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n" + RequestHeaders,
-                            ResponseHeaders +
-                                    "84\r\n" +
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                            "84\r\n" +
                                     "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
@@ -745,11 +706,9 @@ public class RetryIODispatcherTest {
                 .withTelemetry(false)
                 .run(engine -> {
                     // create table
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                    RequestHeaders,
-                            ResponseHeaders +
-                                    "0c\r\n" +
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                            "0c\r\n" +
                                     "{\"ddl\":\"OK\"}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
@@ -761,11 +720,9 @@ public class RetryIODispatcherTest {
                         try {
                             try {
                                 // Rename table
-                                new SendAndReceiveRequestBuilder().execute(
-                                        "GET /query?query=rename+table+%27balances_x%27+to+%27balances_y%27&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                                                RequestHeaders,
-                                        ResponseHeaders +
-                                                "0c\r\n" +
+                                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                        "GET /query?query=rename+table+%27balances_x%27+to+%27balances_y%27&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                                        "0c\r\n" +
                                                 "{\"ddl\":\"OK\"}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"

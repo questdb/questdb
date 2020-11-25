@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public class LastByteGroupByFunctionFactory implements FunctionFactory {
@@ -41,7 +42,7 @@ public class LastByteGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new LastByteGroupByFunction(position, args.getQuick(0));
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.engine.RecordComparator;
 
 class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain chain;

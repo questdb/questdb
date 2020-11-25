@@ -36,6 +36,26 @@ import org.junit.Assert;
 import java.nio.charset.StandardCharsets;
 
 public class SendAndReceiveRequestBuilder {
+    public final static String RequestHeaders = "Host: localhost:9000\r\n" +
+            "Connection: keep-alive\r\n" +
+            "Accept: */*\r\n" +
+            "X-Requested-With: XMLHttpRequest\r\n" +
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+            "Sec-Fetch-Site: same-origin\r\n" +
+            "Sec-Fetch-Mode: cors\r\n" +
+            "Referer: http://localhost:9000/index.html\r\n" +
+            "Accept-Encoding: gzip, deflate, br\r\n" +
+            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+            "\r\n";
+    public final static String ResponseHeaders =
+            "HTTP/1.1 200 OK\r\n" +
+                    "Server: questDB/1.0\r\n" +
+                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                    "Transfer-Encoding: chunked\r\n" +
+                    "Content-Type: application/json; charset=utf-8\r\n" +
+                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                    "\r\n";
+
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
@@ -72,6 +92,13 @@ public class SendAndReceiveRequestBuilder {
     public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
         this.compareLength = compareLength;
         return this;
+    }
+
+    public void executeWithStandardHeaders(
+            String request,
+            String response
+    ) throws InterruptedException {
+        execute(request + RequestHeaders, ResponseHeaders + response);
     }
 
     public void execute(

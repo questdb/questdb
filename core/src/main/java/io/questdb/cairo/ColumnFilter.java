@@ -28,4 +28,13 @@ public interface ColumnFilter {
     int getColumnCount();
 
     int getColumnIndex(int position);
+
+    default int getColumnIndexFactored(int position) {
+        int index = getColumnIndex(position);
+        return (index * getIndexFactor(index) - 1);
+    }
+
+    default int getIndexFactor(int index) {
+        return (index >> 31) | 0x01;
+    }
 }

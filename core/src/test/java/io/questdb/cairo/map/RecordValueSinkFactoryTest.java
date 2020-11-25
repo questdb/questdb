@@ -166,9 +166,9 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
 
                 ListColumnFilter columnFilter = new ListColumnFilter();
+                columnFilter.add(8);
+                columnFilter.add(10);
                 columnFilter.add(7);
-                columnFilter.add(9);
-                columnFilter.add(6);
 
 
                 RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);

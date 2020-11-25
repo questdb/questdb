@@ -43,7 +43,7 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final long lo = args.getQuick(0).getTimestamp(null);
         final long hi = args.getQuick(1).getTimestamp(null);
         final int nanRate = args.getQuick(2).getInt(null);

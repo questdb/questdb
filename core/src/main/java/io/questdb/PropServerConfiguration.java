@@ -28,11 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.http.MimeTypesCache;
-import io.questdb.cutlass.http.WaitProcessorConfiguration;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
@@ -168,6 +164,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpMinServerEnabled;
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private final PropSqlInterruptorConfiguration interruptorConfiguration = new PropSqlInterruptorConfiguration();
+    private final int tableBlockWriterQueueSize;
+    private final int sqlAnalyticStorePageSize;
+    private final int sqlAnalyticStoreMaxPages;
+    private final int sqlAnalyticRowIdPageSize;
+    private final int sqlAnalyticRowIdMaxPages;
+    private final int sqlAnalyticTreeKeyPageSize;
+    private final int sqlAnalyticTreeKeyMaxPages;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -405,10 +408,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
             }
 
-            this.maxRerunWaitCapMs = getLong(properties, env,"http.busy.retry.maximum.wait.before.retry", 1000);
-            this.rerunExponentialWaitMultiplier = getDouble(properties, env,"http.busy.retry.exponential.wait.multipier", 2.0);
-            this.rerunInitialWaitQueueSize = getIntSize(properties, env,"http.busy.retry.initialWaitQueueSize", 64);
-            this.rerunMaxProcessingQueueSize = getIntSize(properties, env,"http.busy.retry.maxProcessingQueueSize", 4096);
+            this.maxRerunWaitCapMs = getLong(properties, env, "http.busy.retry.maximum.wait.before.retry", 1000);
+            this.rerunExponentialWaitMultiplier = getDouble(properties, env, "http.busy.retry.exponential.wait.multipier", 2.0);
+            this.rerunInitialWaitQueueSize = getIntSize(properties, env, "http.busy.retry.initialWaitQueueSize", 64);
+            this.rerunMaxProcessingQueueSize = getIntSize(properties, env, "http.busy.retry.maxProcessingQueueSize", 4096);
         }
         this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
         if (pgEnabled) {
@@ -520,9 +523,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlGroupByPoolCapacity = getInt(properties, env, "cairo.sql.groupby.pool.capacity", 1024);
         this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, "cairo.sql.max.symbol.not.equals.count", 100);
         final String sqlCopyFormatsFile = getString(properties, env, "cairo.sql.copy.formats.file", "/text_loader.json");
-        this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
-        this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
-
         final String dateLocale = getString(properties, env, "cairo.date.locale", "en");
         this.dateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
         if (this.dateLocale == null) {
@@ -552,6 +552,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.backupDirTimestampFormat = getTimestampFormat(properties, env, "cairo.sql.backup.dir.datetime.format", "yyyy-MM-dd");
         this.backupTempDirName = getString(properties, env, "cairo.sql.backup.dir.tmp.name", "tmp");
         this.backupMkdirMode = getInt(properties, env, "cairo.sql.backup.mkdir.mode", 509);
+
+        this.tableBlockWriterQueueSize = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.size", 4096));
+        this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
+        this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
+        this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
+        this.sqlAnalyticRowIdMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.rowid.max.pages", Integer.MAX_VALUE));
+        this.sqlAnalyticTreeKeyPageSize = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.tree.page.size", 512 * 1024));
+        this.sqlAnalyticTreeKeyMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.tree.max.pages", Integer.MAX_VALUE));
+
+        this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
+        this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
 
         parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
             this.lineUdpBindIPV4Address = a;
@@ -1210,11 +1221,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public WaitProcessorConfiguration getWaitProcessorConfiguration() {
-            return httpWaitProcessorConfiguration;
-        }
-
-        @Override
         public HttpContextConfiguration getHttpContextConfiguration() {
             return httpContextConfiguration;
         }
@@ -1232,6 +1238,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryCacheRows() {
             return sqlCacheRows;
+        }
+
+        @Override
+        public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+            return httpWaitProcessorConfiguration;
         }
 
         @Override
@@ -1498,6 +1509,36 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlAnalyticStorePageSize() {
+            return sqlAnalyticStorePageSize;
+        }
+
+        @Override
+        public int getSqlAnalyticStoreMaxPages() {
+            return sqlAnalyticStoreMaxPages;
+        }
+
+        @Override
+        public int getSqlAnalyticRowIdPageSize() {
+            return sqlAnalyticRowIdPageSize;
+        }
+
+        @Override
+        public int getSqlAnalyticRowIdMaxPages() {
+            return sqlAnalyticRowIdMaxPages;
+        }
+
+        @Override
+        public int getSqlAnalyticTreeKeyPageSize() {
+            return sqlAnalyticTreeKeyPageSize;
+        }
+
+        @Override
+        public int getSqlAnalyticTreeKeyMaxPages() {
+            return sqlAnalyticTreeKeyMaxPages;
+        }
+
+        @Override
         public long getSqlLatestByRowCount() {
             return sqlLatestByRowCount;
         }
@@ -1624,7 +1665,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getTableBlockWriterQueueSize() {
-            return 1024;
+            return tableBlockWriterQueueSize;
         }
     }
 

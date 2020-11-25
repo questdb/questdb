@@ -42,15 +42,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
     private final static ColumnTypes keyTypes;
     private final static ColumnTypes valueTypes;
-
-    static {
-        final ArrayColumnTypes kt = new ArrayColumnTypes();
-        kt.add(ColumnType.STRING);
-        kt.add(ColumnType.STRING);
-        keyTypes = kt;
-        valueTypes = new SingleColumnType(ColumnType.INT);
-    }
-
     private final Map map;
     private int refCount;
 
@@ -72,24 +63,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
             boolean symbolTableStatic,
             RecordMetadata metadata
     ) {
-        int dot = Chars.indexOf(columnName, '.');
-        // add column with its own alias
-        MapKey key = map.withKey();
-
-        if (dot == -1) {
-            key.putStr(tableAlias);
-        } else {
-            assert tableAlias == null;
-            key.putStr(columnName, 0, dot);
-        }
-        key.putStr(columnName, dot + 1, columnName.length());
-
-        MapValue value = key.createValue();
-        if (!value.isNew()) {
-            throw CairoException.instance(0).put("Duplicate column [name=").put(columnName).put(", tableAlias=").put(tableAlias).put(']');
-        }
-
-        value.putLong(0, columnCount++);
+        int dot = addAlias(tableAlias, columnName);
         final CharSink b = Misc.getThreadLocalBuilder();
         TableColumnMetadata cm;
         if (dot == -1) {
@@ -111,34 +85,27 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
                     metadata
             );
         }
-        this.columnMetadata.add(cm);
-
-        key = map.withKey();
-        key.putStr(null);
-        key.putStr(columnName, dot + 1, columnName.length());
-
-        value = key.createValue();
-        if (value.isNew()) {
-            value.putInt(0, columnCount - 1);
-        } else {
-            // this is a duplicate columns, if somebody looks it up without alias
-            // we would treat this lookup as if column hadn't been found.
-            value.putInt(0, -1);
-        }
+        addToMap(columnName, dot, cm);
     }
 
-    public void copyColumnMetadataFrom(CharSequence alias, RecordMetadata fromMetadata) {
-        for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
-            add(
-                    alias,
-                    fromMetadata.getColumnName(i),
-                    fromMetadata.getColumnType(i),
-                    fromMetadata.isColumnIndexed(i),
-                    fromMetadata.getIndexValueBlockCapacity(i),
-                    fromMetadata.isSymbolTableStatic(i),
-                    GenericRecordMetadata.copyOf(fromMetadata.getMetadata(i))
+    public void add(CharSequence tableAlias, TableColumnMetadata m) {
+        final CharSequence columnName = m.getName();
+        final int dot = addAlias(tableAlias, columnName);
+        final CharSink b = Misc.getThreadLocalBuilder();
+        TableColumnMetadata cm;
+        if (dot == -1) {
+            cm = new TableColumnMetadata(
+                    b.put(tableAlias).put('.').put(columnName).toString(),
+                    m.getType(),
+                    m.isIndexed(),
+                    m.getIndexValueBlockCapacity(),
+                    m.isSymbolTableStatic(),
+                    m.getMetadata()
             );
+        } else {
+            cm = m;
         }
+        addToMap(columnName, dot, cm);
     }
 
     @Override
@@ -148,8 +115,24 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         }
     }
 
-    public void incrementRefCount() {
-        refCount++;
+    public void copyColumnMetadataFrom(CharSequence alias, RecordMetadata fromMetadata) {
+        if (fromMetadata instanceof BaseRecordMetadata) {
+            for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
+                add(alias, ((BaseRecordMetadata) fromMetadata).getColumnQuick(i));
+            }
+        } else {
+            for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
+                add(
+                        alias,
+                        fromMetadata.getColumnName(i),
+                        fromMetadata.getColumnType(i),
+                        fromMetadata.isColumnIndexed(i),
+                        fromMetadata.getIndexValueBlockCapacity(i),
+                        fromMetadata.isSymbolTableStatic(i),
+                        GenericRecordMetadata.copyOf(fromMetadata.getMetadata(i))
+                );
+            }
+        }
     }
 
     @Override
@@ -171,7 +154,62 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         return -1;
     }
 
+    public void incrementRefCount() {
+        refCount++;
+    }
+
     public void setTimestampIndex(int index) {
         this.timestampIndex = index;
+    }
+
+    private int addAlias(CharSequence tableAlias, CharSequence columnName) {
+        int dot = Chars.indexOf(columnName, '.');
+        assert dot != -1 || tableAlias != null;
+
+        // add column with its own alias
+        MapKey key = map.withKey();
+
+        if (dot == -1) {
+            key.putStr(tableAlias);
+        } else {
+            assert tableAlias == null;
+            key.putStr(columnName, 0, dot);
+        }
+        key.putStr(columnName, dot + 1, columnName.length());
+
+        MapValue value = key.createValue();
+        if (!value.isNew()) {
+            throw CairoException.instance(0).put("Duplicate column [name=").put(columnName).put(", tableAlias=").put(tableAlias).put(']');
+        }
+
+        value.putLong(0, columnCount++);
+        return dot;
+    }
+
+    private void addToMap(CharSequence columnName, int dot, TableColumnMetadata cm) {
+        MapKey key;
+        MapValue value;
+        this.columnMetadata.add(cm);
+
+        key = map.withKey();
+        key.putStr(null);
+        key.putStr(columnName, dot + 1, columnName.length());
+
+        value = key.createValue();
+        if (value.isNew()) {
+            value.putInt(0, columnCount - 1);
+        } else {
+            // this is a duplicate columns, if somebody looks it up without alias
+            // we would treat this lookup as if column hadn't been found.
+            value.putInt(0, -1);
+        }
+    }
+
+    static {
+        final ArrayColumnTypes kt = new ArrayColumnTypes();
+        kt.add(ColumnType.STRING);
+        kt.add(ColumnType.STRING);
+        keyTypes = kt;
+        valueTypes = new SingleColumnType(ColumnType.INT);
     }
 }

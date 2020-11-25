@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -40,7 +41,7 @@ public class CaseFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(@Transient ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int n = args.size();
         int returnType = -1;
         final ObjList<Function> vars = new ObjList<>(n);
@@ -82,12 +83,13 @@ public class CaseFunctionFactory implements FunctionFactory {
             vars.setQuick(i, CaseCommon.getCastFunction(
                     vars.getQuick(i),
                     returnType,
-                    configuration
+                    configuration,
+                    sqlExecutionContext
             ));
         }
 
         if (elseBranch != null) {
-            elseBranch = CaseCommon.getCastFunction(elseBranch, returnType, configuration);
+            elseBranch = CaseCommon.getCastFunction(elseBranch, returnType, configuration, sqlExecutionContext);
         }
 
         final int argsLen = vars.size();

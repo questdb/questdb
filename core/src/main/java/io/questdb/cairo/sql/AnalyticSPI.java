@@ -22,12 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.orderby;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.Record;
-
-public interface RecordComparator {
-    int compare(Record record);
-
-    void setLeft(Record record);
+public interface AnalyticSPI {
+    long getAddress(long recordAddress, int columnIndex);
 }

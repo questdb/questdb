@@ -58,4 +58,8 @@ public class QueryColumn implements Mutable {
         this.ast = ast;
         return this;
     }
+
+    public void setAlias(CharSequence alias) {
+        this.alias = alias;
+    }
 }

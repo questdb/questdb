@@ -70,47 +70,54 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
         assertMemoryLeak(() -> {
 
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
+            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1, -1, -1};
+                }
 
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
+                @Override
+                public int getWorkerCount() {
+                    return 4;
+                }
+            };
 
-
-                try (Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/", "admin", "quest")) {
+            try (final PGWireServer ignored = PGWireServer.create(
+                    conf,
+                    null,
+                    LOG,
+                    engine,
+                    compiler.getFunctionFactoryCache()
+            )) {
+                try (Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:8812/", "admin", "quest")) {
                     try (Statement statement = connection.createStatement()) {
                         statement.executeUpdate("create table test_large_batch(id long,val int)");
                     }
+                    connection.setAutoCommit(false);
                     try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
-                        batchInsert.setLong(1, 0L);
-                        batchInsert.setInt(2, 1);
-                        batchInsert.addBatch();
-                        batchInsert.setLong(1, 1L);
-                        batchInsert.setInt(2, 2);
-                        batchInsert.addBatch();
-                        batchInsert.setLong(1, 2L);
-                        batchInsert.setInt(2, 3);
-                        batchInsert.addBatch();
-                        batchInsert.clearParameters();
-                        batchInsert.executeLargeBatch();
+                        for (int i = 0; i < 10_000; i++) {
+                            batchInsert.setLong(1, 0L);
+                            batchInsert.setInt(2, 1);
+                            batchInsert.addBatch();
+                            batchInsert.setLong(1, 1L);
+                            batchInsert.setInt(2, 2);
+                            batchInsert.addBatch();
+                            batchInsert.setLong(1, 2L);
+                            batchInsert.setInt(2, 3);
+                            batchInsert.addBatch();
+                            batchInsert.clearParameters();
+                            batchInsert.executeLargeBatch();
+                        }
+                        connection.commit();
                     }
 
                     StringSink sink = new StringSink();
-                    String expected = "id[BIGINT],val[INTEGER]\n" +
-                            "0,1\n" +
-                            "1,2\n" +
-                            "2,3\n";
+                    String expected = "count[BIGINT]\n" +
+                            "30000\n";
                     Statement statement = connection.createStatement();
-                    ResultSet rs = statement.executeQuery("select * from test_large_batch");
+                    ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
                     assertResultSet(expected, sink, rs);
                 }
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -736,6 +743,38 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("create table x (a int)");
                 statement.execute();
+                connection.close();
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
+    @Test
+    public void testEmptySql() throws Exception {
+        assertMemoryLeak(() -> {
+
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+
+            try {
+                startBasicServer(NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                sink.clear();
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("");
+                }
                 connection.close();
             } finally {
                 running.set(false);
@@ -1779,23 +1818,32 @@ nodejs code:
 
     @Test
     public void testPreparedStatementParams() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
+        assertMemoryLeak(() -> {
+            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1, -1, -1};
+                }
 
+                @Override
+                public int getWorkerCount() {
+                    return 4;
+                }
+            };
+
+            try (final PGWireServer ignored = PGWireServer.create(
+                    conf,
+                    null,
+                    LOG,
+                    engine,
+                    compiler.getFunctionFactoryCache()
+            )) {
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
                 statement.setLong(2, 123L);
@@ -1835,16 +1883,13 @@ nodejs code:
                         "5,4,123,5.4299,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
 
                 StringSink sink = new StringSink();
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < 10000; i++) {
                     sink.clear();
                     ResultSet rs = statement.executeQuery();
                     assertResultSet(expected, sink, rs);
                     rs.close();
                 }
                 connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }

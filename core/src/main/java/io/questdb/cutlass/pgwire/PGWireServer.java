@@ -45,11 +45,13 @@ public class PGWireServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
+    private final WorkerPool workerPool;
 
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
+            boolean workerPoolLocal,
             MessageBus messageBus,
             FunctionFactoryCache functionFactoryCache
     ) {
@@ -90,6 +92,12 @@ public class PGWireServer implements Closeable {
                 contextFactory.closeContextPool();
             });
         }
+
+        if (workerPoolLocal) {
+            this.workerPool = workerPool;
+        } else {
+            this.workerPool = null;
+        }
     }
 
     @Nullable
@@ -105,13 +113,17 @@ public class PGWireServer implements Closeable {
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, bus, functionFactoryCache1) -> new PGWireServer(conf, cairoEngine, workerPool, bus, functionFactoryCache1),
+                (conf, engine, workerPool, local, bus, functionFactoryCache1) -> new PGWireServer(conf, cairoEngine, workerPool, local, bus, functionFactoryCache1),
                 functionFactoryCache
         );
     }
 
     @Override
     public void close() {
+        // worker pool will only be set if it is "local"
+        if (workerPool != null) {
+            workerPool.halt();
+        }
         Misc.free(contextFactory);
         Misc.free(dispatcher);
     }

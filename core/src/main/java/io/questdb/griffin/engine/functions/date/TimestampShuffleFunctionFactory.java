@@ -43,7 +43,7 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final long start = args.getQuick(0).getTimestamp(null);
         final long end = args.getQuick(1).getTimestamp(null);
         if (start == Numbers.LONG_NaN || end == Numbers.LONG_NaN) {

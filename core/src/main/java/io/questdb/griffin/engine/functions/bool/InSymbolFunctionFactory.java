@@ -49,7 +49,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
 
         CharSequenceHashSet set = new CharSequenceHashSet();
         int n = args.size();

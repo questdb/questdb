@@ -30,6 +30,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;

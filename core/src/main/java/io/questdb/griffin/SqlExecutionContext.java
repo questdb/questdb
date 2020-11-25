@@ -27,8 +27,13 @@ package io.questdb.griffin;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public interface SqlExecutionContext {
@@ -58,4 +63,14 @@ public interface SqlExecutionContext {
     SqlExecutionInterruptor getSqlExecutionInterruptor();
 
     void storeTelemetry(short event, short origin);
+
+    AnalyticContext getAnalyticContext();
+
+    void configureAnalyticContext(
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Transient @Nullable ColumnTypes keyTypes,
+            boolean isOrdered,
+            boolean baseSupportsRandomAccess
+    );
 }
