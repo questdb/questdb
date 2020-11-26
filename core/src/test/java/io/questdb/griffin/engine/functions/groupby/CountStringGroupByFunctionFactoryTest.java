@@ -100,8 +100,8 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> {
-            final String sql = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
-                    "select ts, count(s) from x sample by 1s";
+            final String sql = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(400000000, 300000) ts from long_sequence(100)) timestamp(ts))\n" +
+                    "select ts, count(s) from x sample by 2s";
             CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
 
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
@@ -112,16 +112,21 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals("ts\tcount\n" +
-                            "1970-01-01T00:00:00.000000Z\t5\n" +
-                            "1970-01-01T00:00:01.000000Z\t5\n" +
-                            "1970-01-01T00:00:02.000000Z\t6\n" +
-                            "1970-01-01T00:00:03.000000Z\t5\n" +
-                            "1970-01-01T00:00:04.000000Z\t6\n" +
-                            "1970-01-01T00:00:05.000000Z\t4\n" +
-                            "1970-01-01T00:00:06.000000Z\t4\n" +
-                            "1970-01-01T00:00:07.000000Z\t5\n" +
-                            "1970-01-01T00:00:08.000000Z\t6\n" +
-                            "1970-01-01T00:00:09.000000Z\t5\n",
+                            "1970-01-01T00:06:40.000000Z\t4\n" +
+                            "1970-01-01T00:06:42.000000Z\t4\n" +
+                            "1970-01-01T00:06:44.000000Z\t4\n" +
+                            "1970-01-01T00:06:46.000000Z\t6\n" +
+                            "1970-01-01T00:06:48.000000Z\t5\n" +
+                            "1970-01-01T00:06:50.000000Z\t4\n" +
+                            "1970-01-01T00:06:52.000000Z\t4\n" +
+                            "1970-01-01T00:06:54.000000Z\t4\n" +
+                            "1970-01-01T00:06:56.000000Z\t4\n" +
+                            "1970-01-01T00:06:58.000000Z\t4\n" +
+                            "1970-01-01T00:07:00.000000Z\t5\n" +
+                            "1970-01-01T00:07:02.000000Z\t3\n" +
+                            "1970-01-01T00:07:04.000000Z\t6\n" +
+                            "1970-01-01T00:07:06.000000Z\t5\n" +
+                            "1970-01-01T00:07:08.000000Z\t4\n",
                     sink);
         });
     }
