@@ -2029,24 +2029,20 @@ nodejs code:
                 }
 
 
-                // todo: this does not work, issues are:
-                //    1. analytic functions are not supported
-                //    2. nullif() not supported
-                //    3. pg_catalog.pg_type, pg_catalog.pg_attribute, pg_catalog.pg_attrdef not defined
-/*
                 sink.clear();
                 try (ResultSet rs = metaData.getColumns("qdb", null, "test", null)) {
                     assertResultSet(
-                            "",
+                            "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],COLUMN_NAME[VARCHAR],DATA_TYPE[SMALLINT],TYPE_NAME[VARCHAR],COLUMN_SIZE[INTEGER],BUFFER_LENGTH[VARCHAR],DECIMAL_DIGITS[INTEGER],NUM_PREC_RADIX[INTEGER],NULLABLE[INTEGER],REMARKS[VARCHAR],COLUMN_DEF[VARCHAR],SQL_DATA_TYPE[INTEGER],SQL_DATETIME_SUB[INTEGER],CHAR_OCTET_LENGTH[VARCHAR],ORDINAL_POSITION[INTEGER],IS_NULLABLE[VARCHAR],SCOPE_CATALOG[VARCHAR],SCOPE_SCHEMA[VARCHAR],SCOPE_TABLE[VARCHAR],SOURCE_DATA_TYPE[SMALLINT],IS_AUTOINCREMENT[VARCHAR],IS_GENERATEDCOLUMN[VARCHAR]\n" +
+                                    "null,public,test,id,-5,int8,19,null,0,10,1,column,,null,null,19,0,YES,null,null,null,0,YES,\n" +
+                                    "null,public,test,val,4,int4,10,null,0,10,1,column,,null,null,10,1,YES,null,null,null,0,YES,\n",
                             sink,
                             rs
                     );
                 }
-*/
 
                 // todo:  does not work
                 //    trim() function syntax is not supported (https://w3resource.com/PostgreSQL/trim-function.php)
-/*
+                /*
                 sink.clear();
                 try (ResultSet rs = metaData.getIndexInfo("qdb", "public", "test", true, false)) {
                     assertResultSet(
@@ -2055,7 +2051,7 @@ nodejs code:
                             rs
                     );
                 }
-*/
+                */
                 connection.close();
             } finally {
                 running.set(false);
