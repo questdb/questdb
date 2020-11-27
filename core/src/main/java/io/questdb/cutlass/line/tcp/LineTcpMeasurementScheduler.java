@@ -648,9 +648,46 @@ class LineTcpMeasurementScheduler implements Closeable {
                     long timestamp = event.getTimestamp();
                     row = writer.newRow(timestamp);
                     for (int i = 0; i < nMeasurementValues; i++) {
-                        int columnType = colTypes.getQuick(i);
-                        int columnIndex = colIndexMappings.getQuick(i);
-                        CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, columnIndex, event.getValue(i));
+                        final int columnType = colTypes.getQuick(i);
+                        final int columnIndex = colIndexMappings.getQuick(i);
+                        final CharSequence value = event.getValue(i);
+                        try {
+                            switch (columnType) {
+                                case ColumnType.LONG:
+                                    row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length()-1));
+                                    break;
+                                case ColumnType.BOOLEAN:
+                                    row.putBool(columnIndex, CairoLineProtoParserSupport.isTrue(value));
+                                    break;
+                                case ColumnType.STRING:
+                                    row.putStr(columnIndex, value, 1, value.length() - 2);
+                                    break;
+                                case ColumnType.SYMBOL:
+                                    row.putSym(columnIndex, value);
+                                    break;
+                                case ColumnType.DOUBLE:
+                                    row.putDouble(columnIndex, Numbers.parseDouble(value));
+                                    break;
+                                case ColumnType.SHORT:
+                                    row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
+                                    break;
+                                case ColumnType.LONG256:
+                                    if (value.charAt(0) == '0' && value.charAt(1) == 'x') {
+                                        row.putLong256(columnIndex, value, 2, value.length() - 1);
+                                    } else {
+                                        throw BadCastException.INSTANCE;
+                                    }
+                                    break;
+                                case ColumnType.TIMESTAMP:
+                                    row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                                    break;
+                                default:
+                                    break;
+                            }
+                        } catch (NumericException e) {
+                            LOG.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();
+                            throw BadCastException.INSTANCE;
+                        }
                     }
                     row.append();
                 } catch (NumericException | BadCastException ex) {
@@ -728,7 +765,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     } else {
                         colType = CairoLineProtoParserSupport.getValueType(event.getValue(n));
                     }
-                    colTypes.set(n, colType);
+                    colTypes.setQuick(n, colType);
                 }
             }
 

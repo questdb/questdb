@@ -52,7 +52,7 @@ public class CairoLineProtoParserSupport {
     }
 
     public static class BadCastException extends Exception {
-        private static final BadCastException INSTANCE = new BadCastException();
+        public static final BadCastException INSTANCE = new BadCastException();
     }
 
     public static int getValueType(CharSequence token) {
@@ -83,7 +83,7 @@ public class CairoLineProtoParserSupport {
         }
     }
 
-    private static boolean isTrue(CharSequence value) {
+    public static boolean isTrue(CharSequence value) {
         return (value.charAt(0) | 32) == 't';
     }
 

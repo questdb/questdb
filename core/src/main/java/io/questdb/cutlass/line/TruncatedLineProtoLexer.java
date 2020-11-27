@@ -9,12 +9,12 @@ public class TruncatedLineProtoLexer extends LineProtoLexer {
 
     public long parseLine(long bytesPtr, long hi) {
         finishedLine = false;
-        long atPtr = parsePartial(bytesPtr, hi);
-        if (!finishedLine) {
-            clear();
-            return -1;
+        final long atPtr = parsePartial(bytesPtr, hi);
+        if (finishedLine) {
+            return atPtr;
         }
-        return atPtr;
+        clear();
+        return -1;
     }
 
     @Override

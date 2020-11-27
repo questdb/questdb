@@ -33,15 +33,13 @@ import java.io.Closeable;
 
 public class LineProtoLexer implements Mutable, Closeable {
 
-    private static final Runnable NOOP = LineProtoLexer::noop;
+    protected final CharSequenceCache charSequenceCache;
     private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
     private final ArrayBackedCharSequence cs = new ArrayBackedCharSequence();
     private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
-    private final ObjList<Runnable> charHandlers = new ObjList<>();
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
     private long buffer;
-    protected final CharSequenceCache charSequenceCache;
     private long bufferHi;
     private long dstPos = 0;
     private long dstTop = 0;
@@ -62,7 +60,6 @@ public class LineProtoLexer implements Mutable, Closeable {
             assert floatingCharSequence.lo >= buffer;
             return floatingCharSequence;
         };
-        populateCharHandlers();
         clear();
     }
 
@@ -92,63 +89,6 @@ public class LineProtoLexer implements Mutable, Closeable {
         parsePartial(bytesPtr, hi);
     }
 
-    protected boolean partialComplete() {
-        // For extension
-        return false;
-    }
-
-    protected long parsePartial(long bytesPtr, long hi) {
-        long p = bytesPtr;
-
-        while (p < hi && !partialComplete()) {
-
-            final byte b = Unsafe.getUnsafe().getByte(p);
-
-            if (skipLine) {
-                doSkipLine(b);
-                p++;
-                continue;
-            }
-
-            if (escape) {
-                dstPos -= 2;
-            }
-
-            try {
-                if (b < 0) {
-                    try {
-                        p = utf8Decode(p, hi, b);
-                    } catch (Utf8RepairContinue e) {
-                        break;
-                    }
-                } else {
-                    sink.put((char) b);
-                    p++;
-                }
-
-                dstPos += 2;
-
-                if (escape) {
-                    escape = false;
-                    continue;
-                }
-
-                if (b > -1) {
-                    final Runnable runnable = charHandlers.getQuick(b);
-                    if (runnable != NOOP) {
-                        runnable.run();
-                    }
-                }
-
-            } catch (LineProtoException ex) {
-                skipLine = true;
-                parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);
-            }
-        }
-        
-        return p;
-    }
-
     public void parseLast() {
         if (!skipLine) {
             dstPos += 2;
@@ -165,15 +105,8 @@ public class LineProtoLexer implements Mutable, Closeable {
         this.parser = parser;
     }
 
-    private static void noop() {
-    }
-
     private void chop() {
         dstTop = dstPos;
-    }
-
-    protected void doSkipLineComplete() {
-        // for extension
     }
 
     private void doSkipLine(byte b) {
@@ -181,6 +114,10 @@ public class LineProtoLexer implements Mutable, Closeable {
             clear();
             doSkipLineComplete();
         }
+    }
+
+    protected void doSkipLineComplete() {
+        // for extension
     }
 
     private void fireEvent() throws LineProtoException {
@@ -270,18 +207,79 @@ public class LineProtoLexer implements Mutable, Closeable {
         }
     }
 
-    private void populateCharHandlers() {
-        final Runnable eol = this::onEol;
-        for (int i = 0; i <= Byte.MAX_VALUE; i++) {
-            charHandlers.add(NOOP);
+    protected long parsePartial(long bytesPtr, long hi) {
+        long p = bytesPtr;
+
+        while (p < hi && !partialComplete()) {
+
+            final byte b = Unsafe.getUnsafe().getByte(p);
+
+            if (skipLine) {
+                doSkipLine(b);
+                p++;
+                continue;
+            }
+
+            if (escape) {
+                dstPos -= 2;
+            }
+
+            try {
+                if (b > -1) {
+                    sink.put((char) b);
+                    p++;
+                } else {
+                    try {
+                        p = utf8Decode(p, hi, b);
+                    } catch (Utf8RepairContinue e) {
+                        break;
+                    }
+                }
+
+                dstPos += 2;
+
+                if (escape) {
+                    escape = false;
+                    continue;
+                }
+
+                switch (b) {
+                    case '"':
+                        onQuote();
+                        break;
+                    case '\n':
+                    case '\r':
+                        onEol();
+                        break;
+                    case ' ':
+                        onSpace();
+                        break;
+                    case '\\':
+                        onEsc();
+                        break;
+                    case ',':
+                        onComma();
+                        break;
+                    case '=':
+                        onEquals();
+                        break;
+                    default:
+                        break;
+
+                }
+
+            } catch (LineProtoException ex) {
+                skipLine = true;
+                parser.onError((int) (dstPos - 2 - buffer) / 2, state, errorCode);
+            }
         }
-        charHandlers.extendAndSet('"', this::onQuote);
-        charHandlers.extendAndSet('\n', eol);
-        charHandlers.extendAndSet('\r', eol);
-        charHandlers.extendAndSet(' ', this::onSpace);
-        charHandlers.extendAndSet('\\', this::onEsc);
-        charHandlers.extendAndSet(',', this::onComma);
-        charHandlers.extendAndSet('=', this::onEquals);
+
+        return p;
+    }
+
+    protected boolean partialComplete() {
+        // For extension
+        return false;
     }
 
     private long repairMultiByteChar(long lo, long hi, byte b) throws LineProtoException {
@@ -366,6 +364,11 @@ public class LineProtoLexer implements Mutable, Closeable {
             return this;
         }
 
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            throw new UnsupportedOperationException();
+        }
+
         private void extend() {
             int capacity = ((int) (bufferHi - buffer) * 2);
             if (capacity < 0) {
@@ -381,11 +384,6 @@ public class LineProtoLexer implements Mutable, Closeable {
             buffer = buf;
             dstPos = buf + offset + (dstPos - dstTop);
             dstTop = buf + offset;
-        }
-
-        @Override
-        public CharSink put(char[] chars, int start, int len) {
-            throw new UnsupportedOperationException();
         }
     }
 
