@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;

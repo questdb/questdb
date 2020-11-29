@@ -232,8 +232,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getSndBufSize());
         Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter());
-        Assert.assertEquals(2048, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
-        Assert.assertEquals(2048, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
+        Assert.assertEquals(4096, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
+        Assert.assertEquals(4096, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueSize());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerCount());
         Assert.assertArrayEquals(new int[]{}, configuration.getLineTcpReceiverConfiguration().getWorkerPoolConfiguration().getWorkerAffinity());

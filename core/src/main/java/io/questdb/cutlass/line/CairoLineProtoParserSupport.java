@@ -30,25 +30,58 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
 
 public class CairoLineProtoParserSupport {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParserSupport.class);
-    public static final ObjList<ColumnWriter> writers = new ObjList<>();
 
-    static {
-        writers.extendAndSet(ColumnType.LONG, CairoLineProtoParserSupport::putLong);
-        writers.extendAndSet(ColumnType.BOOLEAN, CairoLineProtoParserSupport::putBoolean);
-        writers.extendAndSet(ColumnType.STRING, CairoLineProtoParserSupport::putStr);
-        writers.extendAndSet(ColumnType.SYMBOL, CairoLineProtoParserSupport::putSymbol);
-        writers.extendAndSet(ColumnType.DOUBLE, CairoLineProtoParserSupport::putDouble);
-        writers.extendAndSet(ColumnType.SHORT, CairoLineProtoParserSupport::putShort);
-        writers.extendAndSet(ColumnType.LONG256, CairoLineProtoParserSupport::putLong256);
-        writers.extendAndSet(ColumnType.TIMESTAMP, CairoLineProtoParserSupport::putTimestamp);
-    }
-
-    public interface ColumnWriter {
-        void write(TableWriter.Row row, int columnIndex, CharSequence value) throws BadCastException;
+    /**
+     * Writes column value to table row. CharSequence value is interpreted depending on
+     * column type and written to column, identified by columnIndex. If value cannot be
+     * cast to column type, #BadCastException is thrown.
+     *
+     * @param row         table row
+     * @param columnIndex index of column to write value to
+     * @param columnType  column type value will be cast to
+     * @param value       value characters
+     */
+    public static void putValue(TableWriter.Row row, int columnType, int columnIndex, CharSequence value, Log log) throws BadCastException {
+        try {
+            switch (columnType) {
+                case ColumnType.LONG:
+                    row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                    break;
+                case ColumnType.BOOLEAN:
+                    row.putBool(columnIndex, isTrue(value));
+                    break;
+                case ColumnType.STRING:
+                    row.putStr(columnIndex, value, 1, value.length() - 2);
+                    break;
+                case ColumnType.SYMBOL:
+                    row.putSym(columnIndex, value);
+                    break;
+                case ColumnType.DOUBLE:
+                    row.putDouble(columnIndex, Numbers.parseDouble(value));
+                    break;
+                case ColumnType.SHORT:
+                    row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
+                    break;
+                case ColumnType.LONG256:
+                    if (value.charAt(0) == '0' && value.charAt(1) == 'x') {
+                        row.putLong256(columnIndex, value, 2, value.length() - 1);
+                    } else {
+                        throw BadCastException.INSTANCE;
+                    }
+                    break;
+                case ColumnType.TIMESTAMP:
+                    row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
+                    break;
+                default:
+                    break;
+            }
+        } catch (NumericException e) {
+            log.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();
+            throw BadCastException.INSTANCE;
+        }
     }
 
     public static class BadCastException extends Exception {
@@ -85,62 +118,5 @@ public class CairoLineProtoParserSupport {
 
     public static boolean isTrue(CharSequence value) {
         return (value.charAt(0) | 32) == 't';
-    }
-
-    public static void putSymbol(TableWriter.Row row, int index, CharSequence value) {
-        row.putSym(index, value);
-    }
-
-    public static void putStr(TableWriter.Row row, int index, CharSequence value) {
-        row.putStr(index, value, 1, value.length() - 2);
-    }
-
-    public static void putBoolean(TableWriter.Row row, int index, CharSequence value) {
-        row.putBool(index, isTrue(value));
-    }
-
-    public static void putDouble(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
-        try {
-            row.putDouble(index, Numbers.parseDouble(value));
-        } catch (NumericException e) {
-            LOG.error().$("not a DOUBLE: ").$(value).$();
-            throw BadCastException.INSTANCE;
-        }
-    }
-
-    public static void putLong(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
-        try {
-            row.putLong(index, Numbers.parseLong(value, 0, value.length() - 1));
-        } catch (NumericException e) {
-            LOG.error().$("not an INT: ").$(value).$();
-            throw BadCastException.INSTANCE;
-        }
-    }
-
-    public static void putShort(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
-        try {
-            row.putShort(index, Numbers.parseShort(value, 0, value.length() - 1));
-        } catch (NumericException e) {
-            LOG.error().$("not a short INT: ").$(value).$();
-            throw BadCastException.INSTANCE;
-        }
-    }
-
-    public static void putLong256(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
-        if (value.charAt(0) == '0' && value.charAt(1) == 'x') {
-            row.putLong256(index, value, 2, value.length() - 1);
-            return;
-        }
-        LOG.error().$("not a LONG256: ").$(value).$();
-        throw BadCastException.INSTANCE;
-    }
-
-    public static void putTimestamp(TableWriter.Row row, int index, CharSequence value) throws BadCastException {
-        try {
-            row.putTimestamp(index, Numbers.parseLong(value, 0, value.length() - 1));
-        } catch (NumericException e) {
-            LOG.error().$("not a LONG: ").$(value).$();
-            throw BadCastException.INSTANCE;
-        }
     }
 }

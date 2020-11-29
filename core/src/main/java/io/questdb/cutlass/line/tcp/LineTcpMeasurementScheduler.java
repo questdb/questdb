@@ -40,6 +40,7 @@ import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.MillisecondClock;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -133,6 +134,25 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
+    @NotNull
+    private TableUpdateDetails assignTableToThread(LineTcpMeasurementEvent event, int keyIndex) {
+        TableUpdateDetails tableUpdateDetails;
+        String tableName = Chars.toString(event.getTableName());
+        calcThreadLoad();
+        int leastLoad = Integer.MAX_VALUE;
+        int threadId = 0;
+        for (int n = 0; n < loadByThread.length; n++) {
+            if (loadByThread[n] < leastLoad) {
+                leastLoad = loadByThread[n];
+                threadId = n;
+            }
+        }
+        tableUpdateDetails = new TableUpdateDetails(tableName, threadId);
+        tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
+        LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
+        return tableUpdateDetails;
+    }
+
     private void calcThreadLoad() {
         Arrays.fill(loadByThread, 0);
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
@@ -142,30 +162,17 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
+    void commitNewEvent(LineTcpMeasurementEvent event, boolean success) {
         assert isOpen() && nextEventCursor != -1 && queue.get(nextEventCursor) == event;
 
-        TableUpdateDetails tableUpdateDetails;
-        if (complete) {
-            int keyIndex = tableUpdateDetailsByTableName.keyIndex(event.getTableName());
-            if (keyIndex > -1) {
-                String tableName = Chars.toString(event.getTableName());
-                calcThreadLoad();
-                int leastLoad = Integer.MAX_VALUE;
-                int threadId = 0;
-                for (int n = 0; n < loadByThread.length; n++) {
-                    if (loadByThread[n] < leastLoad) {
-                        leastLoad = loadByThread[n];
-                        threadId = n;
-                    }
-                }
-                tableUpdateDetails = new TableUpdateDetails(tableName, threadId);
-                tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
-                LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
-            } else {
+        final TableUpdateDetails tableUpdateDetails;
+        if (success) {
+            final int keyIndex = tableUpdateDetailsByTableName.keyIndex(event.getTableName());
+            if (keyIndex < 0) {
                 tableUpdateDetails = tableUpdateDetailsByTableName.valueAt(keyIndex);
+            } else {
+                tableUpdateDetails = assignTableToThread(event, keyIndex);
             }
-
             event.threadId = tableUpdateDetails.threadId;
         } else {
             tableUpdateDetails = null;
@@ -436,27 +443,25 @@ class LineTcpMeasurementScheduler implements Closeable {
             return cache.get(addresses.getQuick(2 * i + 1));
         }
 
-        boolean isComplete() {
-            return errorPosition == -1;
-        }
-
         boolean isRebalanceEvent() {
             return threadId == REBALANCE_EVENT_ID;
+        }
+
+        boolean isSuccess() {
+            return errorPosition == -1;
         }
 
         long parseLine(long bytesPtr, long hi) {
             clear();
             long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
             if (recvBufLineNext != -1) {
-                if (isComplete() && firstFieldIndex == -1) {
+                if (isSuccess() && firstFieldIndex == -1) {
                     errorPosition = (int) (recvBufLineNext - bytesPtr);
                     errorCode = LineProtoParser.ERROR_EMPTY;
                 }
 
-                if (isComplete()) {
-                    if (timestampAddress == 0) {
-                        timestamp = clock.getTicks();
-                    }
+                if (isSuccess() && timestampAddress == 0) {
+                    timestamp = clock.getTicks();
                 }
             }
             return recvBufLineNext;
@@ -552,6 +557,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                         eventProcessed = true;
                     }
                 }
+                // todo: investigate why this is conditional
+                //     this is very likely to cause queue stall
                 if (eventProcessed) {
                     sequence.done(cursor);
                 }
@@ -645,49 +652,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
                 Row row = null;
                 try {
-                    long timestamp = event.getTimestamp();
-                    row = writer.newRow(timestamp);
+                    row = writer.newRow(event.getTimestamp());
                     for (int i = 0; i < nMeasurementValues; i++) {
                         final int columnType = colTypes.getQuick(i);
                         final int columnIndex = colIndexMappings.getQuick(i);
                         final CharSequence value = event.getValue(i);
-                        try {
-                            switch (columnType) {
-                                case ColumnType.LONG:
-                                    row.putLong(columnIndex, Numbers.parseLong(value, 0, value.length()-1));
-                                    break;
-                                case ColumnType.BOOLEAN:
-                                    row.putBool(columnIndex, CairoLineProtoParserSupport.isTrue(value));
-                                    break;
-                                case ColumnType.STRING:
-                                    row.putStr(columnIndex, value, 1, value.length() - 2);
-                                    break;
-                                case ColumnType.SYMBOL:
-                                    row.putSym(columnIndex, value);
-                                    break;
-                                case ColumnType.DOUBLE:
-                                    row.putDouble(columnIndex, Numbers.parseDouble(value));
-                                    break;
-                                case ColumnType.SHORT:
-                                    row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
-                                    break;
-                                case ColumnType.LONG256:
-                                    if (value.charAt(0) == '0' && value.charAt(1) == 'x') {
-                                        row.putLong256(columnIndex, value, 2, value.length() - 1);
-                                    } else {
-                                        throw BadCastException.INSTANCE;
-                                    }
-                                    break;
-                                case ColumnType.TIMESTAMP:
-                                    row.putTimestamp(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
-                                    break;
-                                default:
-                                    break;
-                            }
-                        } catch (NumericException e) {
-                            LOG.info().$("cast error [value=").$(value).$(", toType=").$(ColumnType.nameOf(columnType)).$(']').$();
-                            throw BadCastException.INSTANCE;
-                        }
+                        CairoLineProtoParserSupport.putValue(row, columnType, columnIndex, value, LOG);
                     }
                     row.append();
                 } catch (NumericException | BadCastException ex) {

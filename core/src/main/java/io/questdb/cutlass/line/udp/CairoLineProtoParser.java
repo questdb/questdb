@@ -22,36 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
-import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
-import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
-
-import java.io.Closeable;
-
-import io.questdb.cairo.AppendMemory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+
+import java.io.Closeable;
+
+import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
 public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParser.class);
@@ -197,11 +183,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
         try {
             for (int i = 0; i < columnCount; i++) {
-                putValue(
+                CairoLineProtoParserSupport.putValue(
                         row
-                        , i
                         , (int) columnNameType.getQuick(i * 2 + 1)
+                        , i
                         , cache.get(columnValues.getQuick(i))
+                        , LOG
                 );
             }
             row.append();
@@ -220,23 +207,18 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         try {
             for (int i = 0; i < columnCount; i++) {
                 final long value = columnIndexAndType.getQuick(i);
-                putValue(
+                CairoLineProtoParserSupport.putValue(
                         row
-                        , Numbers.decodeLowInt(value)
                         , Numbers.decodeHighInt(value)
+                        , Numbers.decodeLowInt(value)
                         , cache.get(columnValues.getQuick(i))
+                        , LOG
                 );
             }
             row.append();
         } catch (BadCastException ignore) {
             row.cancel();
         }
-    }
-
-    private void clearState() {
-        columnNameType.clear();
-        columnIndexAndType.clear();
-        columnValues.clear();
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
@@ -249,6 +231,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             LOG.error().$((Sinkable) ex).$();
             switchModeToSkipLine();
         }
+    }
+
+    private void clearState() {
+        columnNameType.clear();
+        columnIndexAndType.clear();
+        columnValues.clear();
     }
 
     private TableWriter.Row createNewRow(CharSequenceCache cache, int columnCount) {
@@ -324,15 +312,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         }
     }
 
-    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
-        if (columnType == valueType) {
-            columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
-            columnValues.add(value.getCacheAddress());
-        } else {
-            possibleNewColumn(value, valueType, cache);
-        }
-    }
-
     private void parseFieldNameNewTable(CachedCharSequence token) {
         columnNameType.add(token.getCacheAddress());
     }
@@ -365,6 +344,20 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         parseValueNewTable(value, ColumnType.SYMBOL);
     }
 
+    private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
+        if (columnType == valueType) {
+            columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
+            columnValues.add(value.getCacheAddress());
+        } else {
+            possibleNewColumn(value, valueType, cache);
+        }
+    }
+
+    private void parseValueNewTable(CachedCharSequence value, int valueType) {
+        columnNameType.add(valueType);
+        columnValues.add(value.getCacheAddress());
+    }
+
     private void possibleNewColumn(CachedCharSequence value, int valueType, CharSequenceCache cache) {
         if (columnIndex > -1) {
             LOG.error().$("mismatched column and value types [table=").$(writer.getName())
@@ -391,25 +384,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void prepareNewColumn(CachedCharSequence token) {
         columnName = token.getCacheAddress();
         columnType = -1;
-    }
-
-    private void parseValueNewTable(CachedCharSequence value, int valueType) {
-        columnNameType.add(valueType);
-        columnValues.add(value.getCacheAddress());
-    }
-
-    /**
-     * Writes column value to table row. CharSequence value is interpreted depending on
-     * column type and written to column, identified by columnIndex. If value cannot be
-     * cast to column type, #BadCastException is thrown.
-     *
-     * @param row        table row
-     * @param index      index of column to write value to
-     * @param columnType column type value will be cast to
-     * @param value      value characters
-     */
-    private void putValue(TableWriter.Row row, int index, int columnType, CharSequence value) throws BadCastException {
-        CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, index, value);
     }
 
     private void switchModeToAppend() {

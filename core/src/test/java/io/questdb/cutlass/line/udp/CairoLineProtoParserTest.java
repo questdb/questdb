@@ -22,10 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.line.LineProtoLexer;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.std.*;
 import io.questdb.std.microtime.MicrosecondClock;
 import io.questdb.std.microtime.TimestampFormatUtils;
