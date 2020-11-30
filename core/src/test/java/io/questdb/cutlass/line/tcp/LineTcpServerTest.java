@@ -24,20 +24,9 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.net.URL;
-import java.security.PrivateKey;
-import java.util.Random;
-import java.util.function.Supplier;
-
-import org.junit.Test;
-
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecordCursor;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.udp.LineProtoSender;
+import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -53,6 +42,12 @@ import io.questdb.std.Os;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.junit.Test;
+
+import java.net.URL;
+import java.security.PrivateKey;
+import java.util.Random;
+import java.util.function.Supplier;
 
 public class LineTcpServerTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpServerTest.class);

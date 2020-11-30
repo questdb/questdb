@@ -37,21 +37,18 @@ import io.questdb.std.time.MillisecondClock;
 
 class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
-    enum IOContextResult {
-        NEEDS_READ, NEEDS_WRITE, NEEDS_CPU, NEEDS_DISCONNECT
-    }
-
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;
     private final MillisecondClock milliClock;
+    private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
     protected long recvBufStart;
     protected long recvBufEnd;
     protected long recvBufPos;
     protected boolean peerDisconnected;
-    private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
+    private boolean queueFull;
     private long lastQueueFullLogMillis = 0;
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
@@ -62,114 +59,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
     }
 
-    IOContextResult handleIO() {
-        try {
-            // Read as much data as possible
-            read();
-
-            // Process as much data as possible
-            long recvBufLineStart = recvBufStart;
-            boolean queueFull = false;
-            do {
-                LineTcpMeasurementEvent event = scheduler.getNewEvent();
-                if (null == event) {
-                    // Waiting for writer threads to drain queue, request callback as soon as possible
-                    if (checkQueueFullLogHysteresis()) {
-                        LOG.info().$('[').$(fd).$("] queue full, consider increasing queue size or number of writer jobs").$();
-                    }
-                    queueFull = true;
-                    break;
-                }
-                boolean complete = false;
-                try {
-                    long recvBufLineNext = event.parseLine(recvBufLineStart, recvBufPos);
-                    if (recvBufLineNext == -1) {
-                        break;
-                    }
-                    if (event.isComplete()) {
-                        complete = true;
-                    } else {
-                        LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
-                                .$(byteCharSequence.of(recvBufLineStart, Math.min(recvBufLineNext, recvBufPos))).$();
-                    }
-                    recvBufLineStart = recvBufLineNext;
-                } finally {
-                    scheduler.commitNewEvent(event, complete);
-                }
-            } while (recvBufLineStart != recvBufPos);
-
-            // Compact input buffer
-            if (recvBufLineStart != recvBufStart) {
-                compactBuffer(recvBufLineStart);
-            }
-
-            if (queueFull) {
-                return IOContextResult.NEEDS_CPU;
-            }
-
-            // Check for buffer overflow
-            if (recvBufPos == recvBufEnd) {
-                LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
-                return IOContextResult.NEEDS_DISCONNECT;
-            }
-
-            if (peerDisconnected) {
-                // Peer disconnected, we have now finished disconnect our end
-                if (recvBufPos != recvBufStart) {
-                    LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
-                } else {
-                    LOG.info().$('[').$(fd).$("] peer disconnected").$();
-                }
-                return IOContextResult.NEEDS_DISCONNECT;
-            }
-
-            return IOContextResult.NEEDS_READ;
-        } catch (RuntimeException ex) {
-            LOG.error().$('[').$(fd).$("] could not process line data").$(ex).$();
-            return IOContextResult.NEEDS_DISCONNECT;
-        }
-    }
-
-    protected final void compactBuffer(long recvBufNewStart) {
-        assert recvBufNewStart <= recvBufPos;
-        int len;
-        len = (int) (recvBufPos - recvBufNewStart);
-        if (len > 0) {
-            Unsafe.getUnsafe().copyMemory(recvBufNewStart, recvBufStart, len);
-        }
-        recvBufPos = recvBufStart + len;
-    }
-
-    protected final void read() {
-        int len = (int) (recvBufEnd - recvBufPos);
-        while (len > 0 && !peerDisconnected) {
-            int nRead = nf.recv(fd, recvBufPos, len);
-            if (nRead < 0) {
-                peerDisconnected = true;
-            } else {
-                if (nRead > 0) {
-                    recvBufPos += nRead;
-                    len -= nRead;
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-    private boolean checkQueueFullLogHysteresis() {
-        long millis = milliClock.getTicks();
-        if ((millis - lastQueueFullLogMillis) >= QUEUE_FULL_LOG_HYSTERESIS_IN_MS) {
-            lastQueueFullLogMillis = millis;
-            return true;
-        }
-        return false;
-    }
-
     @Override
     public void clear() {
         recvBufPos = recvBufStart;
         peerDisconnected = false;
+        queueFull = false;
     }
 
     @Override
@@ -194,10 +88,136 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return dispatcher;
     }
 
+    private boolean checkQueueFullLogHysteresis() {
+        long millis = milliClock.getTicks();
+        if ((millis - lastQueueFullLogMillis) >= QUEUE_FULL_LOG_HYSTERESIS_IN_MS) {
+            lastQueueFullLogMillis = millis;
+            return true;
+        }
+        return false;
+    }
+
+    protected final void compactBuffer(long recvBufNewStart) {
+        assert recvBufNewStart <= recvBufPos;
+        final int len = (int) (recvBufPos - recvBufNewStart);
+        if (len > 0) {
+            Unsafe.getUnsafe().copyMemory(recvBufNewStart, recvBufStart, len);
+        }
+        recvBufPos = recvBufStart + len;
+    }
+
+    private boolean doHandleDisconnectEvent() {
+        if (recvBufPos == recvBufEnd) {
+            LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
+            return true;
+        }
+
+        if (peerDisconnected) {
+            // Peer disconnected, we have now finished disconnect our end
+            if (recvBufPos != recvBufStart) {
+                LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+            } else {
+                LOG.info().$('[').$(fd).$("] peer disconnected").$();
+            }
+        }
+        return peerDisconnected;
+    }
+
+    private boolean handleDisconnectEvent() {
+        if (recvBufPos < recvBufEnd && !peerDisconnected) {
+            return false;
+        }
+        return doHandleDisconnectEvent();
+    }
+
+    IOContextResult handleIO() {
+        while (read()) {
+            try {
+                // Process as much data as possible
+                long recvBufLineStart = recvBufStart;
+                final long lim = recvBufPos;
+                queueFull = false;
+                do {
+                    final LineTcpMeasurementEvent event = scheduler.getNewEvent();
+                    if (event != null) {
+                        boolean success = true;
+                        try {
+                            final long recvBufLineNext = event.parseLine(recvBufLineStart, recvBufPos);
+                            if (recvBufLineNext > -1 && event.isSuccess()) {
+                                recvBufLineStart = recvBufLineNext;
+                            } else if (recvBufLineNext == -1) {
+                                // incomplete line
+                                success = false;
+                                break;
+                            } else {
+                                success = false;
+                                LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
+                                        .$(byteCharSequence.of(recvBufLineStart, Math.min(recvBufLineNext, recvBufPos))).$();
+                                recvBufLineStart = recvBufLineNext;
+                            }
+                        } finally {
+                            scheduler.commitNewEvent(event, success);
+                        }
+                    } else {
+                        // Waiting for writer threads to drain queue, request callback as soon as possible
+                        if (checkQueueFullLogHysteresis()) {
+                            LOG.info().$('[').$(fd).$("] queue full, consider increasing queue size or number of writer jobs").$();
+                        }
+                        queueFull = true;
+                        break;
+                    }
+                } while (recvBufLineStart != lim);
+
+                // Compact input buffer
+                assert recvBufLineStart <= recvBufPos;
+                final int len = (int) (recvBufPos - recvBufLineStart);
+                Unsafe.getUnsafe().copyMemory(recvBufLineStart, recvBufStart, len);
+                recvBufPos = recvBufStart + len;
+
+                if (queueFull) {
+                    return IOContextResult.NEEDS_CPU;
+                }
+
+                if (handleDisconnectEvent()) {
+                    return IOContextResult.NEEDS_DISCONNECT;
+                }
+
+            } catch (RuntimeException ex) {
+                LOG.error().$('[').$(fd).$("] could not process line data").$(ex).$();
+                return IOContextResult.NEEDS_DISCONNECT;
+            }
+        }
+
+        if (handleDisconnectEvent()) {
+            return IOContextResult.NEEDS_DISCONNECT;
+        }
+        return IOContextResult.NEEDS_READ;
+    }
+
     LineTcpConnectionContext of(long clientFd, IODispatcher<LineTcpConnectionContext> dispatcher) {
         this.fd = clientFd;
         this.dispatcher = dispatcher;
         clear();
         return this;
+    }
+
+    protected final boolean read() {
+        int bufferRemaining = (int) (recvBufEnd - recvBufPos);
+        final int orig = bufferRemaining;
+        while (bufferRemaining > 0 && !peerDisconnected) {
+            int nRead = nf.recv(fd, recvBufPos, bufferRemaining);
+            if (nRead > 0) {
+                recvBufPos += nRead;
+                bufferRemaining -= nRead;
+            } else {
+                peerDisconnected = nRead < 0;
+                break;
+            }
+        }
+        return bufferRemaining < orig || queueFull;
+    }
+
+    enum IOContextResult {
+        NEEDS_READ, NEEDS_WRITE, NEEDS_CPU, NEEDS_DISCONNECT
     }
 }
