@@ -31,9 +31,13 @@ public interface Log {
 
     LogRecord info();
 
+    LogRecord advisory();
+
     boolean isDebugEnabled();
 
     LogRecord xerror();
 
     LogRecord xinfo();
+
+    LogRecord xadvisory();
 }
