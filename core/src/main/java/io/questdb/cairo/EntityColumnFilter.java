@@ -34,7 +34,7 @@ public class EntityColumnFilter implements ColumnFilter {
 
     @Override
     public int getColumnIndex(int position) {
-        return position;
+        return position + 1;
     }
 
     public void of(int columnCount) {

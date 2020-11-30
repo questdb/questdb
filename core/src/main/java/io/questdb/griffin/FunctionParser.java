@@ -90,6 +90,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return functionFactoryCache.getFunctionCount();
     }
 
+    public FunctionFactoryCache getFunctionFactoryCache() {
+        return functionFactoryCache;
+    }
+
     public boolean isCursor(CharSequence token) {
         return functionFactoryCache.isCursor(token);
     }
@@ -283,7 +287,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 args.setQuick(0, args.getQuick(1));
                 args.setQuick(1, tmp);
             }
-            function = factory.newInstance(args, position, configuration);
+            function = factory.newInstance(args, position, configuration, sqlExecutionContext);
         } catch (SqlException e) {
             throw e;
         } catch (Throwable e) {

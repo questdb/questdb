@@ -26,24 +26,21 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.std.AssociativeCache;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 
 import java.io.Closeable;
 
 public class PGJobContext implements Closeable {
 
     private final SqlCompiler compiler;
-    private final AssociativeCache<Object> factoryCache;
-    private final CharSequenceObjHashMap<PGConnectionContext.NamedStatementWrapper> namedStatementMap;
-    private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
+    private final AssociativeCache<RecordCursorFactory> factoryCache;
 
     public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, MessageBus messageBus, FunctionFactoryCache functionFactoryCache) {
         this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
@@ -51,7 +48,6 @@ public class PGJobContext implements Closeable {
                 configuration.getFactoryCacheColumnCount(),
                 configuration.getFactoryCacheRowCount()
         );
-        this.namedStatementMap = new CharSequenceObjHashMap<>();
     }
 
     @Override
@@ -65,6 +61,6 @@ public class PGJobContext implements Closeable {
             PeerIsSlowToReadException,
             PeerDisconnectedException,
             BadProtocolException {
-        context.handleClientOperation(compiler, factoryCache, namedStatementMap, bindVariableSetters);
+        context.handleClientOperation(compiler, factoryCache);
     }
 }

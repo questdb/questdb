@@ -100,8 +100,8 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> {
-            final String sql = "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))\n" +
-                    "select ts, count(s) from x sample by 1s";
+            final String sql = "with x as (select * from (select rnd_long256(8) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                    "select ts, count(s) from x sample by 2s";
             CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
 
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
@@ -112,16 +112,8 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
             }
 
             TestUtils.assertEquals("ts\tcount\n" +
-                            "1970-01-01T00:00:00.000000Z\t7\n" +
-                            "1970-01-01T00:00:01.000000Z\t7\n" +
-                            "1970-01-01T00:00:02.000000Z\t7\n" +
-                            "1970-01-01T00:00:03.000000Z\t5\n" +
-                            "1970-01-01T00:00:04.000000Z\t6\n" +
-                            "1970-01-01T00:00:05.000000Z\t6\n" +
-                            "1970-01-01T00:00:06.000000Z\t7\n" +
-                            "1970-01-01T00:00:07.000000Z\t5\n" +
-                            "1970-01-01T00:00:08.000000Z\t7\n" +
-                            "1970-01-01T00:00:09.000000Z\t5\n",
+                            "1970-01-01T00:00:00.050000Z\t8\n" +
+                            "1970-01-01T00:00:02.050000Z\t8\n",
                     sink);
         });
     }

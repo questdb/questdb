@@ -28,6 +28,7 @@ import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.AbstractRedBlackTree;
+import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
 
 public class LongTreeChain extends AbstractRedBlackTree {
@@ -63,17 +64,17 @@ public class LongTreeChain extends AbstractRedBlackTree {
     }
 
     public void put(
-            Record main,
+            Record leftRecord,
             RecordCursor sourceCursor,
-            Record sourceRecord,
+            Record rightRecord,
             RecordComparator comparator
     ) {
         if (root == -1) {
-            putParent(main.getRowId());
+            putParent(leftRecord.getRowId());
             return;
         }
 
-        comparator.setLeft(main);
+        comparator.setLeft(leftRecord);
 
         long p = root;
         long parent;
@@ -81,14 +82,14 @@ public class LongTreeChain extends AbstractRedBlackTree {
         do {
             parent = p;
             final long r = refOf(p);
-            sourceCursor.recordAt(sourceRecord, valueChain.getLong(r));
-            cmp = comparator.compare(sourceRecord);
+            sourceCursor.recordAt(rightRecord, valueChain.getLong(r));
+            cmp = comparator.compare(rightRecord);
             if (cmp < 0) {
                 p = leftOf(p);
             } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                setRef(p, appendValue(main.getRowId(), r));
+                setRef(p, appendValue(leftRecord.getRowId(), r));
                 return;
             }
         } while (p > -1);
@@ -96,7 +97,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
         p = allocateBlock();
         setParent(p, parent);
 
-        setRef(p, appendValue(main.getRowId(), -1L));
+        setRef(p, appendValue(leftRecord.getRowId(), -1L));
 
         if (cmp < 0) {
             setLeft(parent, p);

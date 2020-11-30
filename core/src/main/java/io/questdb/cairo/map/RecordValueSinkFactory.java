@@ -78,7 +78,7 @@ public class RecordValueSinkFactory {
         int n = columnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
 
-            int index = columnFilter.getColumnIndex(i);
+            int index = columnFilter.getColumnIndexFactored(i);
             asm.aload(2);
             asm.iconst(i);
             asm.aload(1);

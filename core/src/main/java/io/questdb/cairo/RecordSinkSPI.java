@@ -58,4 +58,6 @@ public interface RecordSinkSPI {
     void putRecord(Record value);
 
     void putTimestamp(long value);
+
+    void skip(int bytes);
 }

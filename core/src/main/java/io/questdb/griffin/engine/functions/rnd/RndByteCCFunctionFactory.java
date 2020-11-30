@@ -43,7 +43,7 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
 
         byte lo = (byte) args.getQuick(0).getInt(null);
         byte hi = (byte) args.getQuick(1).getInt(null);

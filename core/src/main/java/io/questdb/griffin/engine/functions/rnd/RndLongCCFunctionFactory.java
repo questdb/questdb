@@ -43,7 +43,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final long lo = args.getQuick(0).getLong(null);
         final long hi = args.getQuick(1).getLong(null);
         final int nanRate = args.getQuick(2).getInt(null);

@@ -29,7 +29,8 @@ import io.questdb.cairo.TableWriter;
 import java.io.Closeable;
 
 public interface InsertMethod extends Closeable {
-    void execute();
+    // return inserted row count
+    long execute();
 
     void commit();
 

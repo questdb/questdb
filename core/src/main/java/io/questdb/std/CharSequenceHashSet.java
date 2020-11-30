@@ -185,6 +185,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
         this.keys = new CharSequence[len];
         mask = len - 1;
+        // todo: this is new instance, its already null initialized
         Arrays.fill(keys, null);
         int n = list.size();
         free -= n;

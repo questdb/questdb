@@ -40,7 +40,6 @@ public class InsertStatementImpl implements InsertStatement {
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final CairoEngine engine;
 
-    // todo: recycle these
     public InsertStatementImpl(
             CairoEngine engine,
             String tableName,
@@ -63,13 +62,8 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     @Override
-    public String getTableName() {
-        return tableName;
-    }
-
-    @Override
-    public long getStructureVersion() {
-        return structureVersion;
+    public void close() {
+        detachWriter();
     }
 
     @Override
@@ -84,6 +78,21 @@ public class InsertStatementImpl implements InsertStatement {
             insertMethod.writer = writer;
         }
         return insertMethod;
+    }
+
+    @Override
+    public long getStructureVersion() {
+        return structureVersion;
+    }
+
+    @Override
+    public String getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public void detachWriter() {
+        insertMethod.close();
     }
 
     private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
@@ -111,10 +120,11 @@ public class InsertStatementImpl implements InsertStatement {
         private TableWriter writer = null;
 
         @Override
-        public void execute() {
+        public long execute() {
             final TableWriter.Row row = rowFactory.getRow(writer);
             copier.copy(virtualRecord, row);
             row.append();
+            return 1;
         }
 
         @Override

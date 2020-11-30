@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
@@ -34,7 +35,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI {
+public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI {
 
     private final long[] columnOffsets;
     private final ContiguousVirtualMemory mem;
@@ -75,8 +76,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         this.fixOffset = fixOffset;
     }
 
-    private static long rowToDataOffset(long row) {
-        return row + 8;
+    public long addressOf(long offset) {
+        return mem.addressOf(offset);
     }
 
     public long beginRecord(long prevOffset) {
@@ -101,6 +102,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.close();
         nextRecordOffset = -1L;
         varAppendOffset = 0L;
+    }
+
+    public long getOffsetOfColumn(long recordOffset, int columnIndex) {
+        return rowToDataOffset(recordOffset) + varOffset + columnOffsets[columnIndex];
     }
 
     @Override
@@ -138,6 +143,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
     }
 
+    @Override
+    public long size() {
+        return -1;
+    }
+
     public void of(long nextRecordOffset) {
         this.nextRecordOffset = nextRecordOffset;
     }
@@ -162,6 +172,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             varAppendOffset = mem.getAppendOffset();
             mem.jumpTo(offset);
         }
+    }
+
+    @Override
+    public long getAddress(long recordOffset, int columnIndex) {
+        return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
     }
 
     @Override
@@ -215,11 +230,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public void putRecord(Record value) {
-        // noop
-    }
-
-    @Override
     public void putStr(CharSequence value) {
         if (value != null) {
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
@@ -241,22 +251,31 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putRecord(Record value) {
+        // noop
+    }
+
+    @Override
     public void putTimestamp(long value) {
         putLong(value);
+    }
+
+    @Override
+    public void skip(int bytes) {
+        mem.skip(bytes);
     }
 
     public void setSymbolTableResolver(RecordCursor resolver) {
         this.symbolTableResolver = resolver;
     }
 
+    private static long rowToDataOffset(long row) {
+        return row + 8;
+    }
+
     private void putNull() {
         mem.putLong(rowToDataOffset(recordOffset), TableUtils.NULL_LEN);
         recordOffset += 8;
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     private class RecordChainRecord implements Record {
@@ -286,6 +305,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
+        public char getChar(int col) {
+            return mem.getChar(fixedWithColumnOffset(col));
+        }
+
+        @Override
         public double getDouble(int col) {
             return mem.getDouble(fixedWithColumnOffset(col));
         }
@@ -306,21 +330,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public long getRowId() {
-            return baseOffset - 8;
-        }
-
-        @Override
-        public short getShort(int col) {
-            return mem.getShort(fixedWithColumnOffset(col));
-        }
-
-        @Override
-        public char getChar(int col) {
-            return mem.getChar(fixedWithColumnOffset(col));
-        }
-
-        @Override
         public void getLong256(int col, CharSink sink) {
             mem.getLong256(fixedWithColumnOffset(col), sink);
         }
@@ -333,6 +342,16 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public Long256 getLong256B(int col) {
             return mem.getLong256B(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public long getRowId() {
+            return baseOffset - 8;
+        }
+
+        @Override
+        public short getShort(int col) {
+            return mem.getShort(fixedWithColumnOffset(col));
         }
 
         @Override

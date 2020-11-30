@@ -45,7 +45,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
         Function cursorFunction = args.getQuick(1);
 

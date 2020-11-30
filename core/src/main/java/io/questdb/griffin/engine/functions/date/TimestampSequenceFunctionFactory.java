@@ -43,7 +43,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         if (args.getQuick(0).isConstant()) {
             final long start = args.getQuick(0).getTimestamp(null);
             if (start == Numbers.LONG_NaN) {

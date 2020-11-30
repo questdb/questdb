@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.*;
 
 public class RecordComparatorCompiler {
@@ -64,7 +65,7 @@ public class RecordComparatorCompiler {
         asm.setupPool();
 
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/engine/orderby/comparator"));
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/engine/comparator"));
         int interfaceClassIndex = asm.poolClass(RecordComparator.class);
         int recordClassIndex = asm.poolClass(Record.class);
         // this is name re-use, it used on all static interfaces that compare values
@@ -197,7 +198,8 @@ public class RecordComparatorCompiler {
             int thisClassIndex,
             int recordClassIndex,
             ColumnTypes columnTypes,
-            IntList keyColumnIndices) {
+            IntList keyColumnIndices
+    ) {
         typeMap.clear();
         fieldIndices.clear();
         fieldNameIndices.clear();
