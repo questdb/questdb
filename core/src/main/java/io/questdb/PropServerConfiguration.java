@@ -597,8 +597,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpNetRcvBufSize = getIntSize(properties, env, "line.tcp.net.recv.buf.size", -1);
             this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 64);
             this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.tcp.timestamp");
-            this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 2048);
-            this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 2048);
+            this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 4096);
+            this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 4096);
             if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
                 throw new IllegalArgumentException(
                         "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
