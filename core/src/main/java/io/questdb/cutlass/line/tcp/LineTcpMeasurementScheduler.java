@@ -604,8 +604,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         private boolean processRebalance(LineTcpMeasurementEvent event) {
             if (event.rebalanceToThreadId == id) {
                 // This thread is now a declared owner of the table, but it can only become actual
-                // owner when "old" over is fully done. This is a volatile variable on the event, used by both threads
-                // to handover the table. The starting point is "false" and the "old" over thread will eventually set this
+                // owner when "old" owner is fully done. This is a volatile variable on the event, used by both threads
+                // to handover the table. The starting point is "false" and the "old" owner thread will eventually set this
                 // to "true". In the mean time current thread will not be processing the queue until the handover is
                 // complete
                 if (event.rebalanceReleasedByFromThread) {
