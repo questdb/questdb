@@ -148,6 +148,7 @@ public class LogFactoryTest {
             assertEnabled(logger1.debug());
             assertDisabled(logger1.info());
             assertEnabled(logger1.error());
+            assertEnabled(logger1.advisory());
         }
     }
 
