@@ -161,7 +161,7 @@ public class LogFactory implements Closeable {
         final int index = scopeConfigMap.keyIndex(config.getScope());
         ScopeConfiguration scopeConf;
         if (index > -1) {
-            scopeConfigMap.putAt(index, config.getScope(), scopeConf = new ScopeConfiguration(3));
+            scopeConfigMap.putAt(index, config.getScope(), scopeConf = new ScopeConfiguration(LogLevel.LOG_LEVEL_MAX));
             scopeConfigs.add(scopeConf);
         } else {
             scopeConf = scopeConfigMap.valueAtQuick(index);
@@ -219,11 +219,23 @@ public class LogFactory implements Closeable {
 
         ScopeConfiguration scopeConfiguration = find(key);
         if (scopeConfiguration == null) {
-            return new Logger(clock, compressScope(key), null, null, null, null, null, null);
+            return new Logger(
+                    clock,
+                    compressScope(key),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+            );
         }
-        Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_INFO));
-        Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_DEBUG));
-        Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_ERROR));
+        final Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_INFO));
+        final Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_DEBUG));
+        final Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_ERROR));
+        final Holder adv = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_ADVISORY));
         return new Logger(
                 clock,
                 compressScope(key),
@@ -232,7 +244,9 @@ public class LogFactory implements Closeable {
                 inf == null ? null : inf.ring,
                 inf == null ? null : inf.lSeq,
                 err == null ? null : err.ring,
-                err == null ? null : err.lSeq
+                err == null ? null : err.lSeq,
+                adv == null ? null : adv.ring,
+                adv == null ? null : adv.lSeq
         );
     }
 
@@ -337,6 +351,9 @@ public class LogFactory implements Closeable {
                     case "ERROR":
                         level |= LogLevel.LOG_LEVEL_ERROR;
                         break;
+                    case "ADVISORY":
+                        level |= LogLevel.LOG_LEVEL_ADVISORY;
+                        break;
                     default:
                         throw new LogError("Unknown level: " + s);
                 }
@@ -346,6 +363,11 @@ public class LogFactory implements Closeable {
         if (isForcedDebug()) {
             level = level | LogLevel.LOG_LEVEL_DEBUG;
         }
+
+        // enable all LOG levels above the minimum set one
+        // ((-1 >>> (msb-1)) << msb) | level
+        final int msb = Numbers.msb(level);
+        level = (((-1 >>> (msb-1)) << msb) | level) & LogLevel.LOG_LEVEL_MASK;
 
         return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -> {
             try {
@@ -376,7 +398,7 @@ public class LogFactory implements Closeable {
         });
     }
 
-    private static  boolean isForcedDebug() {
+    private static boolean isForcedDebug() {
         return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);
     }
 
@@ -416,7 +438,7 @@ public class LogFactory implements Closeable {
     }
 
     private void configureDefaultWriter() {
-        int level = LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_ERROR;
+        int level = LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_ERROR | LogLevel.LOG_LEVEL_ADVISORY;
         if (isForcedDebug()) {
             level = level | LogLevel.LOG_LEVEL_DEBUG;
         }
