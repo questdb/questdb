@@ -302,8 +302,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null == event) {
                 return;
             }
-            LOG.info().$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances).$(", table=").$(tableNameToMove).$(", fromThreadId=").$(fromThreadId).$(", toThreadId=")
-                    .$(toThreadId).$(']').$();
+
+            LOG.info()
+                    .$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances)
+                    .$(", table=").$(tableNameToMove)
+                    .$(", fromThreadId=").$(fromThreadId)
+                    .$(", toThreadId=").$(toThreadId)
+                    .$(']').$();
+
             commitRebalanceEvent(event, fromThreadId, toThreadId, tableNameToMove);
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNameToMove);
             stats.threadId = toThreadId;
@@ -545,7 +551,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 }
                 busy = true;
-                LineTcpMeasurementEvent event = queue.get(cursor);
+                final LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
                 if (event.threadId == id) {
                     processNextEvent(event);
@@ -557,43 +563,51 @@ class LineTcpMeasurementScheduler implements Closeable {
                         eventProcessed = true;
                     }
                 }
-                // todo: investigate why this is conditional
-                //     this is very likely to cause queue stall
+
+                // by not releasing cursor we force the sequence to return us the same value over and over
+                // until cursor value is released
                 if (eventProcessed) {
                     sequence.done(cursor);
                 }
             }
         }
 
-        private void handleEventException(LineTcpMeasurementEvent event, Parser parser, CairoException ex) {
-            LOG.error()
-                    .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
-                    .$(", table=").$(event.getTableName())
-                    .$(", ex=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .$(']').$();
-            Misc.free(parser);
-            parserCache.remove(event.getTableName());
-        }
-
         private void processNextEvent(LineTcpMeasurementEvent event) {
-            Parser parser = parserCache.get(event.getTableName());
+            final int index = parserCache.keyIndex(event.getTableName());
+            Parser parser = null;
             try {
-                if (null != parser) {
+                if (index < 0) {
+                    parser = parserCache.valueAt(index);
                     parser.processEvent(event);
                 } else {
                     parser = new Parser();
                     parser.processFirstEvent(engine, securityContext, event);
                     LOG.info().$("created parser [jobName=").$(jobName).$(" table=").$(event.getTableName()).$(']').$();
-                    parserCache.put(Chars.toString(event.getTableName()), parser);
+                    parserCache.putAt(index, Chars.toString(event.getTableName()), parser);
                 }
             } catch (CairoException ex) {
-                handleEventException(event, parser, ex);
+                LOG.error()
+                        .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
+                        .$(", table=").$(event.getTableName())
+                        .$(", ex=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .$(']').$();
+
+                Misc.free(parser);
+
+                if (index < 0) {
+                    parserCache.removeAt(index);
+                }
             }
         }
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
             if (event.rebalanceToThreadId == id) {
+                // This thread is now a declared owner of the table, but it can only become actual
+                // owner when "old" over is fully done. This is a volatile variable on the event, used by both threads
+                // to handover the table. The starting point is "false" and the "old" over thread will eventually set this
+                // to "true". In the mean time current thread will not be processing the queue until the handover is
+                // complete
                 if (event.rebalanceReleasedByFromThread) {
                     LOG.info().$("rebalance cycle, new thread ready [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
                     return true;
@@ -603,11 +617,13 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             if (event.rebalanceFromThreadId == id) {
-                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
-                Parser parser = parserCache.get(event.rebalanceTableName);
-                parserCache.remove(event.rebalanceTableName);
-                parser.close();
-                event.rebalanceReleasedByFromThread = true;
+                final int index = parserCache.keyIndex(event.rebalanceTableName);
+                if (index < 0) {
+                    LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
+                    Misc.free(parserCache.valueAt(index));
+                    parserCache.removeAt(index);
+                    event.rebalanceReleasedByFromThread = true;
+                }
             }
 
             return true;
