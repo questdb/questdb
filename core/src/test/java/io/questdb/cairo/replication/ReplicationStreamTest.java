@@ -235,7 +235,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableReplicationRecordCursorFactory factory = new TableReplicationRecordCursorFactory(engine, sourceTableName, maxRowsPerFrame);
                 TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nFirstRow);
-                ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator(configuration);
+                ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator();
                 ReplicationStreamReceiver streamWriter = new ReplicationStreamReceiver(configuration, recvMgr)) {
 
             IntList initialSymbolCounts = new IntList();
@@ -263,6 +263,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 }
             }
 
+            // Wait for ready to commit from slave
             Assert.assertEquals(0, streamTargetWriteBufferOffset);
             while (streamTargetWriteBufferOffset != TableReplicationStreamHeaderSupport.SCR_HEADER_SIZE) {
                 streamWriter.handleIO();
@@ -284,15 +285,15 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     }
 
     private void sendFrame(ReplicationStreamReceiver streamWriter, ReplicationStreamGeneratorFrame streamFrameMeta) {
-        long sz = streamFrameMeta.getFrameHeaderSize() + streamFrameMeta.getFrameDataSize();
+        long sz = streamFrameMeta.getFrameHeaderLength() + streamFrameMeta.getFrameDataLength();
         if (sz > streamTargetReadBufferSize) {
             streamTargetReadBufferAddress = Unsafe.realloc(streamTargetReadBufferAddress, streamTargetReadBufferSize, sz);
             streamTargetReadBufferSize = sz;
         }
-        Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameHeaderAddress(), streamTargetReadBufferAddress, streamFrameMeta.getFrameHeaderSize());
-        if (streamFrameMeta.getFrameDataSize() > 0) {
-            Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameDataAddress(), streamTargetReadBufferAddress + streamFrameMeta.getFrameHeaderSize(),
-                    streamFrameMeta.getFrameDataSize());
+        Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameHeaderAddress(), streamTargetReadBufferAddress, streamFrameMeta.getFrameHeaderLength());
+        if (streamFrameMeta.getFrameDataLength() > 0) {
+            Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameDataAddress(), streamTargetReadBufferAddress + streamFrameMeta.getFrameHeaderLength(),
+                    streamFrameMeta.getFrameDataLength());
         }
         streamTargetReadBufferOffset = 0;
         streamTargetReadBufferLength = sz;

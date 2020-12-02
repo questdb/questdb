@@ -10,10 +10,6 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Unsafe;
 
 public class ReplicationStreamReceiver implements Closeable {
-    enum IOContextResult {
-        NEEDS_READ, NEEDS_BACKOFF_RETRY, NEEDS_WRITE
-    }
-
     private final FilesFacade ff;
     private final ReplicationSlaveManager recvMgr;
     private final IntList tableIds = new IntList();
@@ -37,6 +33,7 @@ public class ReplicationStreamReceiver implements Closeable {
     private long dataFrameColumnOffset;
 
     private boolean readyToCommit;
+    private int nCommits;
 
     public ReplicationStreamReceiver(CairoConfiguration configuration, ReplicationSlaveManager recvMgr) {
         this.ff = configuration.getFilesFacade();
@@ -48,6 +45,7 @@ public class ReplicationStreamReceiver implements Closeable {
     public void of(long fd) {
         this.fd = fd;
         readyToCommit = false;
+        nCommits = 0;
         resetReading();
     }
 
@@ -59,7 +57,7 @@ public class ReplicationStreamReceiver implements Closeable {
         slaveWriter = null;
     }
 
-    IOContextResult handleIO() {
+    boolean handleIO() {
         if (!readyToCommit) {
             return handleRead();
         } else {
@@ -67,7 +65,8 @@ public class ReplicationStreamReceiver implements Closeable {
         }
     }
 
-    IOContextResult handleRead() {
+    private boolean handleRead() {
+        assert frameHeaderRemaining > 0 || frameDataNBytesRemaining > 0;
         while (frameHeaderRemaining > 0) {
             long nRead = ff.read(fd, frameHeaderAddress, frameHeaderRemaining, frameHeaderOffset);
             if (nRead == -1) {
@@ -77,7 +76,7 @@ public class ReplicationStreamReceiver implements Closeable {
             frameHeaderOffset += nRead;
             frameHeaderRemaining -= nRead;
             if (frameHeaderRemaining > 0) {
-                return IOContextResult.NEEDS_READ;
+                return nRead > 0;
             }
 
             if (frameType == TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN) {
@@ -100,12 +99,12 @@ public class ReplicationStreamReceiver implements Closeable {
 
                 case TableReplicationStreamHeaderSupport.FRAME_TYPE_END_OF_BLOCK: {
                     handleEndOfBlockHeader();
-                    return IOContextResult.NEEDS_WRITE;
+                    return true;
                 }
 
                 case TableReplicationStreamHeaderSupport.FRAME_TYPE_COMMIT_BLOCK: {
                     handleCommitBlock();
-                    return IOContextResult.NEEDS_READ;
+                    return true;
                 }
 
                 default:
@@ -126,10 +125,10 @@ public class ReplicationStreamReceiver implements Closeable {
             slaveWriter = null;
             resetReading();
         }
-        return IOContextResult.NEEDS_READ;
+        return nRead > 0;
     }
 
-    IOContextResult handleWrite() {
+    private boolean handleWrite() {
         long nWritten = ff.write(fd, frameHeaderAddress, frameHeaderRemaining, frameHeaderOffset);
         if (nWritten == -1) {
             // TODO Disconnected mid stream
@@ -140,10 +139,10 @@ public class ReplicationStreamReceiver implements Closeable {
         if (frameHeaderRemaining == 0) {
             readyToCommit = false;
             resetReading();
-            return IOContextResult.NEEDS_READ;
+            return nWritten > 0;
         }
 
-        return IOContextResult.NEEDS_WRITE;
+        return true;
     }
 
     private void handleEndOfBlockHeader() {
@@ -164,6 +163,7 @@ public class ReplicationStreamReceiver implements Closeable {
         }
         slaveWriter.commit();
         resetReading();
+        nCommits++;
     }
 
     private void handleDataFrameHeader() {
@@ -221,6 +221,10 @@ public class ReplicationStreamReceiver implements Closeable {
             tableIds.add(masterTableId);
         }
         return slaveWriter;
+    }
+
+    public int getnCommits() {
+        return nCommits;
     }
 
     public void clear() {
