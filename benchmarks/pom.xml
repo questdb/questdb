@@ -52,17 +52,12 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb</artifactId>
-            <version>5.0.5-SNAPSHOT</version>
+            <version>5.0.6-SNAPSHOT</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-core</artifactId>
             <version>2.13.2</version>
-        </dependency>
-        <dependency>
-            <groupId>com.lmax</groupId>
-            <artifactId>disruptor</artifactId>
-            <version>3.3.4</version>
         </dependency>
     </dependencies>
 

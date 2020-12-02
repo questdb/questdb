@@ -26,7 +26,7 @@ package io.questdb.std;
 
 import java.io.Closeable;
 
-public class AssociativeCache<V> implements Closeable {
+public class AssociativeCache<V> implements Closeable, Mutable {
 
     private static final int MIN_BLOCKS = 2;
     private static final int NOT_FOUND = -1;
@@ -52,6 +52,16 @@ public class AssociativeCache<V> implements Closeable {
         this.rmask = rows - 1;
         this.bmask = this.blocks - 1;
         this.bshift = Numbers.msb(this.blocks);
+    }
+
+    @Override
+    public void clear() {
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != null) {
+                keys[i] = null;
+                free(i);
+            }
+        }
     }
 
     @Override
@@ -98,15 +108,6 @@ public class AssociativeCache<V> implements Closeable {
             values[lo] = value;
         }
         return outgoingKey;
-    }
-
-    private void clear() {
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != null) {
-                keys[i] = null;
-                free(i);
-            }
-        }
     }
 
     private void free(int lo) {

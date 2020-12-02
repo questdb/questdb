@@ -239,7 +239,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     protected void logSuccess(IODispatcherConfiguration configuration) {
-        LOG.info()
+        LOG.advisory()
                 .$("listening on ")
                 .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
                 .$(" [fd=").$(serverFd).$(']').$();

@@ -70,6 +70,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.str;
     exports io.questdb.griffin.engine.groupby;
     exports io.questdb.griffin.engine.groupby.vect;
+    exports io.questdb.griffin.engine.analytic;
 
     exports io.questdb.std;
     exports io.questdb.std.microtime;
@@ -495,6 +496,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
 //                  Change string case
             io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory,
-            io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
-    ;
+            io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory,
+
+            // analytic functions
+            io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
+            ;
 }

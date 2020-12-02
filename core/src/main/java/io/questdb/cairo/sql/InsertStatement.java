@@ -26,10 +26,17 @@ package io.questdb.cairo.sql;
 
 import io.questdb.griffin.SqlExecutionContext;
 
-public interface InsertStatement {
-    CharSequence getTableName();
+import java.io.Closeable;
+
+public interface InsertStatement extends Closeable {
+    @Override
+    void close();
+
+    InsertMethod createMethod(SqlExecutionContext executionContext);
 
     long getStructureVersion();
 
-    InsertMethod createMethod(SqlExecutionContext executionContext);
+    CharSequence getTableName();
+
+    void detachWriter();
 }

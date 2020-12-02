@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
@@ -293,7 +294,8 @@ public class CaseCommon {
     static Function getCastFunction(
             Function arg,
             int toType,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(arg.getType(), toType));
         if (keyIndex < 0) {
@@ -301,7 +303,7 @@ public class CaseCommon {
             ObjList<Function> args = tlArgs.get();
             args.clear();
             args.add(arg);
-            return fact.newInstance(args, 0, configuration);
+            return fact.newInstance(args, 0, configuration, sqlExecutionContext);
         }
 
         return arg;

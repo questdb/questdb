@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.udp.LineProtoSender;
+import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;

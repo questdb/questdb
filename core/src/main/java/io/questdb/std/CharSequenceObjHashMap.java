@@ -77,7 +77,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         }
     }
 
-    public void cleaValues() {
+    public void clearValues() {
         Arrays.fill(values, 0, capacity, null);
     }
 

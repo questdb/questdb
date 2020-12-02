@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.test;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public class TestSumXDoubleGroupByFunctionFactory implements FunctionFactory {
@@ -41,7 +42,7 @@ public class TestSumXDoubleGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new TestSumDoubleGroupByFunction(position, args.getQuick(0), args.getQuick(1));
     }
 }

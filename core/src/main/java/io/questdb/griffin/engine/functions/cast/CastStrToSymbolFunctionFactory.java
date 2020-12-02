@@ -46,7 +46,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             return new SymbolConstant(position, Chars.toString(arg.getStr(null)), 0);

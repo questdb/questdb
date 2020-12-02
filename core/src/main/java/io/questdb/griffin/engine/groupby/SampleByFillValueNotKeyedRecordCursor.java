@@ -24,25 +24,13 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 
-public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final int timestampIndex;
-    private final TimestampSampler timestampSampler;
-    private final SplitVirtualRecord record;
+public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
     private final SimpleMapValue simpleMapValue;
-    private final ObjList<Function> recordFunctions;
-    private RecordCursor base;
-    private Record baseRecord;
-    private long lastTimestamp;
-    private long nextTimestamp;
-    private SqlExecutionInterruptor interruptor;
 
     public SampleByFillValueNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
@@ -52,38 +40,14 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
             TimestampSampler timestampSampler,
             SimpleMapValue simpleMapValue
     ) {
+        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions, placeholderFunctions);
         this.simpleMapValue = simpleMapValue;
-        this.groupByFunctions = groupByFunctions;
-        this.timestampIndex = timestampIndex;
-        this.timestampSampler = timestampSampler;
-        this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         this.record.of(simpleMapValue);
-        assert recordFunctions.size() == placeholderFunctions.size();
-        final TimestampFunc timestampFunc = new TimestampFunc(0);
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            Function f = recordFunctions.getQuick(i);
-            if (f == null) {
-                recordFunctions.setQuick(i, timestampFunc);
-                placeholderFunctions.setQuick(i, timestampFunc);
-            }
-        }
-        this.recordFunctions = recordFunctions;
-    }
-
-    @Override
-    public void close() {
-        base.close();
-        interruptor = null;
     }
 
     @Override
     public Record getRecord() {
         return record;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return (SymbolTable) recordFunctions.getQuick(columnIndex);
     }
 
     @Override
@@ -120,7 +84,7 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
         }
 
         while (base.hasNext()) {
-            final long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            final long timestamp = getBaseRecordTimestamp();
             if (lastTimestamp == timestamp) {
                 for (int i = 0; i < n; i++) {
                     interruptor.checkInterrupted();
@@ -145,38 +109,11 @@ public class SampleByFillValueNotKeyedRecordCursor implements DelegatingRecordCu
 
     @Override
     public void toTop() {
-        this.base.toTop();
+        super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
             this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             this.lastTimestamp = this.nextTimestamp;
-        }
-    }
-
-    @Override
-    public long size() {
-        return -1;
-    }
-
-    @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) {
-        // factory guarantees that base cursor is not empty
-        this.base = base;
-        this.baseRecord = base.getRecord();
-        this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-        this.lastTimestamp = this.nextTimestamp;
-        interruptor = executionContext.getSqlExecutionInterruptor();
-    }
-
-    private class TimestampFunc extends TimestampFunction implements Function {
-
-        public TimestampFunc(int position) {
-            super(position);
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastTimestamp;
         }
     }
 }

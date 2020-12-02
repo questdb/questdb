@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cutlass.line.CairoLineProtoParser;
 import io.questdb.cutlass.line.LineProtoLexer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

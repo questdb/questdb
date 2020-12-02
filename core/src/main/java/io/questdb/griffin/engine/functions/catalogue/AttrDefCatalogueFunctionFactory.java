@@ -45,7 +45,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         return "pg_catalog.pg_attrdef()";
     }
 
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
                 position,
                 new AttrDefCatalogueCursorFactory(configuration, METADATA)

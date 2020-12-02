@@ -43,7 +43,7 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
 
         // todo: limit pages
         ContiguousVirtualMemory strMem = new ContiguousVirtualMemory(1024 * 1024, Integer.MAX_VALUE);

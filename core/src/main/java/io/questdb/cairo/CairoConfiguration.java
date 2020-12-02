@@ -132,6 +132,18 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValueMaxPages();
 
+    int getSqlAnalyticStorePageSize();
+
+    int getSqlAnalyticStoreMaxPages();
+
+    int getSqlAnalyticRowIdPageSize();
+
+    int getSqlAnalyticRowIdMaxPages();
+
+    int getSqlAnalyticTreeKeyPageSize();
+
+    int getSqlAnalyticTreeKeyMaxPages();
+
     long getSqlLatestByRowCount();
 
     int getSqlHashJoinLightValuePageSize();

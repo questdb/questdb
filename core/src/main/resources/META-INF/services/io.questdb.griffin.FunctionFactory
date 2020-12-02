@@ -22,6 +22,7 @@
 #
 ################################################################################
 
+
 ################################################################################
 #     ___                  _   ____  ____
 #    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -507,3 +508,6 @@ io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFa
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
 io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
+
+# analytic functions
+io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
