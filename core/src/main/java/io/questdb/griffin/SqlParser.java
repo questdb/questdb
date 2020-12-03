@@ -934,18 +934,37 @@ public final class SqlParser {
         }
 
         if (isValuesKeyword(tok)) {
-            expectTok(lexer, '(');
+            int count = -1;
+            while (true) {
+                expectTok(lexer, '(');
 
-            do {
-                ExpressionNode expr = expectExpr(lexer);
-                if (Chars.equals(expr.token, ')')) {
-                    throw err(lexer, "missing column value");
+                do {
+                    ExpressionNode expr = expectExpr(lexer);
+                    if (Chars.equals(expr.token, ')')) {
+                        throw err(lexer, "missing column value");
+                    }
+                    model.addColumnValue(expr);
+
+                } while (Chars.equals((tok = tok(lexer, "','")), ','));
+
+                if (count == -1) {
+                    count = model.getColumnValues().size();
+                }
+                else if (count != model.getColumnValues().size()) {
+                    // Statement error: Something like INSERT... VALUES (1,2),(1,2,3)
+                    throw SqlException.$(lexer.lastTokenPosition(), "Each value set must contain the same number of values.");
                 }
 
-                model.addColumnValue(expr);
-            } while (Chars.equals((tok = tok(lexer, "','")), ','));
+                expectTok(tok, lexer.lastTokenPosition(), ')');
 
-            expectTok(tok, lexer.lastTokenPosition(), ')');
+                if ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
+                    model.addValueSet();
+                }
+                else {
+                    break;
+                }
+            }
+
             model.setEndOfValuesPosition(lexer.lastTokenPosition());
 
             return model;

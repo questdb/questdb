@@ -1542,6 +1542,10 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
+
+        ObjList<VirtualRecord> records = new ObjList<>();
+        ObjList<RecordToRowCopier> copiers = new ObjList<>();
+
         try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
@@ -1565,38 +1569,55 @@ public class SqlCompiler implements Closeable {
                         timestampFunction = function;
                     }
                 }
+
+                if (writerTimestampIndex > -1 && timestampFunction == null) {
+                    throw SqlException.$(0, "insert statement must populate timestamp");
+                }
+
+                VirtualRecord record = new VirtualRecord(valueFunctions);
+                records.add(record);
+                copiers.add(assembleRecordToRowCopier(asm, record, metadata, listColumnFilter));
+
             } else {
                 final int columnCount = metadata.getColumnCount();
-                final ObjList<ExpressionNode> values = model.getColumnValues();
-                final int valueCount = values.size();
-                if (columnCount != valueCount) {
-                    throw SqlException.$(model.getEndOfValuesPosition(), "not enough values [expected=").put(columnCount).put(", actual=").put(values.size()).put(']');
-                }
-                valueFunctions = new ObjList<>(columnCount);
-                for (int i = 0; i < columnCount; i++) {
-                    Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                    if (functionIsTimestamp(
-                            model,
-                            valueFunctions,
-                            metadata,
-                            writerTimestampIndex,
-                            i,
-                            i,
-                            function
-                    )) {
-                        timestampFunction = function;
+                ObjList<ExpressionNode> values;
+
+                do {
+                    listColumnFilter.clear();
+                    values = model.getColumnValues();
+
+                    if (columnCount != values.size()) {
+                        throw SqlException.$(model.getEndOfValuesPosition(), "not enough values [expected=").put(columnCount).put(", actual=").put(values.size()).put(']');
                     }
-                }
+                    valueFunctions = new ObjList<>(columnCount);
+                    for (int i = 0; i < columnCount; i++) {
+                        Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
+                        if (functionIsTimestamp(
+                                model,
+                                valueFunctions,
+                                metadata,
+                                writerTimestampIndex,
+                                i,
+                                i,
+                                function
+                        )) {
+                            timestampFunction = function;
+                        }
+                    }
+
+                    // validate timestamp
+                    if (writerTimestampIndex > -1 && timestampFunction == null) {
+                        throw SqlException.$(0, "insert statement must populate timestamp");
+                    }
+
+                    VirtualRecord record = new VirtualRecord(valueFunctions);
+                    records.add(record);
+                    copiers.add(assembleRecordToRowCopier(asm, record, metadata, listColumnFilter));
+                    model.nextColumnValue();
+                } while (model.hasNextColumnValue());
             }
 
-            // validate timestamp
-            if (writerTimestampIndex > -1 && timestampFunction == null) {
-                throw SqlException.$(0, "insert statement must populate timestamp");
-            }
-
-            VirtualRecord record = new VirtualRecord(valueFunctions);
-            RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
-            return compiledQuery.ofInsert(new InsertStatementImpl(engine, Chars.toString(name.token), record, copier, timestampFunction, structureVersion));
+            return compiledQuery.ofInsert(new InsertStatementImpl(engine, Chars.toString(name.token), records, copiers, timestampFunction, structureVersion));
         } catch (SqlException e) {
             Misc.freeObjList(valueFunctions);
             throw e;

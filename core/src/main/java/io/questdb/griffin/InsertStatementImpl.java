@@ -31,8 +31,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class InsertStatementImpl implements InsertStatement {
-    private final VirtualRecord virtualRecord;
-    private final SqlCompiler.RecordToRowCopier copier;
+    private final ObjList<VirtualRecord> virtualRecords;
+    private final ObjList<SqlCompiler.RecordToRowCopier> copiers;
     private final Function timestampFunction;
     private final RowFactory rowFactory;
     private final long structureVersion;
@@ -43,15 +43,15 @@ public class InsertStatementImpl implements InsertStatement {
     public InsertStatementImpl(
             CairoEngine engine,
             String tableName,
-            VirtualRecord virtualRecord,
-            SqlCompiler.RecordToRowCopier copier,
+            ObjList<VirtualRecord> virtualRecords,
+            ObjList<SqlCompiler.RecordToRowCopier> copiers,
             Function timestampFunction,
             long structureVersion
     ) {
         this.engine = engine;
         this.tableName = tableName;
-        this.virtualRecord = virtualRecord;
-        this.copier = copier;
+        this.virtualRecords = virtualRecords;
+        this.copiers = copiers;
         this.timestampFunction = timestampFunction;
         if (timestampFunction != null) {
             rowFactory = this::getRowWithTimestamp;
@@ -104,7 +104,7 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     private void initContext(SqlExecutionContext executionContext) {
-        final ObjList<? extends Function> functions = virtualRecord.getFunctions();
+        final ObjList<? extends Function> functions = virtualRecords.get(0).getFunctions();
         Function.init(functions, null, executionContext);
         if (timestampFunction != null) {
             timestampFunction.init(null, executionContext);
@@ -121,10 +121,12 @@ public class InsertStatementImpl implements InsertStatement {
 
         @Override
         public long execute() {
-            final TableWriter.Row row = rowFactory.getRow(writer);
-            copier.copy(virtualRecord, row);
-            row.append();
-            return 1;
+            for (int i=0; i < virtualRecords.size(); i++) {
+                final TableWriter.Row row = rowFactory.getRow(writer);
+                copiers.get(i).copy(virtualRecords.get(i), row);
+                row.append();
+            }
+            return virtualRecords.size();
         }
 
         @Override

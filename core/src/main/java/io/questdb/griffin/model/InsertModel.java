@@ -30,12 +30,14 @@ import io.questdb.std.str.CharSink;
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
     private final CharSequenceHashSet columnSet = new CharSequenceHashSet();
-    private final ObjList<ExpressionNode> columnValues = new ObjList<>();
+    private final ObjList<ObjList<ExpressionNode>> columnValues = new ObjList<>();
     private final IntList columnPositions = new IntList();
     private ExpressionNode tableName;
     private QueryModel queryModel;
     private int selectKeywordPosition;
     private int endOfValuesPosition;
+    private ObjList<ExpressionNode> currentValueSet = null;
+    private int columnValuePosition = -1;
 
     private InsertModel() {
     }
@@ -49,7 +51,16 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     public void addColumnValue(ExpressionNode value) {
-        columnValues.add(value);
+        if (currentValueSet == null) {
+            columnValuePosition = 0;
+            addValueSet();
+        }
+        currentValueSet.add(value);
+    }
+
+    public void addValueSet() {
+        currentValueSet = new ObjList<>();
+        columnValues.add(currentValueSet);
     }
 
     @Override
@@ -58,6 +69,13 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.queryModel = null;
         this.columnSet.clear();
         this.columnPositions.clear();
+
+        for (int i=0; i < this.columnValues.size(); i++) {
+            this.columnValues.get(i).clear();
+        }
+        this.columnValuePosition = -1;
+        this.currentValueSet = null;
+
         this.columnValues.clear();
         this.selectKeywordPosition = 0;
         this.endOfValuesPosition = 0;
@@ -72,7 +90,18 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     public ObjList<ExpressionNode> getColumnValues() {
-        return columnValues;
+        if (columnValuePosition > -1) {
+            return columnValues.get(columnValuePosition);
+        }
+        return null;
+    }
+
+    public boolean hasNextColumnValue() {
+        return (columnValuePosition != columnValues.size());
+    }
+
+    public void nextColumnValue() {
+        columnValuePosition++;
     }
 
     public int getSelectKeywordPosition() {
@@ -129,16 +158,23 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         if (queryModel != null) {
             queryModel.toSink(sink);
         } else {
-            sink.put("values (");
+            sink.put("values ");
 
-            for (int i = 0, m = columnValues.size(); i < m; i++) {
-                if (i > 0) {
+            for (int outer = 0; outer < columnValues.size(); outer++) {
+                ObjList<ExpressionNode> valueSet = columnValues.get(outer);
+                if (outer > 0) {
                     sink.put(", ");
                 }
-                sink.put(columnValues.getQuick(i));
-            }
+                sink.put('(');
+                for (int i = 0, m = valueSet.size(); i < m; i++) {
+                    if (i > 0) {
+                        sink.put(", ");
+                    }
+                    sink.put(valueSet.getQuick(i));
+                }
 
-            sink.put(')');
+                sink.put(')');
+            }
         }
     }
 }
