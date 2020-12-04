@@ -29,7 +29,7 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
     private LongObjHashMap<SlavePeerDetails> slaveById = new LongObjHashMap<>();
     private ObjList<SlavePeerDetails> slaves = new ObjList<>();
     private int nWorkers;
-    private final ConnectionJobProducerQueue connectionProducerQueue;
+    private final ConnectionJobQueue connectionProducerQueue;
     private final ConnectionJobQueue[] connectionConsumerQueues;
 
     private static final ConnectionJobQueue createConnectionJobConsumerQueue(int queueLen) {
@@ -40,13 +40,21 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         return new ConnectionJobQueue(producerSeq, consumerSeq, queue);
     }
 
+    private static final ConnectionJobQueue createConnectionJobProducerQueue(int queueLen) {
+        Sequence producerSeq = new MPSequence(queueLen);
+        Sequence consumerSeq = new SCSequence();
+        RingQueue<ConnectionJobProducerEvent> queue = new RingQueue<>(ConnectionJobProducerEvent::new, queueLen);
+        producerSeq.then(consumerSeq).then(producerSeq);
+        return new ConnectionJobQueue(producerSeq, consumerSeq, queue);
+    }
+
     public ReplicationMasterConnectionMultiplexer(FilesFacade ff, WorkerPool senderWorkerPool, int producerQueueLen, int consumerQueueLen, ReplicationMasterCallbacks callbacks) {
         super();
         this.ff = ff;
         this.callbacks = callbacks;
 
         nWorkers = senderWorkerPool.getWorkerCount();
-        connectionProducerQueue = new ConnectionJobProducerQueue(producerQueueLen);
+        connectionProducerQueue = createConnectionJobProducerQueue(producerQueueLen);
         connectionConsumerQueues = new ConnectionJobQueue[nWorkers];
         for (int n = 0; n < nWorkers; n++) {
             final ConnectionJobQueue consumerQueue = createConnectionJobConsumerQueue(consumerQueueLen);
@@ -70,8 +78,8 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
     boolean handleTasks() {
         boolean busy = false;
         long seq;
-        while ((seq = connectionProducerQueue.consumerSeq.next()) >= 0) {
-            ConnectionJobProducerEvent event = connectionProducerQueue.queue.get(seq);
+        while ((seq = connectionProducerQueue.getConsumerSeq().next()) >= 0) {
+            ConnectionJobProducerEvent event = connectionProducerQueue.getEvent(seq);
             try {
                 long slaveId = event.slaveId;
                 switch (event.eventType) {
@@ -87,7 +95,7 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
                 }
             } finally {
                 event.clear();
-                connectionProducerQueue.consumerSeq.done(seq);
+                connectionProducerQueue.getConsumerSeq().done(seq);
             }
         }
         return busy;
@@ -290,13 +298,13 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         }
 
         private boolean tryHandleDisconnect() {
-            long seq = connectionProducerQueue.consumerSeq.next();
+            long seq = connectionProducerQueue.getConsumerSeq().next();
             if (seq >= 0) {
                 try {
-                    ConnectionJobProducerEvent event = connectionProducerQueue.queue.get(seq);
+                    ConnectionJobProducerEvent event = connectionProducerQueue.getEvent(seq);
                     event.assignDisconnected(slaveId, fd);
                 } finally {
-                    connectionProducerQueue.consumerSeq.done(seq);
+                    connectionProducerQueue.getConsumerSeq().done(seq);
                 }
                 return true;
             }
@@ -304,13 +312,13 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         }
 
         private boolean tryHandleSlaveCommitReady(int masterTableId) {
-            long seq = connectionProducerQueue.producerSeq.next();
+            long seq = connectionProducerQueue.getProducerSeq().next();
             if (seq >= 0) {
                 try {
-                    ConnectionJobProducerEvent event = connectionProducerQueue.queue.get(seq);
+                    ConnectionJobProducerEvent event = connectionProducerQueue.getEvent(seq);
                     event.assignSlaveComitReady(slaveId, masterTableId);
                 } finally {
-                    connectionProducerQueue.producerSeq.done(seq);
+                    connectionProducerQueue.getProducerSeq().done(seq);
                 }
                 return true;
             }
@@ -339,20 +347,6 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         }
     }
 
-    private static class ConnectionJobConsumerQueue {
-        private final Sequence producerSeq;
-        private final Sequence consumerSeq;
-        private final RingQueue<ConnectionJobConsumerEvent> queue;
-
-        public ConnectionJobConsumerQueue(int queueLen) {
-            super();
-            this.producerSeq = new SPSequence(queueLen);
-            this.consumerSeq = new SCSequence();
-            this.queue = new RingQueue<>(ConnectionJobConsumerEvent::new, queueLen);
-            producerSeq.then(consumerSeq).then(producerSeq);
-        }
-    }
-
     private static class ConnectionJobConsumerEvent implements ConnectionJobEvent {
         private SlaveConnection addedConnection;
 
@@ -364,20 +358,6 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         public void assignAddConnection(PeerConnection connection) {
             assert addedConnection == null;
             addedConnection = (SlaveConnection) connection;
-        }
-    }
-
-    private static class ConnectionJobProducerQueue {
-        private final Sequence producerSeq;
-        private final Sequence consumerSeq;
-        private final RingQueue<ConnectionJobProducerEvent> queue;
-
-        public ConnectionJobProducerQueue(int queueLen) {
-            super();
-            this.producerSeq = new MPSequence(queueLen);
-            this.consumerSeq = new SCSequence();
-            this.queue = new RingQueue<>(ConnectionJobProducerEvent::new, queueLen);
-            producerSeq.then(consumerSeq).then(producerSeq);
         }
     }
 
@@ -446,7 +426,7 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         private void handleConsumerEvents() {
             long seq = consumerQueue.getConsumerSeq().next();
             if (seq >= 0) {
-                ConnectionJobConsumerEvent event = (ConnectionJobConsumerEvent) consumerQueue.getQueue().get(seq);
+                ConnectionJobConsumerEvent event = consumerQueue.getEvent(seq);
                 try {
                     connections.add(event.addedConnection);
                     busy = true;

@@ -38,9 +38,9 @@ abstract class ReplicationPeerDetails implements Closeable {
     static class ConnectionJobQueue {
         private final Sequence producerSeq;
         private final Sequence consumerSeq;
-        private final RingQueue<ConnectionJobEvent> queue;
+        private final RingQueue<?> queue;
 
-        ConnectionJobQueue(Sequence producerSeq, Sequence consumerSeq, RingQueue<ConnectionJobEvent> queue) {
+        <T> ConnectionJobQueue(Sequence producerSeq, Sequence consumerSeq, RingQueue<T> queue) {
             super();
             this.producerSeq = producerSeq;
             this.consumerSeq = consumerSeq;
@@ -55,8 +55,9 @@ abstract class ReplicationPeerDetails implements Closeable {
             return consumerSeq;
         }
 
-        public RingQueue<ConnectionJobEvent> getQueue() {
-            return queue;
+        @SuppressWarnings("unchecked")
+        public <T> T getEvent(long seq) {
+            return (T) queue.get(seq);
         }
     }
 
@@ -89,7 +90,7 @@ abstract class ReplicationPeerDetails implements Closeable {
         long seq = queue.producerSeq.next();
         if (seq >= 0) {
             try {
-                ConnectionJobEvent event = queue.queue.get(seq);
+                ConnectionJobEvent event = queue.getEvent(seq);
                 PeerConnection connection;
                 if (connectionCache.size() > 0) {
                     int n = connectionCache.size() - 1;
