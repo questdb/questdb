@@ -99,6 +99,7 @@ public class TextDelimiterScanner implements Closeable {
         boolean quotes = false;
         long cursor = address;
         boolean delayedClosingQuote = false;
+        boolean lastParsedCharacterIsCR = false;
 
         // bit field that has bit set for bytes
         // that occurred in this text
@@ -143,13 +144,18 @@ public class TextDelimiterScanner implements Closeable {
                         byteBitFieldHi = byteBitFieldHi | (1L << (Byte.MAX_VALUE - 'A'));
                         lineCount++;
                         lineLen = 0;
+                    } else if (!lastParsedCharacterIsCR) {
+                        lineCount++;
                     }
+                    lastParsedCharacterIsCR = (b == '\r');
                     continue;
                 case '"':
                     quotes = true;
+                    lastParsedCharacterIsCR = false;
                     continue;
                 default:
                     lineLen++;
+                    lastParsedCharacterIsCR = false;
                     if (potentialDelimiterBytes[b & 0xff] == 1) {
                         break;
                     }
