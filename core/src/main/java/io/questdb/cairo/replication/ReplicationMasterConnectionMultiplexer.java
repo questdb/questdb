@@ -3,13 +3,13 @@ package io.questdb.cairo.replication;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicReference;
 
+import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionJob;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionJobEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionJobQueue;
 import io.questdb.cairo.replication.ReplicationPeerDetails.PeerConnection;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorFrame;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -20,30 +20,31 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 
 public class ReplicationMasterConnectionMultiplexer implements Closeable {
     private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionMultiplexer.class);
     private final FilesFacade ff;
     private ReplicationMasterCallbacks callbacks;
-    private LongObjHashMap<SlavePeerDetails> slaveById = new LongObjHashMap<>();
-    private ObjList<SlavePeerDetails> slaves = new ObjList<>();
+    private LongObjHashMap<SlavePeerDetails> peerById = new LongObjHashMap<>();
+    private ObjList<SlavePeerDetails> peers = new ObjList<>();
     private int nWorkers;
     private final ConnectionJobQueue connectionProducerQueue;
     private final ConnectionJobQueue[] connectionConsumerQueues;
 
-    private static final ConnectionJobQueue createConnectionJobConsumerQueue(int queueLen) {
+    private static final ConnectionJobQueue createConnectionJobConsumerQueue(int queueLen, ObjectFactory<?> eventFactory) {
         Sequence producerSeq = new SPSequence(queueLen);
         Sequence consumerSeq = new SCSequence();
-        RingQueue<ConnectionJobEvent> queue = new RingQueue<>(ConnectionJobConsumerEvent::new, queueLen);
+        RingQueue<?> queue = new RingQueue<>(eventFactory, queueLen);
         producerSeq.then(consumerSeq).then(producerSeq);
         return new ConnectionJobQueue(producerSeq, consumerSeq, queue);
     }
 
-    private static final ConnectionJobQueue createConnectionJobProducerQueue(int queueLen) {
+    private static final ConnectionJobQueue createConnectionJobProducerQueue(int queueLen, ObjectFactory<?> eventFactory) {
         Sequence producerSeq = new MPSequence(queueLen);
         Sequence consumerSeq = new SCSequence();
-        RingQueue<ConnectionJobProducerEvent> queue = new RingQueue<>(ConnectionJobProducerEvent::new, queueLen);
+        RingQueue<?> queue = new RingQueue<>(eventFactory, queueLen);
         producerSeq.then(consumerSeq).then(producerSeq);
         return new ConnectionJobQueue(producerSeq, consumerSeq, queue);
     }
@@ -54,24 +55,24 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         this.callbacks = callbacks;
 
         nWorkers = senderWorkerPool.getWorkerCount();
-        connectionProducerQueue = createConnectionJobProducerQueue(producerQueueLen);
+        connectionProducerQueue = createConnectionJobProducerQueue(producerQueueLen, ConnectionJobProducerEvent::new);
         connectionConsumerQueues = new ConnectionJobQueue[nWorkers];
         for (int n = 0; n < nWorkers; n++) {
-            final ConnectionJobQueue consumerQueue = createConnectionJobConsumerQueue(consumerQueueLen);
+            final ConnectionJobQueue consumerQueue = createConnectionJobConsumerQueue(consumerQueueLen, ConnectionJobConsumerEvent::new);
             SlaveConnectionJob sendJob = new SlaveConnectionJob(consumerQueue);
             connectionConsumerQueues[n] = consumerQueue;
             senderWorkerPool.assign(n, sendJob);
         }
     }
 
-    boolean tryAddConnection(long slaveId, long fd) {
-        LOG.info().$("slave connected [slaveId=").$(slaveId).$(", fd=").$(fd).$(']').$();
-        SlavePeerDetails slaveDetails = getSlaveDetails(slaveId);
+    boolean tryAddConnection(long peerId, long fd) {
+        LOG.info().$("slave connected [peerId=").$(peerId).$(", fd=").$(fd).$(']').$();
+        SlavePeerDetails slaveDetails = getSlaveDetails(peerId);
         return slaveDetails.tryAddConnection(fd);
     }
 
-    boolean tryQueueSendFrame(long slaveId, ReplicationStreamGeneratorFrame frame) {
-        SlavePeerDetails slaveDetails = getSlaveDetails(slaveId);
+    boolean tryQueueSendFrame(long peerId, ReplicationStreamGeneratorFrame frame) {
+        SlavePeerDetails slaveDetails = getSlaveDetails(peerId);
         return slaveDetails.tryQueueSendFrame(frame);
     }
 
@@ -81,16 +82,16 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         while ((seq = connectionProducerQueue.getConsumerSeq().next()) >= 0) {
             ConnectionJobProducerEvent event = connectionProducerQueue.getEvent(seq);
             try {
-                long slaveId = event.slaveId;
+                long peerId = event.slaveId;
                 switch (event.eventType) {
                     case SlaveReadyToCommit:
-                        callbacks.onSlaveReadyToCommit(slaveId, event.tableId);
+                        callbacks.onSlaveReadyToCommit(peerId, event.tableId);
                         break;
                     case SlaveDisconnected:
-                        SlavePeerDetails slaveDetails = getSlaveDetails(slaveId);
+                        SlavePeerDetails slaveDetails = getSlaveDetails(peerId);
                         long fd = event.fd;
                         slaveDetails.removeConnection(fd);
-                        callbacks.onSlaveDisconnected(slaveId, fd);
+                        callbacks.onSlaveDisconnected(peerId, fd);
                         break;
                 }
             } finally {
@@ -101,23 +102,23 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         return busy;
     }
 
-    private SlavePeerDetails getSlaveDetails(long slaveId) {
-        SlavePeerDetails slaveDetails = slaveById.get(slaveId);
+    private SlavePeerDetails getSlaveDetails(long peerId) {
+        SlavePeerDetails slaveDetails = peerById.get(peerId);
         if (null == slaveDetails) {
-            slaveDetails = new SlavePeerDetails(slaveId, nWorkers, connectionConsumerQueues);
-            slaves.add(slaveDetails);
-            slaveById.put(slaveId, slaveDetails);
+            slaveDetails = new SlavePeerDetails(peerId, nWorkers, connectionConsumerQueues);
+            peers.add(slaveDetails);
+            peerById.put(peerId, slaveDetails);
         }
         return slaveDetails;
     }
 
     @Override
     public void close() {
-        if (null != slaveById) {
-            Misc.freeObjList(slaves);
-            slaves = null;
-            slaveById.clear();
-            slaveById = null;
+        if (null != peerById) {
+            Misc.freeObjList(peers);
+            peers = null;
+            peerById.clear();
+            peerById = null;
             callbacks = null;
         }
     }
@@ -140,7 +141,7 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
     }
 
     private class SlaveConnection implements PeerConnection {
-        private long slaveId = Long.MIN_VALUE;
+        private long peerId = Long.MIN_VALUE;
         private long fd = -1;
         private int workerId;
         private final AtomicReference<ReplicationStreamGeneratorFrame> queuedSendFrame = new AtomicReference<>();
@@ -160,7 +161,7 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         public PeerConnection of(long slaveId, long fd, int workerId) {
             assert null == queuedSendFrame.get();
             assert null == activeSendFrame;
-            this.slaveId = slaveId;
+            this.peerId = slaveId;
             this.fd = fd;
             this.workerId = workerId;
             disconnected = false;
@@ -186,7 +187,8 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
             return queuedSendFrame.compareAndSet(null, frame);
         }
 
-        boolean handleSendTask() {
+        @Override
+        public boolean handleSendTask() {
             assert !disconnected;
             boolean wroteSomething = false;
             while (true) {
@@ -239,7 +241,8 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
             }
         }
 
-        boolean handleReceiveTask() {
+        @Override
+        public boolean handleReceiveTask() {
             assert !disconnected;
             boolean readSomething = false;
             while (true) {
@@ -293,7 +296,8 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
             }
         }
 
-        boolean isDisconnected() {
+        @Override
+        public boolean isDisconnected() {
             return disconnected;
         }
 
@@ -302,7 +306,7 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
             if (seq >= 0) {
                 try {
                     ConnectionJobProducerEvent event = connectionProducerQueue.getEvent(seq);
-                    event.assignDisconnected(slaveId, fd);
+                    event.assignDisconnected(peerId, fd);
                 } finally {
                     connectionProducerQueue.getConsumerSeq().done(seq);
                 }
@@ -316,7 +320,7 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
             if (seq >= 0) {
                 try {
                     ConnectionJobProducerEvent event = connectionProducerQueue.getEvent(seq);
-                    event.assignSlaveComitReady(slaveId, masterTableId);
+                    event.assignSlaveComitReady(peerId, masterTableId);
                 } finally {
                     connectionProducerQueue.getProducerSeq().done(seq);
                 }
@@ -342,22 +346,29 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         private void reset() {
             queuedSendFrame.set(null);
             activeSendFrame = null;
-            slaveId = Long.MIN_VALUE;
+            peerId = Long.MIN_VALUE;
             fd = -1;
         }
     }
 
     private static class ConnectionJobConsumerEvent implements ConnectionJobEvent {
+        private enum EventType {
+            SlaveConnected
+        };
+
+        private EventType eventType;
         private SlaveConnection addedConnection;
 
-        private void clear() {
-            addedConnection = null;
+        @Override
+        public void assignPeerConnected(PeerConnection connection) {
+            assert eventType == null;
+            eventType = EventType.SlaveConnected;
+            addedConnection = (SlaveConnection) connection;
         }
 
         @Override
-        public void assignAddConnection(PeerConnection connection) {
-            assert addedConnection == null;
-            addedConnection = (SlaveConnection) connection;
+        public void clear() {
+            eventType = null;
         }
     }
 
@@ -390,50 +401,21 @@ public class ReplicationMasterConnectionMultiplexer implements Closeable {
         }
     }
 
-    private class SlaveConnectionJob implements Job {
-        private final ConnectionJobQueue consumerQueue;
-        private final ObjList<SlaveConnection> connections = new ObjList<>();
-        private boolean busy;
-
+    private class SlaveConnectionJob extends ConnectionJob<ConnectionJobConsumerEvent> {
         private SlaveConnectionJob(ConnectionJobQueue consumerQueue) {
-            super();
-            this.consumerQueue = consumerQueue;
+            super(consumerQueue);
         }
 
         @Override
-        public boolean run(int workerId) {
-            busy = false;
-            int nConnection = 0;
-            while (nConnection < connections.size()) {
-                SlaveConnection connection = connections.get(nConnection);
-                if (connection.handleSendTask()) {
-                    busy = true;
-                } else {
-                }
-                if (connection.handleReceiveTask()) {
-                    busy = true;
-                }
-                if (connection.isDisconnected()) {
-                    connections.remove(nConnection);
-                } else {
-                    nConnection++;
-                }
-            }
-            handleConsumerEvents();
-            return busy;
+        protected boolean isBlocked() {
+            return false;
         }
 
-        private void handleConsumerEvents() {
-            long seq = consumerQueue.getConsumerSeq().next();
-            if (seq >= 0) {
-                ConnectionJobConsumerEvent event = consumerQueue.getEvent(seq);
-                try {
-                    connections.add(event.addedConnection);
-                    busy = true;
-                } finally {
-                    event.clear();
-                    consumerQueue.getConsumerSeq().done(seq);
-                }
+        @Override
+        protected void handleConsumerEvent(ConnectionJobConsumerEvent event) {
+            switch (event.eventType) {
+                case SlaveConnected:
+                    addConnection(event.addedConnection);
             }
         }
     }
