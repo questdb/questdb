@@ -14,7 +14,7 @@ import io.questdb.cairo.TablePageFrameCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.replication.ReplicationMasterConnectionMultiplexer.ReplicationMasterCallbacks;
+import io.questdb.cairo.replication.ReplicationMasterConnectionDemultiplexer.ReplicationMasterCallbacks;
 import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorFrame;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorResult;
@@ -33,8 +33,8 @@ import io.questdb.std.IntList;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
 
-public class ReplicationMasterConnectionMultiplexerTest extends AbstractGriffinTest {
-    private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionMultiplexerTest.class);
+public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffinTest {
+    private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionDemultiplexerTest.class);
 
     @BeforeClass
     public static void setUp() throws IOException {
@@ -116,12 +116,12 @@ public class ReplicationMasterConnectionMultiplexerTest extends AbstractGriffinT
             }
 
             @Override
-            public void onSlaveDisconnected(long sid, long fd) {
+            public void onPeerDisconnected(long sid, long fd) {
                 Assert.assertEquals(slaveId, sid);
                 Assert.fail();
             }
         };
-        ReplicationMasterConnectionMultiplexer masterConnMux = new ReplicationMasterConnectionMultiplexer(configuration.getFilesFacade(), workerPool, muxProducerQueueLen,
+        ReplicationMasterConnectionDemultiplexer masterConnMux = new ReplicationMasterConnectionDemultiplexer(configuration.getFilesFacade(), workerPool, muxProducerQueueLen,
                 1, muxConsumerQueueLen, masterConnMuxCallbacks);
         workerPool.start(LOG);
         MockConnection conn1 = new MockConnection();

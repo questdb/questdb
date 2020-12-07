@@ -32,7 +32,7 @@ abstract class ReplicationPeerDetails implements Closeable {
 
         int getWorkertId();
 
-        SequencedQueue<SENDEVT> getConsumerQueue();
+        SequencedQueue<SENDEVT> getConnectionQueue();
 
         boolean handleSendTask();
 
