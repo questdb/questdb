@@ -122,7 +122,7 @@ public class ReplicationMasterConnectionMultiplexerTest extends AbstractGriffinT
             }
         };
         ReplicationMasterConnectionMultiplexer masterConnMux = new ReplicationMasterConnectionMultiplexer(configuration.getFilesFacade(), workerPool, muxProducerQueueLen,
-                muxConsumerQueueLen, masterConnMuxCallbacks);
+                1, muxConsumerQueueLen, masterConnMuxCallbacks);
         workerPool.start(LOG);
         MockConnection conn1 = new MockConnection();
         boolean added = masterConnMux.tryAddConnection(slaveId, conn1.acceptorFd);

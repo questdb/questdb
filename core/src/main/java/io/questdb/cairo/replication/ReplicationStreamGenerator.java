@@ -255,6 +255,10 @@ public class ReplicationStreamGenerator implements Closeable {
             ready.set(true);
         }
 
+        public void cancel() {
+            complete();
+        }
+
         private boolean isReady() {
             return ready.get();
         }
