@@ -140,10 +140,6 @@ abstract class ReplicationPeerDetails implements Closeable {
             this.nWorker = nWorker;
             this.newConnection = newConnection;
         }
-
-        void clear() {
-            eventType = 0;
-        }
     }
 
     static abstract class ConnectionWorkerJob implements Job {
@@ -186,16 +182,16 @@ abstract class ReplicationPeerDetails implements Closeable {
             while ((seq = consumerSeq.next()) >= 0) {
                 ConnectionWorkerEvent event = connectionWorkerQueue.getEvent(seq);
                 try {
-                    if (nWorker == event.nWorker || nWorker == -1) {
+                    if (nWorker == event.nWorker || event.nWorker == -1) {
                         if (event.eventType == ConnectionWorkerEvent.ADD_NEW_CONNECTION_EVENT_TYPE) {
                             connections.add(event.newConnection);
+                            LOG.info().$("handling new connection [fd=").$(event.newConnection.getFd()).$(", nWorker=").$(nWorker).$(']').$();
                         } else {
                             handleConsumerEvent(event);
                         }
                         busy = true;
                     }
                 } finally {
-                    event.clear();
                     consumerSeq.done(seq);
                 }
             }
