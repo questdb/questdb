@@ -1,9 +1,5 @@
 package io.questdb.cairo.replication;
 
-import java.io.Closeable;
-
-import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerEvent;
-import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerJob;
 import io.questdb.cairo.replication.ReplicationPeerDetails.PeerConnection;
 import io.questdb.cairo.replication.ReplicationPeerDetails.SequencedQueue;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorFrame;
@@ -11,21 +7,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.LongObjHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
-public class ReplicationMasterConnectionDemultiplexer implements Closeable {
+public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleConnectionManager {
     private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionDemultiplexer.class);
-    private final FilesFacade ff;
     private final int sendFrameQueueLen;
     private ReplicationMasterCallbacks callbacks;
-    private LongObjHashMap<ReplicationPeerDetails> peerById = new LongObjHashMap<>();
-    private ObjList<ReplicationPeerDetails> peers = new ObjList<>();
-    private int nWorkers;
     private final SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue;
-    private final ConnectionWorkerJob[] connectionWorkerJobs;
 
     public ReplicationMasterConnectionDemultiplexer(
             FilesFacade ff,
@@ -35,26 +23,11 @@ public class ReplicationMasterConnectionDemultiplexer implements Closeable {
             int sendFrameQueueLen,
             ReplicationMasterCallbacks callbacks
     ) {
-        super();
-        this.ff = ff;
+        super(ff, senderWorkerPool, connectionCallbackQueueLen, newConnectionQueueLen);
         this.callbacks = callbacks;
         this.sendFrameQueueLen = sendFrameQueueLen;
 
-        nWorkers = senderWorkerPool.getWorkerCount();
         connectionCallbackQueue = SequencedQueue.createMultipleProducerSingleConsumerQueue(connectionCallbackQueueLen, ConnectionCallbackEvent::new);
-        connectionWorkerJobs = new ConnectionWorkerJob[nWorkers];
-        for (int n = 0; n < nWorkers; n++) {
-            final SequencedQueue<ConnectionWorkerEvent> consumerQueue = SequencedQueue.createSingleProducerSingleConsumerQueue(newConnectionQueueLen, ConnectionWorkerEvent::new);
-            ConnectionWorkerJob sendJob = new ConnectionWorkerJob(consumerQueue);
-            connectionWorkerJobs[n] = sendJob;
-            senderWorkerPool.assign(n, sendJob);
-        }
-    }
-
-    boolean tryAddConnection(long peerId, long fd) {
-        LOG.info().$("peer connected [peerId=").$(peerId).$(", fd=").$(fd).$(']').$();
-        ReplicationPeerDetails peerDetails = getPeerDetails(peerId);
-        return peerDetails.tryAddConnection(fd);
     }
 
     boolean tryQueueSendFrame(long peerId, ReplicationStreamGeneratorFrame frame) {
@@ -62,6 +35,12 @@ public class ReplicationMasterConnectionDemultiplexer implements Closeable {
         return slaveDetails.tryQueueSendFrame(frame);
     }
 
+    @Override
+    ReplicationPeerDetails createNewReplicationPeerDetails(long peerId) {
+        return new SlavePeerDetails(peerId, nWorkers, connectionWorkerJobs);
+    }
+
+    @Override
     boolean handleTasks() {
         boolean busy = false;
         long seq;
@@ -86,28 +65,6 @@ public class ReplicationMasterConnectionDemultiplexer implements Closeable {
             }
         }
         return busy;
-    }
-
-    @SuppressWarnings("unchecked")
-    private <T extends ReplicationPeerDetails> T getPeerDetails(long peerId) {
-        ReplicationPeerDetails peerDetails = peerById.get(peerId);
-        if (null == peerDetails) {
-            peerDetails = new SlavePeerDetails(peerId, nWorkers, connectionWorkerJobs);
-            peers.add(peerDetails);
-            peerById.put(peerId, peerDetails);
-        }
-        return (T) peerDetails;
-    }
-
-    @Override
-    public void close() {
-        if (null != peerById) {
-            Misc.freeObjList(peers);
-            peers = null;
-            peerById.clear();
-            peerById = null;
-            callbacks = null;
-        }
     }
 
     interface ReplicationMasterCallbacks {

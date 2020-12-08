@@ -121,11 +121,11 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 Assert.fail();
             }
         };
-        ReplicationMasterConnectionDemultiplexer masterConnMux = new ReplicationMasterConnectionDemultiplexer(configuration.getFilesFacade(), workerPool, muxProducerQueueLen,
+        ReplicationMasterConnectionDemultiplexer masterConnDemux = new ReplicationMasterConnectionDemultiplexer(configuration.getFilesFacade(), workerPool, muxProducerQueueLen,
                 1, muxConsumerQueueLen, masterConnMuxCallbacks);
         workerPool.start(LOG);
         MockConnection conn1 = new MockConnection();
-        boolean added = masterConnMux.tryAddConnection(slaveId, conn1.acceptorFd);
+        boolean added = masterConnDemux.tryAddConnection(slaveId, conn1.acceptorFd);
         Assert.assertTrue(added);
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$();
         compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
@@ -170,10 +170,10 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 if (!streamResult.isRetry()) {
                     ReplicationStreamGeneratorFrame frame = streamResult.getFrame();
                     while (true) {
-                        boolean frameQueued = masterConnMux.tryQueueSendFrame(slaveId, frame);
+                        boolean frameQueued = masterConnDemux.tryQueueSendFrame(slaveId, frame);
                         if (!frameQueued) {
                             streamReceiver.handleIO();
-                            masterConnMux.handleTasks();
+                            masterConnDemux.handleTasks();
                         } else {
                             break;
                         }
@@ -189,7 +189,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 int readyToCommitMasterTableId = refReadyToCommitMasterTableId.get();
                 if (readyToCommitMasterTableId == Integer.MIN_VALUE) {
                     streamReceiver.handleIO();
-                    masterConnMux.handleTasks();
+                    masterConnDemux.handleTasks();
                 } else {
                     Assert.assertEquals(reader.getMetadata().getId(), readyToCommitMasterTableId);
                     break;
@@ -201,10 +201,10 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 Thread.yield();
             }
             while (true) {
-                boolean frameQueued = masterConnMux.tryQueueSendFrame(slaveId, streamResult.getFrame());
+                boolean frameQueued = masterConnDemux.tryQueueSendFrame(slaveId, streamResult.getFrame());
                 if (!frameQueued) {
                     streamReceiver.handleIO();
-                    masterConnMux.handleTasks();
+                    masterConnDemux.handleTasks();
                 } else {
                     break;
                 }
@@ -213,7 +213,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
             // Wait for slave to commit
             while (streamReceiver.getnCommits() == 0) {
                 streamReceiver.handleIO();
-                masterConnMux.handleTasks();
+                masterConnDemux.handleTasks();
             }
         }
 
@@ -223,7 +223,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
 
         conn1.close();
         workerPool.halt();
-        masterConnMux.close();
+        masterConnDemux.close();
 
         String actual = select("SELECT * FROM " + destTableName);
         Assert.assertEquals(expected, actual);
