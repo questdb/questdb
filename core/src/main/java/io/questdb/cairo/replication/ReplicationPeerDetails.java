@@ -4,6 +4,7 @@ import java.io.Closeable;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
@@ -31,8 +32,6 @@ abstract class ReplicationPeerDetails implements Closeable {
         long getFd();
 
         int getWorkertId();
-
-        SequencedQueue<SENDEVT> getConnectionQueue();
 
         boolean handleSendTask();
 
@@ -84,18 +83,79 @@ abstract class ReplicationPeerDetails implements Closeable {
         }
     }
 
-    static class ConnectionWorkerEvent {
-        private PeerConnection<?> newConnection;
+    public static class FanOutSequencedQueue<T> {
+        public static final <T> FanOutSequencedQueue<T> createSingleProducerFanOutConsumerQueue(int queueLen, ObjectFactory<T> eventFactory, int nConsumers) {
+            Sequence producerSeq = new SPSequence(queueLen);
+            Sequence[] consumerSeqs = new Sequence[nConsumers];
+            if (nConsumers > 1) {
+                FanOut fanOut = new FanOut();
+                for (int n = 0; n < nConsumers; n++) {
+                    SCSequence consumerSeq = new SCSequence();
+                    consumerSeqs[n] = consumerSeq;
+                    fanOut.and(consumerSeq);
+                }
+                producerSeq.then(fanOut).then(producerSeq);
+            } else {
+                SCSequence consumerSeq = new SCSequence();
+                consumerSeqs[0] = consumerSeq;
+                producerSeq.then(consumerSeq).then(producerSeq);
+            }
+            RingQueue<T> queue = new RingQueue<>(eventFactory, queueLen);
+            return new FanOutSequencedQueue<T>(producerSeq, consumerSeqs, queue);
+        }
+
+        private final Sequence producerSeq;
+        private final Sequence[] consumerSeqs;
+        private final RingQueue<T> queue;
+
+        FanOutSequencedQueue(Sequence producerSeq, Sequence[] consumerSeqs, RingQueue<T> queue) {
+            super();
+            this.producerSeq = producerSeq;
+            this.consumerSeqs = consumerSeqs;
+            this.queue = queue;
+        }
+
+        public Sequence getProducerSeq() {
+            return producerSeq;
+        }
+
+        public Sequence getConsumerSeq(int nConsumer) {
+            return consumerSeqs[nConsumer];
+        }
+
+        public T getEvent(long seq) {
+            return queue.get(seq);
+        }
     }
 
-    static class ConnectionWorkerJob implements Job {
-        private final SequencedQueue<ConnectionWorkerEvent> newConnectionQueue;
+    static class ConnectionWorkerEvent {
+        final static byte ADD_NEW_CONNECTION_EVENT_TYPE = 1;
+        private byte eventType;
+        private int nWorker;
+        private PeerConnection<?> newConnection;
+
+        void assignAddNewConnection(int nWorker, PeerConnection<?> newConnection) {
+            assert eventType == (byte) 0;
+            eventType = ADD_NEW_CONNECTION_EVENT_TYPE;
+            this.nWorker = nWorker;
+            this.newConnection = newConnection;
+        }
+
+        void clear() {
+            eventType = 0;
+        }
+    }
+
+    static abstract class ConnectionWorkerJob implements Job {
+        private final int nWorker;
+        private final FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue;
         private final ObjList<PeerConnection<?>> connections = new ObjList<>();
         private boolean busy;
 
-        protected ConnectionWorkerJob(SequencedQueue<ConnectionWorkerEvent> consumerQueue) {
+        protected ConnectionWorkerJob(int nWorker, FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue) {
             super();
-            this.newConnectionQueue = consumerQueue;
+            this.nWorker = nWorker;
+            this.connectionWorkerQueue = connectionWorkerQueue;
         }
 
         @Override
@@ -122,17 +182,26 @@ abstract class ReplicationPeerDetails implements Closeable {
 
         private void handleConsumerEvents() {
             long seq;
-            while ((seq = newConnectionQueue.getConsumerSeq().next()) >= 0) {
-                ConnectionWorkerEvent event = newConnectionQueue.getEvent(seq);
+            Sequence consumerSeq = connectionWorkerQueue.getConsumerSeq(nWorker);
+            while ((seq = consumerSeq.next()) >= 0) {
+                ConnectionWorkerEvent event = connectionWorkerQueue.getEvent(seq);
                 try {
-                    connections.add(event.newConnection);
-                    busy = true;
+                    if (nWorker == event.nWorker || nWorker == -1) {
+                        if (event.eventType == ConnectionWorkerEvent.ADD_NEW_CONNECTION_EVENT_TYPE) {
+                            connections.add(event.newConnection);
+                        } else {
+                            handleConsumerEvent(event);
+                        }
+                        busy = true;
+                    }
                 } finally {
-                    event.newConnection = null;
-                    newConnectionQueue.getConsumerSeq().done(seq);
+                    event.clear();
+                    consumerSeq.done(seq);
                 }
             }
         }
+
+        protected abstract void handleConsumerEvent(ConnectionWorkerEvent event);
     }
 
     ReplicationPeerDetails(long peerId, int nWorkers, ConnectionWorkerJob[] connectionWorkerJobs, ObjectFactory<PeerConnection<?>> connectionFactory) {
@@ -160,7 +229,7 @@ abstract class ReplicationPeerDetails implements Closeable {
             }
         }
 
-        SequencedQueue<ConnectionWorkerEvent> queue = connectionWorkerJobs[workerId].newConnectionQueue;
+        FanOutSequencedQueue<ConnectionWorkerEvent> queue = connectionWorkerJobs[workerId].connectionWorkerQueue;
         long seq = queue.producerSeq.next();
         if (seq >= 0) {
             try {
@@ -174,7 +243,7 @@ abstract class ReplicationPeerDetails implements Closeable {
                     connection = connectionFactory.newInstance();
                 }
                 connection.of(peerId, fd, workerId);
-                event.newConnection = connection;
+                event.assignAddNewConnection(workerId, connection);
                 nAssignedByWorkerId.set(workerId, nAssignedByWorkerId.getQuick(workerId) + 1);
                 connections.add(connection);
             } finally {

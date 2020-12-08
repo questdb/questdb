@@ -4,7 +4,7 @@ import java.io.Closeable;
 
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerJob;
-import io.questdb.cairo.replication.ReplicationPeerDetails.SequencedQueue;
+import io.questdb.cairo.replication.ReplicationPeerDetails.FanOutSequencedQueue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -25,16 +25,17 @@ abstract class AbstractMultipleConnectionManager implements Closeable {
             FilesFacade ff,
             WorkerPool connectionWorkerPool,
             int connectionCallbackQueueLen,
-            int newConnectionQueueLen
+            int connectionWorkerQueueLen
     ) {
         super();
         this.ff = ff;
 
         nWorkers = connectionWorkerPool.getWorkerCount();
+        FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue = FanOutSequencedQueue.createSingleProducerFanOutConsumerQueue(connectionWorkerQueueLen, ConnectionWorkerEvent::new,
+                nWorkers);
         connectionWorkerJobs = new ConnectionWorkerJob[nWorkers];
         for (int n = 0; n < nWorkers; n++) {
-            final SequencedQueue<ConnectionWorkerEvent> consumerQueue = SequencedQueue.createSingleProducerSingleConsumerQueue(newConnectionQueueLen, ConnectionWorkerEvent::new);
-            ConnectionWorkerJob sendJob = new ConnectionWorkerJob(consumerQueue);
+            ConnectionWorkerJob sendJob = createConnectionWorkerJob(n, connectionWorkerQueue);
             connectionWorkerJobs[n] = sendJob;
             connectionWorkerPool.assign(n, sendJob);
         }
@@ -47,6 +48,8 @@ abstract class AbstractMultipleConnectionManager implements Closeable {
     }
 
     abstract boolean handleTasks();
+
+    abstract ConnectionWorkerJob createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue);
 
     abstract ReplicationPeerDetails createNewReplicationPeerDetails(long peerId);
 

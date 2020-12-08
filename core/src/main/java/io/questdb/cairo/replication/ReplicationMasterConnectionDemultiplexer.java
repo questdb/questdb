@@ -1,5 +1,8 @@
 package io.questdb.cairo.replication;
 
+import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerEvent;
+import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerJob;
+import io.questdb.cairo.replication.ReplicationPeerDetails.FanOutSequencedQueue;
 import io.questdb.cairo.replication.ReplicationPeerDetails.PeerConnection;
 import io.questdb.cairo.replication.ReplicationPeerDetails.SequencedQueue;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorFrame;
@@ -33,6 +36,15 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
     boolean tryQueueSendFrame(long peerId, ReplicationStreamGeneratorFrame frame) {
         SlavePeerDetails slaveDetails = getPeerDetails(peerId);
         return slaveDetails.tryQueueSendFrame(frame);
+    }
+
+    @Override
+    ConnectionWorkerJob createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue) {
+        return new ConnectionWorkerJob(nWorker, connectionWorkerQueue) {
+            @Override
+            protected void handleConsumerEvent(ConnectionWorkerEvent event) {
+            }
+        };
     }
 
     @Override
@@ -145,8 +157,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             return workerId;
         }
 
-        @Override
-        public SequencedQueue<SendFrameEvent> getConnectionQueue() {
+        SequencedQueue<SendFrameEvent> getConnectionQueue() {
             return sendFrameQueue;
         }
 
