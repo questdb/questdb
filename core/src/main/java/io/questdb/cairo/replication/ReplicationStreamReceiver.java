@@ -11,9 +11,7 @@ import io.questdb.std.Unsafe;
 
 public class ReplicationStreamReceiver implements Closeable {
     private final FilesFacade ff;
-    private final ReplicationSlaveManager recvMgr;
-    private final IntList tableIds = new IntList();
-    private final IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
+    private IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId;
     private long fd = -1;
     private long frameHeaderAddress;
     private long frameHeaderOffset;
@@ -35,15 +33,15 @@ public class ReplicationStreamReceiver implements Closeable {
     private boolean readyToCommit;
     private int nCommits;
 
-    public ReplicationStreamReceiver(CairoConfiguration configuration, ReplicationSlaveManager recvMgr) {
+    public ReplicationStreamReceiver(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
-        this.recvMgr = recvMgr;
         frameHeaderAddress = Unsafe.malloc(TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE);
         fd = -1;
     }
 
-    public void of(long fd) {
+    public void of(long fd, IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId) {
         this.fd = fd;
+        this.slaveWriteByMasterTableId = slaveWriteByMasterTableId;
         readyToCommit = false;
         nCommits = 0;
         resetReading();
@@ -214,13 +212,7 @@ public class ReplicationStreamReceiver implements Closeable {
     }
 
     private SlaveWriter getSlaveWriter(int masterTableId) {
-        SlaveWriter slaveWriter = slaveWriteByMasterTableId.get(masterTableId);
-        if (null == slaveWriter) {
-            slaveWriter = recvMgr.getSlaveWriter(masterTableId);
-            slaveWriteByMasterTableId.put(masterTableId, slaveWriter);
-            tableIds.add(masterTableId);
-        }
-        return slaveWriter;
+        return slaveWriteByMasterTableId.get(masterTableId);
     }
 
     public int getnCommits() {
@@ -229,7 +221,7 @@ public class ReplicationStreamReceiver implements Closeable {
 
     public void clear() {
         if (fd != -1) {
-            slaveWriteByMasterTableId.clear();
+            slaveWriteByMasterTableId = null;
             fd = -1;
         }
     }

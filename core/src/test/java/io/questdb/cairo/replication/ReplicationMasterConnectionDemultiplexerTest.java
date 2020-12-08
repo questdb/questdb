@@ -30,6 +30,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
 
@@ -130,23 +131,9 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$();
         compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
 
-        TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, destTableName);
-        SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
-        ReplicationSlaveManager recvMgr = new ReplicationSlaveManager() {
-            @Override
-            public SlaveWriter getSlaveWriter(int masterTableId) {
-                // TODO Auto-generated method stub
-                return slaveWriter;
-            }
-
-            @Override
-            public void releaseSlaveWriter(int masterTableId, SlaveWriter slaveWriter) {
-                // TODO Auto-generated method stub
-
-            }
-        };
-        ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(configuration, recvMgr);
-        streamReceiver.of(conn1.connectorFd);
+        ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(configuration);
+        IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
+        streamReceiver.of(conn1.connectorFd, slaveWriteByMasterTableId);
 
         try (
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
@@ -163,8 +150,13 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 }
             }
 
+            int masterTableId = reader.getMetadata().getId();
+            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, destTableName);
+            SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
+            slaveWriteByMasterTableId.put(masterTableId, slaveWriter);
+
             // Send replication frames
-            streamGenerator.of(reader.getMetadata().getId(), workerPool.getWorkerCount() * muxConsumerQueueLen / 2, cursor, reader.getMetadata(), initialSymbolCounts);
+            streamGenerator.of(masterTableId, workerPool.getWorkerCount() * muxConsumerQueueLen / 2, cursor, reader.getMetadata(), initialSymbolCounts);
             ReplicationStreamGeneratorResult streamResult;
             while ((streamResult = streamGenerator.nextDataFrame()) != null) {
                 if (!streamResult.isRetry()) {
@@ -215,11 +207,13 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 streamReceiver.handleIO();
                 masterConnDemux.handleTasks();
             }
+
+            slaveWriteByMasterTableId.remove(masterTableId);
+            slaveWriter.close();
+            writer.close();
         }
 
         streamReceiver.close();
-        slaveWriter.close();
-        writer.close();
 
         conn1.close();
         workerPool.halt();

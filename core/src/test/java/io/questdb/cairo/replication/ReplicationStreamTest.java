@@ -27,6 +27,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
@@ -215,28 +216,14 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
             }
         };
 
-        SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
-
-        ReplicationSlaveManager recvMgr = new ReplicationSlaveManager() {
-            @Override
-            public SlaveWriter getSlaveWriter(int masterTableId) {
-                // TODO Auto-generated method stub
-                return slaveWriter;
-            }
-
-            @Override
-            public void releaseSlaveWriter(int masterTableId, SlaveWriter slaveWriter) {
-                // TODO Auto-generated method stub
-
-            }
-        };
+        IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
 
         try (
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableReplicationRecordCursorFactory factory = new TableReplicationRecordCursorFactory(engine, sourceTableName, maxRowsPerFrame);
                 TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nFirstRow);
                 ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator();
-                ReplicationStreamReceiver streamWriter = new ReplicationStreamReceiver(configuration, recvMgr)) {
+                ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(configuration)) {
 
             IntList initialSymbolCounts = new IntList();
             for (int columnIndex = 0, sz = reader.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
@@ -247,14 +234,20 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 }
             }
 
-            streamGenerator.of(reader.getMetadata().getId(), 1, cursor, reader.getMetadata(), initialSymbolCounts);
-            streamWriter.of(STREAM_TARGET_FD);
+            // Setup stream frame generator
+            int masterTableId = reader.getMetadata().getId();
+            streamGenerator.of(masterTableId, 1, cursor, reader.getMetadata(), initialSymbolCounts);
+
+            // Setup stream frame receiver
+            SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
+            slaveWriteByMasterTableId.put(masterTableId, slaveWriter);
+            streamReceiver.of(STREAM_TARGET_FD, slaveWriteByMasterTableId);
 
             ReplicationStreamGeneratorResult streamResult;
             while ((streamResult = streamGenerator.nextDataFrame()) != null) {
                 if (!streamResult.isRetry()) {
                     try {
-                        sendFrame(streamWriter, streamResult.getFrame());
+                        sendFrame(streamReceiver, streamResult.getFrame());
                     } finally {
                         streamResult.getFrame().complete();
                     }
@@ -266,20 +259,22 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
             // Wait for ready to commit from slave
             Assert.assertEquals(0, streamTargetWriteBufferOffset);
             while (streamTargetWriteBufferOffset != TableReplicationStreamHeaderSupport.SCR_HEADER_SIZE) {
-                streamWriter.handleIO();
+                streamReceiver.handleIO();
             }
 
             while ((streamResult = streamGenerator.generateCommitBlockFrame()).isRetry()) {
                 Thread.yield();
             }
             try {
-                sendFrame(streamWriter, streamResult.getFrame());
+                sendFrame(streamReceiver, streamResult.getFrame());
             } finally {
                 streamResult.getFrame().complete();
             }
+
+            slaveWriter.close();
+            slaveWriteByMasterTableId.remove(masterTableId);
         }
 
-        slaveWriter.close();
         Unsafe.free(streamTargetReadBufferAddress, streamTargetReadBufferSize);
         Unsafe.free(streamTargetWriteBufferAddress, streamTargetWriteBufferSize);
     }
