@@ -1,5 +1,7 @@
 package io.questdb.cairo.replication;
 
+import io.questdb.cairo.replication.ReplicationMasterConnectionDemultiplexer.MasterConnectionCallbackEvent;
+import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionCallbackEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerJob;
 import io.questdb.cairo.replication.ReplicationPeerDetails.FanOutSequencedQueue;
@@ -12,11 +14,10 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 
-public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleConnectionManager<ConnectionWorkerEvent> {
+public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleConnectionManager<ConnectionWorkerEvent, MasterConnectionCallbackEvent> {
     private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionDemultiplexer.class);
     private final int sendFrameQueueLen;
     private ReplicationMasterCallbacks callbacks;
-    private final SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue;
 
     public ReplicationMasterConnectionDemultiplexer(
             FilesFacade ff,
@@ -26,11 +27,9 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             int sendFrameQueueLen,
             ReplicationMasterCallbacks callbacks
     ) {
-        super(ff, senderWorkerPool, connectionCallbackQueueLen, newConnectionQueueLen, ConnectionWorkerEvent::new);
+        super(ff, senderWorkerPool, connectionCallbackQueueLen, newConnectionQueueLen, ConnectionWorkerEvent::new, MasterConnectionCallbackEvent::new);
         this.callbacks = callbacks;
         this.sendFrameQueueLen = sendFrameQueueLen;
-
-        connectionCallbackQueue = SequencedQueue.createMultipleProducerSingleConsumerQueue(connectionCallbackQueueLen, ConnectionCallbackEvent::new);
     }
 
     boolean tryQueueSendFrame(long peerId, ReplicationStreamGeneratorFrame frame) {
@@ -39,8 +38,10 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
     }
 
     @Override
-    ConnectionWorkerJob<ConnectionWorkerEvent> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue) {
-        return new ConnectionWorkerJob<ConnectionWorkerEvent>(nWorker, connectionWorkerQueue) {
+    ConnectionWorkerJob<ConnectionWorkerEvent, MasterConnectionCallbackEvent> createConnectionWorkerJob(
+            int nWorker, FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue, SequencedQueue<MasterConnectionCallbackEvent> connectionCallbackQueue
+    ) {
+        return new ConnectionWorkerJob<ConnectionWorkerEvent, MasterConnectionCallbackEvent>(nWorker, connectionWorkerQueue, connectionCallbackQueue) {
             @Override
             protected void handleConsumerEvent(ConnectionWorkerEvent event) {
             }
@@ -57,7 +58,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         boolean busy = false;
         long seq;
         while ((seq = connectionCallbackQueue.getConsumerSeq().next()) >= 0) {
-            ConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
+            MasterConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
             try {
                 long peerId = event.slaveId;
                 switch (event.eventType) {
@@ -132,7 +133,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         }
 
         @Override
-        public SlaveConnection of(long slaveId, long fd, ConnectionWorkerJob<?> workerJob) {
+        public SlaveConnection of(long slaveId, long fd, ConnectionWorkerJob<?, ?> workerJob) {
             assert sendFrameQueue.getConsumerSeq().next() == -1; // Queue is empty
             assert null == activeSendFrame;
             this.peerId = slaveId;
@@ -297,7 +298,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             long seq = connectionCallbackQueue.getConsumerSeq().next();
             if (seq >= 0) {
                 try {
-                    ConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
+                    MasterConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
                     event.assignDisconnected(peerId, fd);
                 } finally {
                     disconnected = true;
@@ -312,7 +313,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             long seq = connectionCallbackQueue.getProducerSeq().next();
             if (seq >= 0) {
                 try {
-                    ConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
+                    MasterConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
                     event.assignSlaveComitReady(peerId, masterTableId);
                 } finally {
                     connectionCallbackQueue.getProducerSeq().done(seq);
@@ -355,7 +356,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         }
     }
 
-    private static class ConnectionCallbackEvent {
+    static class MasterConnectionCallbackEvent extends ConnectionCallbackEvent {
         private enum EventType {
             SlaveDisconnected, SlaveReadyToCommit
         };

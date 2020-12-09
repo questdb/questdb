@@ -3,10 +3,12 @@ package io.questdb.cairo.replication;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionCallbackEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerJob;
 import io.questdb.cairo.replication.ReplicationPeerDetails.FanOutSequencedQueue;
 import io.questdb.cairo.replication.ReplicationPeerDetails.PeerConnection;
+import io.questdb.cairo.replication.ReplicationPeerDetails.SequencedQueue;
 import io.questdb.cairo.replication.ReplicationSlaveConnectionMultiplexer.SlaveConnectionWorkerEvent;
 import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.log.Log;
@@ -14,7 +16,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.IntObjHashMap;
 
-public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConnectionManager<SlaveConnectionWorkerEvent> {
+public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConnectionManager<SlaveConnectionWorkerEvent, ConnectionCallbackEvent> {
     private static final Log LOG = LogFactory.getLog(ReplicationSlaveConnectionMultiplexer.class);
     private final CairoConfiguration configuration;
 
@@ -24,7 +26,7 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
             int connectionCallbackQueueLen,
             int newConnectionQueueLen
     ) {
-        super(configuration.getFilesFacade(), workerPool, connectionCallbackQueueLen, newConnectionQueueLen, SlaveConnectionWorkerEvent::new);
+        super(configuration.getFilesFacade(), workerPool, connectionCallbackQueueLen, newConnectionQueueLen, SlaveConnectionWorkerEvent::new, ConnectionCallbackEvent::new);
         this.configuration = configuration;
     }
 
@@ -63,8 +65,10 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
     }
 
     @Override
-    ConnectionWorkerJob<SlaveConnectionWorkerEvent> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue) {
-        return new SlaveConnectionWorkerJob(nWorker, connectionWorkerQueue);
+    ConnectionWorkerJob<SlaveConnectionWorkerEvent, ConnectionCallbackEvent> createConnectionWorkerJob(
+            int nWorker, FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue, SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue
+    ) {
+        return new SlaveConnectionWorkerJob(nWorker, connectionWorkerQueue, connectionCallbackQueue);
     }
 
     @Override
@@ -73,7 +77,7 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
     }
 
     private static class MasterPeerDetails extends ReplicationPeerDetails {
-        MasterPeerDetails(long peerId, int nWorkers, ConnectionWorkerJob<?>[] connectionWorkerJobs, CairoConfiguration configuration) {
+        MasterPeerDetails(long peerId, int nWorkers, ConnectionWorkerJob<?, ?>[] connectionWorkerJobs, CairoConfiguration configuration) {
             super(peerId, nWorkers, connectionWorkerJobs, () -> {
                 return new MasterConnection(configuration);
             });
@@ -102,11 +106,15 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
         }
     }
 
-    static class SlaveConnectionWorkerJob extends ConnectionWorkerJob<SlaveConnectionWorkerEvent> {
+    static class SlaveConnectionWorkerJob extends ConnectionWorkerJob<SlaveConnectionWorkerEvent, ConnectionCallbackEvent> {
         private final IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
 
-        protected SlaveConnectionWorkerJob(int nWorker, FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue) {
-            super(nWorker, connectionWorkerQueue);
+        protected SlaveConnectionWorkerJob(
+                int nWorker,
+                FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue,
+                SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue
+        ) {
+            super(nWorker, connectionWorkerQueue, connectionCallbackQueue);
         }
 
         @Override
@@ -137,7 +145,7 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
         }
 
         @Override
-        public PeerConnection of(long peerId, long fd, ConnectionWorkerJob<?> workerJob) {
+        public PeerConnection of(long peerId, long fd, ConnectionWorkerJob<?, ?> workerJob) {
             this.peerId = peerId;
             this.fd = fd;
             this.workerId = workerJob.getWorkerId();
