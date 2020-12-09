@@ -143,7 +143,18 @@ abstract class ReplicationPeerDetails implements Closeable {
 
     // Events produced by the connection job
     static class ConnectionCallbackEvent {
+        final static byte NO_EVENT_TYPE = 0;
+        final static byte PEER_DISCONNECTED_EVENT_TYPE = 1;
+        protected byte eventType;
+        protected long peerId;
+        protected long fd;
 
+        void assignPeerDisconnected(long peerId, long fd) {
+            assert eventType == ConnectionCallbackEvent.NO_EVENT_TYPE;
+            eventType = PEER_DISCONNECTED_EVENT_TYPE;
+            this.peerId = peerId;
+            this.fd = fd;
+        }
     }
 
     static abstract class ConnectionWorkerJob<WKEV extends ConnectionWorkerEvent, CBEV extends ConnectionCallbackEvent> implements Job {

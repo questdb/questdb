@@ -60,12 +60,12 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         while ((seq = connectionCallbackQueue.getConsumerSeq().next()) >= 0) {
             MasterConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
             try {
-                long peerId = event.slaveId;
+                long peerId = event.peerId;
                 switch (event.eventType) {
-                    case SlaveReadyToCommit:
+                    case MasterConnectionCallbackEvent.SLAVE_READEY_TOCOMMIT_EVENT_TYPE:
                         callbacks.onSlaveReadyToCommit(peerId, event.tableId);
                         break;
-                    case SlaveDisconnected:
+                    case ConnectionCallbackEvent.PEER_DISCONNECTED_EVENT_TYPE:
                         ReplicationPeerDetails peerDetails = getPeerDetails(peerId);
                         long fd = event.fd;
                         peerDetails.removeConnection(fd);
@@ -299,7 +299,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             if (seq >= 0) {
                 try {
                     MasterConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
-                    event.assignDisconnected(peerId, fd);
+                    event.assignPeerDisconnected(peerId, fd);
                 } finally {
                     disconnected = true;
                     connectionCallbackQueue.getConsumerSeq().done(seq);
@@ -357,31 +357,18 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
     }
 
     static class MasterConnectionCallbackEvent extends ConnectionCallbackEvent {
-        private enum EventType {
-            SlaveDisconnected, SlaveReadyToCommit
-        };
-
-        private EventType eventType;
-        private long slaveId;
-        private long fd;
+        final static byte SLAVE_READEY_TOCOMMIT_EVENT_TYPE = 2;
         private int tableId;
 
-        void assignDisconnected(long slaveId, long fd) {
-            assert eventType == null;
-            eventType = EventType.SlaveDisconnected;
-            this.slaveId = slaveId;
-            this.fd = fd;
-        }
-
         void assignSlaveComitReady(long slaveId, int masterTableId) {
-            assert eventType == null;
-            eventType = EventType.SlaveReadyToCommit;
-            this.slaveId = slaveId;
+            assert eventType == ConnectionCallbackEvent.NO_EVENT_TYPE;
+            eventType = SLAVE_READEY_TOCOMMIT_EVENT_TYPE;
+            this.peerId = slaveId;
             tableId = masterTableId;
         }
 
         void clear() {
-            eventType = null;
+            eventType = ConnectionCallbackEvent.NO_EVENT_TYPE;
         }
     }
 }
