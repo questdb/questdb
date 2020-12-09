@@ -46,8 +46,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.std.time.DateFormatUtils.PG_DATE_TIME_Z_FORMAT;
-import static io.questdb.std.time.DateFormatUtils.PG_DATE_Z_FORMAT;
+import static io.questdb.std.time.DateFormatUtils.*;
 
 public class PGConnectionContext implements IOContext, Mutable {
     public static final String TAG_SET = "SET";
@@ -126,7 +125,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final WeakObjectPool<IntList> bindVarTypesPool = new WeakObjectPool<>(IntList::new, 16);
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
     private final DateLocale dateLocale;
-    private final BindVariableSetter dateSetter = this::setDateBindVariable;
+    private final BindVariableSetter timestampSetter = this::setTimestampBindVariable;
     private final ObjHashSet<InsertMethod> cachedTransactionInsertWriters = new ObjHashSet<>();
     private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
     private final IntList parameterFormats = new IntList();
@@ -418,13 +417,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
+    public void setTimestampBindVariable(int index, long address, int valueLen) throws SqlException {
         dbcs.of(address, address + valueLen);
         try {
-            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, dateLocale));
+            bindVariableService.setTimestamp(index, PG_DATE_TIME_Z_FORMAT.parse(dbcs, dateLocale));
         } catch (NumericException ex) {
             try {
-                bindVariableService.setDate(index, PG_DATE_TIME_Z_FORMAT.parse(dbcs, dateLocale));
+                bindVariableService.setTimestamp(index, PG_DATE_MILLI_TIME_Z_FORMAT.parse(dbcs, dateLocale));
             } catch (NumericException exc) {
                 throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
             }
@@ -565,7 +564,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            PG_DATE_TIME_Z_FORMAT.format(longValue, null, null, responseAsciiSink);
+            PG_DATE_MILLI_TIME_Z_FORMAT.format(longValue, null, null, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         }
     }
@@ -1815,9 +1814,9 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // cause driver to send UNSPECIFIED type
                 // QuestDB has to know types to resolve function linkage
                 // at compile time rather than at runtime.
-                bindVariableService.setDate(idx);
-                bindVariableSetters.add(dateSetter);
-                bindVariableSetters.add(dateSetter);
+                bindVariableService.setTimestamp(idx);
+                bindVariableSetters.add(timestampSetter);
+                bindVariableSetters.add(timestampSetter);
                 break;
             default:
                 throw SqlException.$(0, "unsupported parameter [type=").put(pgType).put(", index=").put(idx).put(']');
