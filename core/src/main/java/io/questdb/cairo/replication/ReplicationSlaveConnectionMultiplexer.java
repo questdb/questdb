@@ -63,7 +63,7 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
     }
 
     @Override
-    ConnectionWorkerJob<?> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue) {
+    ConnectionWorkerJob<SlaveConnectionWorkerEvent> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue) {
         return new SlaveConnectionWorkerJob(nWorker, connectionWorkerQueue);
     }
 
@@ -125,11 +125,7 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
         }
     }
 
-    // TODO
-    private static class ToPeerEvent {
-    }
-
-    private static class MasterConnection implements PeerConnection<ToPeerEvent> {
+    private static class MasterConnection implements PeerConnection {
         private long peerId = Long.MIN_VALUE;
         private long fd = -1;
         private int workerId;
@@ -141,11 +137,13 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
         }
 
         @Override
-        public PeerConnection<ToPeerEvent> of(long peerId, long fd, ConnectionWorkerJob<?> workerJob) {
+        public PeerConnection of(long peerId, long fd, ConnectionWorkerJob<?> workerJob) {
             this.peerId = peerId;
             this.fd = fd;
             this.workerId = workerJob.getWorkerId();
-            streamReceiver.of(fd, ((SlaveConnectionWorkerJob) workerJob).slaveWriteByMasterTableId);
+            streamReceiver.of(fd, ((SlaveConnectionWorkerJob) workerJob).slaveWriteByMasterTableId, () -> {
+                // TODO
+            });
             disconnected = false;
             return this;
         }

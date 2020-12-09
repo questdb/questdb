@@ -21,13 +21,13 @@ abstract class ReplicationPeerDetails implements Closeable {
     private long peerId = Long.MIN_VALUE;
     private int nWorkers;
     private final ConnectionWorkerJob<?>[] connectionWorkerJobs;
-    private final ObjectFactory<PeerConnection<?>> connectionFactory;
+    private final ObjectFactory<PeerConnection> connectionFactory;
     private IntList nAssignedByWorkerId = new IntList();
-    private ObjList<PeerConnection<?>> connections;
-    private ObjList<PeerConnection<?>> connectionCache;
+    private ObjList<PeerConnection> connections;
+    private ObjList<PeerConnection> connectionCache;
 
-    interface PeerConnection<SENDEVT> extends Closeable {
-        PeerConnection<SENDEVT> of(long peerId, long fd, ConnectionWorkerJob<?> workerJob);
+    interface PeerConnection extends Closeable {
+        PeerConnection of(long peerId, long fd, ConnectionWorkerJob<?> workerJob);
 
         long getFd();
 
@@ -131,9 +131,9 @@ abstract class ReplicationPeerDetails implements Closeable {
         final static int ALL_WORKERS = -1;
         protected byte eventType;
         protected int nWorker;
-        PeerConnection<?> newConnection;
+        PeerConnection newConnection;
 
-        void assignAddNewConnection(int nWorker, PeerConnection<?> newConnection) {
+        void assignAddNewConnection(int nWorker, PeerConnection newConnection) {
             eventType = ADD_NEW_CONNECTION_EVENT_TYPE;
             this.nWorker = nWorker;
             this.newConnection = newConnection;
@@ -143,7 +143,7 @@ abstract class ReplicationPeerDetails implements Closeable {
     static abstract class ConnectionWorkerJob<EVT extends ConnectionWorkerEvent> implements Job {
         protected final int nWorker;
         private final FanOutSequencedQueue<EVT> connectionWorkerQueue;
-        private final ObjList<PeerConnection<?>> connections = new ObjList<>();
+        private final ObjList<PeerConnection> connections = new ObjList<>();
         private boolean busy;
 
         protected ConnectionWorkerJob(int nWorker, FanOutSequencedQueue<EVT> connectionWorkerQueue) {
@@ -158,11 +158,12 @@ abstract class ReplicationPeerDetails implements Closeable {
             handleConsumerEvents();
             int nConnection = 0;
             while (nConnection < connections.size()) {
-                PeerConnection<?> connection = connections.get(nConnection);
+                PeerConnection connection = connections.get(nConnection);
                 if (connection.handleIO()) {
                     busy = true;
                 }
                 if (connection.isDisconnected()) {
+                    // TODO:
                     connections.remove(nConnection);
                 } else {
                     nConnection++;
@@ -199,7 +200,7 @@ abstract class ReplicationPeerDetails implements Closeable {
         protected abstract void handleConsumerEvent(EVT event);
     }
 
-    ReplicationPeerDetails(long peerId, int nWorkers, ConnectionWorkerJob<?>[] connectionWorkerJobs, ObjectFactory<PeerConnection<?>> connectionFactory) {
+    ReplicationPeerDetails(long peerId, int nWorkers, ConnectionWorkerJob<?>[] connectionWorkerJobs, ObjectFactory<PeerConnection> connectionFactory) {
         super();
         this.peerId = peerId;
         this.nWorkers = nWorkers;
@@ -229,7 +230,7 @@ abstract class ReplicationPeerDetails implements Closeable {
         if (seq >= 0) {
             try {
                 ConnectionWorkerEvent event = queue.getEvent(seq);
-                PeerConnection<?> connection;
+                PeerConnection connection;
                 if (connectionCache.size() > 0) {
                     int n = connectionCache.size() - 1;
                     connection = connectionCache.getQuick(n);
@@ -253,7 +254,7 @@ abstract class ReplicationPeerDetails implements Closeable {
 
     void removeConnection(long fd) {
         for (int n = 0, sz = connections.size(); n < sz; n++) {
-            PeerConnection<?> peerConnection = connections.get(n);
+            PeerConnection peerConnection = connections.get(n);
             if (peerConnection.getFd() == fd) {
                 connections.remove(n);
                 nAssignedByWorkerId.set(peerConnection.getWorkerId(), nAssignedByWorkerId.getQuick(peerConnection.getWorkerId()) - 1);
@@ -265,7 +266,7 @@ abstract class ReplicationPeerDetails implements Closeable {
     }
 
     @SuppressWarnings("unchecked")
-    <T extends PeerConnection<?>> T getConnection(int concurrencyId) {
+    <T extends PeerConnection> T getConnection(int concurrencyId) {
         int connectionId = concurrencyId % connections.size();
         return (T) connections.getQuick(connectionId);
     }

@@ -133,7 +133,9 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
 
         ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(configuration);
         IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
-        streamReceiver.of(conn1.connectorFd, slaveWriteByMasterTableId);
+        streamReceiver.of(conn1.connectorFd, slaveWriteByMasterTableId, () -> {
+            throw new RuntimeException("Unexpectedly disconnected");
+        });
 
         try (
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);

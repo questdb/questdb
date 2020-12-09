@@ -241,7 +241,9 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
             // Setup stream frame receiver
             SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
             slaveWriteByMasterTableId.put(masterTableId, slaveWriter);
-            streamReceiver.of(STREAM_TARGET_FD, slaveWriteByMasterTableId);
+            streamReceiver.of(STREAM_TARGET_FD, slaveWriteByMasterTableId, () -> {
+                throw new RuntimeException("Unexpectedly disconnected");
+            });
 
             ReplicationStreamGeneratorResult streamResult;
             while ((streamResult = streamGenerator.nextDataFrame()) != null) {

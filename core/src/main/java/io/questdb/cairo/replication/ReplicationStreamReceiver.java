@@ -12,6 +12,7 @@ public class ReplicationStreamReceiver implements Closeable {
     private final FilesFacade ff;
     private IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId;
     private long fd = -1;
+    private Runnable disconnectedCallback;
     private long frameHeaderAddress;
     private long frameHeaderOffset;
     private long frameHeaderRemaining;
@@ -38,7 +39,7 @@ public class ReplicationStreamReceiver implements Closeable {
         fd = -1;
     }
 
-    public void of(long fd, IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId) {
+    public void of(long fd, IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId, Runnable disconnectedCallback) {
         this.fd = fd;
         this.slaveWriteByMasterTableId = slaveWriteByMasterTableId;
         readyToCommit = false;
@@ -212,6 +213,11 @@ public class ReplicationStreamReceiver implements Closeable {
 
     private SlaveWriter getSlaveWriter(int masterTableId) {
         return slaveWriteByMasterTableId.get(masterTableId);
+    }
+
+    private void disconnect() {
+        fd = -1;
+        disconnectedCallback.run();
     }
 
     public int getnCommits() {

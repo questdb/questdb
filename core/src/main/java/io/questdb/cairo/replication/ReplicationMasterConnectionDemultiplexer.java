@@ -110,7 +110,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         private ReplicationStreamGeneratorFrame frame;
     }
 
-    private class SlaveConnection implements PeerConnection<SendFrameEvent> {
+    private class SlaveConnection implements PeerConnection {
         private final SequencedQueue<SendFrameEvent> sendFrameQueue;
         private long peerId = Long.MIN_VALUE;
         private long fd = -1;
@@ -300,6 +300,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                     ConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
                     event.assignDisconnected(peerId, fd);
                 } finally {
+                    disconnected = true;
                     connectionCallbackQueue.getConsumerSeq().done(seq);
                 }
                 return true;

@@ -21,8 +21,9 @@ abstract class AbstractMultipleConnectionManager<EVT extends ConnectionWorkerEve
     private LongObjHashMap<ReplicationPeerDetails> peerById = new LongObjHashMap<>();
     private ObjList<ReplicationPeerDetails> peers = new ObjList<>();
     protected int nWorkers;
-    protected final ConnectionWorkerJob[] connectionWorkerJobs;
+    protected final ConnectionWorkerJob<EVT>[] connectionWorkerJobs;
 
+    @SuppressWarnings("unchecked")
     public AbstractMultipleConnectionManager(
             FilesFacade ff,
             WorkerPool connectionWorkerPool,
@@ -38,7 +39,7 @@ abstract class AbstractMultipleConnectionManager<EVT extends ConnectionWorkerEve
                 nWorkers);
         connectionWorkerJobs = new ConnectionWorkerJob[nWorkers];
         for (int n = 0; n < nWorkers; n++) {
-            ConnectionWorkerJob sendJob = createConnectionWorkerJob(n, connectionWorkerQueue);
+            ConnectionWorkerJob<EVT> sendJob = createConnectionWorkerJob(n, connectionWorkerQueue);
             connectionWorkerJobs[n] = sendJob;
             connectionWorkerPool.assign(n, sendJob);
         }
@@ -52,7 +53,7 @@ abstract class AbstractMultipleConnectionManager<EVT extends ConnectionWorkerEve
 
     abstract boolean handleTasks();
 
-    abstract ConnectionWorkerJob createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<EVT> connectionWorkerQueue);
+    abstract ConnectionWorkerJob<EVT> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<EVT> connectionWorkerQueue);
 
     abstract ReplicationPeerDetails createNewReplicationPeerDetails(long peerId);
 
