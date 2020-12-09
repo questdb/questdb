@@ -15,7 +15,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.replication.ReplicationMasterConnectionDemultiplexer.ReplicationMasterCallbacks;
-import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorFrame;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorResult;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;

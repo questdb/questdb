@@ -10,7 +10,6 @@ import io.questdb.cairo.replication.ReplicationPeerDetails.FanOutSequencedQueue;
 import io.questdb.cairo.replication.ReplicationPeerDetails.PeerConnection;
 import io.questdb.cairo.replication.ReplicationPeerDetails.SequencedQueue;
 import io.questdb.cairo.replication.ReplicationSlaveConnectionMultiplexer.SlaveConnectionWorkerEvent;
-import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;

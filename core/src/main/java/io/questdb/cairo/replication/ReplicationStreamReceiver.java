@@ -3,7 +3,6 @@ package io.questdb.cairo.replication;
 import java.io.Closeable;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;

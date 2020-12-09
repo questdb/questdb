@@ -13,7 +13,6 @@ import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableBlockWriter;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
