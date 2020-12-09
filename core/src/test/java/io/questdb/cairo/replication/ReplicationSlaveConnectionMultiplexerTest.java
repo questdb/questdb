@@ -15,6 +15,7 @@ import io.questdb.cairo.TablePageFrameCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.replication.ReplicationSlaveConnectionMultiplexer.ReplicationSlaveCallbacks;
 import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorFrame;
 import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorResult;
@@ -109,8 +110,15 @@ public class ReplicationSlaveConnectionMultiplexerTest extends AbstractGriffinTe
             }
         };
         WorkerPool workerPool = new WorkerPool(workerPoolConfig);
+        ReplicationSlaveCallbacks slaveConnMuxCallbacks = new ReplicationSlaveCallbacks() {
+            @Override
+            public void onPeerDisconnected(long sid, long fd) {
+                Assert.assertEquals(peerId, sid);
+                Assert.fail();
+            }
+        };
         ReplicationSlaveConnectionMultiplexer slaveConnMux = new ReplicationSlaveConnectionMultiplexer(configuration, workerPool, muxProducerQueueLen,
-                muxConsumerQueueLen);
+                muxConsumerQueueLen, slaveConnMuxCallbacks);
         workerPool.start(LOG);
         MockConnection conn1 = new MockConnection();
         long recvBufferSz = TableReplicationStreamHeaderSupport.SCR_HEADER_SIZE;

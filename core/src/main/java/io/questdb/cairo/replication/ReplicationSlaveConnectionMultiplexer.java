@@ -19,15 +19,18 @@ import io.questdb.std.IntObjHashMap;
 public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConnectionManager<SlaveConnectionWorkerEvent, ConnectionCallbackEvent> {
     private static final Log LOG = LogFactory.getLog(ReplicationSlaveConnectionMultiplexer.class);
     private final CairoConfiguration configuration;
+    private final ReplicationSlaveCallbacks callbacks;
 
     public ReplicationSlaveConnectionMultiplexer(
             CairoConfiguration configuration,
             WorkerPool workerPool,
             int connectionCallbackQueueLen,
-            int newConnectionQueueLen
+            int newConnectionQueueLen,
+            ReplicationSlaveCallbacks callbacks
     ) {
         super(configuration.getFilesFacade(), workerPool, connectionCallbackQueueLen, newConnectionQueueLen, SlaveConnectionWorkerEvent::new, ConnectionCallbackEvent::new);
         this.configuration = configuration;
+        this.callbacks = callbacks;
     }
 
     boolean tryAddSlaveWriter(int masterTableId, SlaveWriter slaveWriter) {
@@ -60,26 +63,52 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
 
     @Override
     boolean handleTasks() {
-        // TODO Auto-generated method stub
-        return false;
+        boolean busy = false;
+        long seq;
+        while ((seq = connectionCallbackQueue.getConsumerSeq().next()) >= 0) {
+            ConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
+            try {
+                long peerId = event.peerId;
+                switch (event.eventType) {
+                    case ConnectionCallbackEvent.PEER_DISCONNECTED_EVENT_TYPE:
+                        ReplicationPeerDetails peerDetails = getPeerDetails(peerId);
+                        long fd = event.fd;
+                        peerDetails.removeConnection(fd);
+                        callbacks.onPeerDisconnected(peerId, fd);
+                        break;
+                }
+            } finally {
+                event.clear();
+                connectionCallbackQueue.getConsumerSeq().done(seq);
+            }
+        }
+        return busy;
     }
 
     @Override
-    ConnectionWorkerJob<SlaveConnectionWorkerEvent, ConnectionCallbackEvent> createConnectionWorkerJob(
-            int nWorker, FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue, SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue
-    ) {
-        return new SlaveConnectionWorkerJob(nWorker, connectionWorkerQueue, connectionCallbackQueue);
+    ConnectionWorkerJob<SlaveConnectionWorkerEvent, ConnectionCallbackEvent> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue) {
+        return new SlaveConnectionWorkerJob(nWorker, connectionWorkerQueue);
     }
 
     @Override
     ReplicationPeerDetails createNewReplicationPeerDetails(long peerId) {
-        return new MasterPeerDetails(peerId, nWorkers, connectionWorkerJobs, configuration);
+        return new MasterPeerDetails(peerId, nWorkers, connectionWorkerJobs, configuration, connectionCallbackQueue);
+    }
+
+    interface ReplicationSlaveCallbacks {
+        void onPeerDisconnected(long peerId, long fd);
     }
 
     private static class MasterPeerDetails extends ReplicationPeerDetails {
-        MasterPeerDetails(long peerId, int nWorkers, ConnectionWorkerJob<?, ?>[] connectionWorkerJobs, CairoConfiguration configuration) {
+        MasterPeerDetails(
+                long peerId,
+                int nWorkers,
+                ConnectionWorkerJob<?, ?>[] connectionWorkerJobs,
+                CairoConfiguration configuration,
+                SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue
+        ) {
             super(peerId, nWorkers, connectionWorkerJobs, () -> {
-                return new MasterConnection(configuration);
+                return new MasterConnection(configuration, connectionCallbackQueue);
             });
         }
     }
@@ -109,12 +138,8 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
     static class SlaveConnectionWorkerJob extends ConnectionWorkerJob<SlaveConnectionWorkerEvent, ConnectionCallbackEvent> {
         private final IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
 
-        protected SlaveConnectionWorkerJob(
-                int nWorker,
-                FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue,
-                SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue
-        ) {
-            super(nWorker, connectionWorkerQueue, connectionCallbackQueue);
+        protected SlaveConnectionWorkerJob(int nWorker, FanOutSequencedQueue<SlaveConnectionWorkerEvent> connectionWorkerQueue) {
+            super(nWorker, connectionWorkerQueue);
         }
 
         @Override
@@ -133,48 +158,38 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
         }
     }
 
-    private static class MasterConnection implements PeerConnection {
-        private long peerId = Long.MIN_VALUE;
-        private long fd = -1;
-        private int workerId;
+    private static class MasterConnection extends PeerConnection<ConnectionCallbackEvent> {
+        private boolean diconnecting;
         private ReplicationStreamReceiver streamReceiver;
-        private boolean disconnected;
 
-        MasterConnection(CairoConfiguration configuration) {
+        MasterConnection(CairoConfiguration configuration, SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue) {
+            super(configuration.getFilesFacade(), connectionCallbackQueue);
             streamReceiver = new ReplicationStreamReceiver(configuration);
         }
 
         @Override
-        public PeerConnection of(long peerId, long fd, ConnectionWorkerJob<?, ?> workerJob) {
+        public PeerConnection<ConnectionCallbackEvent> of(long peerId, long fd, ConnectionWorkerJob<?, ?> workerJob) {
             this.peerId = peerId;
             this.fd = fd;
             this.workerId = workerJob.getWorkerId();
+            diconnecting = false;
             streamReceiver.of(fd, ((SlaveConnectionWorkerJob) workerJob).slaveWriteByMasterTableId, () -> {
-                // TODO
+                diconnecting = true;
             });
-            disconnected = false;
             return this;
         }
 
         @Override
-        public long getFd() {
-            return fd;
-        }
+        public IOResult handleIO() {
+            if (!diconnecting) {
+                return streamReceiver.handleIO() ? IOResult.Busy : IOResult.NotBusy;
+            }
 
-        @Override
-        public int getWorkerId() {
-            return workerId;
-        }
+            if (tryHandleDisconnect()) {
+                return IOResult.Disconnected;
+            }
 
-        @Override
-        public boolean handleIO() {
-            assert !disconnected;
-            return streamReceiver.handleIO();
-        }
-
-        @Override
-        public boolean isDisconnected() {
-            return disconnected;
+            return IOResult.Busy;
         }
 
         @Override

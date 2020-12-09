@@ -122,8 +122,8 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 Assert.fail();
             }
         };
-        ReplicationMasterConnectionDemultiplexer masterConnDemux = new ReplicationMasterConnectionDemultiplexer(configuration.getFilesFacade(), workerPool, muxProducerQueueLen,
-                1, muxConsumerQueueLen, masterConnMuxCallbacks);
+        ReplicationMasterConnectionDemultiplexer masterConnDemux = new ReplicationMasterConnectionDemultiplexer(configuration.getFilesFacade(), workerPool, muxProducerQueueLen, 1,
+                muxConsumerQueueLen, masterConnMuxCallbacks);
         workerPool.start(LOG);
         MockConnection conn1 = new MockConnection();
         boolean added = masterConnDemux.tryAddConnection(peerId, conn1.acceptorFd);

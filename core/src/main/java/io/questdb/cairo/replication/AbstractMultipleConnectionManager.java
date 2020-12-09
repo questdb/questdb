@@ -44,7 +44,7 @@ abstract class AbstractMultipleConnectionManager<WKEV extends ConnectionWorkerEv
         connectionCallbackQueue = SequencedQueue.createMultipleProducerSingleConsumerQueue(connectionCallbackQueueLen, callbackEventFactory);
         connectionWorkerJobs = new ConnectionWorkerJob[nWorkers];
         for (int n = 0; n < nWorkers; n++) {
-            ConnectionWorkerJob<WKEV, CBEV> sendJob = createConnectionWorkerJob(n, connectionWorkerQueue, connectionCallbackQueue);
+            ConnectionWorkerJob<WKEV, CBEV> sendJob = createConnectionWorkerJob(n, connectionWorkerQueue);
             connectionWorkerJobs[n] = sendJob;
             connectionWorkerPool.assign(n, sendJob);
         }
@@ -58,7 +58,7 @@ abstract class AbstractMultipleConnectionManager<WKEV extends ConnectionWorkerEv
 
     abstract boolean handleTasks();
 
-    abstract ConnectionWorkerJob<WKEV, CBEV> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<WKEV> connectionWorkerQueue, SequencedQueue<CBEV> connectionCallbackQueue);
+    abstract ConnectionWorkerJob<WKEV, CBEV> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<WKEV> connectionWorkerQueue);
 
     abstract ReplicationPeerDetails createNewReplicationPeerDetails(long peerId);
 

@@ -2,6 +2,8 @@ package io.questdb.cairo.replication;
 
 import java.io.Closeable;
 
+import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionCallbackEvent;
+import io.questdb.cairo.replication.ReplicationPeerDetails.PeerConnection.IOResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -11,6 +13,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -21,23 +24,60 @@ abstract class ReplicationPeerDetails implements Closeable {
     private long peerId = Long.MIN_VALUE;
     private int nWorkers;
     private final ConnectionWorkerJob<?, ?>[] connectionWorkerJobs;
-    private final ObjectFactory<PeerConnection> connectionFactory;
+    private final ObjectFactory<PeerConnection<?>> connectionFactory;
     private IntList nAssignedByWorkerId = new IntList();
-    private ObjList<PeerConnection> connections;
-    private ObjList<PeerConnection> connectionCache;
+    private ObjList<PeerConnection<?>> connections;
+    private ObjList<PeerConnection<?>> connectionCache;
 
-    interface PeerConnection extends Closeable {
-        PeerConnection of(long peerId, long fd, ConnectionWorkerJob<?, ?> workerJob);
+    abstract static class PeerConnection<CBEV extends ConnectionCallbackEvent> implements Closeable {
+        enum IOResult {
+            Busy, NotBusy, Disconnected
+        };
 
-        long getFd();
+        protected final FilesFacade ff;
+        protected final SequencedQueue<CBEV> connectionCallbackQueue;
+        protected long peerId = Long.MIN_VALUE;
+        protected long fd = -1;
+        protected int workerId;
 
-        int getWorkerId();
+        protected PeerConnection(FilesFacade ff, SequencedQueue<CBEV> connectionCallbackQueue) {
+            this.ff = ff;
+            this.connectionCallbackQueue = connectionCallbackQueue;
+        }
 
-        boolean handleIO();
+        PeerConnection<CBEV> of(long peerId, long fd, ConnectionWorkerJob<?, ?> workerJob) {
+            this.peerId = peerId;
+            this.fd = fd;
+            this.workerId = workerJob.getWorkerId();
+            return this;
+        }
 
-        boolean isDisconnected();
+        public final long getFd() {
+            return fd;
+        }
 
-        void clear();
+        public final int getWorkerId() {
+            return workerId;
+        }
+
+        public abstract IOResult handleIO();
+
+        protected final boolean tryHandleDisconnect() {
+            long seq = connectionCallbackQueue.getConsumerSeq().next();
+            if (seq >= 0) {
+                try {
+                    CBEV event = connectionCallbackQueue.getEvent(seq);
+                    event.assignPeerDisconnected(peerId, fd);
+                } finally {
+                    fd = -1;
+                    connectionCallbackQueue.getConsumerSeq().done(seq);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        public abstract void clear();
     }
 
     public static class SequencedQueue<T> {
@@ -132,9 +172,9 @@ abstract class ReplicationPeerDetails implements Closeable {
         final static int ALL_WORKERS = -1;
         protected byte eventType;
         protected int nWorker;
-        PeerConnection newConnection;
+        PeerConnection<?> newConnection;
 
-        void assignAddNewConnection(int nWorker, PeerConnection newConnection) {
+        void assignAddNewConnection(int nWorker, PeerConnection<?> newConnection) {
             eventType = ADD_NEW_CONNECTION_EVENT_TYPE;
             this.nWorker = nWorker;
             this.newConnection = newConnection;
@@ -155,20 +195,22 @@ abstract class ReplicationPeerDetails implements Closeable {
             this.peerId = peerId;
             this.fd = fd;
         }
+
+        void clear() {
+            eventType = ConnectionCallbackEvent.NO_EVENT_TYPE;
+        }
     }
 
     static abstract class ConnectionWorkerJob<WKEV extends ConnectionWorkerEvent, CBEV extends ConnectionCallbackEvent> implements Job {
         protected final int nWorker;
         private final FanOutSequencedQueue<WKEV> connectionWorkerQueue;
-        private final SequencedQueue<CBEV> connectionCallbackQueue;
-        private final ObjList<PeerConnection> connections = new ObjList<>();
+        private final ObjList<PeerConnection<?>> connections = new ObjList<>();
         private boolean busy;
 
-        protected ConnectionWorkerJob(int nWorker, FanOutSequencedQueue<WKEV> connectionWorkerQueue, SequencedQueue<CBEV> connectionCallbackQueue) {
+        protected ConnectionWorkerJob(int nWorker, FanOutSequencedQueue<WKEV> connectionWorkerQueue) {
             super();
             this.nWorker = nWorker;
             this.connectionWorkerQueue = connectionWorkerQueue;
-            this.connectionCallbackQueue = connectionCallbackQueue;
         }
 
         @Override
@@ -177,14 +219,15 @@ abstract class ReplicationPeerDetails implements Closeable {
             handleConsumerEvents();
             int nConnection = 0;
             while (nConnection < connections.size()) {
-                PeerConnection connection = connections.get(nConnection);
-                if (connection.handleIO()) {
-                    busy = true;
-                }
-                if (connection.isDisconnected()) {
-                    connections.remove(nConnection);
-                } else {
+                PeerConnection<?> connection = connections.get(nConnection);
+                IOResult rc = connection.handleIO();
+                if (rc != IOResult.Disconnected) {
+                    if (rc == IOResult.Busy) {
+                        busy = true;
+                    }
                     nConnection++;
+                } else {
+                    connections.remove(nConnection);
                 }
             }
             return busy;
@@ -218,7 +261,7 @@ abstract class ReplicationPeerDetails implements Closeable {
         protected abstract void handleConsumerEvent(WKEV event);
     }
 
-    ReplicationPeerDetails(long peerId, int nWorkers, ConnectionWorkerJob<?, ?>[] connectionWorkerJobs, ObjectFactory<PeerConnection> connectionFactory) {
+    ReplicationPeerDetails(long peerId, int nWorkers, ConnectionWorkerJob<?, ?>[] connectionWorkerJobs, ObjectFactory<PeerConnection<?>> connectionFactory) {
         super();
         this.peerId = peerId;
         this.nWorkers = nWorkers;
@@ -248,7 +291,7 @@ abstract class ReplicationPeerDetails implements Closeable {
         if (seq >= 0) {
             try {
                 ConnectionWorkerEvent event = queue.getEvent(seq);
-                PeerConnection connection;
+                PeerConnection<?> connection;
                 if (connectionCache.size() > 0) {
                     int n = connectionCache.size() - 1;
                     connection = connectionCache.getQuick(n);
@@ -272,7 +315,7 @@ abstract class ReplicationPeerDetails implements Closeable {
 
     void removeConnection(long fd) {
         for (int n = 0, sz = connections.size(); n < sz; n++) {
-            PeerConnection peerConnection = connections.get(n);
+            PeerConnection<?> peerConnection = connections.get(n);
             if (peerConnection.getFd() == fd) {
                 connections.remove(n);
                 nAssignedByWorkerId.set(peerConnection.getWorkerId(), nAssignedByWorkerId.getQuick(peerConnection.getWorkerId()) - 1);
