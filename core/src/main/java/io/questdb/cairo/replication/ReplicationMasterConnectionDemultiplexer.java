@@ -12,7 +12,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 
-public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleConnectionManager {
+public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleConnectionManager<ConnectionWorkerEvent> {
     private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionDemultiplexer.class);
     private final int sendFrameQueueLen;
     private ReplicationMasterCallbacks callbacks;
@@ -26,7 +26,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             int sendFrameQueueLen,
             ReplicationMasterCallbacks callbacks
     ) {
-        super(ff, senderWorkerPool, connectionCallbackQueueLen, newConnectionQueueLen);
+        super(ff, senderWorkerPool, connectionCallbackQueueLen, newConnectionQueueLen, ConnectionWorkerEvent::new);
         this.callbacks = callbacks;
         this.sendFrameQueueLen = sendFrameQueueLen;
 
@@ -39,8 +39,8 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
     }
 
     @Override
-    ConnectionWorkerJob createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue) {
-        return new ConnectionWorkerJob(nWorker, connectionWorkerQueue) {
+    ConnectionWorkerJob<ConnectionWorkerEvent> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue) {
+        return new ConnectionWorkerJob<ConnectionWorkerEvent>(nWorker, connectionWorkerQueue) {
             @Override
             protected void handleConsumerEvent(ConnectionWorkerEvent event) {
             }
@@ -132,12 +132,12 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         }
 
         @Override
-        public SlaveConnection of(long slaveId, long fd, int workerId) {
+        public SlaveConnection of(long slaveId, long fd, ConnectionWorkerJob<?> workerJob) {
             assert sendFrameQueue.getConsumerSeq().next() == -1; // Queue is empty
             assert null == activeSendFrame;
             this.peerId = slaveId;
             this.fd = fd;
-            this.workerId = workerId;
+            this.workerId = workerJob.getWorkerId();
             disconnected = false;
             receiveBufSz = TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE;
             receiveAddress = Unsafe.malloc(receiveBufSz);
@@ -153,7 +153,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         }
 
         @Override
-        public int getWorkertId() {
+        public int getWorkerId() {
             return workerId;
         }
 
@@ -162,7 +162,19 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         }
 
         @Override
-        public boolean handleSendTask() {
+        public boolean handleIO() {
+            boolean busy = false;
+            ;
+            if (handleSendTask()) {
+                busy = true;
+            }
+            if (handleReceiveTask()) {
+                busy = true;
+            }
+            return busy;
+        }
+
+        private boolean handleSendTask() {
             assert !disconnected;
             boolean wroteSomething = false;
             while (true) {
@@ -223,8 +235,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             }
         }
 
-        @Override
-        public boolean handleReceiveTask() {
+        private boolean handleReceiveTask() {
             assert !disconnected;
             boolean readSomething = false;
             while (true) {

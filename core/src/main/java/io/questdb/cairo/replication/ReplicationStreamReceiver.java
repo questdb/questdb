@@ -5,7 +5,6 @@ import java.io.Closeable;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Unsafe;
 

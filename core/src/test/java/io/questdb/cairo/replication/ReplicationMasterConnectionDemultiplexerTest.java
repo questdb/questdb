@@ -88,7 +88,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
     private void replicateTable(String sourceTableName, String destTableName, String expected, String tableCreateFields, long nFirstRow, long maxRowsPerFrame) throws SqlException {
         final int muxProducerQueueLen = 4;
         final int muxConsumerQueueLen = 4;
-        final long slaveId = 1;
+        final long peerId = 1;
         WorkerPoolConfiguration workerPoolConfig = new WorkerPoolConfiguration() {
             private final int[] affinity = { -1, -1 };
 
@@ -112,13 +112,13 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
         ReplicationMasterCallbacks masterConnMuxCallbacks = new ReplicationMasterCallbacks() {
             @Override
             public void onSlaveReadyToCommit(long sid, int tableId) {
-                Assert.assertEquals(slaveId, sid);
+                Assert.assertEquals(peerId, sid);
                 refReadyToCommitMasterTableId.set(tableId);
             }
 
             @Override
             public void onPeerDisconnected(long sid, long fd) {
-                Assert.assertEquals(slaveId, sid);
+                Assert.assertEquals(peerId, sid);
                 Assert.fail();
             }
         };
@@ -126,7 +126,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 1, muxConsumerQueueLen, masterConnMuxCallbacks);
         workerPool.start(LOG);
         MockConnection conn1 = new MockConnection();
-        boolean added = masterConnDemux.tryAddConnection(slaveId, conn1.acceptorFd);
+        boolean added = masterConnDemux.tryAddConnection(peerId, conn1.acceptorFd);
         Assert.assertTrue(added);
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$();
         compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
@@ -141,6 +141,11 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nFirstRow);
                 ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator()) {
 
+            int masterTableId = reader.getMetadata().getId();
+            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, destTableName);
+            SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
+            slaveWriteByMasterTableId.put(masterTableId, slaveWriter);
+
             IntList initialSymbolCounts = new IntList();
             for (int columnIndex = 0, sz = reader.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
                 if (reader.getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
@@ -150,11 +155,6 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 }
             }
 
-            int masterTableId = reader.getMetadata().getId();
-            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, destTableName);
-            SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
-            slaveWriteByMasterTableId.put(masterTableId, slaveWriter);
-
             // Send replication frames
             streamGenerator.of(masterTableId, workerPool.getWorkerCount() * muxConsumerQueueLen / 2, cursor, reader.getMetadata(), initialSymbolCounts);
             ReplicationStreamGeneratorResult streamResult;
@@ -162,7 +162,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 if (!streamResult.isRetry()) {
                     ReplicationStreamGeneratorFrame frame = streamResult.getFrame();
                     while (true) {
-                        boolean frameQueued = masterConnDemux.tryQueueSendFrame(slaveId, frame);
+                        boolean frameQueued = masterConnDemux.tryQueueSendFrame(peerId, frame);
                         if (!frameQueued) {
                             streamReceiver.handleIO();
                             masterConnDemux.handleTasks();
@@ -193,7 +193,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 Thread.yield();
             }
             while (true) {
-                boolean frameQueued = masterConnDemux.tryQueueSendFrame(slaveId, streamResult.getFrame());
+                boolean frameQueued = masterConnDemux.tryQueueSendFrame(peerId, streamResult.getFrame());
                 if (!frameQueued) {
                     streamReceiver.handleIO();
                     masterConnDemux.handleTasks();

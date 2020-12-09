@@ -15,6 +15,7 @@ class MockConnection implements Closeable {
     private static final int BUF_SZ = 2000;
     final long acceptorFd;
     final long connectorFd;
+    boolean closed;
     private long buf1;
     private long bufLen1;
     private long bufSz1;
@@ -49,6 +50,7 @@ class MockConnection implements Closeable {
     MockConnection() {
         acceptorFd = NEXT_FD.incrementAndGet();
         connectorFd = NEXT_FD.incrementAndGet();
+        closed = false;
         bufSz1 = BUF_SZ;
         bufLen1 = 0;
         buf1 = Unsafe.malloc(bufSz1);
@@ -62,6 +64,10 @@ class MockConnection implements Closeable {
     }
 
     long read(long fd, long buf, long len, long offset) {
+        if (closed) {
+            return -1;
+        }
+
         if (fd == connectorFd) {
             buf1Lock.lock();
             try {
@@ -95,6 +101,10 @@ class MockConnection implements Closeable {
     }
 
     long write(long fd, long buf, long len, long offset) {
+        if (closed) {
+            return -1;
+        }
+
         if (fd == acceptorFd) {
             buf1Lock.lock();
             try {
@@ -146,7 +156,10 @@ class MockConnection implements Closeable {
 
     @Override
     public void close() {
-        Unsafe.free(buf1, bufSz1);
-        Unsafe.free(buf2, bufSz2);
+        if (!closed) {
+            closed = true;
+            Unsafe.free(buf1, bufSz1);
+            Unsafe.free(buf2, bufSz2);
+        }
     }
 }

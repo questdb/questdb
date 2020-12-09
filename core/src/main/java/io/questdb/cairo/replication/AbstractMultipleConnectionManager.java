@@ -12,10 +12,12 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 
-abstract class AbstractMultipleConnectionManager implements Closeable {
+abstract class AbstractMultipleConnectionManager<EVT extends ConnectionWorkerEvent> implements Closeable {
     private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionDemultiplexer.class);
     protected final FilesFacade ff;
+    protected final FanOutSequencedQueue<EVT> connectionWorkerQueue;
     private LongObjHashMap<ReplicationPeerDetails> peerById = new LongObjHashMap<>();
     private ObjList<ReplicationPeerDetails> peers = new ObjList<>();
     protected int nWorkers;
@@ -25,13 +27,14 @@ abstract class AbstractMultipleConnectionManager implements Closeable {
             FilesFacade ff,
             WorkerPool connectionWorkerPool,
             int connectionCallbackQueueLen,
-            int connectionWorkerQueueLen
+            int connectionWorkerQueueLen,
+            ObjectFactory<EVT> eventFactory
     ) {
         super();
         this.ff = ff;
 
         nWorkers = connectionWorkerPool.getWorkerCount();
-        FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue = FanOutSequencedQueue.createSingleProducerFanOutConsumerQueue(connectionWorkerQueueLen, ConnectionWorkerEvent::new,
+        connectionWorkerQueue = FanOutSequencedQueue.createSingleProducerFanOutConsumerQueue(connectionWorkerQueueLen, eventFactory,
                 nWorkers);
         connectionWorkerJobs = new ConnectionWorkerJob[nWorkers];
         for (int n = 0; n < nWorkers; n++) {
@@ -49,7 +52,7 @@ abstract class AbstractMultipleConnectionManager implements Closeable {
 
     abstract boolean handleTasks();
 
-    abstract ConnectionWorkerJob createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<ConnectionWorkerEvent> connectionWorkerQueue);
+    abstract ConnectionWorkerJob createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<EVT> connectionWorkerQueue);
 
     abstract ReplicationPeerDetails createNewReplicationPeerDetails(long peerId);
 
