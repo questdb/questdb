@@ -65,7 +65,7 @@ public class IntList implements Mutable {
         while (low < high) {
 
             if (high - low < 65) {
-                return scanSearch(v);
+                return scanSearch(v, low, high);
             }
 
             int mid = (low + high - 1) >>> 1;
@@ -268,9 +268,8 @@ public class IntList implements Mutable {
         return true;
     }
 
-    private int scanSearch(int v) {
-        int sz = size();
-        for (int i = 0; i < sz; i++) {
+    private int scanSearch(int v, int low, int high) {
+        for (int i = low; i < high; i++) {
             long f = getQuick(i);
             if (f == v) {
                 return i;
@@ -279,7 +278,7 @@ public class IntList implements Mutable {
                 return -(i + 1);
             }
         }
-        return -(sz + 1);
+        return -(high + 1);
     }
 
 }

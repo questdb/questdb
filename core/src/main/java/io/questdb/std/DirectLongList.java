@@ -72,7 +72,7 @@ public class DirectLongList implements Mutable, Closeable {
         while (low <= high) {
 
             if (high - low < 65) {
-                return scanSearch(v);
+                return scanSearch(v, low, high);
             }
 
             int mid = (low + high) >>> 1;
@@ -109,9 +109,8 @@ public class DirectLongList implements Mutable, Closeable {
         return Unsafe.getUnsafe().getLong(start + (p << 3));
     }
 
-    public int scanSearch(long v) {
-        int sz = size();
-        for (int i = 0; i < sz; i++) {
+    public int scanSearch(long v, int low, int high) {
+        for (int i = low; i < high; i++) {
             long f = get(i);
             if (f == v) {
                 return i;
@@ -120,7 +119,7 @@ public class DirectLongList implements Mutable, Closeable {
                 return -(i + 1);
             }
         }
-        return -(sz + 1);
+        return -(high + 1);
     }
 
     public void set(long p, long v) {
