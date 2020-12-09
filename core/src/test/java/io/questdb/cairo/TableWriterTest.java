@@ -3329,7 +3329,6 @@ public class TableWriterTest extends AbstractCairoTest {
                                 // if this happens return count to non-failing state
                                 ff.count = Long.MAX_VALUE;
                             } catch (CairoException e) {
-                                e.printStackTrace();
                                 failureCount++;
                                 ff.count = Long.MAX_VALUE;
                                 writer.commit();
