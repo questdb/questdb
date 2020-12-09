@@ -4,11 +4,14 @@ import java.io.Closeable;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.replication.ReplicationSlaveManager.SlaveWriter;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Unsafe;
 
 public class ReplicationStreamReceiver implements Closeable {
+    private static final Log LOG = LogFactory.getLog(ReplicationStreamReceiver.class);
     private final FilesFacade ff;
     private IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId;
     private long fd = -1;
@@ -68,8 +71,9 @@ public class ReplicationStreamReceiver implements Closeable {
         while (frameHeaderRemaining > 0) {
             long nRead = ff.read(fd, frameHeaderAddress, frameHeaderRemaining, frameHeaderOffset);
             if (nRead == -1) {
-                // TODO Disconnected while reading header
-                throw new RuntimeException();
+                LOG.info().$("peer disconnected when reading frame header [fd=").$(fd).$(']').$();
+                disconnect();
+                return true;
             }
             frameHeaderOffset += nRead;
             frameHeaderRemaining -= nRead;
@@ -79,7 +83,10 @@ public class ReplicationStreamReceiver implements Closeable {
 
             if (frameType == TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN) {
                 // decode the generic header
-                decodeGenericHeader();
+                if (!decodeGenericHeader()) {
+                    disconnect();
+                    return true;
+                }
                 if (frameHeaderRemaining > 0)
                     continue;
             }
@@ -96,12 +103,16 @@ public class ReplicationStreamReceiver implements Closeable {
                 }
 
                 case TableReplicationStreamHeaderSupport.FRAME_TYPE_END_OF_BLOCK: {
-                    handleEndOfBlockHeader();
+                    if (!handleEndOfBlockHeader()) {
+                        disconnect();
+                    }
                     return true;
                 }
 
                 case TableReplicationStreamHeaderSupport.FRAME_TYPE_COMMIT_BLOCK: {
-                    handleCommitBlock();
+                    if (!handleCommitBlock()) {
+                        disconnect();
+                    }
                     return true;
                 }
 
@@ -112,8 +123,9 @@ public class ReplicationStreamReceiver implements Closeable {
 
         long nRead = ff.read(fd, frameMappingAddress, frameDataNBytesRemaining, frameMappingOffset);
         if (nRead == -1) {
-            // TODO Disconnected mid stream
-            throw new RuntimeException();
+            LOG.info().$("peer disconnected when reading frame data [fd=").$(fd).$(']').$();
+            disconnect();
+            return true;
         }
         frameDataNBytesRemaining -= nRead;
         if (frameDataNBytesRemaining == 0) {
@@ -129,8 +141,8 @@ public class ReplicationStreamReceiver implements Closeable {
     private boolean handleWrite() {
         long nWritten = ff.write(fd, frameHeaderAddress, frameHeaderRemaining, frameHeaderOffset);
         if (nWritten == -1) {
-            // TODO Disconnected mid stream
-            throw new RuntimeException();
+            LOG.info().$("peer disconnected when writiing frame [fd=").$(fd).$(']').$();
+            disconnect();
         }
         frameHeaderRemaining -= nWritten;
         frameHeaderOffset += nWritten;
@@ -143,25 +155,27 @@ public class ReplicationStreamReceiver implements Closeable {
         return true;
     }
 
-    private void handleEndOfBlockHeader() {
+    private boolean handleEndOfBlockHeader() {
         if (frameDataNBytesRemaining != 0) {
-            // TODO Received junk in the header
-            throw new RuntimeException();
+            LOG.info().$("invalid end of block frame, disconnecting [fd=").$(fd).$(", frameDataNBytesRemaining=").$(frameDataNBytesRemaining).$(']').$();
+            return false;
         }
         int nFrames = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_EOB_N_FRAMES_SENT);
         if (slaveWriter.markBlockNFrames(nFrames)) {
             handleReadyToCommit();
         }
+        return true;
     }
 
-    private void handleCommitBlock() {
+    private boolean handleCommitBlock() {
         if (frameDataNBytesRemaining != 0) {
-            // TODO Received junk in the header
-            throw new RuntimeException();
+            LOG.info().$("invalid commit block frame, disconnecting [fd=").$(fd).$(", frameDataNBytesRemaining=").$(frameDataNBytesRemaining).$(']').$();
+            return false;
         }
         slaveWriter.commit();
         resetReading();
         nCommits++;
+        return true;
     }
 
     private void handleDataFrameHeader() {
@@ -184,22 +198,23 @@ public class ReplicationStreamReceiver implements Closeable {
         frameMappingOffset = 0;
     }
 
-    private void decodeGenericHeader() {
+    private boolean decodeGenericHeader() {
         assert frameHeaderRemaining == 0;
         frameType = Unsafe.getUnsafe().getByte(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_TYPE);
         if (frameType > TableReplicationStreamHeaderSupport.FRAME_TYPE_MAX_ID || frameType < TableReplicationStreamHeaderSupport.FRAME_TYPE_MIN_ID) {
-            // TODO Received junk frame type
-            throw new RuntimeException();
+            LOG.info().$("peer sent invalid frame header, disconnecting [frameType=").$(frameType).$(']').$();
+            return false;
         }
         frameHeaderRemaining = TableReplicationStreamHeaderSupport.getFrameHeaderSize(frameType) - frameHeaderOffset;
         frameDataNBytesRemaining = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_SIZE) - frameHeaderOffset
                 - frameHeaderRemaining;
         if (frameDataNBytesRemaining < 0) {
-            // TODO Received junk in the header
-            throw new RuntimeException();
+            LOG.info().$("peer sent invalid frame header, disconnecting [frameDataNBytesRemaining=").$(frameDataNBytesRemaining).$(']').$();
+            return false;
         }
         masterTableId = Unsafe.getUnsafe().getInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID);
         slaveWriter = getSlaveWriter(masterTableId);
+        return true;
     }
 
     private void handleReadyToCommit() {
