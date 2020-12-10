@@ -41,6 +41,9 @@ public class TimestampFormatUtils {
     public static final TimestampFormat NANOS_UTC_FORMAT;
     public static final TimestampFormat USEC_UTC_FORMAT;
     public static final TimestampFormat PG_TIMESTAMP_FORMAT;
+    public static final TimestampFormat PG_DATE_MILLI_TIME_Z_FORMAT;
+    public static final TimestampFormat PG_DATE_TIME_Z_FORMAT;
+
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final TimestampLocale enLocale = TimestampLocaleFactory.INSTANCE.getLocale("en");
     private static final TimestampFormat HTTP_FORMAT;
@@ -373,5 +376,7 @@ public class TimestampFormatUtils {
         GREEDY_MILLIS2_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSz");
         NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
         PG_TIMESTAMP_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
+        PG_DATE_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ssz");
+        PG_DATE_MILLI_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
     }
 }

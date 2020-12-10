@@ -33,6 +33,7 @@ import io.questdb.network.*;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -1342,6 +1343,74 @@ nodejs code:
     }
 
     @Test
+    public void testMicroTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1, -1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 4;
+                }
+            };
+
+            try (final PGWireServer ignored = PGWireServer.create(
+                    conf,
+                    null,
+                    LOG,
+                    engine,
+                    compiler.getFunctionFactoryCache()
+            )) {
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+                connection.prepareCall("create table x(t timestamp)").execute();
+
+                PreparedStatement statement = connection.prepareStatement("insert into x values (?)");
+
+                final String expected = "t[TIMESTAMP]\n" +
+                        "2019-02-11 13:48:11.123998\n" +
+                        "2019-02-11 13:48:11.123999\n" +
+                        "2019-02-11 13:48:11.124\n" +
+                        "2019-02-11 13:48:11.124001\n" +
+                        "2019-02-11 13:48:11.124002\n" +
+                        "2019-02-11 13:48:11.124003\n" +
+                        "2019-02-11 13:48:11.124004\n" +
+                        "2019-02-11 13:48:11.124005\n" +
+                        "2019-02-11 13:48:11.124006\n" +
+                        "2019-02-11 13:48:11.124007\n" +
+                        "2019-02-11 13:48:11.124008\n" +
+                        "2019-02-11 13:48:11.124009\n" +
+                        "2019-02-11 13:48:11.12401\n" +
+                        "2019-02-11 13:48:11.124011\n" +
+                        "2019-02-11 13:48:11.124012\n" +
+                        "2019-02-11 13:48:11.124013\n" +
+                        "2019-02-11 13:48:11.124014\n" +
+                        "2019-02-11 13:48:11.124015\n" +
+                        "2019-02-11 13:48:11.124016\n" +
+                        "2019-02-11 13:48:11.124017\n";
+
+                long ts = TimestampFormatUtils.parseTimestamp("2019-02-11T13:48:11.123998Z");
+                for (int i = 0; i < 20; i++) {
+                    statement.setLong(1, ts + i);
+                    statement.execute();
+                }
+                StringSink sink = new StringSink();
+                PreparedStatement sel = connection.prepareStatement("x");
+                ResultSet res = sel.executeQuery();
+                assertResultSet(expected, sink, res);
+                connection.close();
+            }
+        });
+    }
+
+    @Test
     public void testMultiplePreparedStatements() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CountDownLatch haltLatch = new CountDownLatch(1);
@@ -1842,9 +1911,10 @@ nodejs code:
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
+                properties.setProperty("binaryTransfer", "true");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
-                PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
+                PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
                 statement.setLong(2, 123L);
                 statement.setFloat(3, 5.43f);
@@ -1867,20 +1937,26 @@ nodejs code:
                 statement.setNull(17, Types.VARCHAR);
                 statement.setString(18, null);
                 statement.setNull(19, Types.DATE);
-                statement.setNull(20, Types.TIMESTAMP);
+                // bizarrely this NULL will go out to server as type UNSPECIFIED, despite JDBC API
+                // actually specifying the type as you can see
+                // todo: null like this needs to be derived from table field where it goes to
+                //    this is not yet supported
+                // statement.setNull(20, Types.TIMESTAMP);
+                // and so is this - UNSPECIFIED apparently
+                // statement.setTimestamp(20, null);
 
                 // when someone uses PostgreSQL's type extensions, which alter driver behaviour
                 // we should handle this gracefully
 
-                statement.setTimestamp(21, new PGTimestamp(300011));
-                statement.setTimestamp(22, new PGTimestamp(500023, new GregorianCalendar()));
+                statement.setTimestamp(20, new PGTimestamp(300011));
+                statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
 
-                final String expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[TIMESTAMP],$10[TIMESTAMP],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP],$22[TIMESTAMP]\n" +
-                        "1,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "2,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "3,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "4,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "5,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                final String expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[DATE],$10[TIMESTAMP],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[DATE],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                        "1,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "2,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "3,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "4,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "5,4,123,5.429999828338623,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
 
                 StringSink sink = new StringSink();
                 for (int i = 0; i < 10000; i++) {
@@ -1914,7 +1990,7 @@ nodejs code:
                 properties.setProperty("binaryTransfer", "false");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
-                PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
+                PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
                 statement.setLong(2, 123L);
                 statement.setFloat(3, 5.43f);
@@ -1937,20 +2013,20 @@ nodejs code:
                 statement.setNull(17, Types.VARCHAR);
                 statement.setString(18, null);
                 statement.setNull(19, Types.DATE);
-                statement.setNull(20, Types.TIMESTAMP);
+//                statement.setNull(20, Types.TIMESTAMP);
 
                 // when someone uses PostgreSQL's type extensions, which alter driver behaviour
                 // we should handle this gracefully
 
-                statement.setTimestamp(21, new PGTimestamp(300011));
-                statement.setTimestamp(22, new PGTimestamp(500023, new GregorianCalendar()));
+                statement.setTimestamp(20, new PGTimestamp(300011));
+                statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
 
-                final String expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[TIMESTAMP],$10[TIMESTAMP],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP],$22[TIMESTAMP]\n" +
-                        "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                final String expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[DATE],$10[TIMESTAMP],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[DATE],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                        "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
 
                 StringSink sink = new StringSink();
                 for (int i = 0; i < 10; i++) {
@@ -2536,11 +2612,12 @@ nodejs code:
                         sink.put(rs.getBoolean(i));
                         break;
                     case TIME:
-                        Date date = rs.getDate(i);
-                        if (date == null) {
+                    case DATE:
+                        timestamp = rs.getTimestamp(i);
+                        if (timestamp == null) {
                             sink.put("null");
                         } else {
-                            sink.put(date.toString());
+                            sink.put(timestamp.toString());
                         }
                         break;
                     case BINARY:

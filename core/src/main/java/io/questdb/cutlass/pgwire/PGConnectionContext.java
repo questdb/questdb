@@ -40,13 +40,16 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.str.*;
 import io.questdb.std.time.DateLocale;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.std.time.DateFormatUtils.*;
+import static io.questdb.std.microtime.TimestampFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
+import static io.questdb.std.microtime.TimestampFormatUtils.PG_DATE_TIME_Z_FORMAT;
+import static io.questdb.std.time.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class PGConnectionContext implements IOContext, Mutable {
     public static final String TAG_SET = "SET";
@@ -120,12 +123,12 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final BindVariableSetter booleanSetter = this::setBooleanBindVariable;
     private final BindVariableSetter charSetter = this::setCharBindVariable;
     private final BindVariableSetter strSetter = this::setStrBindVariable;
-    private final BindVariableSetter noopSetter = this::setNoopBindVariable;
     private final ObjList<ColumnAppender> columnAppenders = new ObjList<>();
-    private final WeakObjectPool<IntList> bindVarTypesPool = new WeakObjectPool<>(IntList::new, 16);
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
+    private final TimestampLocale timestampLocale;
     private final DateLocale dateLocale;
     private final BindVariableSetter timestampSetter = this::setTimestampBindVariable;
+    private final BindVariableSetter dateSetter = this::setDateBindVariable;
     private final ObjHashSet<InsertMethod> cachedTransactionInsertWriters = new ObjHashSet<>();
     private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
     private final IntList parameterFormats = new IntList();
@@ -134,6 +137,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final AssociativeCache<InsertStatement> insertStatements = new AssociativeCache<>(8, 8);
     private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap = new CharSequenceObjHashMap<>();
+    private int typedBindVariableCount = 0;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean requireInitialMessage = false;
@@ -154,6 +158,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private long rowCount;
     private boolean isEmptyQuery;
     private int transactionState = NO_TRANSACTION;
+    private NamedStatementWrapper wrapper;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -190,6 +195,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
+        this.timestampLocale = configuration.getDefaultTimestampLocale();
         this.dateLocale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         populateAppender();
@@ -417,16 +423,12 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setTimestampBindVariable(int index, long address, int valueLen) throws SqlException {
+    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
         dbcs.of(address, address + valueLen);
         try {
-            bindVariableService.setTimestamp(index, PG_DATE_TIME_Z_FORMAT.parse(dbcs, dateLocale));
+            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, dateLocale));
         } catch (NumericException ex) {
-            try {
-                bindVariableService.setTimestamp(index, PG_DATE_MILLI_TIME_Z_FORMAT.parse(dbcs, dateLocale));
-            } catch (NumericException exc) {
-                throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
-            }
+            throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
         }
     }
 
@@ -495,6 +497,19 @@ public class PGConnectionContext implements IOContext, Mutable {
         } else {
             LOG.error().$("invalid str UTF8 bytes [index=").$(index).$(']').$();
             throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    public void setTimestampBindVariable(int index, long address, int valueLen) throws SqlException {
+        dbcs.of(address, address + valueLen);
+        try {
+            bindVariableService.setTimestamp(index, PG_DATE_TIME_Z_FORMAT.parse(dbcs, timestampLocale));
+        } catch (NumericException exc) {
+            try {
+                bindVariableService.setTimestamp(index, PG_DATE_MILLI_TIME_Z_FORMAT.parse(dbcs, timestampLocale));
+            } catch (NumericException excc) {
+                throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
+            }
         }
     }
 
@@ -701,7 +716,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         //   0: default format is text for all parameters
         //   1: client can specify one format for all parameters
         //   2 or greater: format has been define for each parameter, so parameterFormatCount must equal parameterValueCount
-        boolean inferTypes = parameterValueCount != bindVariableService.getIndexedVariableCount();
+        boolean inferTypes = parameterValueCount != typedBindVariableCount;
         boolean allTextFormat = parameterFormatCount == 0 || (parameterFormatCount == 1 && parameterFormats.get(0) == 0);
         boolean allBinaryFormat = parameterFormatCount == 1 && parameterFormats.get(0) == 1;
 
@@ -734,9 +749,10 @@ public class PGConnectionContext implements IOContext, Mutable {
                 throw BadProtocolException.INSTANCE;
             }
             ensureData(lo, valueLen, msgLimit, j);
-            //infer type if needed
-            if (inferTypes) {
+            // infer type if needed
+            if (inferTypes && bindVariableSetters.getQuick(j * 2) == null) {
                 int pgType = inferParameterType(lo, valueLen);
+                // todo: how's this possible? our probe return type is not in our own OID set?
                 if (pgType == -1) {
                     LOG.error().$("invalid parameter type for parameter #[").$(j).$(']').$();
                     throw BadProtocolException.INSTANCE;
@@ -848,7 +864,9 @@ public class PGConnectionContext implements IOContext, Mutable {
             @Transient AssociativeCache<RecordCursorFactory> factoryCache
     ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         final CharSequence statementName = getStatementName(lo, hi);
-        if (statementName != null) {
+        // make sure there is no current wrapper is set, so that we don't assign values
+        // from the wrapper back to context on the first pass where named statement is setup
+        if (statementName != null && wrapper == null) {
             LOG.debug().$("named statement [name=").$(statementName).$(']').$();
             NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
             if (wrapper != null) {
@@ -1004,9 +1022,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private int inferParameterType(long lo, int valueLen) {
+        parameterHolder.of(lo, lo + valueLen);
         for (int i = 0; i < typeManager.getProbeCount(); i++) {
-            TypeAdapter typeAdapter = typeManager.getProbe(i);
-            if (typeAdapter.probe(parameterHolder.of(lo, lo + valueLen))) {
+            final TypeAdapter typeAdapter = typeManager.getProbe(i);
+            if (typeAdapter.probe(parameterHolder)) {
                 return TYPE_OIDS.get(typeAdapter.getType());
             }
         }
@@ -1084,6 +1103,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // fall thru
             case 'H': // flush
                 sendAndReset();
+                // todo: we we need to prepare for new query here?
                 prepareForNewQuery();
                 break;
             case 'D': // describe
@@ -1203,6 +1223,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         queryTag = TAG_OK;
         queryText = null;
         bindVariableSetters.clear();
+        wrapper = null;
     }
 
     private void prepareLoginOk() {
@@ -1347,10 +1368,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             if (statementName != null) {
                 final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
                 if (wrapper != null) {
-                    IntList bindVariableTypes = wrapper.bindVariableTypes;
-                    if (bindVariableTypes != null) {
-                        bindVarTypesPool.push(bindVariableTypes);
-                    }
                     namedStatementWrapperPool.push(wrapper);
                 } else {
                     LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
@@ -1523,20 +1540,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         long hi = getStringLength(lo, msgLimit);
         checkNotTrue(hi == -1, "bad prepared statement name length");
 
-        // we only need to hold on to the named statement if it has
-        // bind variables, otherwise it is useless
+        // When we encounter statement name in the "parse" message
+        // we need to ensure the wrapper is properly setup to deal with
+        // "describe", "bind" message sequence that will follow next.
+        // In that all parameter types that we need to infer will have to be added to the
+        // "bindVariableTypes" list.
+        // Perhaps this is a good idea to make named statement writer a part of the context
         final CharSequence statementName = getStatementName(lo, hi);
-        NamedStatementWrapper wrapper = null;
-        IntList bindVariableTypes = null;
-        if (statementName != null) {
-            LOG.debug().$("'P' statement [name=").$(statementName).$(']').$();
-            wrapper = namedStatementMap.get(statementName);
-            if (wrapper == null) {
-                wrapper = namedStatementWrapperPool.pop();
-                namedStatementMap.put(statementName, wrapper);
-            }
-            bindVariableTypes = wrapper.bindVariableTypes;
-        }
 
         //query text
         lo = hi + 1;
@@ -1544,6 +1554,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         checkNotTrue(hi == -1, "bad query text length");
 
         prepareForNewQuery();
+
+        // thi is is where we set "queryText"
         parseQueryText(lo, hi);
 
         //parameter type count
@@ -1551,6 +1563,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter type count");
 
         final short parameterCount = getShort(lo);
+
+        if (statementName != null) {
+            LOG.debug().$("'P' statement [name=").$(statementName).$(']').$();
+            wrapper = namedStatementMap.get(statementName);
+            // todo: check if this can ever be null, perhaps only by exception or protocol violation
+            assert wrapper == null;
+            wrapper = namedStatementWrapperPool.pop();
+            wrapper.queryText = Chars.toString(queryText);
+            namedStatementMap.put(Chars.toString(statementName), wrapper);
+        }
 
         //process parameter types
         bindVariableSetters.clear();
@@ -1567,26 +1589,14 @@ public class PGConnectionContext implements IOContext, Mutable {
             LOG.debug().$("params [count=").$(parameterCount).$(']').$();
             lo += Short.BYTES;
             bindVariableService.clear();
-            if (bindVariableTypes == null) {
-                bindVariableTypes = bindVarTypesPool.pop();
-            }
-            setupBindVariables(lo, parameterCount, bindVariableSetters, bindVariableTypes);
+            bindVariableSetters.ensureCapacity(parameterCount * 2);
+            setupBindVariables(lo, parameterCount, bindVariableSetters);
         } else if (parameterCount < 0) {
             LOG.error()
                     .$("invalid parameter count [parameterCount=").$(parameterCount)
                     .$(", offset=").$(lo - address)
                     .$(']').$();
             throw BadProtocolException.INSTANCE;
-        } else if (wrapper != null && wrapper.bindVariableTypes != null) {
-            bindVarTypesPool.push(wrapper.bindVariableTypes);
-            wrapper.bindVariableTypes = null;
-        }
-
-        if (wrapper != null) {
-            CharacterStoreEntry cachedQueryText = queryTextCharacterStore.newEntry();
-            cachedQueryText.put(queryText);
-            wrapper.queryText = cachedQueryText.toImmutable();
-            wrapper.bindVariableTypes = bindVariableTypes;
         }
         prepareParseComplete();
     }
@@ -1761,80 +1771,95 @@ public class PGConnectionContext implements IOContext, Mutable {
         switch (pgType) {
             case PG_FLOAT8: // FLOAT8 - double
                 bindVariableService.setDouble(idx);
-                bindVariableSetters.add(doubleSetter);
-                bindVariableSetters.add(doubleTxtSetter);
+                bindVariableSetters.setQuick(idx * 2, doubleSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, doubleTxtSetter);
                 break;
             case PG_INT4: // INT
                 bindVariableService.setInt(idx);
-                bindVariableSetters.add(intSetter);
-                bindVariableSetters.add(intTxtSetter);
+                bindVariableSetters.setQuick(idx * 2, intSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, intTxtSetter);
                 break;
             case PG_INT8:
                 bindVariableService.setLong(idx);
-                bindVariableSetters.add(longSetter);
-                bindVariableSetters.add(longTxtSetter);
+                bindVariableSetters.setQuick(idx * 2, longSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, longTxtSetter);
                 break;
             case PG_FLOAT4:
                 bindVariableService.setFloat(idx);
-                bindVariableSetters.add(floatSetter);
-                bindVariableSetters.add(floatTxtSetter);
+                bindVariableSetters.setQuick(idx * 2, floatSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, floatTxtSetter);
                 break;
             case PG_INT2:
                 // todo: is this not short?
                 bindVariableService.setByte(idx);
-                bindVariableSetters.add(byteSetter);
-                bindVariableSetters.add(byteTxtSetter);
+                bindVariableSetters.setQuick(idx * 2, byteSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, byteTxtSetter);
                 break;
             case PG_BOOL:
                 bindVariableService.setBoolean(idx);
-                bindVariableSetters.add(booleanSetter);
-                bindVariableSetters.add(booleanSetter);
+                bindVariableSetters.setQuick(idx * 2, booleanSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, booleanSetter);
                 break;
             case PG_VARCHAR:
                 bindVariableService.setStr(idx);
-                bindVariableSetters.add(strSetter);
-                bindVariableSetters.add(strSetter);
+                bindVariableSetters.setQuick(idx * 2, strSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_CHAR:
                 bindVariableService.setChar(idx);
-                bindVariableSetters.add(charSetter);
-                bindVariableSetters.add(charSetter);
+                bindVariableSetters.setQuick(idx * 2, charSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, charSetter);
                 break;
             case PG_DATE:
                 bindVariableService.setDate(idx);
-                bindVariableSetters.add(noopSetter);
-                bindVariableSetters.add(noopSetter);
+                bindVariableSetters.setQuick(idx * 2, dateSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, dateSetter);
                 break;
-            case PG_UNSPECIFIED:
             case PG_TIMESTAMP:
             case PG_TIMESTAMPZ:
+                bindVariableService.setTimestamp(idx, Numbers.LONG_NaN);
+                bindVariableSetters.setQuick(idx * 2, timestampSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, timestampSetter);
+                break;
+            case PG_UNSPECIFIED:
                 // postgres JDBC driver does not seem to send
                 // microseconds with its text timestamp
                 // on top of this parameters such as setDate, setTimestamp
                 // cause driver to send UNSPECIFIED type
                 // QuestDB has to know types to resolve function linkage
                 // at compile time rather than at runtime.
-                bindVariableService.setTimestamp(idx);
-                bindVariableSetters.add(timestampSetter);
-                bindVariableSetters.add(timestampSetter);
+//                bindVariableService.setLong(idx);
+//                bindVariableSetters.add(timestampAsLongSetter);
+//                bindVariableSetters.add(timestampAsLongSetter);
                 break;
             default:
                 throw SqlException.$(0, "unsupported parameter [type=").put(pgType).put(", index=").put(idx).put(']');
         }
     }
 
-    private void setupBindVariables(
-            long lo,
-            short pc,
-            @Transient ObjList<BindVariableSetter> bindVariableSetters,
-            @Nullable IntList bindVariableTypes
-    ) throws SqlException {
+    private void setupBindVariables(long lo, short pc, @Transient ObjList<BindVariableSetter> bindVariableSetters) throws SqlException {
+        this.typedBindVariableCount = 0;
+
+        if (wrapper != null) {
+            wrapper.bindVariableTypes.ensureCapacity(pc);
+        }
+
         for (int idx = 0; idx < pc; idx++) {
             int pgType = getInt(lo + idx * Integer.BYTES);
-            if (bindVariableTypes != null) {
-                bindVariableTypes.add(pgType);
+
+            if (pgType != PG_UNSPECIFIED) {
+
+                // todo: this is not great to have "if" in a loop
+                if (wrapper != null) {
+                    wrapper.bindVariableTypes.setQuick(idx, pgType);
+                }
+                setupBindVariable(bindVariableSetters, idx, pgType);
+                typedBindVariableCount++;
             }
-            setupBindVariable(bindVariableSetters, idx, pgType);
+        }
+
+        if (wrapper != null) {
+            wrapper.typedVariableCount = typedBindVariableCount;
         }
     }
 
@@ -1851,9 +1876,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     ) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         queryText = wrapper.queryText;
         bindVariableSetters.clear();
-        if (wrapper.bindVariableTypes != null) {
-            setupCachedBindVariables(wrapper.bindVariableTypes);
-        }
+        typedBindVariableCount = wrapper.typedVariableCount;
+        setupCachedBindVariables(wrapper.bindVariableTypes);
         if (compiler != null) {
             compileQuery(compiler, factoryCache);
         }
@@ -1879,12 +1903,13 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     public static class NamedStatementWrapper implements Mutable {
 
+        public final IntList bindVariableTypes = new IntList();
         public CharSequence queryText = null;
-        public IntList bindVariableTypes = null;
+        public int typedVariableCount = 0;
 
         public void clear() {
             queryText = null;
-            bindVariableTypes = null;
+            bindVariableTypes.clear();
         }
     }
 

@@ -48,7 +48,7 @@ public class PGOids {
     public static final IntList TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[11];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];
 
     static {
         TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
@@ -62,7 +62,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
         TYPE_OIDS.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
         TYPE_OIDS.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
+        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_DATE); // DATE
         TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
         TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
 
@@ -77,6 +77,7 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_BOOL);
         PG_TYPE_OIDS.add(PG_BYTEA);
         PG_TYPE_OIDS.add(PG_NUMERIC);
+        PG_TYPE_OIDS.add(PG_DATE);
 
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Double.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, Float.BYTES);
@@ -98,8 +99,6 @@ public class PGOids {
         PG_TYPE_TO_NAME[8] = "BOOL";
         PG_TYPE_TO_NAME[9] = "BINARY";
         PG_TYPE_TO_NAME[10] = "NUMERIC";
-
-        //PG_TYPE_TO_NAME & PG_TYPE_TO_SIZE_MAP are expected to be of same size
-        assert PG_TYPE_TO_NAME.length == PG_TYPE_TO_NAME.length;
+        PG_TYPE_TO_NAME[11] = "DATE";
     }
 }
