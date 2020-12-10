@@ -12,22 +12,23 @@ import io.questdb.cairo.replication.ReplicationSlaveConnectionMultiplexer.SlaveC
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.IntObjHashMap;
 
 public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConnectionManager<SlaveConnectionWorkerEvent, ConnectionCallbackEvent> {
     private static final Log LOG = LogFactory.getLog(ReplicationSlaveConnectionMultiplexer.class);
-    private final CairoConfiguration configuration;
+    private final NetworkFacade nf;
     private final ReplicationSlaveCallbacks callbacks;
 
     public ReplicationSlaveConnectionMultiplexer(
-            CairoConfiguration configuration,
+            NetworkFacade nf,
             WorkerPool workerPool,
             int connectionCallbackQueueLen,
             int newConnectionQueueLen,
             ReplicationSlaveCallbacks callbacks
     ) {
-        super(configuration.getFilesFacade(), workerPool, connectionCallbackQueueLen, newConnectionQueueLen, SlaveConnectionWorkerEvent::new, ConnectionCallbackEvent::new);
-        this.configuration = configuration;
+        super(nf, workerPool, connectionCallbackQueueLen, newConnectionQueueLen, SlaveConnectionWorkerEvent::new, ConnectionCallbackEvent::new);
+        this.nf = nf;
         this.callbacks = callbacks;
     }
 
@@ -92,7 +93,7 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
 
     @Override
     ReplicationPeerDetails createNewReplicationPeerDetails(long peerId) {
-        return new MasterPeerDetails(peerId, nWorkers, connectionWorkerJobs, configuration, connectionCallbackQueue);
+        return new MasterPeerDetails(peerId, nWorkers, connectionWorkerJobs, nf, connectionCallbackQueue);
     }
 
     interface ReplicationSlaveCallbacks {
@@ -104,11 +105,11 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
                 long peerId,
                 int nWorkers,
                 ConnectionWorkerJob<?, ?>[] connectionWorkerJobs,
-                CairoConfiguration configuration,
+                NetworkFacade nf,
                 SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue
         ) {
             super(peerId, nWorkers, connectionWorkerJobs, () -> {
-                return new MasterConnection(configuration, connectionCallbackQueue);
+                return new MasterConnection(nf, connectionCallbackQueue);
             });
         }
     }
@@ -162,9 +163,9 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
         private boolean diconnecting;
         private ReplicationStreamReceiver streamReceiver;
 
-        MasterConnection(CairoConfiguration configuration, SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue) {
-            super(configuration.getFilesFacade(), connectionCallbackQueue);
-            streamReceiver = new ReplicationStreamReceiver(configuration);
+        MasterConnection(NetworkFacade nf, SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue) {
+            super(nf, connectionCallbackQueue);
+            streamReceiver = new ReplicationStreamReceiver(nf);
         }
 
         @Override

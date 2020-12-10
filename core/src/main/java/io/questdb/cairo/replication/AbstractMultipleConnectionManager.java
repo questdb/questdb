@@ -9,7 +9,7 @@ import io.questdb.cairo.replication.ReplicationPeerDetails.FanOutSequencedQueue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.FilesFacade;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -17,7 +17,7 @@ import io.questdb.std.ObjectFactory;
 
 abstract class AbstractMultipleConnectionManager<WKEV extends ConnectionWorkerEvent, CBEV extends ConnectionCallbackEvent> implements Closeable {
     private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionDemultiplexer.class);
-    protected final FilesFacade ff;
+    protected final NetworkFacade nf;
     protected final FanOutSequencedQueue<WKEV> connectionWorkerQueue;
     protected final SequencedQueue<CBEV> connectionCallbackQueue;
     private LongObjHashMap<ReplicationPeerDetails> peerById = new LongObjHashMap<>();
@@ -27,7 +27,7 @@ abstract class AbstractMultipleConnectionManager<WKEV extends ConnectionWorkerEv
 
     @SuppressWarnings("unchecked")
     public AbstractMultipleConnectionManager(
-            FilesFacade ff,
+            NetworkFacade nf,
             WorkerPool connectionWorkerPool,
             int connectionCallbackQueueLen,
             int connectionWorkerQueueLen,
@@ -35,7 +35,7 @@ abstract class AbstractMultipleConnectionManager<WKEV extends ConnectionWorkerEv
             ObjectFactory<CBEV> callbackEventFactory
     ) {
         super();
-        this.ff = ff;
+        this.nf = nf;
 
         nWorkers = connectionWorkerPool.getWorkerCount();
         connectionWorkerQueue = FanOutSequencedQueue.createSingleProducerFanOutConsumerQueue(connectionWorkerQueueLen, workerEventFactory,

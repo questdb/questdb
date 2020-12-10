@@ -10,7 +10,7 @@ import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStream
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.FilesFacade;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.Unsafe;
 
 public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleConnectionManager<ConnectionWorkerEvent, MasterConnectionCallbackEvent> {
@@ -19,14 +19,14 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
     private ReplicationMasterCallbacks callbacks;
 
     public ReplicationMasterConnectionDemultiplexer(
-            FilesFacade ff,
+            NetworkFacade nf,
             WorkerPool senderWorkerPool,
             int connectionCallbackQueueLen,
             int newConnectionQueueLen,
             int sendFrameQueueLen,
             ReplicationMasterCallbacks callbacks
     ) {
-        super(ff, senderWorkerPool, connectionCallbackQueueLen, newConnectionQueueLen, ConnectionWorkerEvent::new, MasterConnectionCallbackEvent::new);
+        super(nf, senderWorkerPool, connectionCallbackQueueLen, newConnectionQueueLen, ConnectionWorkerEvent::new, MasterConnectionCallbackEvent::new);
         this.callbacks = callbacks;
         this.sendFrameQueueLen = sendFrameQueueLen;
     }
@@ -47,7 +47,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
 
     @Override
     ReplicationPeerDetails createNewReplicationPeerDetails(long peerId) {
-        return new SlavePeerDetails(ff, connectionCallbackQueue, sendFrameQueueLen, peerId, nWorkers, connectionWorkerJobs);
+        return new SlavePeerDetails(nf, connectionCallbackQueue, sendFrameQueueLen, peerId, nWorkers, connectionWorkerJobs);
     }
 
     @Override
@@ -87,7 +87,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
 
     private static class SlavePeerDetails extends ReplicationPeerDetails {
         private SlavePeerDetails(
-                FilesFacade ff,
+                NetworkFacade nf,
                 SequencedQueue<MasterConnectionCallbackEvent> connectionCallbackQueue,
                 int sendFrameQueueLen,
                 long slaveId,
@@ -95,7 +95,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                 ConnectionWorkerJob<?, ?>[] connectionWorkerJobs
         ) {
             super(slaveId, nWorkers, connectionWorkerJobs, () -> {
-                return new SlaveConnection(ff, connectionCallbackQueue, sendFrameQueueLen);
+                return new SlaveConnection(nf, connectionCallbackQueue, sendFrameQueueLen);
             });
         }
 
@@ -126,17 +126,17 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         private final SequencedQueue<SendFrameEvent> sendFrameQueue;
         private ReplicationStreamGeneratorFrame activeSendFrame;
         private long sendAddress;
-        private long sendOffset;
-        private long sendLength;
+        private int sendOffset;
+        private int sendLength;
         private boolean sendingHeader;
         private long receiveAddress;
-        private long receiveBufSz;
-        private long receiveOffset;
-        private long receiveLen;
+        private int receiveBufSz;
+        private int receiveOffset;
+        private int receiveLen;
         private byte receiveFrameType;
 
-        private SlaveConnection(FilesFacade ff, SequencedQueue<MasterConnectionCallbackEvent> connectionCallbackQueue, int sendFrameQueueLen) {
-            super(ff, connectionCallbackQueue);
+        private SlaveConnection(NetworkFacade nf, SequencedQueue<MasterConnectionCallbackEvent> connectionCallbackQueue, int sendFrameQueueLen) {
+            super(nf, connectionCallbackQueue);
             this.sendFrameQueue = SequencedQueue.createSingleProducerSingleConsumerQueue(sendFrameQueueLen, SendFrameEvent::new);
         }
 
@@ -199,7 +199,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                 assert sendAddress != 0;
                 assert sendLength > 0;
                 assert sendOffset < sendLength;
-                long nWritten = ff.write(fd, sendAddress, sendLength, sendOffset);
+                int nWritten = nf.send(fd, sendAddress + sendOffset, sendLength);
                 if (nWritten > 0) {
                     if (nWritten == sendLength) {
                         wroteSomething = true;
@@ -237,8 +237,8 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             boolean readSomething = false;
             while (true) {
                 if (receiveFrameType == TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN) {
-                    long len = receiveLen - receiveOffset;
-                    long nRead = ff.read(fd, receiveAddress, len, receiveOffset);
+                    int len = receiveLen - receiveOffset;
+                    int nRead = nf.recv(fd, receiveAddress + receiveOffset, len);
                     if (nRead > 0) {
                         readSomething = true;
                         receiveOffset += nRead;

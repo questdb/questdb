@@ -10,7 +10,6 @@ import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TablePageFrameCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
@@ -28,7 +27,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.FilesFacade;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
@@ -36,17 +35,12 @@ import io.questdb.test.tools.TestUtils.LeakProneCode;
 
 public class ReplicationSlaveConnectionMultiplexerTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(ReplicationSlaveConnectionMultiplexerTest.class);
+    private static NetworkFacade NF;
 
     @BeforeClass
     public static void setUp() throws IOException {
         AbstractCairoTest.setUp();
-        final FilesFacade ff = MockConnection.FILES_FACADE_INSTANCE;
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
+        NF = MockConnection.NETWORK_FACADE_INSTANCE;
     }
 
     @BeforeClass
@@ -116,11 +110,11 @@ public class ReplicationSlaveConnectionMultiplexerTest extends AbstractGriffinTe
                 Assert.fail();
             }
         };
-        ReplicationSlaveConnectionMultiplexer slaveConnMux = new ReplicationSlaveConnectionMultiplexer(configuration, workerPool, muxProducerQueueLen,
+        ReplicationSlaveConnectionMultiplexer slaveConnMux = new ReplicationSlaveConnectionMultiplexer(NF, workerPool, muxProducerQueueLen,
                 muxConsumerQueueLen, slaveConnMuxCallbacks);
         workerPool.start(LOG);
         MockConnection conn1 = new MockConnection();
-        long recvBufferSz = TableReplicationStreamHeaderSupport.SCR_HEADER_SIZE;
+        int recvBufferSz = TableReplicationStreamHeaderSupport.SCR_HEADER_SIZE;
         long recvBuffer = Unsafe.malloc(recvBufferSz);
         boolean done = slaveConnMux.tryAddConnection(peerId, conn1.connectorFd);
         Assert.assertTrue(done);
@@ -163,7 +157,7 @@ public class ReplicationSlaveConnectionMultiplexerTest extends AbstractGriffinTe
             }
 
             // Wait for slave ready to commit (SCR) frame
-            recv(MockConnection.FILES_FACADE_INSTANCE, conn1.acceptorFd, recvBuffer, recvBufferSz, () -> {
+            recv(MockConnection.NETWORK_FACADE_INSTANCE, conn1.acceptorFd, recvBuffer, recvBufferSz, () -> {
                 return false;
             });
 
@@ -208,22 +202,22 @@ public class ReplicationSlaveConnectionMultiplexerTest extends AbstractGriffinTe
     }
 
     private void sendFrame(MockConnection conn1, ReplicationStreamGeneratorFrame frame) throws IOException {
-        send(MockConnection.FILES_FACADE_INSTANCE, conn1.acceptorFd, frame.getFrameHeaderAddress(), frame.getFrameHeaderLength(), () -> {
+        send(MockConnection.NETWORK_FACADE_INSTANCE, conn1.acceptorFd, frame.getFrameHeaderAddress(), frame.getFrameHeaderLength(), () -> {
             return false;
         });
         if (frame.getFrameDataAddress() != 0) {
-            send(MockConnection.FILES_FACADE_INSTANCE, conn1.acceptorFd, frame.getFrameDataAddress(), frame.getFrameDataLength(), () -> {
+            send(MockConnection.NETWORK_FACADE_INSTANCE, conn1.acceptorFd, frame.getFrameDataAddress(), frame.getFrameDataLength(), () -> {
                 return false;
             });
         }
         frame.complete();
     }
 
-    private void send(FilesFacade ff, long fd, long buffer, long buflen, Callable<Boolean> onIdle) throws IOException {
-        long offset = 0;
+    private void send(NetworkFacade nf, long fd, long buffer, int buflen, Callable<Boolean> onIdle) throws IOException {
+        int offset = 0;
         while (offset < buflen) {
-            long len = buflen - offset;
-            long nSent = ff.write(fd, buffer, len, offset);
+            int len = buflen - offset;
+            int nSent = nf.send(fd, buffer + offset, len);
             if (nSent < 0) {
                 throw new IOException("disconnected");
             }
@@ -244,11 +238,11 @@ public class ReplicationSlaveConnectionMultiplexerTest extends AbstractGriffinTe
         }
     }
 
-    private void recv(FilesFacade ff, long fd, long buffer, long buflen, Callable<Boolean> onIdle) throws IOException {
-        long offset = 0;
+    private void recv(NetworkFacade nf, long fd, long buffer, int buflen, Callable<Boolean> onIdle) throws IOException {
+        int offset = 0;
         while (offset < buflen) {
-            long len = buflen - offset;
-            long nReceived = ff.read(fd, buffer, len, offset);
+            int len = buflen - offset;
+            int nReceived = nf.recv(fd, buffer + offset, len);
             if (nReceived < 0) {
                 throw new IOException("disconnected");
             }

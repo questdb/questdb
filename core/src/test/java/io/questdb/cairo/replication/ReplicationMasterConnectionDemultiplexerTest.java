@@ -9,7 +9,6 @@ import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TablePageFrameCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
@@ -27,7 +26,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.FilesFacade;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.test.tools.TestUtils;
@@ -35,17 +34,12 @@ import io.questdb.test.tools.TestUtils.LeakProneCode;
 
 public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionDemultiplexerTest.class);
+    private static NetworkFacade NF;
 
     @BeforeClass
     public static void setUp() throws IOException {
         AbstractCairoTest.setUp();
-        final FilesFacade ff = MockConnection.FILES_FACADE_INSTANCE;
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
+        NF = MockConnection.NETWORK_FACADE_INSTANCE;
     }
 
     @BeforeClass
@@ -121,7 +115,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                 Assert.fail();
             }
         };
-        ReplicationMasterConnectionDemultiplexer masterConnDemux = new ReplicationMasterConnectionDemultiplexer(configuration.getFilesFacade(), workerPool, muxProducerQueueLen, 1,
+        ReplicationMasterConnectionDemultiplexer masterConnDemux = new ReplicationMasterConnectionDemultiplexer(NF, workerPool, muxProducerQueueLen, 1,
                 muxConsumerQueueLen, masterConnMuxCallbacks);
         workerPool.start(LOG);
         MockConnection conn1 = new MockConnection();
@@ -130,7 +124,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$();
         compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
 
-        ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(configuration);
+        ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(NF);
         IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
         streamReceiver.of(conn1.connectorFd, slaveWriteByMasterTableId, () -> {
             throw new RuntimeException("Unexpectedly disconnected");

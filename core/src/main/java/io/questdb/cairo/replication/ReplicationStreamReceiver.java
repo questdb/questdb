@@ -2,25 +2,24 @@ package io.questdb.cairo.replication;
 
 import java.io.Closeable;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Unsafe;
 
 public class ReplicationStreamReceiver implements Closeable {
     private static final Log LOG = LogFactory.getLog(ReplicationStreamReceiver.class);
-    private final FilesFacade ff;
+    private final NetworkFacade nf;
     private IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId;
     private long fd = -1;
     private Runnable disconnectedCallback;
     private long frameHeaderAddress;
-    private long frameHeaderOffset;
-    private long frameHeaderRemaining;
+    private int frameHeaderOffset;
+    private int frameHeaderRemaining;
 
     private byte frameType;
-    private long frameDataNBytesRemaining;
+    private int frameDataNBytesRemaining;
     private int masterTableId;
     private SlaveWriter slaveWriter;
 
@@ -35,8 +34,8 @@ public class ReplicationStreamReceiver implements Closeable {
     private boolean readyToCommit;
     private int nCommits;
 
-    public ReplicationStreamReceiver(CairoConfiguration configuration) {
-        this.ff = configuration.getFilesFacade();
+    public ReplicationStreamReceiver(NetworkFacade nf) {
+        this.nf = nf;
         frameHeaderAddress = Unsafe.malloc(TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE);
         fd = -1;
     }
@@ -69,7 +68,7 @@ public class ReplicationStreamReceiver implements Closeable {
     private boolean handleRead() {
         assert frameHeaderRemaining > 0 || frameDataNBytesRemaining > 0;
         while (frameHeaderRemaining > 0) {
-            long nRead = ff.read(fd, frameHeaderAddress, frameHeaderRemaining, frameHeaderOffset);
+            int nRead = nf.recv(fd, frameHeaderAddress + frameHeaderOffset, frameHeaderRemaining);
             if (nRead == -1) {
                 LOG.info().$("peer disconnected when reading frame header [fd=").$(fd).$(']').$();
                 disconnect();
@@ -121,7 +120,7 @@ public class ReplicationStreamReceiver implements Closeable {
             }
         }
 
-        long nRead = ff.read(fd, frameMappingAddress, frameDataNBytesRemaining, frameMappingOffset);
+        int nRead = nf.recv(fd, frameMappingAddress + frameMappingOffset, frameDataNBytesRemaining);
         if (nRead == -1) {
             LOG.info().$("peer disconnected when reading frame data [fd=").$(fd).$(']').$();
             disconnect();
@@ -139,7 +138,7 @@ public class ReplicationStreamReceiver implements Closeable {
     }
 
     private boolean handleWrite() {
-        long nWritten = ff.write(fd, frameHeaderAddress, frameHeaderRemaining, frameHeaderOffset);
+        int nWritten = nf.send(fd, frameHeaderAddress + frameHeaderOffset, frameHeaderRemaining);
         if (nWritten == -1) {
             LOG.info().$("peer disconnected when writiing frame [fd=").$(fd).$(']').$();
             disconnect();
@@ -219,7 +218,7 @@ public class ReplicationStreamReceiver implements Closeable {
 
     private void handleReadyToCommit() {
         frameHeaderRemaining = TableReplicationStreamHeaderSupport.SCR_HEADER_SIZE;
-        Unsafe.getUnsafe().putInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_SIZE, (int) frameHeaderRemaining);
+        Unsafe.getUnsafe().putInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_SIZE, frameHeaderRemaining);
         Unsafe.getUnsafe().putByte(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_FRAME_TYPE, TableReplicationStreamHeaderSupport.FRAME_TYPE_SLAVE_COMMIT_READY);
         Unsafe.getUnsafe().putInt(frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID, masterTableId);
         frameHeaderOffset = 0;

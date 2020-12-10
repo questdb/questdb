@@ -23,6 +23,8 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
@@ -35,43 +37,38 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(ReplicationStreamTest.class);
     private static final int STREAM_TARGET_FD = Integer.MAX_VALUE;
 
-    interface FilesFacadeReadHandler {
-        long read(long fd, long buf, long len, long offset);
+    interface FilesFacadeRecvHandler {
+        int recv(long fd, long buf, int len);
     }
 
-    interface FilesFacadeWriteHandler {
-        long write(long fd, long buf, long len, long offset);
+    interface FilesFacadeSendHandler {
+        int send(long fd, long buf, int len);
     }
 
-    private static FilesFacadeReadHandler READ_HANDLER = null;
-    private static FilesFacadeWriteHandler WRITE_HANDLER = null;
+    private static FilesFacadeRecvHandler RECV_HANDLER = null;
+    private static FilesFacadeSendHandler SEND_HANDLER = null;
+    private static NetworkFacade NF;
 
     @BeforeClass
     public static void setUp() throws IOException {
         AbstractCairoTest.setUp();
-        final FilesFacade ff = new FilesFacadeImpl() {
+        NF = new NetworkFacadeImpl() {
             @Override
-            public long read(long fd, long buf, long len, long offset) {
+            public int recv(long fd, long buffer, int bufferLen) {
                 if (fd != STREAM_TARGET_FD) {
-                    return super.read(fd, buf, len, offset);
+                    return super.recv(fd, buffer, bufferLen);
                 }
-                return READ_HANDLER.read(fd, buf, len, offset);
+                return RECV_HANDLER.recv(fd, buffer, bufferLen);
             }
 
             @Override
-            public long write(long fd, long address, long len, long offset) {
+            public int send(long fd, long buffer, int bufferLen) {
                 if (fd != STREAM_TARGET_FD) {
-                    return super.write(fd, address, len, offset);
+                    return super.send(fd, buffer, bufferLen);
                 }
-                return WRITE_HANDLER.write(fd, address, len, offset);
+                return SEND_HANDLER.send(fd, buffer, bufferLen);
             }
-        };
 
-        configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
         };
     }
 
@@ -173,26 +170,26 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         Assert.assertEquals(expected, actual);
     }
 
-    private long streamTargetReadBufferSize = 1000;
+    private int streamTargetReadBufferSize = 1000;
     private long streamTargetReadBufferAddress;
-    private long streamTargetReadBufferOffset;
-    private long streamTargetReadBufferLength;
+    private int streamTargetReadBufferOffset;
+    private int streamTargetReadBufferLength;
 
-    private long streamTargetWriteBufferSize = 1000;
+    private int streamTargetWriteBufferSize = 1000;
     private long streamTargetWriteBufferAddress;
-    private long streamTargetWriteBufferOffset;
+    private int streamTargetWriteBufferOffset;
 
     private void sendReplicationStream(String sourceTableName, long nFirstRow, long maxRowsPerFrame, TableWriter writer) {
-        READ_HANDLER = new FilesFacadeReadHandler() {
+        RECV_HANDLER = new FilesFacadeRecvHandler() {
             @Override
-            public long read(long fd, long buf, long len, long offset) {
-                long nRead = 0;
+            public int recv(long fd, long buf, int len) {
+                int nRead = 0;
                 if (streamTargetReadBufferOffset < streamTargetReadBufferLength) {
                     nRead = streamTargetReadBufferLength - streamTargetReadBufferOffset;
                     if (nRead > len) {
                         nRead = len;
                     }
-                    Unsafe.getUnsafe().copyMemory(streamTargetReadBufferAddress + streamTargetReadBufferOffset, buf + offset, nRead);
+                    Unsafe.getUnsafe().copyMemory(streamTargetReadBufferAddress + streamTargetReadBufferOffset, buf, nRead);
                     streamTargetReadBufferOffset += nRead;
                 }
                 return nRead;
@@ -202,14 +199,14 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         streamTargetWriteBufferAddress = Unsafe.malloc(streamTargetWriteBufferSize);
         streamTargetWriteBufferOffset = 0;
 
-        WRITE_HANDLER = new FilesFacadeWriteHandler() {
+        SEND_HANDLER = new FilesFacadeSendHandler() {
             @Override
-            public long write(long fd, long buf, long len, long offset) {
-                long nWrote = streamTargetWriteBufferSize - streamTargetWriteBufferOffset;
+            public int send(long fd, long buf, int len) {
+                int nWrote = streamTargetWriteBufferSize - streamTargetWriteBufferOffset;
                 if (nWrote > len) {
                     nWrote = len;
                 }
-                Unsafe.getUnsafe().copyMemory(buf + offset, streamTargetWriteBufferAddress + streamTargetWriteBufferOffset, nWrote);
+                Unsafe.getUnsafe().copyMemory(buf, streamTargetWriteBufferAddress + streamTargetWriteBufferOffset, nWrote);
                 streamTargetWriteBufferOffset += nWrote;
                 return nWrote;
             }
@@ -222,7 +219,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 TableReplicationRecordCursorFactory factory = new TableReplicationRecordCursorFactory(engine, sourceTableName, maxRowsPerFrame);
                 TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nFirstRow);
                 ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator();
-                ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(configuration)) {
+                ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(NF)) {
 
             IntList initialSymbolCounts = new IntList();
             for (int columnIndex = 0, sz = reader.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
@@ -281,7 +278,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     }
 
     private void sendFrame(ReplicationStreamReceiver streamWriter, ReplicationStreamGeneratorFrame streamFrameMeta) {
-        long sz = streamFrameMeta.getFrameHeaderLength() + streamFrameMeta.getFrameDataLength();
+        int sz = streamFrameMeta.getFrameHeaderLength() + streamFrameMeta.getFrameDataLength();
         if (sz > streamTargetReadBufferSize) {
             streamTargetReadBufferAddress = Unsafe.realloc(streamTargetReadBufferAddress, streamTargetReadBufferSize, sz);
             streamTargetReadBufferSize = sz;

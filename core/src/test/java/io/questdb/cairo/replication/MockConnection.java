@@ -4,8 +4,8 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Unsafe;
 
@@ -17,33 +17,33 @@ class MockConnection implements Closeable {
     final long connectorFd;
     boolean closed;
     private long buf1;
-    private long bufLen1;
-    private long bufSz1;
+    private int bufLen1;
+    private int bufSz1;
     private final ReentrantLock buf1Lock = new ReentrantLock();
     private long buf2;
-    private long bufSz2;
-    private long bufLen2;
+    private int bufSz2;
+    private int bufLen2;
     private final ReentrantLock buf2Lock = new ReentrantLock();
     private long nBytesSent; // From the perspective of the receiver
     private long nBytesReceived; // From the perspective of the receiver
 
-    public static FilesFacade FILES_FACADE_INSTANCE = new FilesFacadeImpl() {
+    public static NetworkFacade NETWORK_FACADE_INSTANCE = new NetworkFacadeImpl() {
         @Override
-        public long read(long fd, long buf, long len, long offset) {
+        public int recv(long fd, long buf, int len) {
             MockConnection conn = MOCK_CONNECTION_BY_FD.get((int) fd);
             if (null == conn) {
-                return super.read(fd, buf, len, offset);
+                return super.recv(fd, buf, len);
             }
-            return conn.read(fd, buf, len, offset);
+            return conn.recv(fd, buf, len);
         }
 
         @Override
-        public long write(long fd, long address, long len, long offset) {
+        public int send(long fd, long address, int len) {
             MockConnection conn = MOCK_CONNECTION_BY_FD.get((int) fd);
             if (null == conn) {
-                return super.write(fd, address, len, offset);
+                return super.send(fd, address, len);
             }
-            return conn.write(fd, address, len, offset);
+            return conn.send(fd, address, len);
         }
     };
 
@@ -63,7 +63,7 @@ class MockConnection implements Closeable {
         }
     }
 
-    long read(long fd, long buf, long len, long offset) {
+    int recv(long fd, long buf, int len) {
         if (closed) {
             return -1;
         }
@@ -71,8 +71,8 @@ class MockConnection implements Closeable {
         if (fd == connectorFd) {
             buf1Lock.lock();
             try {
-                long tranSz = bufLen1 < len ? bufLen1 : len;
-                Unsafe.getUnsafe().copyMemory(null, buf1, null, buf + offset, tranSz);
+                int tranSz = bufLen1 < len ? bufLen1 : len;
+                Unsafe.getUnsafe().copyMemory(null, buf1, null, buf, tranSz);
                 bufLen1 -= tranSz;
                 if (bufLen1 > 0) {
                     Unsafe.getUnsafe().copyMemory(null, buf1 + tranSz, null, buf1, bufLen1);
@@ -84,8 +84,8 @@ class MockConnection implements Closeable {
         } else if (fd == acceptorFd) {
             buf2Lock.lock();
             try {
-                long tranSz = bufLen2 < len ? bufLen2 : len;
-                Unsafe.getUnsafe().copyMemory(null, buf2, null, buf + offset, tranSz);
+                int tranSz = bufLen2 < len ? bufLen2 : len;
+                Unsafe.getUnsafe().copyMemory(null, buf2, null, buf, tranSz);
                 bufLen2 -= tranSz;
                 if (bufLen2 > 0) {
                     Unsafe.getUnsafe().copyMemory(null, buf2 + tranSz, null, buf2, bufLen2);
@@ -100,7 +100,7 @@ class MockConnection implements Closeable {
         }
     }
 
-    long write(long fd, long buf, long len, long offset) {
+    int send(long fd, long buf, int len) {
         if (closed) {
             return -1;
         }
@@ -108,11 +108,11 @@ class MockConnection implements Closeable {
         if (fd == acceptorFd) {
             buf1Lock.lock();
             try {
-                long tranSz = bufSz1 - bufLen1;
+                int tranSz = bufSz1 - bufLen1;
                 if (tranSz > len) {
                     tranSz = len;
                 }
-                Unsafe.getUnsafe().copyMemory(null, buf + offset, null, buf1 + bufLen1, tranSz);
+                Unsafe.getUnsafe().copyMemory(null, buf, null, buf1 + bufLen1, tranSz);
                 bufLen1 += tranSz;
                 nBytesSent += tranSz;
                 return tranSz;
@@ -122,11 +122,11 @@ class MockConnection implements Closeable {
         } else if (fd == connectorFd) {
             buf2Lock.lock();
             try {
-                long tranSz = bufSz2 - bufLen2;
+                int tranSz = bufSz2 - bufLen2;
                 if (tranSz > len) {
                     tranSz = len;
                 }
-                Unsafe.getUnsafe().copyMemory(null, buf + offset, null, buf2 + bufLen2, tranSz);
+                Unsafe.getUnsafe().copyMemory(null, buf, null, buf2 + bufLen2, tranSz);
                 bufLen2 += tranSz;
                 return tranSz;
             } finally {

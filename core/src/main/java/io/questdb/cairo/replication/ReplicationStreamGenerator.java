@@ -123,7 +123,8 @@ public class ReplicationStreamGenerator implements Closeable {
         } else {
             symbolDataFrame = true;
         }
-        frame.of(TableReplicationStreamHeaderSupport.DF_HEADER_SIZE, sourceFrame.getPageAddress(atColumnIndex), sourceFrame.getPageSize(atColumnIndex), atColumnIndex % nConcurrentFrames);
+        frame.of(TableReplicationStreamHeaderSupport.DF_HEADER_SIZE, sourceFrame.getPageAddress(atColumnIndex), (int) sourceFrame.getPageSize(atColumnIndex),
+                atColumnIndex % nConcurrentFrames);
         long frameSize = frame.frameHeaderLength + frame.frameDataLength;
         Unsafe.getUnsafe().putLong(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_FIRST_TIMESTAMP, sourceFrame.getFirstTimestamp());
         Unsafe.getUnsafe().putInt(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_COLUMN_INDEX, atColumnIndex);
@@ -139,7 +140,7 @@ public class ReplicationStreamGenerator implements Closeable {
     private void generateSymbolDataFrame(ReplicationStreamGeneratorFrame frame, SymbolMapReader symReader, int symbolCount, int newSymbolCount) {
         long addressFrameStart = symReader.symbolCharsAddressOf(symbolCount);
         long dataOffset = addressFrameStart - symReader.symbolCharsAddressOf(0);
-        long dataSize = symReader.symbolCharsAddressOf(newSymbolCount) - addressFrameStart;
+        int dataSize = (int) (symReader.symbolCharsAddressOf(newSymbolCount) - addressFrameStart);
         frame.of(TableReplicationStreamHeaderSupport.SFF_HEADER_SIZE, addressFrameStart, dataSize, atColumnIndex % nConcurrentFrames);
         long frameSize = frame.frameHeaderLength + frame.frameDataLength;
         Unsafe.getUnsafe().putInt(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_SFF_COLUMN_INDEX, atColumnIndex);
@@ -208,16 +209,16 @@ public class ReplicationStreamGenerator implements Closeable {
     public static class ReplicationStreamGeneratorFrame {
         private final AtomicBoolean ready = new AtomicBoolean(true);
         private long frameHeaderAddress;
-        private long frameHeaderLength;
+        private int frameHeaderLength;
         private long frameDataAddress;
-        private long frameDataLength;
+        private int frameDataLength;
         private int threadId;
 
         private ReplicationStreamGeneratorFrame() {
             frameHeaderAddress = Unsafe.malloc(TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE);
         }
 
-        private ReplicationStreamGeneratorFrame of(long frameHeaderLength, long frameDataAddress, long frameDataLength, int threadId) {
+        private ReplicationStreamGeneratorFrame of(int frameHeaderLength, long frameDataAddress, int frameDataLength, int threadId) {
             assert ready.get();
             this.frameHeaderLength = frameHeaderLength;
             this.frameDataAddress = frameDataAddress;
@@ -234,7 +235,7 @@ public class ReplicationStreamGenerator implements Closeable {
             return threadId;
         }
 
-        public long getFrameHeaderLength() {
+        public int getFrameHeaderLength() {
             return frameHeaderLength;
         }
 
@@ -242,7 +243,7 @@ public class ReplicationStreamGenerator implements Closeable {
             return frameHeaderAddress;
         }
 
-        public long getFrameDataLength() {
+        public int getFrameDataLength() {
             return frameDataLength;
         }
 

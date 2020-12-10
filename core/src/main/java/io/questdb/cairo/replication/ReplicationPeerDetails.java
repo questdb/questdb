@@ -2,7 +2,6 @@ package io.questdb.cairo.replication;
 
 import java.io.Closeable;
 
-import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionCallbackEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.PeerConnection.IOResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -12,7 +11,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
-import io.questdb.std.FilesFacade;
+import io.questdb.network.NetworkFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -33,14 +32,14 @@ abstract class ReplicationPeerDetails implements Closeable {
             Busy, NotBusy, Disconnected
         };
 
-        protected final FilesFacade ff;
+        protected final NetworkFacade nf;
         protected final SequencedQueue<CBEV> connectionCallbackQueue;
         protected long peerId = Long.MIN_VALUE;
         protected long fd = -1;
         protected int workerId;
 
-        protected PeerConnection(FilesFacade ff, SequencedQueue<CBEV> connectionCallbackQueue) {
-            this.ff = ff;
+        protected PeerConnection(NetworkFacade nf, SequencedQueue<CBEV> connectionCallbackQueue) {
+            this.nf = nf;
             this.connectionCallbackQueue = connectionCallbackQueue;
         }
 
