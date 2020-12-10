@@ -44,6 +44,7 @@ public class ReplicationStreamReceiver implements Closeable {
     public void of(long fd, IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId, Runnable disconnectedCallback) {
         this.fd = fd;
         this.slaveWriteByMasterTableId = slaveWriteByMasterTableId;
+        this.disconnectedCallback = disconnectedCallback;
         readyToCommit = false;
         nCommits = 0;
         resetReading();

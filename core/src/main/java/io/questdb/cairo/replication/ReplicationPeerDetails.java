@@ -8,7 +8,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
-import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
@@ -63,62 +62,24 @@ abstract class ReplicationPeerDetails implements Closeable {
         public abstract IOResult handleIO();
 
         protected final boolean tryHandleDisconnect() {
-            long seq = connectionCallbackQueue.getConsumerSeq().next();
-            if (seq >= 0) {
-                try {
-                    CBEV event = connectionCallbackQueue.getEvent(seq);
-                    event.assignPeerDisconnected(peerId, fd);
-                } finally {
-                    fd = -1;
-                    connectionCallbackQueue.getConsumerSeq().done(seq);
+            long seq;
+            do {
+                seq = connectionCallbackQueue.getConsumerSeq().next();
+                if (seq >= 0) {
+                    try {
+                        CBEV event = connectionCallbackQueue.getEvent(seq);
+                        event.assignPeerDisconnected(peerId, fd);
+                    } finally {
+                        fd = -1;
+                        connectionCallbackQueue.getConsumerSeq().done(seq);
+                    }
+                    return true;
                 }
-                return true;
-            }
+            } while (seq == -2);
             return false;
         }
 
         public abstract void clear();
-    }
-
-    public static class SequencedQueue<T> {
-        public static final <T> SequencedQueue<T> createSingleProducerSingleConsumerQueue(int queueLen, ObjectFactory<T> eventFactory) {
-            Sequence producerSeq = new SPSequence(queueLen);
-            Sequence consumerSeq = new SCSequence();
-            RingQueue<T> queue = new RingQueue<>(eventFactory, queueLen);
-            producerSeq.then(consumerSeq).then(producerSeq);
-            return new SequencedQueue<T>(producerSeq, consumerSeq, queue);
-        }
-
-        public static final <T> SequencedQueue<T> createMultipleProducerSingleConsumerQueue(int queueLen, ObjectFactory<T> eventFactory) {
-            Sequence producerSeq = new MPSequence(queueLen);
-            Sequence consumerSeq = new SCSequence();
-            RingQueue<T> queue = new RingQueue<>(eventFactory, queueLen);
-            producerSeq.then(consumerSeq).then(producerSeq);
-            return new SequencedQueue<T>(producerSeq, consumerSeq, queue);
-        }
-
-        private final Sequence producerSeq;
-        private final Sequence consumerSeq;
-        private final RingQueue<T> queue;
-
-        SequencedQueue(Sequence producerSeq, Sequence consumerSeq, RingQueue<T> queue) {
-            super();
-            this.producerSeq = producerSeq;
-            this.consumerSeq = consumerSeq;
-            this.queue = queue;
-        }
-
-        public Sequence getProducerSeq() {
-            return producerSeq;
-        }
-
-        public Sequence getConsumerSeq() {
-            return consumerSeq;
-        }
-
-        public T getEvent(long seq) {
-            return queue.get(seq);
-        }
     }
 
     public static class FanOutSequencedQueue<T> {

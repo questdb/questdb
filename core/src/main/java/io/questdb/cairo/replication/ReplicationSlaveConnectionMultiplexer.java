@@ -8,7 +8,6 @@ import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerEvent
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerJob;
 import io.questdb.cairo.replication.ReplicationPeerDetails.FanOutSequencedQueue;
 import io.questdb.cairo.replication.ReplicationPeerDetails.PeerConnection;
-import io.questdb.cairo.replication.ReplicationPeerDetails.SequencedQueue;
 import io.questdb.cairo.replication.ReplicationSlaveConnectionMultiplexer.SlaveConnectionWorkerEvent;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -64,23 +63,25 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
     boolean handleTasks() {
         boolean busy = false;
         long seq;
-        while ((seq = connectionCallbackQueue.getConsumerSeq().next()) >= 0) {
-            ConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
-            try {
-                long peerId = event.peerId;
-                switch (event.eventType) {
-                    case ConnectionCallbackEvent.PEER_DISCONNECTED_EVENT_TYPE:
-                        ReplicationPeerDetails peerDetails = getPeerDetails(peerId);
-                        long fd = event.fd;
-                        peerDetails.removeConnection(fd);
-                        callbacks.onPeerDisconnected(peerId, fd);
-                        break;
+        do {
+            while ((seq = connectionCallbackQueue.getConsumerSeq().next()) >= 0) {
+                ConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
+                try {
+                    long peerId = event.peerId;
+                    switch (event.eventType) {
+                        case ConnectionCallbackEvent.PEER_DISCONNECTED_EVENT_TYPE:
+                            ReplicationPeerDetails peerDetails = getPeerDetails(peerId);
+                            long fd = event.fd;
+                            peerDetails.removeConnection(fd);
+                            callbacks.onPeerDisconnected(peerId, fd);
+                            break;
+                    }
+                } finally {
+                    event.clear();
+                    connectionCallbackQueue.getConsumerSeq().done(seq);
                 }
-            } finally {
-                event.clear();
-                connectionCallbackQueue.getConsumerSeq().done(seq);
             }
-        }
+        } while (seq == -2);
         return busy;
     }
 

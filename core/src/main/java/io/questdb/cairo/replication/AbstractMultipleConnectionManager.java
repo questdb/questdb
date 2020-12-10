@@ -6,7 +6,6 @@ import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionCallbackEve
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerJob;
 import io.questdb.cairo.replication.ReplicationPeerDetails.FanOutSequencedQueue;
-import io.questdb.cairo.replication.ReplicationPeerDetails.SequencedQueue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
