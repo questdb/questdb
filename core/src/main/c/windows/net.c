@@ -297,6 +297,16 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEwouldblock
     return WSAEWOULDBLOCK;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEinprogress
+        (JNIEnv *e, jclass cl) {
+    return WSAEINPROGRESS;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEalready
+        (JNIEnv *e, jclass cl) {
+    return WSAEALREADY;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getRcvBuf
         (JNIEnv *e, jclass cl, jlong fd) {
     return get_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF);

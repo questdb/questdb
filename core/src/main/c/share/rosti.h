@@ -28,6 +28,7 @@
 #include <utility>
 #include <cstring>
 #include <cstdint>
+#include <algorithm>
 #include "jni.h"
 #include "util.h"
 

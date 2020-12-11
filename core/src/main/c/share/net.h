@@ -301,6 +301,12 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getMsgHeaderBufferLengthOffs
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEwouldblock
         (JNIEnv *, jclass);
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEinprogress
+        (JNIEnv *, jclass);
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEalready
+        (JNIEnv *, jclass);
+
 #ifdef __cplusplus
 }
 #endif
