@@ -307,6 +307,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEinprogress
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEalready
         (JNIEnv *, jclass);
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEisconn
+        (JNIEnv *, jclass);
+
 #ifdef __cplusplus
 }
 #endif

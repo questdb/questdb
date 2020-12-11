@@ -307,6 +307,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEalready
     return WSAEALREADY;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEisconn
+        (JNIEnv *e, jclass cl) {
+    return WSAEISCONN;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getRcvBuf
         (JNIEnv *e, jclass cl, jlong fd) {
     return get_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF);

@@ -298,6 +298,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEalready
     return EALREADY;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEisconn
+        (JNIEnv *e, jclass cl) {
+    return EISCONN;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerIP
         (JNIEnv *e, jclass cl, jlong fd) {
     struct sockaddr peer;
