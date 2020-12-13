@@ -181,7 +181,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getStdOutFd
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
         (JNIEnv *e, jclass cl, jlong fd, jlong len) {
     if (ftruncate((int) fd, len) == 0) {
-        return JNI_TRUE;
+        if (posix_fallocate(fd, 0, len) == 0) {
+            return JNI_TRUE;
+        }
     }
     return JNI_FALSE;
 }
