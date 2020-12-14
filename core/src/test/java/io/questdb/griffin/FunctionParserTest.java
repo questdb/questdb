@@ -947,7 +947,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testUntypedBindVariableAmbiguouslyMatched() throws SqlException {
+    public void testUndefinedBindVariableAmbiguouslyMatched() throws SqlException {
+        bindVariableService.clear();
         functions.add(new EqIntFunctionFactory());
         functions.add(new EqDoubleFunctionFactory());
         functions.add(new EqLongFunctionFactory());
@@ -956,10 +957,13 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function f = parseFunction("$2 = $1", metadata, createFunctionParser())) {
             TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
         }
+        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
+        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
     }
 
     @Test
-    public void testUntypedBindVariableExactlyMatched() throws SqlException {
+    public void testUndefinedBindVariableExactlyMatched() throws SqlException {
+        bindVariableService.clear();
         functions.add(new EqIntFunctionFactory());
         functions.add(new EqDoubleFunctionFactory());
         functions.add(new EqLongFunctionFactory());
@@ -968,10 +972,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
             TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func", f.getClass().getCanonicalName());
         }
+        Assert.assertEquals(ColumnType.LONG, bindVariableService.getFunction(0).getType());
     }
 
     @Test
-    public void testUntypedBindVariableFuzzyMatched() throws SqlException {
+    public void testUndefinedBindVariableFuzzyMatched() throws SqlException {
+        bindVariableService.clear();
         functions.add(new EqIntFunctionFactory());
         functions.add(new EqDoubleFunctionFactory());
         functions.add(new EqLongFunctionFactory());
@@ -980,6 +986,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
             TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
         }
+        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
     }
 
     @Test

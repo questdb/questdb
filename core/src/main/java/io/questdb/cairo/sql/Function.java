@@ -113,7 +113,15 @@ public interface Function extends Closeable {
 
     int getType();
 
+    default boolean isUndefined() {
+        return getType() == -1;
+    }
+
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+    }
+
+    default void assignType(int type, BindVariableService bindVariableService) {
+        throw new UnsupportedOperationException();
     }
 
     default boolean isConstant() {

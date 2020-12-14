@@ -28,9 +28,10 @@ import io.questdb.MessageBusImpl;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -47,7 +48,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
             int N = 1_000_000;
             populateUsersTable(engine, N);
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                BindVariableService bindVariableService = new BindVariableService();
+                BindVariableService bindVariableService = new BindVariableServiceImpl();
                 bindVariableService.setLong("low", 0L);
                 bindVariableService.setLong("high", 0L);
                 final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(
@@ -74,14 +75,14 @@ public class MemoryLeakTest extends AbstractGriffinTest {
     private void populateUsersTable(CairoEngine engine, int n) throws SqlException {
         try (SqlCompiler compiler = new SqlCompiler(engine)) {
             final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, new MessageBusImpl(configuration)).with(AllowAllCairoSecurityContext.INSTANCE,
-                    new BindVariableService(),
+                    new BindVariableServiceImpl(),
                     null);
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024);
             try {
                 try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), "users")) {
                     for (int i = 0; i < n; i++) {
-                        long sequence = 20 + i * 2;
+                        long sequence = 20 + i * 2L;
                         TableWriter.Row row = writer.newRow(Os.currentTimeMicros());
                         row.putLong(0, sequence);
                         row.putBin(1, buffer, 1024);

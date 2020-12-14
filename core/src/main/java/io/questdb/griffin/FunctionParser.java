@@ -26,12 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -64,6 +60,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
+    private final IntList undefinedVariables = new IntList();
 
     public FunctionParser(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
@@ -446,6 +443,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         int candidateSigArgTypeSum = 0;
         int bestMatch = MATCH_NO_MATCH;
 
+        undefinedVariables.clear();
+
+        // find all undefined args for the purpose of setting
+        // their types when we find suitable candidate function
+        for (int i = 0; i < argCount; i++) {
+            if (args.getQuick(i).isUndefined()) {
+                undefinedVariables.add(i);
+            }
+        }
+
         for (int i = 0, n = overload.size(); i < n; i++) {
             final FunctionFactoryDescriptor descriptor = overload.getQuick(i);
             final FunctionFactory factory = descriptor.getFactory();
@@ -520,21 +527,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         continue;
                     }
 
-                    final boolean overloadPossible = (
-                            arg.getType() >= ColumnType.BYTE
-                                    && arg.getType() <= ColumnType.DOUBLE
-                                    && sigArgType >= ColumnType.BYTE
-                                    && sigArgType <= ColumnType.DOUBLE
-                                    && arg.getType() < sigArgType
-                    ) || ((
-                            arg.getType() == ColumnType.DOUBLE
-                                    && arg.isConstant()
-                                    && Double.isNaN(arg.getDouble(null))
-                                    && (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT)
-                    ) && (!(arg instanceof TypeConstant) || arg.getType() != sigArgType))
-                            || (arg.getType() == ColumnType.CHAR && sigArgType == ColumnType.STRING
-                            || arg.getType() == -1 //todo: extract constant
-                    );
+                    final int argType = arg.getType();
+                    final boolean undefined = arg.isUndefined();
+                    final boolean overloadPossible =
+                            argType >= ColumnType.BYTE &&
+                                    sigArgType >= ColumnType.BYTE &&
+                                    sigArgType <= ColumnType.DOUBLE &&
+                                    argType < sigArgType ||
+                                    argType == ColumnType.DOUBLE &&
+                                            arg.isConstant() &&
+                                            Double.isNaN(arg.getDouble(null)) &&
+                                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT) ||
+                                    argType == ColumnType.CHAR &&
+                                            sigArgType == ColumnType.STRING ||
+                                    undefined;
+
 
                     // can we use overload mechanism?
 
@@ -618,6 +625,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     args.setQuick(k, new IntConstant(arg.getPosition(), Numbers.INT_NaN));
                 }
             }
+        }
+
+        for (int i = 0, n = undefinedVariables.size(); i < n; i++) {
+            final int pos = undefinedVariables.getQuick(i);
+            final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
+            args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
         }
 
         LOG.debug().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();

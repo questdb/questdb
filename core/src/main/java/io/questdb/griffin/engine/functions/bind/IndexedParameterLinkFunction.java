@@ -32,7 +32,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
-public class IndexedParameterLinkFunction implements ScalarFunction, BindVariable {
+public class IndexedParameterLinkFunction implements ScalarFunction {
     private final int variableIndex;
     private final int position;
     private int type;
@@ -70,8 +70,9 @@ public class IndexedParameterLinkFunction implements ScalarFunction, BindVariabl
     }
 
     @Override
-    public void assignType(int type) {
+    public void assignType(int type, BindVariableService bindVariableService) {
         this.type = type;
+        bindVariableService.define(variableIndex, type);
     }
 
     @Override
@@ -97,11 +98,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction, BindVariabl
     @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
-    }
-
-    @Override
-    public boolean isDefined() {
-        return type != -1;
     }
 
     @Override

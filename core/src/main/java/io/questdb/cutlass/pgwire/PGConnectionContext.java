@@ -33,7 +33,7 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -94,7 +94,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final CharacterStore queryCharacterStore;
     private final CharacterStore portalCharacterStore;
     private final CharacterStore queryTextCharacterStore;
-    private final BindVariableService bindVariableService = new BindVariableService();
+    private final BindVariableService bindVariableService = new BindVariableServiceImpl();
     private final long sendBufferLimit;
     private final int sendBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
@@ -128,7 +128,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final DateLocale dateLocale;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
     private final ObjHashSet<InsertMethod> cachedTransactionInsertWriters = new ObjHashSet<>();
-    //    private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
     private final IntList parameterFormats = new IntList();
     private final DirectCharSink utf8Sink;
@@ -1761,47 +1760,48 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void setupBindVariable(ObjList<BindVariableSetter> bindVariableSetters, int idx, int pgType) throws SqlException {
         switch (pgType) {
             case PG_FLOAT8: // FLOAT8 - double
-                bindVariableService.setDouble(idx, Double.NaN);
+                bindVariableService.setDouble(idx);
                 bindVariableSetters.add(doubleSetter);
                 bindVariableSetters.add(doubleTxtSetter);
                 break;
             case PG_INT4: // INT
-                bindVariableService.setInt(idx, Numbers.INT_NaN);
+                bindVariableService.setInt(idx);
                 bindVariableSetters.add(intSetter);
                 bindVariableSetters.add(intTxtSetter);
                 break;
             case PG_INT8:
-                bindVariableService.setLong(idx, Numbers.LONG_NaN);
+                bindVariableService.setLong(idx);
                 bindVariableSetters.add(longSetter);
                 bindVariableSetters.add(longTxtSetter);
                 break;
             case PG_FLOAT4:
-                bindVariableService.setFloat(idx, Float.NaN);
+                bindVariableService.setFloat(idx);
                 bindVariableSetters.add(floatSetter);
                 bindVariableSetters.add(floatTxtSetter);
                 break;
             case PG_INT2:
-                bindVariableService.setByte(idx, (byte) 0);
+                // todo: is this not short?
+                bindVariableService.setByte(idx);
                 bindVariableSetters.add(byteSetter);
                 bindVariableSetters.add(byteTxtSetter);
                 break;
             case PG_BOOL:
-                bindVariableService.setBoolean(idx, false);
+                bindVariableService.setBoolean(idx);
                 bindVariableSetters.add(booleanSetter);
                 bindVariableSetters.add(booleanSetter);
                 break;
             case PG_VARCHAR:
-                bindVariableService.setStr(idx, null);
+                bindVariableService.setStr(idx);
                 bindVariableSetters.add(strSetter);
                 bindVariableSetters.add(strSetter);
                 break;
             case PG_CHAR:
-                bindVariableService.setChar(idx, (char) 0);
+                bindVariableService.setChar(idx);
                 bindVariableSetters.add(charSetter);
                 bindVariableSetters.add(charSetter);
                 break;
             case PG_DATE:
-                bindVariableService.setDate(idx, Numbers.LONG_NaN);
+                bindVariableService.setDate(idx);
                 bindVariableSetters.add(noopSetter);
                 bindVariableSetters.add(noopSetter);
                 break;
@@ -1814,7 +1814,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // cause driver to send UNSPECIFIED type
                 // QuestDB has to know types to resolve function linkage
                 // at compile time rather than at runtime.
-                bindVariableService.setDate(idx, Numbers.LONG_NaN);
+                bindVariableService.setDate(idx);
                 bindVariableSetters.add(dateSetter);
                 bindVariableSetters.add(dateSetter);
                 break;

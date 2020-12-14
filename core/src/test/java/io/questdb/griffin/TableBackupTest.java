@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -121,7 +121,7 @@ public class TableBackupTest {
         };
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null, -1, null);
+        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableServiceImpl(), null, -1, null);
     }
 
     @After
@@ -502,7 +502,7 @@ public class TableBackupTest {
                 final CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
                 engine = new CairoEngine(backupConfiguration);
                 sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE,
-                        new BindVariableService(),
+                        new BindVariableServiceImpl(),
                         null,
                         -1,
                         null);

@@ -24,12 +24,13 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-public class BindVariableServiceTest {
-    private final static BindVariableService bindVariableService = new BindVariableService();
+public class BindVariableServiceImplTest {
+    private final static BindVariableService bindVariableService = new BindVariableServiceImpl();
 
     @Before
     public void setUp() {

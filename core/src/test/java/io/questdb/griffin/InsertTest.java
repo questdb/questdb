@@ -26,12 +26,9 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.WriterOutOfDateException;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.TestBinarySequence;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -104,7 +101,7 @@ public class InsertTest extends AbstractGriffinTest {
                 method.commit();
             }
 
-            BindVariableService bindVariableService = new BindVariableService();
+            BindVariableService bindVariableService = new BindVariableServiceImpl();
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, null, -1, null);
 

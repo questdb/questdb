@@ -25,8 +25,5 @@
 package io.questdb.cairo.sql;
 
 public interface BindVariable {
-
     void assignType(int type);
-
-    boolean isDefined();
 }

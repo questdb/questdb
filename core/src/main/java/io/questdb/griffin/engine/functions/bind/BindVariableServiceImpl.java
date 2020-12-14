@@ -25,28 +25,77 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.*;
 
-public class BindVariableService {
+public class BindVariableServiceImpl implements BindVariableService {
     private final CharSequenceObjHashMap<Function> namedVariables = new CharSequenceObjHashMap<>();
     private final ObjList<Function> indexedVariables = new ObjList<>();
 
+    @Override
     public void clear() {
         namedVariables.clear();
         indexedVariables.clear();
     }
 
-    public int getIndexedVariableCount() {
-        return indexedVariables.size();
+    @Override
+    public void define(int index, int type) {
+        switch (type) {
+            case ColumnType.BOOLEAN:
+                setBoolean(index);
+                break;
+            case ColumnType.BYTE:
+                setByte(index);
+                break;
+            case ColumnType.SHORT:
+                setShort(index);
+                break;
+            case ColumnType.CHAR:
+                setChar(index);
+                break;
+            case ColumnType.INT:
+                setInt(index);
+                break;
+            case ColumnType.LONG:
+                setLong(index);
+                break;
+            case ColumnType.DATE:
+                setDate(index);
+                break;
+            case ColumnType.TIMESTAMP:
+                setTimestamp(index);
+                break;
+            case ColumnType.FLOAT:
+                setFloat(index);
+                break;
+            case ColumnType.DOUBLE:
+                setDouble(index);
+                break;
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                setStr(index);
+                break;
+            case ColumnType.LONG256:
+                setLong256(index);
+                break;
+            case ColumnType.BINARY:
+                setBin(index);
+                break;
+            default:
+                // todo: define what happens for unsupported types
+                throw new UnsupportedOperationException();
+        }
     }
 
+    @Override
     public Function getFunction(CharSequence name) {
         assert name != null;
         assert Chars.startsWith(name, ':');
         return namedVariables.valueAt(namedVariables.keyIndex(name, 1, name.length()));
     }
 
+    @Override
     public Function getFunction(int index) {
         final int n = indexedVariables.size();
         if (index < n) {
@@ -55,6 +104,12 @@ public class BindVariableService {
         return null;
     }
 
+    @Override
+    public int getIndexedVariableCount() {
+        return indexedVariables.size();
+    }
+
+    @Override
     public void setBin(CharSequence name, BinarySequence value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -69,6 +124,12 @@ public class BindVariableService {
         }
     }
 
+    @Override
+    public void setBin(int index) {
+        setBin(index, null);
+    }
+
+    @Override
     public void setBin(int index, BinarySequence value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -84,6 +145,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setBoolean(CharSequence name, boolean value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -98,6 +160,12 @@ public class BindVariableService {
         }
     }
 
+    @Override
+    public void setBoolean(int index) {
+        setBoolean(index, false);
+    }
+
+    @Override
     public void setBoolean(int index, boolean value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -113,6 +181,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setByte(CharSequence name, byte value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -127,6 +196,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setByte(int index, byte value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -142,20 +212,7 @@ public class BindVariableService {
         }
     }
 
-    public void setDate(CharSequence name, long value) {
-        int index = namedVariables.keyIndex(name);
-        if (index > -1) {
-            namedVariables.putAt(index, name, new DateBindVariable(value));
-        } else {
-            Function function = namedVariables.valueAtQuick(index);
-            if (function instanceof DateBindVariable) {
-                ((DateBindVariable) function).value = value;
-            } else {
-                throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
-            }
-        }
-    }
-
+    @Override
     public void setChar(CharSequence name, char value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -170,6 +227,48 @@ public class BindVariableService {
         }
     }
 
+    @Override
+    public void setChar(int index) {
+        setChar(index, (char) 0);
+    }
+
+    @Override
+    public void setChar(int index, char value) {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new CharBindVariable(value));
+            } else if (function instanceof CharBindVariable) {
+                ((CharBindVariable) function).value = value;
+            } else {
+                throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new CharBindVariable(value));
+        }
+    }
+
+    @Override
+    public void setDate(CharSequence name, long value) {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            namedVariables.putAt(index, name, new DateBindVariable(value));
+        } else {
+            Function function = namedVariables.valueAtQuick(index);
+            if (function instanceof DateBindVariable) {
+                ((DateBindVariable) function).value = value;
+            } else {
+                throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        }
+    }
+
+    @Override
+    public void setDate(int index) {
+        setDate(index, Numbers.LONG_NaN);
+    }
+
+    @Override
     public void setDate(int index, long value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -185,6 +284,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setDouble(CharSequence name, double value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -199,6 +299,12 @@ public class BindVariableService {
         }
     }
 
+    @Override
+    public void setDouble(int index) {
+        setDouble(index, Double.NaN);
+    }
+
+    @Override
     public void setDouble(int index, double value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -214,6 +320,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setFloat(CharSequence name, float value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -228,6 +335,12 @@ public class BindVariableService {
         }
     }
 
+    @Override
+    public void setFloat(int index) {
+        setFloat(index, Float.NaN);
+    }
+
+    @Override
     public void setFloat(int index, float value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -243,6 +356,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setInt(CharSequence name, int value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -257,10 +371,64 @@ public class BindVariableService {
         }
     }
 
-    public void setLong256Null(CharSequence name) {
-        setLong256(name, Long256Impl.NULL_LONG256);
+    @Override
+    public void setInt(int index) {
+        setInt(index, Numbers.INT_NaN);
     }
 
+    @Override
+    public void setInt(int index, int value) {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new IntBindVariable(value));
+            } else if (function instanceof IntBindVariable) {
+                ((IntBindVariable) function).value = value;
+            } else {
+                throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new IntBindVariable(value));
+        }
+    }
+
+    @Override
+    public void setLong(CharSequence name, long value) {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            namedVariables.putAt(index, name, new LongBindVariable(value));
+        } else {
+            Function function = namedVariables.valueAtQuick(index);
+            if (function instanceof LongBindVariable) {
+                ((LongBindVariable) function).value = value;
+            } else {
+                throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        }
+    }
+
+    @Override
+    public void setLong(int index) {
+        setLong(index, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public void setLong(int index, long value) {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new LongBindVariable(value));
+            } else if (function instanceof LongBindVariable) {
+                ((LongBindVariable) function).value = value;
+            } else {
+                throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new LongBindVariable(value));
+        }
+    }
+
+    @Override
     public void setLong256(CharSequence name, long l0, long l1, long l2, long l3) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -279,6 +447,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setLong256(CharSequence name, Long256 value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -293,21 +462,12 @@ public class BindVariableService {
         }
     }
 
-    public void setInt(int index, int value) {
-        if (index < indexedVariables.size()) {
-            Function function = indexedVariables.getQuick(index);
-            if (function == null) {
-                indexedVariables.setQuick(index, new IntBindVariable(value));
-            } else if (function instanceof IntBindVariable) {
-                ((IntBindVariable) function).value = value;
-            } else {
-                throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
-            }
-        } else {
-            indexedVariables.extendAndSet(index, new IntBindVariable(value));
-        }
+    @Override
+    public void setLong256(int index) {
+        setLong256(index, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);
     }
 
+    @Override
     public void setLong256(int index, long l0, long l1, long l2, long l3) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -327,50 +487,17 @@ public class BindVariableService {
         }
     }
 
-    public void setChar(int index, char value) {
-        if (index < indexedVariables.size()) {
-            Function function = indexedVariables.getQuick(index);
-            if (function == null) {
-                indexedVariables.setQuick(index, new CharBindVariable(value));
-            } else if (function instanceof CharBindVariable) {
-                ((CharBindVariable) function).value = value;
-            } else {
-                throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
-            }
-        } else {
-            indexedVariables.extendAndSet(index, new CharBindVariable(value));
-        }
+    @Override
+    public void setLong256Null(CharSequence name) {
+        setLong256(name, Long256Impl.NULL_LONG256);
     }
 
-    public void setLong(CharSequence name, long value) {
-        int index = namedVariables.keyIndex(name);
-        if (index > -1) {
-            namedVariables.putAt(index, name, new LongBindVariable(value));
-        } else {
-            Function function = namedVariables.valueAtQuick(index);
-            if (function instanceof LongBindVariable) {
-                ((LongBindVariable) function).value = value;
-            } else {
-                throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
-            }
-        }
+    @Override
+    public void setShort(int index) {
+        setShort(index, (short) 0);
     }
 
-    public void setLong(int index, long value) {
-        if (index < indexedVariables.size()) {
-            Function function = indexedVariables.getQuick(index);
-            if (function == null) {
-                indexedVariables.setQuick(index, new LongBindVariable(value));
-            } else if (function instanceof LongBindVariable) {
-                ((LongBindVariable) function).value = value;
-            } else {
-                throw BindException.init().put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
-            }
-        } else {
-            indexedVariables.extendAndSet(index, new LongBindVariable(value));
-        }
-    }
-
+    @Override
     public void setShort(int index, short value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -386,6 +513,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setShort(CharSequence name, short value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -400,6 +528,12 @@ public class BindVariableService {
         }
     }
 
+    @Override
+    public void setStr(int index) {
+        setStr(index, null);
+    }
+
+    @Override
     public void setStr(int index, CharSequence value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -415,6 +549,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setStr(CharSequence name, CharSequence value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -429,6 +564,12 @@ public class BindVariableService {
         }
     }
 
+    @Override
+    public void setTimestamp(int index) {
+        setTimestamp(index, Numbers.LONG_NaN);
+    }
+
+    @Override
     public void setTimestamp(int index, long value) {
         if (index < indexedVariables.size()) {
             Function function = indexedVariables.getQuick(index);
@@ -444,6 +585,7 @@ public class BindVariableService {
         }
     }
 
+    @Override
     public void setTimestamp(CharSequence name, long value) {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
@@ -456,5 +598,10 @@ public class BindVariableService {
                 throw BindException.init().put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
             }
         }
+    }
+
+    @Override
+    public void setByte(int index) {
+        setByte(index, (byte) 0);
     }
 }
