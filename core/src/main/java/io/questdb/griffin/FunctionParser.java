@@ -73,7 +73,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
-            throw SqlException.position(node.position).put("no bind variable defined at index ").put(variableIndex);
+            // bind variable is undefined
+            return new IndexedParameterLinkFunction(variableIndex, -1, node.position);
+//            throw SqlException.position(node.position).put("no bind variable defined at index ").put(variableIndex);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), node.position);
     }
@@ -269,6 +271,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return ex;
     }
 
+    private static int widestOf(int typeA, int typeB) {
+        return Math.max(typeA, typeB);
+    }
+
     private Function checkAndCreateFunction(
             FunctionFactory factory,
             @Transient ObjList<Function> args,
@@ -437,8 +443,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         FunctionFactoryDescriptor candidateDescriptor = null;
         boolean candidateSigVarArgConst = false;
         int candidateSigArgCount = 0;
-
-        int fuzzyMatchCount = 0;
+        int candidateSigArgTypeSum = 0;
         int bestMatch = MATCH_NO_MATCH;
 
         for (int i = 0, n = overload.size(); i < n; i++) {
@@ -478,6 +483,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     match = MATCH_EXACT_MATCH;
                 }
 
+                int sigArgTypeSum = 0;
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
                     final int sigArgTypeMask = descriptor.getArgTypeMask(k);
@@ -497,6 +503,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
                     final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
 
+                    sigArgTypeSum += sigArgType;
+
                     if (sigArgType == arg.getType()) {
                         switch (match) {
                             case MATCH_NO_MATCH: // was it no match
@@ -513,18 +521,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     }
 
                     final boolean overloadPossible = (
-                            (arg.getType() >= ColumnType.BYTE)
-                                    && (arg.getType() <= ColumnType.DOUBLE)
-                                    && (sigArgType >= ColumnType.BYTE)
-                                    && (sigArgType <= ColumnType.DOUBLE)
-                                    && (arg.getType() < sigArgType)
+                            arg.getType() >= ColumnType.BYTE
+                                    && arg.getType() <= ColumnType.DOUBLE
+                                    && sigArgType >= ColumnType.BYTE
+                                    && sigArgType <= ColumnType.DOUBLE
+                                    && arg.getType() < sigArgType
                     ) || ((
-                            (arg.getType() == ColumnType.DOUBLE)
+                            arg.getType() == ColumnType.DOUBLE
                                     && arg.isConstant()
                                     && Double.isNaN(arg.getDouble(null))
-                                    && ((sigArgType == ColumnType.LONG) || (sigArgType == ColumnType.INT))
-                    ) && (!(arg instanceof TypeConstant) || (arg.getType() != sigArgType)))
-                            || (arg.getType() == ColumnType.CHAR && sigArgType == ColumnType.STRING);
+                                    && (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT)
+                    ) && (!(arg instanceof TypeConstant) || arg.getType() != sigArgType))
+                            || (arg.getType() == ColumnType.CHAR && sigArgType == ColumnType.STRING
+                            || arg.getType() == -1 //todo: extract constant
+                    );
 
                     // can we use overload mechanism?
 
@@ -541,7 +551,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         }
                     } else {
                         // types mismatch
-                        candidateDescriptor = descriptor;
                         match = MATCH_NO_MATCH;
                         break;
                     }
@@ -556,29 +565,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     // special case - if signature enforces constant vararg we
                     // have to ensure all args are indeed constant
 
-                    candidate = factory;
-                    candidateDescriptor = descriptor;
-                    candidateSigArgCount = sigArgCount;
-                    candidateSigVarArgConst = sigVarArgConst;
 
                     if (match != MATCH_EXACT_MATCH) {
                         if (match == MATCH_FUZZY_MATCH) {
-                            fuzzyMatchCount++;
+                            if (candidateSigArgTypeSum < sigArgTypeSum) {
+                                candidate = factory;
+                                candidateDescriptor = descriptor;
+                                candidateSigArgCount = sigArgCount;
+                                candidateSigVarArgConst = sigVarArgConst;
+                                candidateSigArgTypeSum = sigArgTypeSum;
+                            }
                         } else {
-                            fuzzyMatchCount = 0;
+                            candidate = factory;
+                            candidateDescriptor = descriptor;
+                            candidateSigArgCount = sigArgCount;
+                            candidateSigVarArgConst = sigVarArgConst;
                         }
                         bestMatch = match;
                     } else {
-                        fuzzyMatchCount = 0;
+                        candidate = factory;
+                        candidateDescriptor = descriptor;
+                        candidateSigArgCount = sigArgCount;
+                        candidateSigVarArgConst = sigVarArgConst;
                         break;
                     }
                 }
             }
-        }
-
-        if (fuzzyMatchCount > 1) {
-            // ambiguous invocation target
-            throw invalidFunction("ambiguous function call", node, args);
         }
 
         if (candidate == null) {

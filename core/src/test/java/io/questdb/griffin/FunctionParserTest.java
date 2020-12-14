@@ -36,6 +36,9 @@ import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
@@ -52,7 +55,7 @@ import org.junit.Test;
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
-    public void testAmbiguousFunctionInvocation() {
+    public void testAmbiguousFunctionInvocation() throws SqlException {
         functions.add(new FunctionFactory() {
             @Override
             public String getSignature() {
@@ -61,7 +64,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
             @Override
             public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return null;
+                return new DoubleFunction(position) {
+                    @Override
+                    public double getDouble(Record rec) {
+                        return 123.123;
+                    }
+                };
             }
         });
         functions.add(new FunctionFactory() {
@@ -78,7 +86,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BYTE, null));
         metadata.add(new TableColumnMetadata("c", ColumnType.SHORT, null));
-        assertFail(2, "ambiguous function call: +(BYTE,SHORT)", "a + c", metadata);
+        FunctionParser functionParser = createFunctionParser();
+        Function f = parseFunction("a + c", metadata, functionParser);
+        Assert.assertEquals(123.123, f.getDouble(null), 0.0001);
     }
 
     @Test
@@ -934,6 +944,42 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN, null));
         assertFail(5, "unknown function name", "a or xyz()", metadata);
+    }
+
+    @Test
+    public void testUntypedBindVariableAmbiguouslyMatched() throws SqlException {
+        functions.add(new EqIntFunctionFactory());
+        functions.add(new EqDoubleFunctionFactory());
+        functions.add(new EqLongFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.FLOAT, null));
+        try (Function f = parseFunction("$2 = $1", metadata, createFunctionParser())) {
+            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
+        }
+    }
+
+    @Test
+    public void testUntypedBindVariableExactlyMatched() throws SqlException {
+        functions.add(new EqIntFunctionFactory());
+        functions.add(new EqDoubleFunctionFactory());
+        functions.add(new EqLongFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.LONG, null));
+        try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
+            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func", f.getClass().getCanonicalName());
+        }
+    }
+
+    @Test
+    public void testUntypedBindVariableFuzzyMatched() throws SqlException {
+        functions.add(new EqIntFunctionFactory());
+        functions.add(new EqDoubleFunctionFactory());
+        functions.add(new EqLongFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.FLOAT, null));
+        try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
+            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
+        }
     }
 
     @Test

@@ -36,12 +36,7 @@ import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
-import io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory;
-import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
-import io.questdb.griffin.engine.functions.str.SubStrFunctionFactory;
-import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
-import io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory;
-import io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory;
+import io.questdb.griffin.engine.functions.str.*;
 import io.questdb.std.*;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.time.DateFormatUtils;
@@ -793,6 +788,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                     .withFunction(new ToStrDateFunctionFactory())
                     .withFunction(new ToStrTimestampFunctionFactory())
                     .$();
+            Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(8, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "undefined bind variable: :xyz");
@@ -802,12 +798,13 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     @Test
     public void testUndefinedIndexed() {
         try {
-            expr("to_char($1, 'yyyy-MM')")
+            expr("to_str($1, 'yyyy-MM')")
                     .withFunction(new ToStrDateFunctionFactory())
                     .withFunction(new ToStrTimestampFunctionFactory())
                     .$();
+            Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(8, e.getPosition());
+            Assert.assertEquals(0, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "no bind variable defined at index 0");
         }
     }
