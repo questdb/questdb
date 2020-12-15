@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -120,7 +121,7 @@ public interface Function extends Closeable {
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
     }
 
-    default void assignType(int type, BindVariableService bindVariableService) {
+    default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
         throw new UnsupportedOperationException();
     }
 

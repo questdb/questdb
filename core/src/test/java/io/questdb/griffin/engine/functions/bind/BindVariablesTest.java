@@ -795,20 +795,6 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         }
     }
 
-    @Test
-    public void testUndefinedIndexed() {
-        try {
-            expr("to_str($1, 'yyyy-MM')")
-                    .withFunction(new ToStrDateFunctionFactory())
-                    .withFunction(new ToStrTimestampFunctionFactory())
-                    .$();
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "no bind variable defined at index 0");
-        }
-    }
-
     private FunctionBuilder expr(String expression) {
         return builder.withExpression(expression);
     }

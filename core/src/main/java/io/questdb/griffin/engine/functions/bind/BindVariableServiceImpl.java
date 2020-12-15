@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 
 public class BindVariableServiceImpl implements BindVariableService {
@@ -40,51 +41,51 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void define(int index, int type) {
+    public int define(int index, int type, int position) throws SqlException {
         switch (type) {
             case ColumnType.BOOLEAN:
                 setBoolean(index);
-                break;
+                return type;
             case ColumnType.BYTE:
                 setByte(index);
-                break;
+                return type;
             case ColumnType.SHORT:
                 setShort(index);
-                break;
+                return type;
             case ColumnType.CHAR:
                 setChar(index);
-                break;
+                return type;
             case ColumnType.INT:
                 setInt(index);
-                break;
+                return type;
             case ColumnType.LONG:
                 setLong(index);
-                break;
+                return type;
             case ColumnType.DATE:
                 setDate(index);
-                break;
+                return type;
             case ColumnType.TIMESTAMP:
                 setTimestamp(index);
-                break;
+                return type;
             case ColumnType.FLOAT:
                 setFloat(index);
-                break;
+                return type;
             case ColumnType.DOUBLE:
                 setDouble(index);
-                break;
+                return type;
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
+            case ColumnType.VAR_ARG:
                 setStr(index);
-                break;
+                return ColumnType.STRING;
             case ColumnType.LONG256:
                 setLong256(index);
-                break;
+                return type;
             case ColumnType.BINARY:
                 setBin(index);
-                break;
+                return type;
             default:
-                // todo: define what happens for unsupported types
-                throw new UnsupportedOperationException();
+                throw SqlException.$(position, "bind variable cannot be used [contextType=").put(ColumnType.nameOf(type)).put(", index=").put(index).put(']');
         }
     }
 

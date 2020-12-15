@@ -24,13 +24,14 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
 
 public interface BindVariableService extends Mutable {
 
-    void define(int variableIndex, int type);
+    int define(int variableIndex, int type, int position) throws SqlException;
 
     Function getFunction(CharSequence name);
 

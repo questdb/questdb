@@ -440,7 +440,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         FunctionFactoryDescriptor candidateDescriptor = null;
         boolean candidateSigVarArgConst = false;
         int candidateSigArgCount = 0;
-        int candidateSigArgTypeSum = 0;
+        int candidateSigArgTypeSum = -1;
         int bestMatch = MATCH_NO_MATCH;
 
         undefinedVariables.clear();
@@ -627,10 +627,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
 
+        // it is possible that we have more undefined variables than
+        // args in the descriptor, in case of vararg for example
         for (int i = 0, n = undefinedVariables.size(); i < n; i++) {
             final int pos = undefinedVariables.getQuick(i);
-            final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
-            args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
+            if (pos < candidateSigArgCount) {
+                final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
+                args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
+            } else {
+                args.getQuick(pos).assignType(ColumnType.VAR_ARG, sqlExecutionContext.getBindVariableService());
+            }
         }
 
         LOG.debug().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
