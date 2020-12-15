@@ -57,10 +57,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final CairoConfiguration configuration;
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private final FunctionFactoryCache functionFactoryCache;
+    private final IntList undefinedVariables = new IntList();
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
-    private final IntList undefinedVariables = new IntList();
 
     public FunctionParser(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
@@ -168,9 +168,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (argCount == 0) {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
+                    stack.push(createColumn(node));
+                    break;
+                case ExpressionNode.BIND_VARIABLE:
                     if (Chars.startsWith(node.token, ':')) {
                         stack.push(createNamedParameter(node));
-                    } else if (Chars.startsWith(node.token, '$')) {
+                    } else {
                         // get variable index from token
                         try {
                             final int variableIndex = Numbers.parseInt(node.token, 1, node.token.length());
@@ -182,9 +185,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                             // not a number - must be a column
                             stack.push(createColumn(node));
                         }
-                    } else {
-                        // lookup column
-                        stack.push(createColumn(node));
                     }
                     break;
                 case ExpressionNode.MEMBER_ACCESS:
