@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
@@ -115,7 +116,7 @@ public interface Function extends Closeable {
     int getType();
 
     default boolean isUndefined() {
-        return getType() == -1;
+        return getType() == ColumnType.UNDEFINED;
     }
 
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {

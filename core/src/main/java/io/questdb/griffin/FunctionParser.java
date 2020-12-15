@@ -72,7 +72,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (function == null) {
             // bind variable is undefined
             return new IndexedParameterLinkFunction(variableIndex, -1, node.position);
-//            throw SqlException.position(node.position).put("no bind variable defined at index ").put(variableIndex);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), node.position);
     }
@@ -211,9 +210,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
+    private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
         SqlException ex = SqlException.position(node.position);
-        ex.put(message);
+        ex.put("unknown function name");
         ex.put(": ");
         ex.put(node.token);
         ex.put('(');
@@ -266,10 +265,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
         ex.put(')');
         return ex;
-    }
-
-    private static int widestOf(int typeA, int typeB) {
-        return Math.max(typeA, typeB);
     }
 
     private Function checkAndCreateFunction(
@@ -422,11 +417,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             ExpressionNode node,
             @Transient ObjList<Function> args
     ) throws SqlException {
-        ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
+        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         boolean isNegated = functionFactoryCache.isNegated(node.token);
         boolean isFlipped = functionFactoryCache.isFlipped(node.token);
         if (overload == null) {
-            throw invalidFunction("unknown function name", node, args);
+            throw invalidFunction(node, args);
         }
 
         final int argCount;
@@ -493,6 +488,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 int sigArgTypeSum = 0;
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
+                    final boolean undefined = arg.isUndefined();
                     final int sigArgTypeMask = descriptor.getArgTypeMask(k);
 
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
@@ -501,8 +497,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         break;
                     }
 
-                    if ((FunctionFactoryDescriptor.isArray(sigArgTypeMask) && (arg instanceof ScalarFunction)) ||
-                            (!FunctionFactoryDescriptor.isArray(sigArgTypeMask) && !(arg instanceof ScalarFunction))) {
+                    final boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                    final boolean isScalar = arg instanceof ScalarFunction;
+                    if ((isArray && isScalar) || (!isArray && !isScalar)) {
                         candidateDescriptor = descriptor;
                         match = MATCH_NO_MATCH; // no match
                         break;
@@ -510,7 +507,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
                     final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
 
-                    sigArgTypeSum += sigArgType;
+                    sigArgTypeSum += ColumnType.widthPrecedenceOf(sigArgType);
 
                     if (sigArgType == arg.getType()) {
                         switch (match) {
@@ -528,7 +525,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     }
 
                     final int argType = arg.getType();
-                    final boolean undefined = arg.isUndefined();
                     final boolean overloadPossible =
                             argType >= ColumnType.BYTE &&
                                     sigArgType >= ColumnType.BYTE &&
@@ -539,8 +535,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                                             Double.isNaN(arg.getDouble(null)) &&
                                             (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT) ||
                                     argType == ColumnType.CHAR &&
-                                            sigArgType == ColumnType.STRING ||
-                                    undefined;
+                                            sigArgType == ColumnType.STRING
+                                    || undefined;
 
 
                     // can we use overload mechanism?
@@ -574,19 +570,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
 
                     if (match != MATCH_EXACT_MATCH) {
-                        if (match == MATCH_FUZZY_MATCH) {
-                            if (candidateSigArgTypeSum < sigArgTypeSum) {
-                                candidate = factory;
-                                candidateDescriptor = descriptor;
-                                candidateSigArgCount = sigArgCount;
-                                candidateSigVarArgConst = sigVarArgConst;
-                                candidateSigArgTypeSum = sigArgTypeSum;
-                            }
-                        } else {
+                        if (candidateSigArgTypeSum < sigArgTypeSum || bestMatch < match) {
                             candidate = factory;
                             candidateDescriptor = descriptor;
                             candidateSigArgCount = sigArgCount;
                             candidateSigVarArgConst = sigVarArgConst;
+                            candidateSigArgTypeSum = sigArgTypeSum;
                         }
                         bestMatch = match;
                     } else {

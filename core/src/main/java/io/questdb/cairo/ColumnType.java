@@ -33,6 +33,7 @@ public final class ColumnType {
     public static final int VERSION = 417;
     public static final int VERSION_THAT_ADDED_TABLE_ID = 417;
 
+    public static final int UNDEFINED = -1;
     public static final int BOOLEAN = 0;
     public static final int BYTE = 1;
     public static final int SHORT = 2;
@@ -56,12 +57,19 @@ public final class ColumnType {
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final int[] TYPE_SIZE_POW2 = new int[ColumnType.PARAMETER + 1];
     private static final int[] TYPE_SIZE = new int[ColumnType.PARAMETER + 1];
+    // this list governs the order of types being chosen for
+    // the undefined functions
+    private static final byte[] typeWidthPrecedence = new byte[MAX + 1];
 
     private ColumnType() {
     }
 
     public static int columnTypeOf(CharSequence name) {
         return nameTypeMap.get(name);
+    }
+
+    public static int widthPrecedenceOf(int type) {
+        return typeWidthPrecedence[type];
     }
 
     public static String nameOf(int columnType) {
@@ -150,5 +158,21 @@ public final class ColumnType {
         TYPE_SIZE[ColumnType.DATE] = Long.BYTES;
         TYPE_SIZE[ColumnType.TIMESTAMP] = Long.BYTES;
         TYPE_SIZE[ColumnType.LONG256] = Long256.BYTES;
+
+        typeWidthPrecedence[BOOLEAN] = 0;
+        typeWidthPrecedence[BYTE] = 1;
+        typeWidthPrecedence[CHAR] = 2;
+        typeWidthPrecedence[SHORT] = 3;
+        typeWidthPrecedence[INT] = 4;
+        typeWidthPrecedence[DATE] = 5;
+        typeWidthPrecedence[TIMESTAMP] = 6;
+        typeWidthPrecedence[LONG] = 7;
+        typeWidthPrecedence[FLOAT] = 8;
+        typeWidthPrecedence[DOUBLE] = 9;
+        typeWidthPrecedence[SYMBOL] = 10;
+        typeWidthPrecedence[STRING] = 11;
+        typeWidthPrecedence[LONG256] = 12;
+        typeWidthPrecedence[BINARY] = 13;
+        typeWidthPrecedence[VAR_ARG] = 14;
     }
 }
