@@ -143,6 +143,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "Nagriar",
+      "name": "Xavier Grand",
+      "avatar_url": "https://avatars0.githubusercontent.com/u/2361099?v=4",
+      "profile": "https://github.com/Nagriar",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
