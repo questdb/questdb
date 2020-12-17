@@ -15,6 +15,8 @@ public interface SlaveWriter extends Closeable {
 
     void cancel();
 
+    void clear();
+
     @Override
     void close();
 }

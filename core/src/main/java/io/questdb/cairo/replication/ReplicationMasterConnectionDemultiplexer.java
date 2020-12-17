@@ -47,7 +47,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
 
     @Override
     ReplicationPeerDetails createNewReplicationPeerDetails(long peerId) {
-        return new SlavePeerDetails(nf, connectionCallbackQueue, sendFrameQueueLen, peerId, nWorkers, connectionWorkerJobs);
+        return new SlavePeerDetails(nf, connectionWorkerJobs, connectionCallbackQueue, connectionWorkerQueue, sendFrameQueueLen, peerId);
     }
 
     @Override
@@ -88,19 +88,19 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
     private static class SlavePeerDetails extends ReplicationPeerDetails {
         private SlavePeerDetails(
                 NetworkFacade nf,
+                ConnectionWorkerJob<?, ?>[] connectionWorkerJobs,
                 SequencedQueue<MasterConnectionCallbackEvent> connectionCallbackQueue,
+                FanOutSequencedQueue<? extends ConnectionWorkerEvent> connectionJobEventQueue,
                 int sendFrameQueueLen,
-                long slaveId,
-                int nWorkers,
-                ConnectionWorkerJob<?, ?>[] connectionWorkerJobs
+                long slaveId
         ) {
-            super(slaveId, nWorkers, connectionWorkerJobs, () -> {
-                return new SlaveConnection(nf, connectionCallbackQueue, sendFrameQueueLen);
+            super(slaveId, connectionWorkerJobs, connectionJobEventQueue, () -> {
+                return new StreamingMasterConnection(nf, connectionCallbackQueue, sendFrameQueueLen);
             });
         }
 
         boolean tryQueueSendFrame(ReplicationStreamGeneratorFrame frame) {
-            SlaveConnection connection = getConnection(frame.getThreadId());
+            StreamingMasterConnection connection = getConnection(frame.getThreadId());
             SequencedQueue<SendFrameEvent> consumerQueue = connection.getConnectionQueue();
             long seq;
             do {
@@ -122,7 +122,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         private ReplicationStreamGeneratorFrame frame;
     }
 
-    private static class SlaveConnection extends PeerConnection<MasterConnectionCallbackEvent> {
+    private static class StreamingMasterConnection extends PeerConnection<MasterConnectionCallbackEvent> {
         private final SequencedQueue<SendFrameEvent> sendFrameQueue;
         private ReplicationStreamGeneratorFrame activeSendFrame;
         private long sendAddress;
@@ -135,16 +135,16 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         private int receiveLen;
         private byte receiveFrameType;
 
-        private SlaveConnection(NetworkFacade nf, SequencedQueue<MasterConnectionCallbackEvent> connectionCallbackQueue, int sendFrameQueueLen) {
+        private StreamingMasterConnection(NetworkFacade nf, SequencedQueue<MasterConnectionCallbackEvent> connectionCallbackQueue, int sendFrameQueueLen) {
             super(nf, connectionCallbackQueue);
             this.sendFrameQueue = SequencedQueue.createSingleProducerSingleConsumerQueue(sendFrameQueueLen, SendFrameEvent::new);
         }
 
         @Override
-        public SlaveConnection of(long slaveId, long fd, ConnectionWorkerJob<?, ?> workerJob) {
+        public StreamingMasterConnection of(long slaveId, long fd, ConnectionWorkerJob<?, ?> workerJob) {
             assert sendFrameQueue.getConsumerSeq().next() == -1; // Queue is empty
             assert null == activeSendFrame;
-            super.of(slaveId, fd, workerJob);
+            init(slaveId, fd, workerJob.getWorkerId());
             receiveBufSz = TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE;
             receiveAddress = Unsafe.malloc(receiveBufSz);
             receiveOffset = 0;
@@ -158,19 +158,14 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         }
 
         @Override
-        public IOResult handleIO() {
-            IOResult sendRc = handleSendTask();
-            IOResult recvRc;
-            if (sendRc != IOResult.Disconnected) {
-                recvRc = handleReceiveTask();
-                if (recvRc != IOResult.NotBusy) {
-                    return recvRc;
-                }
+        public boolean handleIO() {
+            if (handleSendTask()) {
+                return true;
             }
-            return sendRc;
+            return handleReceiveTask();
         }
 
-        private IOResult handleSendTask() {
+        private boolean handleSendTask() {
             boolean wroteSomething = false;
             while (true) {
                 if (null == activeSendFrame) {
@@ -186,7 +181,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                                 sendFrameQueue.getConsumerSeq().done(seq);
                             }
                         } else {
-                            return IOResult.NotBusy;
+                            return false;
                         }
                     } while (seq == -2);
 
@@ -216,24 +211,21 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                         sendOffset += nWritten;
                         sendLength -= nWritten;
                         // OS send buffer full, return busy since we wrote some data
-                        return IOResult.Busy;
+                        return true;
                     }
                 } else {
                     if (nWritten < 0) {
-                        if (tryHandleDisconnect()) {
-                            LOG.info().$("socket peer disconnected when writing [fd=").$(fd).$(']').$();
-                            return IOResult.Disconnected;
-                        } else {
-                            return IOResult.Busy;
-                        }
+                        LOG.info().$("socket peer disconnected when writing [fd=").$(fd).$(']').$();
+                        disconnect();
+                        return true;
                     }
                     // OS send buffer full, if nothing was written return not busy due to back pressure
-                    return wroteSomething ? IOResult.Busy : IOResult.NotBusy;
+                    return wroteSomething;
                 }
             }
         }
 
-        private IOResult handleReceiveTask() {
+        private boolean handleReceiveTask() {
             boolean readSomething = false;
             while (true) {
                 if (receiveFrameType == TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN) {
@@ -251,18 +243,15 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                             }
                             receiveFrameType = frameType;
                         } else {
-                            return readSomething ? IOResult.Busy : IOResult.NotBusy;
+                            return readSomething;
                         }
                     } else {
                         if (nRead < 0) {
-                            if (tryHandleDisconnect()) {
-                                LOG.info().$("socket peer disconnected when reading [fd=").$(fd).$(']').$();
-                                return IOResult.Disconnected;
-                            } else {
-                                return IOResult.Busy;
-                            }
+                            LOG.info().$("socket peer disconnected when reading [fd=").$(fd).$(']').$();
+                            disconnect();
+                            return true;
                         }
-                        return readSomething ? IOResult.Busy : IOResult.NotBusy;
+                        return readSomething;
                     }
                 }
 
@@ -270,7 +259,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                     case TableReplicationStreamHeaderSupport.FRAME_TYPE_SLAVE_COMMIT_READY:
                         int masterTableId = Unsafe.getUnsafe().getByte(receiveAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID);
                         if (!tryHandleSlaveCommitReady(masterTableId)) {
-                            return IOResult.Busy;
+                            return true;
                         }
                         receiveFrameType = TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN;
                         break;
@@ -279,9 +268,9 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                         break;
 
                     default:
-                        if (tryHandleDisconnect()) {
-                            LOG.error().$("received unrecognized frame type ").$(receiveFrameType).$(" [fd=").$(fd).$(']').$();
-                        }
+                        LOG.error().$("received unrecognized frame type ").$(receiveFrameType).$(" [fd=").$(fd).$(']').$();
+                        disconnect();
+                        return true;
                 }
             }
         }

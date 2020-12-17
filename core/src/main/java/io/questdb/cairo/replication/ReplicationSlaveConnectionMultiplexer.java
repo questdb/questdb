@@ -2,7 +2,6 @@ package io.questdb.cairo.replication;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionCallbackEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerEvent;
 import io.questdb.cairo.replication.ReplicationPeerDetails.ConnectionWorkerJob;
@@ -93,7 +92,7 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
 
     @Override
     ReplicationPeerDetails createNewReplicationPeerDetails(long peerId) {
-        return new MasterPeerDetails(peerId, nWorkers, connectionWorkerJobs, nf, connectionCallbackQueue);
+        return new MasterPeerDetails(peerId, nf, connectionWorkerJobs, connectionCallbackQueue, connectionWorkerQueue);
     }
 
     interface ReplicationSlaveCallbacks {
@@ -103,20 +102,20 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
     private static class MasterPeerDetails extends ReplicationPeerDetails {
         MasterPeerDetails(
                 long peerId,
-                int nWorkers,
-                ConnectionWorkerJob<?, ?>[] connectionWorkerJobs,
                 NetworkFacade nf,
-                SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue
+                ConnectionWorkerJob<?, ?>[] connectionWorkerJobs,
+                SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue,
+                FanOutSequencedQueue<? extends ConnectionWorkerEvent> connectionJobEventQueue
         ) {
-            super(peerId, nWorkers, connectionWorkerJobs, () -> {
-                return new MasterConnection(nf, connectionCallbackQueue);
+            super(peerId, connectionWorkerJobs, connectionJobEventQueue, () -> {
+                return new StreamingSlaveConnection(nf, connectionCallbackQueue);
             });
         }
     }
 
     static class SlaveConnectionWorkerEvent extends ConnectionWorkerEvent {
-        final static byte ADD_SLAVE_WRITER_EVENT_TYPE = 2;
-        final static byte REMOVE_SLAVE_WRITER_EVENT_TYPE = 3;
+        final static byte ADD_SLAVE_WRITER_EVENT_TYPE = 16;
+        final static byte REMOVE_SLAVE_WRITER_EVENT_TYPE = 17;
         private int masterTableId;
         private SlaveWriter slaveWriter;
         private AtomicInteger ackCounter;
@@ -159,11 +158,10 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
         }
     }
 
-    private static class MasterConnection extends PeerConnection<ConnectionCallbackEvent> {
-        private boolean diconnecting;
+    private static class StreamingSlaveConnection extends PeerConnection<ConnectionCallbackEvent> {
         private ReplicationStreamReceiver streamReceiver;
 
-        MasterConnection(NetworkFacade nf, SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue) {
+        StreamingSlaveConnection(NetworkFacade nf, SequencedQueue<ConnectionCallbackEvent> connectionCallbackQueue) {
             super(nf, connectionCallbackQueue);
             streamReceiver = new ReplicationStreamReceiver(nf);
         }
@@ -173,24 +171,15 @@ public class ReplicationSlaveConnectionMultiplexer extends AbstractMultipleConne
             this.peerId = peerId;
             this.fd = fd;
             this.workerId = workerJob.getWorkerId();
-            diconnecting = false;
             streamReceiver.of(fd, ((SlaveConnectionWorkerJob) workerJob).slaveWriteByMasterTableId, () -> {
-                diconnecting = true;
+                disconnect();
             });
             return this;
         }
 
         @Override
-        public IOResult handleIO() {
-            if (!diconnecting) {
-                return streamReceiver.handleIO() ? IOResult.Busy : IOResult.NotBusy;
-            }
-
-            if (tryHandleDisconnect()) {
-                return IOResult.Disconnected;
-            }
-
-            return IOResult.Busy;
+        public boolean handleIO() {
+            return streamReceiver.handleIO();
         }
 
         @Override

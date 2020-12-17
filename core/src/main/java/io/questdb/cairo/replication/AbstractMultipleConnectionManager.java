@@ -18,12 +18,12 @@ import io.questdb.std.ObjectFactory;
 abstract class AbstractMultipleConnectionManager<WKEV extends ConnectionWorkerEvent, CBEV extends ConnectionCallbackEvent> implements Closeable {
     private static final Log LOG = LogFactory.getLog(ReplicationMasterConnectionDemultiplexer.class);
     protected final NetworkFacade nf;
+    protected final ConnectionWorkerJob<WKEV, CBEV>[] connectionWorkerJobs;
     protected final FanOutSequencedQueue<WKEV> connectionWorkerQueue;
     protected final SequencedQueue<CBEV> connectionCallbackQueue;
     private LongObjHashMap<ReplicationPeerDetails> peerById = new LongObjHashMap<>();
     private ObjList<ReplicationPeerDetails> peers = new ObjList<>();
     protected int nWorkers;
-    protected final ConnectionWorkerJob<WKEV, CBEV>[] connectionWorkerJobs;
 
     @SuppressWarnings("unchecked")
     public AbstractMultipleConnectionManager(
@@ -50,16 +50,28 @@ abstract class AbstractMultipleConnectionManager<WKEV extends ConnectionWorkerEv
     }
 
     final boolean tryAddConnection(long peerId, long fd) {
-        LOG.info().$("peer connected [peerId=").$(peerId).$(", fd=").$(fd).$(']').$();
         ReplicationPeerDetails peerDetails = getPeerDetails(peerId);
-        return peerDetails.tryAddConnection(fd);
+        if (peerDetails.tryAddConnection(fd)) {
+            LOG.info().$("peer streaming [peerId=").$(peerId).$(", fd=").$(fd).$(']').$();
+            return true;
+        }
+        return false;
+    }
+
+    final boolean tryStopPeer(long peerId) {
+        ReplicationPeerDetails peerDetails = getPeerDetails(peerId);
+        if (peerDetails.tryStop()) {
+            LOG.info().$("peer stopping [peerId=").$(peerId).$(']').$();
+            return true;
+        }
+        return false;
     }
 
     abstract boolean handleTasks();
 
     abstract ConnectionWorkerJob<WKEV, CBEV> createConnectionWorkerJob(int nWorker, FanOutSequencedQueue<WKEV> connectionWorkerQueue);
 
-    abstract ReplicationPeerDetails createNewReplicationPeerDetails(long peerId);
+    abstract ReplicationPeerDetails createNewReplicationPeerDetails(long connectionId);
 
     @SuppressWarnings("unchecked")
     final protected <T extends ReplicationPeerDetails> T getPeerDetails(long peerId) {

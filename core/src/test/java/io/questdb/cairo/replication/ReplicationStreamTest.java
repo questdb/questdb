@@ -8,7 +8,6 @@ import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TablePageFrameCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
@@ -25,8 +24,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Unsafe;

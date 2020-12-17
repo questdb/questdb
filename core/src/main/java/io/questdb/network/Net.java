@@ -35,6 +35,9 @@ public final class Net {
     public static final long MMSGHDR_BUFFER_LENGTH_OFFSET;
 
     public static final int EWOULDBLOCK;
+    public static final int EINPROGRESS;
+    public static final int EALREADY;
+    public static final int EISCONN;
     public static final int ERETRY = 0;
     public static final int EPEERDISCONNECT = -1;
     @SuppressWarnings("unused")
@@ -43,6 +46,9 @@ public final class Net {
     static {
         Os.init();
         EWOULDBLOCK = getEwouldblock();
+        EINPROGRESS = getEinprogress();
+        EALREADY = getEalready();
+        EISCONN = getEisconn();
         if (Os.type == Os.LINUX_AMD64) {
             MMSGHDR_SIZE = getMsgHeaderSize();
             MMSGHDR_BUFFER_ADDRESS_OFFSET = getMsgHeaderBufferAddressOffset();
@@ -238,6 +244,12 @@ public final class Net {
     private static native long getMsgHeaderBufferLengthOffset();
 
     private native static int getEwouldblock();
+
+    private native static int getEinprogress();
+
+    private native static int getEalready();
+
+    private native static int getEisconn();
 
     public native static int setMulticastTtl(long fd, int ttl);
 }

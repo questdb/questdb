@@ -118,7 +118,8 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
         // TODO
     }
 
-    private void clear() {
+    @Override
+    public void clear() {
         if (null != writer) {
             for (int i = 0, sz = usedPartitions.size(); i < sz; i++) {
                 PartitionDetails partitionDetails = usedPartitions.getQuick(i);
