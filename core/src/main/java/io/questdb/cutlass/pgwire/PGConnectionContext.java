@@ -487,9 +487,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setNoopBindVariable(int index, long address, int valueLen) {
-    }
-
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = queryCharacterStore.newEntry();
         if (Chars.utf8Decode(address, address + valueLen, e)) {
@@ -716,7 +713,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         //   0: default format is text for all parameters
         //   1: client can specify one format for all parameters
         //   2 or greater: format has been define for each parameter, so parameterFormatCount must equal parameterValueCount
-        boolean inferTypes = parameterValueCount != typedBindVariableCount;
+        boolean inferTypes = false; //parameterValueCount != typedBindVariableCount;
         boolean allTextFormat = parameterFormatCount == 0 || (parameterFormatCount == 1 && parameterFormats.get(0) == 0);
         boolean allBinaryFormat = parameterFormatCount == 1 && parameterFormats.get(0) == 1;
 
@@ -782,7 +779,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         recvBufferReadOffset = 0;
     }
 
-    private void compileQuery(SqlCompiler compiler, AssociativeCache<RecordCursorFactory> factoryCache) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void compileQuery(
+            SqlCompiler compiler,
+            AssociativeCache<RecordCursorFactory> factoryCache
+    ) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         if (queryText != null && queryText.length() > 0) {
 
             // try insert, peek because this is our private cache
@@ -1083,7 +1083,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
         switch (type) {
             case 'P':
-                processParse(address, msgLo, msgLimit);
+                processParse(address, msgLo, msgLimit, compiler, factoryCache);
                 break;
             case 'X':
                 // 'Terminate'
@@ -1122,11 +1122,17 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void parseQueryText(long lo, long hi) throws BadProtocolException {
+    private void parseQueryText(
+            long lo,
+            long hi,
+            SqlCompiler compiler,
+            AssociativeCache<RecordCursorFactory> factoryCache
+    ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         CharacterStoreEntry e = queryCharacterStore.newEntry();
         if (Chars.utf8Decode(lo, hi, e)) {
             queryText = queryCharacterStore.toImmutable();
             LOG.info().$("parse [q=").utf8(queryText).$(']').$();
+            compileQuery(compiler, factoryCache);
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();
             throw BadProtocolException.INSTANCE;
@@ -1353,7 +1359,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             bindParameterValues(lo, msgLimit, parameterFormatCount, parameterValueCount, bindVariableSetters);
         }
 
-        compileQuery(compiler, factoryCache);
+//        compileQuery(compiler, factoryCache);
 
         prepareBindComplete();
     }
@@ -1534,7 +1540,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void processParse(long address, long lo, long msgLimit) throws BadProtocolException, SqlException {
+    private void processParse(
+            long address,
+            long lo,
+            long msgLimit,
+            SqlCompiler compiler,
+            AssociativeCache<RecordCursorFactory> factoryCache
+    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         // 'Parse'
         //message length
         long hi = getStringLength(lo, msgLimit);
@@ -1556,7 +1568,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareForNewQuery();
 
         // thi is is where we set "queryText"
-        parseQueryText(lo, hi);
+        bindVariableService.clear();
+        parseQueryText(lo, hi, compiler, factoryCache);
 
         //parameter type count
         lo = hi + 1;
@@ -1588,7 +1601,6 @@ public class PGConnectionContext implements IOContext, Mutable {
 
             LOG.debug().$("params [count=").$(parameterCount).$(']').$();
             lo += Short.BYTES;
-            bindVariableService.clear();
             bindVariableSetters.ensureCapacity(parameterCount * 2);
             setupBindVariables(lo, parameterCount, bindVariableSetters);
         } else if (parameterCount < 0) {
@@ -1609,7 +1621,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         // vanilla query
         prepareForNewQuery();
-        parseQueryText(lo, limit - 1);
+        parseQueryText(lo, limit - 1, compiler, factoryCache);
 
         if (SqlKeywords.isSemicolon(queryText)) {
             queryTag = TAG_OK;
@@ -1770,58 +1782,59 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void setupBindVariable(ObjList<BindVariableSetter> bindVariableSetters, int idx, int pgType) throws SqlException {
         switch (pgType) {
             case PG_FLOAT8: // FLOAT8 - double
-                bindVariableService.setDouble(idx);
+//                bindVariableService.setDouble(idx);
                 bindVariableSetters.setQuick(idx * 2, doubleSetter);
-                bindVariableSetters.setQuick(idx * 2 + 1, doubleTxtSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_INT4: // INT
-                bindVariableService.setInt(idx);
+//                bindVariableService.setInt(idx);
                 bindVariableSetters.setQuick(idx * 2, intSetter);
-                bindVariableSetters.setQuick(idx * 2 + 1, intTxtSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_INT8:
-                bindVariableService.setLong(idx);
+//                bindVariableService.setLong(idx);
                 bindVariableSetters.setQuick(idx * 2, longSetter);
-                bindVariableSetters.setQuick(idx * 2 + 1, longTxtSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_FLOAT4:
-                bindVariableService.setFloat(idx);
+//                bindVariableService.setFloat(idx);
                 bindVariableSetters.setQuick(idx * 2, floatSetter);
-                bindVariableSetters.setQuick(idx * 2 + 1, floatTxtSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_INT2:
                 // todo: is this not short?
-                bindVariableService.setByte(idx);
+//                bindVariableService.setByte(idx);
                 bindVariableSetters.setQuick(idx * 2, byteSetter);
-                bindVariableSetters.setQuick(idx * 2 + 1, byteTxtSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_BOOL:
-                bindVariableService.setBoolean(idx);
+//                bindVariableService.setBoolean(idx);
                 bindVariableSetters.setQuick(idx * 2, booleanSetter);
-                bindVariableSetters.setQuick(idx * 2 + 1, booleanSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_VARCHAR:
-                bindVariableService.setStr(idx);
+            case PG_UNSPECIFIED:
+//                bindVariableService.setStr(idx);
                 bindVariableSetters.setQuick(idx * 2, strSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_CHAR:
-                bindVariableService.setChar(idx);
+//                bindVariableService.setChar(idx);
                 bindVariableSetters.setQuick(idx * 2, charSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, charSetter);
                 break;
             case PG_DATE:
-                bindVariableService.setDate(idx);
+//                bindVariableService.setDate(idx);
                 bindVariableSetters.setQuick(idx * 2, dateSetter);
-                bindVariableSetters.setQuick(idx * 2 + 1, dateSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_TIMESTAMP:
             case PG_TIMESTAMPZ:
-                bindVariableService.setTimestamp(idx, Numbers.LONG_NaN);
+//                bindVariableService.setTimestamp(idx, Numbers.LONG_NaN);
                 bindVariableSetters.setQuick(idx * 2, timestampSetter);
-                bindVariableSetters.setQuick(idx * 2 + 1, timestampSetter);
+                bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
-            case PG_UNSPECIFIED:
+//            case PG_UNSPECIFIED:
                 // postgres JDBC driver does not seem to send
                 // microseconds with its text timestamp
                 // on top of this parameters such as setDate, setTimestamp
@@ -1831,7 +1844,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 //                bindVariableService.setLong(idx);
 //                bindVariableSetters.add(timestampAsLongSetter);
 //                bindVariableSetters.add(timestampAsLongSetter);
-                break;
+//                break;
             default:
                 throw SqlException.$(0, "unsupported parameter [type=").put(pgType).put(", index=").put(idx).put(']');
         }
@@ -1847,7 +1860,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         for (int idx = 0; idx < pc; idx++) {
             int pgType = getInt(lo + idx * Integer.BYTES);
 
-            if (pgType != PG_UNSPECIFIED) {
+//            if (pgType != PG_UNSPECIFIED) {
 
                 // todo: this is not great to have "if" in a loop
                 if (wrapper != null) {
@@ -1855,7 +1868,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 }
                 setupBindVariable(bindVariableSetters, idx, pgType);
                 typedBindVariableCount++;
-            }
+//            }
         }
 
         if (wrapper != null) {
