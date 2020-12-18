@@ -17,7 +17,6 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.replication.MasterReplicationService.MasterReplicationConfiguration;
 import io.questdb.cairo.replication.SlaveReplicationService.SlaveReplicationConfiguration;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -29,7 +28,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -67,7 +66,7 @@ public class ReplicationTest extends AbstractGriffinTest {
         slaveConfiguration = new DefaultCairoConfiguration(slaveRoot);
         slaveEngine = new CairoEngine(slaveConfiguration);
         slaveCompiler = new SqlCompiler(slaveEngine);
-        slaveSqlExecutionContext = new SqlExecutionContextImpl(slaveEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null, -1, null);
+        slaveSqlExecutionContext = new SqlExecutionContextImpl(slaveEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableServiceImpl(slaveConfiguration), null, -1, null);
     }
 
     @AfterClass
