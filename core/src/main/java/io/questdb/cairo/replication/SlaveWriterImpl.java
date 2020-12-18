@@ -137,7 +137,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             }
             blockWriter.close();
             blockWriter = null;
-            writer.close();
+            // writer.close();
             writer = null;
         }
     }
