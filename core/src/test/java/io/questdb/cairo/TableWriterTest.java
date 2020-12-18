@@ -1421,7 +1421,6 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
             long fd = -1;
-            int count = 1;
             boolean ran = false;
 
             @Override
@@ -1439,7 +1438,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean truncate(long fd, long size) {
-                if (this.fd == fd && count-- == 0) {
+                if (this.fd == fd) {
                     ran = true;
                     return false;
                 }
@@ -1502,7 +1501,6 @@ public class TableWriterTest extends AbstractCairoTest {
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
             long fd = -1;
-            int count = 1;
             boolean ran = false;
 
             @Override
@@ -1520,7 +1518,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean truncate(long fd, long size) {
-                if (this.fd == fd && count-- <= 0) {
+                if (this.fd == fd) {
                     ran = true;
                     return false;
                 }

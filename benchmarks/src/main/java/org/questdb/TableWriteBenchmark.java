@@ -38,6 +38,8 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.io.File;
+import java.nio.file.Files;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Benchmark)
@@ -82,6 +84,22 @@ public class TableWriteBenchmark {
     public void reset() {
         writer = new TableWriter(configuration, "test1");
         rnd.reset();
+    }
+
+    public static boolean deleteDirectory(File directory) {
+        if (directory.exists()) {
+            File[] files = directory.listFiles();
+            if (null != files) {
+                for (int i = 0; i < files.length; i++) {
+                    if (files[i].isDirectory()) {
+                        deleteDirectory(files[i]);
+                    } else {
+                        files[i].delete();
+                    }
+                }
+            }
+        }
+        return (directory.delete());
     }
 
     @Benchmark

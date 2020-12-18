@@ -76,9 +76,9 @@ public class CairoEngine implements Closeable {
             tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
-                if (!ff.truncate(tableIndexFd, Files.PAGE_SIZE)) {
+                if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
                     ff.close(tableIndexFd);
-                    throw CairoException.instance(ff.errno()).put("Could not truncate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
+                    throw CairoException.instance(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
                 }
             }
 
