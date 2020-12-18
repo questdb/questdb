@@ -115,6 +115,7 @@ public class TextDelimiterScanner implements Closeable {
                 delayedClosingQuote = false;
                 // this is double quote '""' situation
                 if (b == '"') {
+                    lineLen++;
                     continue;
                 } else {
                     // last quote was genuine closing one
@@ -127,6 +128,7 @@ public class TextDelimiterScanner implements Closeable {
                 if (b == '"') {
                     delayedClosingQuote = true;
                 }
+                lineLen++;
                 continue;
             }
 
@@ -146,6 +148,7 @@ public class TextDelimiterScanner implements Closeable {
                     }
                     continue;
                 case '"':
+                    lineLen++;
                     quotes = true;
                     continue;
                 default:
@@ -233,8 +236,6 @@ public class TextDelimiterScanner implements Closeable {
                 }
             }
         }
-
-        assert delimiter > 0;
 
         // exclude '.' as delimiter
         if (delimiter != '.' && lastDelimiterStdDev < maxRequiredDelimiterStdDev) {

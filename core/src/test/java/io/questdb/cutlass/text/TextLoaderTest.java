@@ -1919,6 +1919,48 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSingleColumnWithQuote() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "f0\n" +
+                    "A1\n" +
+                    "A2\n" +
+                    "A3\n" +
+                    "A4\n" +
+                    "A5\n" +
+                    "A6\n" +
+                    "A7\n" +
+                    "A8\n" +
+                    "A9\n" +
+                    "A10\n" +
+                    "A11\n";
+
+            String csv = "\"A1\"\n" +
+                    "\"A2\"\n" +
+                    "\"A3\"\n" +
+                    "\"A4\"\n" +
+                    "\"A5\"\n" +
+                    "\"A6\"\n" +
+                    "\"A7\"\n" +
+                    "\"A8\"\n" +
+                    "\"A9\"\n" +
+                    "\"A10\"\n" +
+                    "\"A11\"";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(false);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    11,
+                    11
+            );
+        });
+    }
+
+    @Test
     public void testSmallInitialBuffer() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\tTRUE\tLorem ipsum dolor sit amet.\t122\n" +
