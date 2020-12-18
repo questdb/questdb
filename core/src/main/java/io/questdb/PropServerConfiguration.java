@@ -142,6 +142,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByPoolCapacity;
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
+    private final int sqlBindVariablePoolSize;
     private final DateLocale dateLocale;
     private final TimestampLocale timestampLocale;
     private final String backupRoot;
@@ -522,6 +523,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlGroupByMapCapacity = getInt(properties, env, "cairo.sql.groupby.map.capacity", 1024);
         this.sqlGroupByPoolCapacity = getInt(properties, env, "cairo.sql.groupby.pool.capacity", 1024);
         this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, "cairo.sql.max.symbol.not.equals.count", 100);
+        this.sqlBindVariablePoolSize = getInt(properties, env, "cairo.sql.bind.variable.pool.size", 8);
         final String sqlCopyFormatsFile = getString(properties, env, "cairo.sql.copy.formats.file", "/text_loader.json");
         final String dateLocale = getString(properties, env, "cairo.date.locale", "en");
         this.dateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
@@ -1272,6 +1274,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+
+        @Override
+        public int getBindVariablePoolSize() {
+            return sqlBindVariablePoolSize;
+        }
 
         @Override
         public int getSqlCopyBufferSize() {

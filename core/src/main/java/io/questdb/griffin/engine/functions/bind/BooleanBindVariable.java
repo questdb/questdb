@@ -27,13 +27,18 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.std.Mutable;
 
-public class BooleanBindVariable extends BooleanFunction implements ScalarFunction {
+public class BooleanBindVariable extends BooleanFunction implements ScalarFunction, Mutable {
     boolean value;
 
-    public BooleanBindVariable(boolean value) {
+    public BooleanBindVariable() {
         super(0);
-        this.value = value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = false;
     }
 
     @Override

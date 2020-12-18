@@ -101,7 +101,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
         assertFailure(
                 "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
                 "create table x (id int, ref int, ref3 int)",
-                73, "bind variable is not allowed here"
+                73, "literal expected"
         );
     }
 

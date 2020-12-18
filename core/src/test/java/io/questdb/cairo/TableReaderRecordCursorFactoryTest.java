@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -110,7 +110,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                     final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                             .with(
                                     AllowAllCairoSecurityContext.INSTANCE,
-                                    new BindVariableService(),
+                                    new BindVariableServiceImpl(engine.getConfiguration()),
                                     null,
                                     -1,
                                     null

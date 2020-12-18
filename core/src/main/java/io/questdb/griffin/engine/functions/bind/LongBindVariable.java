@@ -27,13 +27,19 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 
-class LongBindVariable extends LongFunction implements ScalarFunction {
+class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
     long value;
 
-    public LongBindVariable(long value) {
+    public LongBindVariable() {
         super(0);
-        this.value = value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = Numbers.LONG_NaN;
     }
 
     @Override

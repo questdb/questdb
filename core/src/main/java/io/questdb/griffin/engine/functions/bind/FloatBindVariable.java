@@ -27,13 +27,18 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.std.Mutable;
 
-class FloatBindVariable extends FloatFunction implements ScalarFunction {
+class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable {
     float value;
 
-    public FloatBindVariable(float value) {
+    public FloatBindVariable() {
         super(0);
-        this.value = value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = Float.NaN;
     }
 
     @Override

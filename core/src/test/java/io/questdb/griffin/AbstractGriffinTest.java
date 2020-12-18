@@ -30,7 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -41,7 +41,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
-    protected static final BindVariableService bindVariableService = new BindVariableService();
+    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private static final LongList rows = new LongList();
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
@@ -354,10 +354,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 }
             }
         }
-    }
-
-    protected static void assertTimestampColumnValues(RecordCursorFactory factory) {
-        assertTimestampColumnValues(factory, sqlExecutionContext);
     }
 
     protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {

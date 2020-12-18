@@ -955,6 +955,13 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static short parseShort(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence, 0, sequence.length());
+    }
+
     public static short parseShort(CharSequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -2007,7 +2014,7 @@ public final class Numbers {
                         }
                     }
 
-                    lowDigitDifference = (b << 1) - tens;
+                    lowDigitDifference = ((long) b << 1) - tens;
                 } else {
                     long b = fractionBits * LONG_5_POW[B5] << B2;
                     long s = LONG_5_POW[S5] << S2;

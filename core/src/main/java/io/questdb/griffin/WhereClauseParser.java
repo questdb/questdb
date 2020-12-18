@@ -743,7 +743,7 @@ final class WhereClauseParser implements Mutable {
     }
 
     private boolean isTimestamp(ExpressionNode n) {
-        return timestamp != null && Chars.equals(timestamp, n.token);
+        return Chars.equalsNc(n.token, timestamp);
     }
 
     private long parseFullOrPartialDate(boolean equalsTo, ExpressionNode node, boolean isLo) throws NumericException {
