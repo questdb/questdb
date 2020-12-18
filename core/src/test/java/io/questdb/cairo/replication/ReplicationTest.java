@@ -100,26 +100,6 @@ public class ReplicationTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testSimple2() throws Exception {
-        runTest("testSimple1", () -> {
-            compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
-                    ") TIMESTAMP (ts);",
-                    sqlExecutionContext);
-            String expected = select("SELECT * FROM source", false);
-            slaveCompiler.compile("CREATE TABLE source (ts TIMESTAMP, l LONG) TIMESTAMP(ts);",
-                    slaveSqlExecutionContext);
-            TableWriter writer = slaveEngine.getWriter(slaveSqlExecutionContext.getCairoSecurityContext(), "source");
-            String countText = select("SELECT count() FROM source", true);
-            writer.close();
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-            slaveEngine.releaseAllReaders();
-            slaveEngine.releaseAllWriters();
-        });
-    }
-
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
         TestUtils.assertMemoryLeak(runnable);
