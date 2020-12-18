@@ -110,7 +110,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                     final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                             .with(
                                     AllowAllCairoSecurityContext.INSTANCE,
-                                    new BindVariableServiceImpl(),
+                                    new BindVariableServiceImpl(engine.getConfiguration()),
                                     null,
                                     -1,
                                     null

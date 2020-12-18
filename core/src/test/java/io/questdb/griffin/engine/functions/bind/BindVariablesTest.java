@@ -362,7 +362,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testExplicitlyIndexedInvalidIndex() {
+    public void testExplicitlyIndexedInvalidIndex() throws SqlException {
         bindVariableService.setFloat(2, Float.NaN);
         bindVariableService.setFloat(0, 7.6f);
         bindVariableService.setFloat(1, 9.21f);
@@ -497,7 +497,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         TestUtils.assertEquals("0x04000000000000000300000000000000020000000000000001", sink);
 
         sink.clear();
-        bindVariableService.setLong256Null("x");
+        bindVariableService.setLong256("x");
         func.getLong256(builder.getRecord(), sink);
         TestUtils.assertEquals("", sink);
 

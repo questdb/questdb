@@ -94,7 +94,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final CharacterStore queryCharacterStore;
     private final CharacterStore portalCharacterStore;
     private final CharacterStore queryTextCharacterStore;
-    private final BindVariableService bindVariableService = new BindVariableServiceImpl();
+    private final BindVariableService bindVariableService;
     private final long sendBufferLimit;
     private final int sendBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
@@ -165,6 +165,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
         this.nf = configuration.getNetworkFacade();
+        this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -393,7 +394,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         bindVariableService.setBoolean(index, valueLen == 4);
     }
 
-    public void setByteBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setByteBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Short.BYTES, valueLen);
         bindVariableService.setByte(index, (byte) getShort(address));
     }
@@ -401,13 +402,13 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void setByteTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
         try {
             bindVariableService.setByte(index, (byte) Numbers.parseInt(dbcs.of(address, address + valueLen)));
-        } catch (NumericException e) {
+        } catch (NumericException | SqlException e) {
             LOG.error().$("bad byte variable value [index=").$(index).$(", value=`").$(dbcs).$("`").$();
             throw BadProtocolException.INSTANCE;
         }
     }
 
-    public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = queryCharacterStore.newEntry();
         if (Chars.utf8Decode(address, address + valueLen, e)) {
             bindVariableService.setChar(index, queryCharacterStore.toImmutable().charAt(0));
@@ -430,7 +431,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Double.BYTES, valueLen);
         bindVariableService.setDouble(index, Double.longBitsToDouble(getLong(address)));
     }
@@ -438,18 +439,18 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void setDoubleTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
         try {
             bindVariableService.setDouble(index, Numbers.parseDouble(dbcs.of(address, address + valueLen)));
-        } catch (NumericException e) {
+        } catch (NumericException | SqlException e) {
             LOG.error().$("bad double variable value [index=").$(index).$(", value=`").$(dbcs).$("`]").$();
             throw BadProtocolException.INSTANCE;
         }
     }
 
-    public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Float.BYTES, valueLen);
         bindVariableService.setFloat(index, Float.intBitsToFloat(getInt(address)));
     }
 
-    public void setFloatTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setFloatTextBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         try {
             bindVariableService.setFloat(index, Numbers.parseFloat(dbcs.of(address, address + valueLen)));
         } catch (NumericException e) {
@@ -457,12 +458,12 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Integer.BYTES, valueLen);
         bindVariableService.setInt(index, getInt(address));
     }
 
-    public void setIntTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setIntTextBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         try {
             bindVariableService.setInt(index, Numbers.parseInt(dbcs.of(address, address + valueLen)));
         } catch (NumericException e) {
@@ -471,12 +472,12 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Long.BYTES, valueLen);
         bindVariableService.setLong(index, getLong(address));
     }
 
-    public void setLongTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setLongTextBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         try {
             bindVariableService.setLong(index, Numbers.parseLong(dbcs.of(address, address + valueLen)));
         } catch (NumericException e) {
@@ -488,7 +489,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void setNoopBindVariable(int index, long address, int valueLen) {
     }
 
-    public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+    public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = queryCharacterStore.newEntry();
         if (Chars.utf8Decode(address, address + valueLen, e)) {
             bindVariableService.setStr(index, queryCharacterStore.toImmutable());
@@ -575,7 +576,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            responseAsciiSink.put(doubleValue, Numbers.MAX_SCALE);
+            responseAsciiSink.put(doubleValue);
             responseAsciiSink.putLenEx(a);
         }
     }

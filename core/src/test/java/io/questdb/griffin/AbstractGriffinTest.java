@@ -41,7 +41,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
-    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl();
+    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private static final LongList rows = new LongList();
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
@@ -354,10 +354,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 }
             }
         }
-    }
-
-    protected static void assertTimestampColumnValues(RecordCursorFactory factory) {
-        assertTimestampColumnValues(factory, sqlExecutionContext);
     }
 
     protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {

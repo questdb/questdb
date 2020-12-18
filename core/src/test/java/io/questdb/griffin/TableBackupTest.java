@@ -121,7 +121,7 @@ public class TableBackupTest {
         };
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableServiceImpl(), null, -1, null);
+        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableServiceImpl(mainConfiguration), null, -1, null);
     }
 
     @After
@@ -502,7 +502,7 @@ public class TableBackupTest {
                 final CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
                 engine = new CairoEngine(backupConfiguration);
                 sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE,
-                        new BindVariableServiceImpl(),
+                        new BindVariableServiceImpl(backupConfiguration),
                         null,
                         -1,
                         null);

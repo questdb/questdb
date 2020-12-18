@@ -361,7 +361,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 } else if (value instanceof Long) {
                     sink.put((Long) value);
                 } else {
-                    sink.put((Double) value, Numbers.MAX_SCALE);
+                    sink.put((Double) value);
                 }
                 break;
             case ColumnType.FLOAT:

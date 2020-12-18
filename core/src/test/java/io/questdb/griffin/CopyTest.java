@@ -39,7 +39,7 @@ import java.io.IOException;
 
 public class CopyTest extends AbstractCairoTest {
 
-    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl();
+    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     protected static SqlExecutionContext sqlExecutionContext;
 
     private static final LongList rows = new LongList();

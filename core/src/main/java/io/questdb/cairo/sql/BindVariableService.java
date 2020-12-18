@@ -39,85 +39,85 @@ public interface BindVariableService extends Mutable {
 
     int getIndexedVariableCount();
 
-    void setBin(CharSequence name, BinarySequence value);
+    void setBin(CharSequence name, BinarySequence value) throws SqlException;
 
-    void setBin(int index);
+    void setBin(int index) throws SqlException;
 
-    void setBin(int index, BinarySequence value);
+    void setBin(int index, BinarySequence value) throws SqlException;
 
-    void setBoolean(CharSequence name, boolean value);
+    void setBoolean(CharSequence name, boolean value) throws SqlException;
 
-    void setBoolean(int index);
+    void setBoolean(int index) throws SqlException;
 
-    void setBoolean(int index, boolean value);
+    void setBoolean(int index, boolean value) throws SqlException;
 
-    void setByte(CharSequence name, byte value);
+    void setByte(CharSequence name, byte value) throws SqlException;
 
-    void setByte(int index, byte value);
+    void setByte(int index, byte value) throws SqlException;
 
-    void setChar(CharSequence name, char value);
+    void setChar(CharSequence name, char value) throws SqlException;
 
-    void setChar(int index);
+    void setChar(int index) throws SqlException;
 
-    void setChar(int index, char value);
+    void setChar(int index, char value) throws SqlException;
 
-    void setDate(CharSequence name, long value);
+    void setDate(CharSequence name, long value) throws SqlException;
 
-    void setDate(int index);
+    void setDate(int index) throws SqlException;
 
-    void setDate(int index, long value);
+    void setDate(int index, long value) throws SqlException;
 
-    void setDouble(CharSequence name, double value);
+    void setDouble(CharSequence name, double value) throws SqlException;
 
-    void setDouble(int index);
+    void setDouble(int index) throws SqlException;
 
-    void setDouble(int index, double value);
+    void setDouble(int index, double value) throws SqlException;
 
-    void setFloat(CharSequence name, float value);
+    void setFloat(CharSequence name, float value) throws SqlException;
 
-    void setFloat(int index);
+    void setFloat(int index) throws SqlException;
 
-    void setFloat(int index, float value);
+    void setFloat(int index, float value) throws SqlException;
 
-    void setInt(CharSequence name, int value);
+    void setInt(CharSequence name, int value) throws SqlException;
 
-    void setInt(int index);
+    void setInt(int index) throws SqlException;
 
-    void setInt(int index, int value);
+    void setInt(int index, int value) throws SqlException;
 
-    void setLong(CharSequence name, long value);
+    void setLong(CharSequence name, long value) throws SqlException;
 
-    void setLong(int index);
+    void setLong(int index) throws SqlException;
 
-    void setLong(int index, long value);
+    void setLong(int index, long value) throws SqlException;
 
-    void setLong256(CharSequence name, long l0, long l1, long l2, long l3);
+    void setLong256(CharSequence name, long l0, long l1, long l2, long l3) throws SqlException;
 
-    void setLong256(CharSequence name, Long256 value);
+    void setLong256(CharSequence name, Long256 value) throws SqlException;
 
-    void setLong256(int index);
+    void setLong256(int index) throws SqlException;
 
-    void setLong256(int index, long l0, long l1, long l2, long l3);
+    void setLong256(int index, long l0, long l1, long l2, long l3) throws SqlException;
 
-    void setLong256Null(CharSequence name);
+    void setLong256(CharSequence name) throws SqlException;
 
-    void setShort(int index);
+    void setShort(int index) throws SqlException;
 
-    void setShort(int index, short value);
+    void setShort(int index, short value) throws SqlException;
 
-    void setShort(CharSequence name, short value);
+    void setShort(CharSequence name, short value) throws SqlException;
 
-    void setStr(int index);
+    void setStr(int index) throws SqlException;
 
-    void setStr(int index, CharSequence value);
+    void setStr(int index, CharSequence value) throws SqlException;
 
-    void setStr(CharSequence name, CharSequence value);
+    void setStr(CharSequence name, CharSequence value) throws SqlException;
 
-    void setTimestamp(int index);
+    void setTimestamp(int index) throws SqlException;
 
-    void setTimestamp(int index, long value);
+    void setTimestamp(int index, long value) throws SqlException;
 
-    void setTimestamp(CharSequence name, long value);
+    void setTimestamp(CharSequence name, long value) throws SqlException;
 
-    void setByte(int index);
+    void setByte(int index) throws SqlException;
 }

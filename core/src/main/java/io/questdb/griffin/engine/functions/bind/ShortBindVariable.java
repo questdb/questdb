@@ -27,17 +27,22 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.std.Mutable;
 
-class ShortBindVariable extends ShortFunction implements ScalarFunction {
+class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable {
     short value;
 
-    public ShortBindVariable(short value) {
+    public ShortBindVariable() {
         super(0);
-        this.value = value;
     }
 
     @Override
     public short getShort(Record rec) {
         return value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = 0;
     }
 }
