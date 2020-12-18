@@ -35,6 +35,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int CONSTANT = 2;
     public static final int LITERAL = 4;
     public static final int MEMBER_ACCESS = 5;
+    public static final int BIND_VARIABLE = 6;
     public static final int FUNCTION = 8;
     public static final int ARRAY_ACCESS = 9;
     public static final int CONTROL = 16;
@@ -123,7 +124,12 @@ public class ExpressionNode implements Mutable, Sinkable {
 
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {
         clear();
-        this.type = type;
+        // override literal with bind variable
+        if (type == LITERAL && token != null && (token.charAt(0) == '$' || token.charAt(0) == ':')) {
+            this.type = BIND_VARIABLE;
+        } else {
+            this.type = type;
+        }
         this.precedence = precedence;
         this.token = token;
         this.position = position;
@@ -151,9 +157,6 @@ public class ExpressionNode implements Mutable, Sinkable {
                 break;
             case 2:
                 if (OperatorExpression.isOperator(token)) {
-                    if (lhs == null) {
-                        System.out.println("not good");
-                    }
                     lhs.toSink(sink);
                     sink.put(' ');
                     sink.put(token);

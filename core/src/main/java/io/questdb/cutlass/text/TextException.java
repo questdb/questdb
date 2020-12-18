@@ -64,7 +64,7 @@ public class TextException extends Exception implements Sinkable, FlyweightMessa
     }
 
     public TextException put(double c) {
-        message.put(c, Numbers.MAX_SCALE);
+        message.put(c);
         return this;
     }
 

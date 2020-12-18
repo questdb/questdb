@@ -63,6 +63,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectUndefinedBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = compiler.compile("select $1+x, $2 from long_sequence(10)", sqlExecutionContext).getRecordCursorFactory()) {
+                sink.clear();
+                factory.getMetadata().toJson(sink);
+                TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"column\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"$2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}", sink);
+            }
+        });
+    }
+
+    @Test
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 

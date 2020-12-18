@@ -27,17 +27,22 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.std.Mutable;
 
-class ByteBindVariable extends ByteFunction implements ScalarFunction {
+class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     byte value;
 
-    public ByteBindVariable(byte value) {
+    public ByteBindVariable() {
         super(0);
-        this.value = value;
     }
 
     @Override
     public byte getByte(Record rec) {
         return value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = 0;
     }
 }

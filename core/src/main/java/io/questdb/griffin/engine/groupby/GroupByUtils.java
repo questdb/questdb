@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -256,8 +255,8 @@ public class GroupByUtils {
 
         for (int i = 0; i < explicitKeyColumnCount; i++) {
             final ExpressionNode key = groupByColumns.getQuick(i);
-            if (key.type == ExpressionNode.LITERAL) {
-                if (SqlUtil.isNotBindVariable(key.token)) {
+            switch (key.type) {
+                case ExpressionNode.LITERAL:
                     final int dotIndex = Chars.indexOf(key.token, '.');
 
                     if (dotIndex > -1) {
@@ -295,26 +294,30 @@ public class GroupByUtils {
                             throw SqlException.$(key.position, "group by column references aggregate expression");
                         }
                     }
-                } else {
+                    break;
+                case ExpressionNode.BIND_VARIABLE:
                     throw SqlException.$(key.position, "bind variable is not allowed here");
-                }
-            } else if (key.type == ExpressionNode.FUNCTION || key.type == ExpressionNode.OPERATION || key.type == ExpressionNode.CONSTANT) {
-                final ObjList<QueryColumn> availableColumns = nested.getTopDownColumns();
-                boolean invalid = true;
-                for (int j = 0, n = availableColumns.size(); j < n; j++) {
-                    final QueryColumn qc = availableColumns.getQuick(j);
-                    if (qc.getAst().type == key.type) {
-                        if (ExpressionNode.compareNodesGroupBy(key, qc.getAst(), chooseModel)) {
-                            invalid = false;
-                            break;
+                case ExpressionNode.FUNCTION:
+                case ExpressionNode.OPERATION:
+                case ExpressionNode.CONSTANT:
+                    final ObjList<QueryColumn> availableColumns = nested.getTopDownColumns();
+                    boolean invalid = true;
+                    for (int j = 0, n = availableColumns.size(); j < n; j++) {
+                        final QueryColumn qc = availableColumns.getQuick(j);
+                        if (qc.getAst().type == key.type) {
+                            if (ExpressionNode.compareNodesGroupBy(key, qc.getAst(), chooseModel)) {
+                                invalid = false;
+                                break;
+                            }
                         }
                     }
-                }
-                if (invalid) {
-                    throw SqlException.$(key.position, "group by expression does not match anything select in statement");
-                }
-            } else {
-                throw SqlException.$(key.position, "unsupported type of expression");
+                    if (invalid) {
+                        throw SqlException.$(key.position, "group by expression does not match anything select in statement");
+                    }
+                    break;
+                default:
+                    throw SqlException.$(key.position, "unsupported type of expression");
+
             }
         }
 

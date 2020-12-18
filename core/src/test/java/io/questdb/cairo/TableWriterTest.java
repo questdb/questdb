@@ -3511,7 +3511,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     final int plen = path.length();
                     FF.iterateDir(path.$(), (file, type) -> {
                         lpsz.of(file);
-                        if (type == Files.DT_DIR && !Chars.equals(lpsz, '.') && !Chars.equals(lpsz, "..")) {
+
+                        if (type == Files.DT_DIR && !Files.isDots(lpsz)) {
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
@@ -3602,7 +3603,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     path.trimTo(plen);
                     FF.iterateDir(path.$(), (file, type) -> {
                         lpsz.of(file);
-                        if (type == Files.DT_DIR && !Chars.equals(lpsz, '.') && !Chars.equals(lpsz, "..")) {
+                        if (type == Files.DT_DIR && !Files.isDots(lpsz)) {
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
@@ -3973,7 +3974,7 @@ public class TableWriterTest extends AbstractCairoTest {
         try (Path vp = new Path()) {
             for (i = 0; i < 10000; i++) {
                 vp.of(root).concat(PRODUCT).put(Files.SEPARATOR);
-                fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);
+                fmt.format(vmem.getLong(i * 8L), enGb, "UTC", vp);
                 if (!FF.exists(vp.$())) {
                     Assert.fail();
                 }
