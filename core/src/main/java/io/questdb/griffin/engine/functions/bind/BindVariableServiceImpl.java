@@ -36,21 +36,33 @@ import org.jetbrains.annotations.Nullable;
 public class BindVariableServiceImpl implements BindVariableService {
     private final CharSequenceObjHashMap<Function> namedVariables = new CharSequenceObjHashMap<>();
     private final ObjList<Function> indexedVariables = new ObjList<>();
-    private final ObjectPool<DoubleBindVariable> doubleVarPool = new ObjectPool<>(DoubleBindVariable::new, 8);
-    private final ObjectPool<FloatBindVariable> floatVarPool = new ObjectPool<>(FloatBindVariable::new, 8);
-    private final ObjectPool<IntBindVariable> intVarPool = new ObjectPool<>(IntBindVariable::new, 8);
-    private final ObjectPool<LongBindVariable> longVarPool = new ObjectPool<>(LongBindVariable::new, 8);
-    private final ObjectPool<TimestampBindVariable> timestampVarPool = new ObjectPool<>(TimestampBindVariable::new, 8);
-    private final ObjectPool<DateBindVariable> dateVarPool = new ObjectPool<>(DateBindVariable::new, 8);
-    private final ObjectPool<ShortBindVariable> shortVarPool = new ObjectPool<>(ShortBindVariable::new, 8);
-    private final ObjectPool<ByteBindVariable> byteVarPool = new ObjectPool<>(ByteBindVariable::new, 8);
-    private final ObjectPool<BooleanBindVariable> booleanVarPool = new ObjectPool<>(BooleanBindVariable::new, 8);
+    private final ObjectPool<DoubleBindVariable> doubleVarPool;
+    private final ObjectPool<FloatBindVariable> floatVarPool;
+    private final ObjectPool<IntBindVariable> intVarPool;
+    private final ObjectPool<LongBindVariable> longVarPool;
+    private final ObjectPool<TimestampBindVariable> timestampVarPool;
+    private final ObjectPool<DateBindVariable> dateVarPool;
+    private final ObjectPool<ShortBindVariable> shortVarPool;
+    private final ObjectPool<ByteBindVariable> byteVarPool;
+    private final ObjectPool<BooleanBindVariable> booleanVarPool;
     private final ObjectPool<StrBindVariable> strVarPool;
-    private final ObjectPool<CharBindVariable> charVarPool = new ObjectPool<>(CharBindVariable::new, 8);
-    private final ObjectPool<Long256BindVariable> long256VarPool = new ObjectPool<>(Long256BindVariable::new, 8);
+    private final ObjectPool<CharBindVariable> charVarPool;
+    private final ObjectPool<Long256BindVariable> long256VarPool;
 
     public BindVariableServiceImpl(CairoConfiguration configuration) {
-        this.strVarPool = new ObjectPool<>(() -> new StrBindVariable(configuration.getFloatToStrCastScale()), 8);
+        final int poolSize = configuration.getBindVariablePoolSize();
+        this.doubleVarPool = new ObjectPool<>(DoubleBindVariable::new, poolSize);
+        this.floatVarPool = new ObjectPool<>(FloatBindVariable::new, poolSize);
+        this.intVarPool = new ObjectPool<>(IntBindVariable::new, poolSize);
+        this.longVarPool = new ObjectPool<>(LongBindVariable::new, poolSize);
+        this.timestampVarPool = new ObjectPool<>(TimestampBindVariable::new, poolSize);
+        this.dateVarPool = new ObjectPool<>(DateBindVariable::new, poolSize);
+        this.shortVarPool = new ObjectPool<>(ShortBindVariable::new, poolSize);
+        this.byteVarPool = new ObjectPool<>(ByteBindVariable::new, poolSize);
+        this.booleanVarPool = new ObjectPool<>(BooleanBindVariable::new, poolSize);
+        this.strVarPool = new ObjectPool<>(() -> new StrBindVariable(configuration.getFloatToStrCastScale()), poolSize);
+        this.charVarPool = new ObjectPool<>(CharBindVariable::new, 8);
+        this.long256VarPool = new ObjectPool<>(Long256BindVariable::new, 8);
     }
 
     @Override

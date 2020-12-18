@@ -36,6 +36,8 @@ import io.questdb.std.time.MillisecondClock;
 
 public interface CairoConfiguration {
 
+    int getBindVariablePoolSize();
+
     int getSqlCopyBufferSize();
 
     int getCopyPoolCapacity();
