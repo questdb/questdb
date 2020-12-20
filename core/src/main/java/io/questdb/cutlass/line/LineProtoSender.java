@@ -141,7 +141,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     }
 
     public LineProtoSender field(CharSequence name, double value) {
-        field(name).put(value, 19);
+        field(name).put(value);
         return this;
     }
 

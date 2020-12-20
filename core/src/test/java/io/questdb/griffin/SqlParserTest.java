@@ -5289,6 +5289,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUndefinedBindVariables() throws SqlException {
+        assertQuery(
+                "select-virtual $1 + 1 column, $2 $2, $3 $3 from (long_sequence(10))",
+                "select $1+1, $2, $3 from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testUnderTerminatedOver() throws Exception {
         assertSyntaxError("select a,b, f(c) over (partition by b order by ts from xyz", 50, "expected");
     }

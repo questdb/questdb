@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -34,8 +35,8 @@ import io.questdb.std.str.CharSink;
 
 public class IndexedParameterLinkFunction implements ScalarFunction {
     private final int variableIndex;
-    private final int type;
     private final int position;
+    private int type;
     private Function base;
 
     public IndexedParameterLinkFunction(int variableIndex, int type, int position) {
@@ -47,11 +48,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public void close() {
         base = Misc.free(base);
-    }
-
-    @Override
-    public char getChar(Record rec) {
-        return getBase().getChar(rec);
     }
 
     @Override
@@ -72,6 +68,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public byte getByte(Record rec) {
         return getBase().getByte(rec);
+    }
+
+    @Override
+    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        this.type = bindVariableService.define(variableIndex, type, position);
     }
 
     @Override
@@ -97,6 +98,16 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
+    }
+
+    @Override
+    public char getChar(Record rec) {
+        return getBase().getChar(rec);
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        getBase().getLong256(rec, sink);
     }
 
     @Override
@@ -145,23 +156,8 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public Long256 getLong256A(Record rec) {
-        return getBase().getLong256A(rec);
-    }
-
-    @Override
-    public Long256 getLong256B(Record rec) {
-        return getBase().getLong256B(rec);
-    }
-
-    @Override
     public int getType() {
         return type;
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        getBase().getLong256(rec, sink);
     }
 
     @Override
@@ -172,6 +168,16 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         }
         assert base.getType() == type;
         base.init(symbolTableSource, executionContext);
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+        return getBase().getLong256A(rec);
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
+        return getBase().getLong256B(rec);
     }
 
     private Function getBase() {

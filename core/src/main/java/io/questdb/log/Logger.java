@@ -123,7 +123,7 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord $(double x) {
-        sink().put(x, Numbers.MAX_SCALE);
+        sink().put(x);
         return this;
     }
 

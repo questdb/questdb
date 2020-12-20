@@ -1505,22 +1505,30 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
-    private boolean functionIsTimestamp(
+    private void validateAndConsume(
             InsertModel model,
             ObjList<Function> valueFunctions,
             RecordMetadata metadata,
             int writerTimestampIndex,
             int bottomUpColumnIndex,
             int metadataColumnIndex,
-            Function function
+            Function function,
+            BindVariableService bindVariableService
     ) throws SqlException {
-        if (isAssignableFrom(metadata.getColumnType(metadataColumnIndex), function.getType())) {
+
+        final int columnType = metadata.getColumnType(metadataColumnIndex);
+
+        if (function.isUndefined()) {
+            function.assignType(columnType, bindVariableService);
+        }
+
+        if (isAssignableFrom(columnType, function.getType())) {
             if (metadataColumnIndex == writerTimestampIndex) {
-                return true;
+                return;
             }
             valueFunctions.add(function);
             listColumnFilter.add(metadataColumnIndex + 1);
-            return false;
+            return;
         }
 
         throw SqlException.inconvertibleTypes(
@@ -1555,14 +1563,27 @@ public class SqlCompiler implements Closeable {
                 valueFunctions = new ObjList<>(columnSetSize);
                 for (int i = 0; i < columnSetSize; i++) {
                     int index = metadata.getColumnIndexQuiet(columnSet.get(i));
-                    if (index < 0) {
-                        // todo: write test that used invalid column in insert statement
-                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
-                    }
+                    if (index > -1) {
+                        final ExpressionNode node = model.getColumnValues().getQuick(i);
 
-                    final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), GenericRecordMetadata.EMPTY, executionContext);
-                    if (functionIsTimestamp(model, valueFunctions, metadata, writerTimestampIndex, i, index, function)) {
-                        timestampFunction = function;
+                        final Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
+                        validateAndConsume(
+                                model,
+                                valueFunctions,
+                                metadata,
+                                writerTimestampIndex,
+                                i,
+                                index,
+                                function,
+                                executionContext.getBindVariableService()
+                        );
+
+                        if (writerTimestampIndex == index) {
+                            timestampFunction = function;
+                        }
+
+                    } else {
+                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
                     }
                 }
             } else {
@@ -1573,17 +1594,23 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(model.getEndOfValuesPosition(), "not enough values [expected=").put(columnCount).put(", actual=").put(values.size()).put(']');
                 }
                 valueFunctions = new ObjList<>(columnCount);
+
                 for (int i = 0; i < columnCount; i++) {
-                    Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                    if (functionIsTimestamp(
+                    final ExpressionNode node = values.getQuick(i);
+
+                    Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                    validateAndConsume(
                             model,
                             valueFunctions,
                             metadata,
                             writerTimestampIndex,
                             i,
                             i,
-                            function
-                    )) {
+                            function,
+                            executionContext.getBindVariableService()
+                    );
+
+                    if (writerTimestampIndex == i) {
                         timestampFunction = function;
                     }
                 }

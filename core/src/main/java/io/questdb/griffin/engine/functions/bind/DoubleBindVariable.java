@@ -27,17 +27,22 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Mutable;
 
-class DoubleBindVariable extends DoubleFunction implements ScalarFunction {
+class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutable {
     double value;
 
-    public DoubleBindVariable(double value) {
+    public DoubleBindVariable() {
         super(0);
-        this.value = value;
     }
 
     @Override
     public double getDouble(Record rec) {
         return value;
+    }
+
+    @Override
+    public void clear() {
+        value = Double.NaN;
     }
 }

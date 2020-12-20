@@ -57,6 +57,8 @@ public interface CharSink {
 
     CharSink put(float value, int scale);
 
+    CharSink put(double value);
+
     CharSink put(double value, int scale);
 
     CharSink put(boolean value);
