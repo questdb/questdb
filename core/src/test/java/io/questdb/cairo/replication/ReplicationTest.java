@@ -92,16 +92,16 @@ public class ReplicationTest extends AbstractGriffinTest {
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source", false);
             replicateTable("source", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-            slaveEngine.releaseAllReaders();
-            slaveEngine.releaseAllWriters();
         });
     }
 
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
-        TestUtils.assertMemoryLeak(runnable);
+        TestUtils.assertMemoryLeak(() -> {
+            runnable.run();
+            engine.releaseInactive();
+            slaveEngine.releaseInactive();
+        });
         LOG.info().$("Finished test ").$(name).$();
     }
 
@@ -196,7 +196,12 @@ public class ReplicationTest extends AbstractGriffinTest {
                     LOG.error().$("timed out").$();
                     break;
                 }
-                Thread.yield();
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    LOG.error().$("interrupted").$();
+                    break;
+                }
             } else {
                 break;
             }

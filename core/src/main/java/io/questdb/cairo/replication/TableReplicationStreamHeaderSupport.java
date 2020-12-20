@@ -37,7 +37,10 @@ public class TableReplicationStreamHeaderSupport {
     public static final int EOB_HEADER_SIZE = OFFSET_EOB_N_FRAMES_SENT + Integer.BYTES;
 
     public static final int OFFSET_RTI_PROTOCOL_VERSION = OFFSET_MASTER_TABLE_ID + Integer.BYTES;
-    public static final int RTI_HEADER_SIZE = OFFSET_RTI_PROTOCOL_VERSION + Integer.BYTES;
+    public static final int OFFSET_RTI_UUID_1 = OFFSET_RTI_PROTOCOL_VERSION + Integer.BYTES;
+    public static final int OFFSET_RTI_UUID_2 = OFFSET_RTI_UUID_1 + Long.BYTES;
+    public static final int OFFSET_RTI_UUID_3 = OFFSET_RTI_UUID_2 + Long.BYTES;
+    public static final int RTI_HEADER_SIZE = OFFSET_RTI_UUID_3 + Long.BYTES;
 
     public static final int OFFSET_TI_TABLE_STRUCTURE_VERSION = OFFSET_MASTER_TABLE_ID + Integer.BYTES;
     public static final int OFFSET_TI_TABLE_ROW_COUNT = OFFSET_TI_TABLE_STRUCTURE_VERSION + Long.BYTES;
@@ -51,8 +54,8 @@ public class TableReplicationStreamHeaderSupport {
     public static final int OFFSET_SORS_INITIAL_ROW_COUNT = OFFSET_SORS_TABLE_STRUCTURE_VERSION + Long.BYTES;
     public static final int SORS_HEADER_SIZE = OFFSET_SORS_INITIAL_ROW_COUNT + Long.BYTES;
 
-    public static final int MIN_HEADER_SIZE = CB_HEADER_SIZE;
-    public static final int MAX_HEADER_SIZE = DF_HEADER_SIZE;
+    public static final int MIN_HEADER_SIZE;
+    public static final int MAX_HEADER_SIZE;
 
     private static int[] HEADER_SIZE_BY_FRAME_TYPE;
     static {
@@ -66,6 +69,19 @@ public class TableReplicationStreamHeaderSupport {
         HEADER_SIZE_BY_FRAME_TYPE[FRAME_TYPE_TABLE_INFO - FRAME_TYPE_MIN_ID] = TI_HEADER_SIZE;
         HEADER_SIZE_BY_FRAME_TYPE[FRAME_TYPE_REQUEST_REPLICATION_STREAM - FRAME_TYPE_MIN_ID] = RRS_HEADER_SIZE;
         HEADER_SIZE_BY_FRAME_TYPE[FRAME_TYPE_START_OF_REPLICATION_STREAM - FRAME_TYPE_MIN_ID] = SORS_HEADER_SIZE;
+
+        int minHeaderSize = Integer.MAX_VALUE;
+        int maxHeaderSize = Integer.MIN_VALUE;
+        for (int sz : HEADER_SIZE_BY_FRAME_TYPE) {
+            if (sz < minHeaderSize) {
+                minHeaderSize = sz;
+            }
+            if (sz > maxHeaderSize) {
+                maxHeaderSize = sz;
+            }
+        }
+        MIN_HEADER_SIZE = minHeaderSize;
+        MAX_HEADER_SIZE = maxHeaderSize;
     }
 
     public static final int getFrameHeaderSize(byte frameType) {

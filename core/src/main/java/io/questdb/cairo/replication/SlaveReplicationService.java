@@ -1,6 +1,8 @@
 package io.questdb.cairo.replication;
 
 import java.io.Closeable;
+import java.lang.invoke.WrongMethodTypeException;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 import io.questdb.cairo.CairoConfiguration;
@@ -27,6 +29,7 @@ import io.questdb.std.str.Path;
 public class SlaveReplicationService {
     private static final Log LOG = LogFactory.getLog(SlaveReplicationService.class);
     private static final AtomicLong NEXT_PEER_ID = new AtomicLong();
+    private static final UUID VM_UUID = UUID.randomUUID();
     private final CairoConfiguration configuration;
     private final NetworkFacade nf;
     private final FilesFacade ff;
@@ -41,6 +44,7 @@ public class SlaveReplicationService {
         this.ff = configuration.getFilesFacade();
         this.root = configuration.getRoot();
         this.engine = engine;
+        // TODO: Dynamic configuration
         int instructionQueueLen = 2;
         int connectionCallbackQueueLen = 8;
         int newConnectionQueueLen = 2;
@@ -506,6 +510,9 @@ public class SlaveReplicationService {
                 private void setupRequestTableInfo() {
                     int frameLen = TableReplicationStreamHeaderSupport.RTI_HEADER_SIZE + getTableName().length() * 2;
                     Unsafe.getUnsafe().putInt(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RTI_PROTOCOL_VERSION, TableReplicationStreamHeaderSupport.PROTOCOL_VERSION);
+                    Unsafe.getUnsafe().putLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RTI_UUID_1, VM_UUID.getLeastSignificantBits());
+                    Unsafe.getUnsafe().putLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RTI_UUID_2, VM_UUID.getMostSignificantBits());
+                    Unsafe.getUnsafe().putLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RTI_UUID_3, peerId);
                     resetWriting(TableReplicationStreamHeaderSupport.FRAME_TYPE_REQUEST_TABLE_INFO, frameLen);
                     long p = bufferAddress + TableReplicationStreamHeaderSupport.RTI_HEADER_SIZE;
                     for (int n = 0, sz = getTableName().length(); n < sz; n++) {

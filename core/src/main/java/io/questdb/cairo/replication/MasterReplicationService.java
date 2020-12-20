@@ -1,10 +1,22 @@
 package io.questdb.cairo.replication;
 
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.concurrent.atomic.AtomicLong;
+
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OnePageMemory;
+import io.questdb.cairo.TablePageFrameCursor;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReplicationRecordCursorFactory;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.replication.ReplicationMasterConnectionDemultiplexer.ReplicationMasterCallbacks;
+import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorFrame;
+import io.questdb.cairo.replication.ReplicationStreamGenerator.ReplicationStreamGeneratorResult;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -15,6 +27,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -23,10 +36,12 @@ import io.questdb.std.str.Path;
 
 public class MasterReplicationService {
     private static final Log LOG = LogFactory.getLog(MasterReplicationService.class);
+    private static final AtomicLong NEXT_PEER_ID = new AtomicLong();
     private final NetworkFacade nf;
     private final FilesFacade ff;
     private final CairoEngine engine;
     private final CharSequence root;
+    private final ReplicationMasterConnectionDemultiplexer masterConnectionDemux;
 
     public MasterReplicationService(NetworkFacade nf, FilesFacade ff, CharSequence root, CairoEngine engine, MasterReplicationConfiguration masterReplicationConf, WorkerPool workerPool) {
         this.nf = nf;
@@ -51,6 +66,27 @@ public class MasterReplicationService {
             LOG.info().$("replication master listening on ").$(ipv4Address).$(':').$(port).$(" [fd=").$(listenFd).$(']').$();
         }
         ReplicationMasterControllerJob job = new ReplicationMasterControllerJob(listenFds);
+        // TODO: Dynamic configuration
+        int connectionCallbackQueueLen = 8;
+        int newConnectionQueueLen = 4;
+        int sendFrameQueueLen = 64;
+        ReplicationMasterCallbacks callbacks = new ReplicationMasterCallbacks() {
+
+            @Override
+            public void onSlaveReadyToCommit(long peerId, int tableId) {
+                // TODO Auto-generated method stub
+                throw new RuntimeException();
+            }
+
+            @Override
+            public void onPeerDisconnected(long peerId, long fd) {
+                // TODO Auto-generated method stub
+                throw new RuntimeException();
+            }
+
+        };
+        masterConnectionDemux = new ReplicationMasterConnectionDemultiplexer(nf, workerPool, connectionCallbackQueueLen,
+                newConnectionQueueLen, sendFrameQueueLen, callbacks);
         workerPool.assign(job);
         workerPool.assign(0, job::close);
     }
@@ -69,19 +105,25 @@ public class MasterReplicationService {
     }
 
     private class ReplicationMasterControllerJob extends SynchronizedJob {
+        private final SqlExecutionContext sqlExecutionContext;
         private final Path path = new Path();
         private final DirectCharSequence charSeq = new DirectCharSequence();
         private final OnePageMemory tempMem = new OnePageMemory();
         private LongList listenFds;
         private final IntObjHashMap<CharSequence> tableNameById;
-        private ObjList<InitialMasterConnection> idleConnections;
+        private ObjList<InitialMasterConnection> initialisingConnections;
+        private ObjList<StreamingTask> streamingTasks;
+        private LongObjHashMap<StreamingTask> streamingTaskByPeerId;
         private ObjList<InitialMasterConnection> connectionCache;
         private boolean busy;
 
         private ReplicationMasterControllerJob(LongList listenFds) {
             this.listenFds = listenFds;
+            sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
             tableNameById = new IntObjHashMap<>();
-            idleConnections = new ObjList<>();
+            initialisingConnections = new ObjList<>();
+            streamingTasks = new ObjList<>();
+            streamingTaskByPeerId = new LongObjHashMap<>();
             connectionCache = new ObjList<>();
         }
 
@@ -90,7 +132,8 @@ public class MasterReplicationService {
             busy = false;
             if (null != listenFds) {
                 acceptConnections();
-                handleConnections();
+                handleInitialsingConnections();
+                handleStreamingTasks();
             }
             return busy;
         }
@@ -120,20 +163,22 @@ public class MasterReplicationService {
                     LOG.info().$("failed to set TCP no delay [fd=").$(clientFd).$(']').$();
                 }
                 connection.of(clientFd);
-                idleConnections.add(connection);
+                initialisingConnections.add(connection);
                 LOG.info().$("peer connected [ip=").$ip(nf.getPeerIP(clientFd)).$(", fd=").$(clientFd).$(']').$();
             }
         }
 
-        private void handleConnections() {
+        private void handleInitialsingConnections() {
             int n = 0;
-            int sz = idleConnections.size();
+            int sz = initialisingConnections.size();
             while (n < sz) {
-                InitialMasterConnection connection = idleConnections.get(n);
+                InitialMasterConnection connection = initialisingConnections.get(n);
                 if (connection.handleIO()) {
                     if (connection.isDisconnected()) {
-                        idleConnections.remove(n);
+                        initialisingConnections.remove(n);
                         sz--;
+                        connection.close();
+                        connectionCache.add(connection);
                         continue;
                     }
                 }
@@ -141,15 +186,26 @@ public class MasterReplicationService {
             }
         }
 
+        private void handleStreamingTasks() {
+            for (int n = 0, sz = streamingTasks.size(); n < sz; n++) {
+                StreamingTask task = streamingTasks.get(n);
+                task.handleTask();
+            }
+        }
+
         public void close() {
             if (null != listenFds) {
-                Misc.freeObjList(idleConnections);
-                idleConnections.clear();
-                Misc.freeObjList(connectionCache);
-                connectionCache.clear();
+                masterConnectionDemux.close();
+                Misc.freeObjList(initialisingConnections);
+                initialisingConnections.clear();
+                Misc.freeObjList(streamingTasks);
+                streamingTasks.clear();
+                streamingTaskByPeerId.clear();
                 for (int n = 0, sz = listenFds.size(); n < sz; n++) {
                     nf.close(listenFds.get(n), LOG);
                 }
+                Misc.freeObjList(connectionCache);
+                connectionCache.clear();
                 path.close();
                 tempMem.close();
                 listenFds = null;
@@ -158,6 +214,10 @@ public class MasterReplicationService {
 
         private class InitialMasterConnection extends AbstractFramedConnection {
             private int tableId;
+            private long uuid1;
+            private long uuid2;
+            private long uuid3;
+            private long startingRowCount;
 
             protected InitialMasterConnection(NetworkFacade nf) {
                 super(nf);
@@ -215,7 +275,9 @@ public class MasterReplicationService {
                     rowCount = Long.MIN_VALUE;
                     tableStructureVersion = Long.MIN_VALUE;
                 }
-                tableId = masterTableId;
+                uuid1 = Unsafe.getUnsafe().getLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RTI_UUID_1);
+                uuid2 = Unsafe.getUnsafe().getLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RTI_UUID_2);
+                uuid3 = Unsafe.getUnsafe().getLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RTI_UUID_3);
 
                 int frameLen = TableReplicationStreamHeaderSupport.TI_HEADER_SIZE + tableName.length() * 2;
                 resetWriting(TableReplicationStreamHeaderSupport.FRAME_TYPE_TABLE_INFO, frameLen);
@@ -229,7 +291,7 @@ public class MasterReplicationService {
             private void handleRequestReplicationStream() {
                 int masterTableId = Unsafe.getUnsafe().getInt(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID);
                 long requestedTableStructureVersion = Unsafe.getUnsafe().getLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RRS_TABLE_STRUCTURE_VERSION);
-                long startingRowCount = Unsafe.getUnsafe().getLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RRS_INITIAL_ROW_COUNT);
+                startingRowCount = Unsafe.getUnsafe().getLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RRS_INITIAL_ROW_COUNT);
                 CharSequence tableName = tableNameById.get(masterTableId);
                 if (null != tableName && engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_EXISTS) {
                     TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
@@ -247,18 +309,159 @@ public class MasterReplicationService {
                         int frameLen = TableReplicationStreamHeaderSupport.SORS_HEADER_SIZE + metaSize;
                         resetWriting(TableReplicationStreamHeaderSupport.FRAME_TYPE_START_OF_REPLICATION_STREAM, frameLen);
                         Unsafe.getUnsafe().putInt(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID, masterTableId);
-                        Unsafe.getUnsafe().putLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_SORS_TABLE_STRUCTURE_VERSION,
-                                tableStructureVersion);
-                        Unsafe.getUnsafe().putLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_SORS_INITIAL_ROW_COUNT,
-                                startingRowCount);
-                        Unsafe.getUnsafe().copyMemory(tempMem.addressOf(0), bufferAddress + TableReplicationStreamHeaderSupport.SORS_HEADER_SIZE,
-                                metaSize);
+                        Unsafe.getUnsafe().putLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_SORS_TABLE_STRUCTURE_VERSION, tableStructureVersion);
+                        Unsafe.getUnsafe().putLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_SORS_INITIAL_ROW_COUNT, startingRowCount);
+                        Unsafe.getUnsafe().copyMemory(tempMem.addressOf(0), bufferAddress + TableReplicationStreamHeaderSupport.SORS_HEADER_SIZE, metaSize);
+                        tableId = masterTableId;
                     } finally {
                         reader.close();
                     }
                 } else {
                     // TODO invalid request
                     throw new RuntimeException("Not implemented");
+                }
+            }
+
+            @Override
+            protected void onFinishedWriting() {
+                if (tableId == 0) {
+                    super.onFinishedWriting();
+                } else {
+                    // TODO recycle StreamingTask
+                    StreamingTask streamingTask = new StreamingTask().of(tableId, startingRowCount, uuid1, uuid2, uuid3);
+                    streamingTasks.add(streamingTask);
+                    streamingTaskByPeerId.put(streamingTask.peerId, streamingTask);
+                }
+            }
+        }
+
+        private class StreamingTask implements Closeable {
+            private ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator();
+            private TableReplicationRecordCursorFactory factory;
+            private ObjList<InitialMasterConnection> connections = new ObjList<>();
+            private IntList initialSymbolCounts = new IntList();
+            private long peerId;
+            private int tableId;
+            private long nRow;
+            private int nConnectionsToEnqueue;
+            private TableReader reader;
+            private boolean streaming;
+            private boolean waitingForReadyToCommit;
+            private ReplicationStreamGeneratorFrame frame;
+
+            private StreamingTask of(int tableId, long nRow, long uuid1, long uuid2, long uuid3) {
+                peerId = NEXT_PEER_ID.incrementAndGet();
+                this.tableId = tableId;
+                this.nRow = nRow;
+                streaming = false;
+                waitingForReadyToCommit = false;
+                frame = null;
+                int n = 0;
+                while (n < initialisingConnections.size()) {
+                    InitialMasterConnection connection = initialisingConnections.get(n);
+                    if (connection.uuid1 == uuid1 && connection.uuid2 == uuid2 && connection.uuid3 == uuid3) {
+                        initialisingConnections.remove(n);
+                        connections.add(connection);
+                    } else {
+                        n++;
+                    }
+                }
+                nConnectionsToEnqueue = connections.size();
+
+                CharSequence tableName = tableNameById.get(tableId);
+                reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                LOG.info().$("replication streaming starting [peerId=").$(peerId).$(", tableName=").$(tableName).$(", nRow=").$(nRow).$(']').$();
+
+                // TODO initialSymbolCounts need to be passed in
+                for (int columnIndex = 0, sz = reader.getMetadata().getColumnCount(); columnIndex < sz; columnIndex++) {
+                    if (reader.getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
+                        initialSymbolCounts.add(0);
+                    } else {
+                        initialSymbolCounts.add(-1);
+                    }
+                }
+                factory = new TableReplicationRecordCursorFactory(engine, tableName, Long.MAX_VALUE);
+
+                return this;
+            }
+
+            private void handleTask() {
+                if (nConnectionsToEnqueue == 0) {
+                    if (!streaming) {
+                        if (reader.size() > nRow) {
+                            TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nRow);
+                            // TODO nConcurrentFrames needs to be set appropriately so that the queues can be filled
+                            streamGenerator.of(tableId, connections.size(), cursor, reader.getMetadata(), initialSymbolCounts);
+                            streaming = true;
+                        } else {
+                            return;
+                        }
+                    }
+                    busy = true;
+
+                    if (!waitingForReadyToCommit) {
+                        // Queue frames to send to slave
+                        while (true) {
+                            if (null == frame) {
+                                ReplicationStreamGeneratorResult streamResult = streamGenerator.nextDataFrame();
+                                if (null != streamResult) {
+                                    if (streamResult.isRetry()) {
+                                        // streamGenerator ran out of free frames, possibly increase streamGenerator
+                                        return;
+                                    }
+                                    frame = streamResult.getFrame();
+                                } else {
+                                    frame = null;
+                                    waitingForReadyToCommit = true;
+                                    break;
+                                }
+
+                                if (!masterConnectionDemux.tryQueueSendFrame(peerId, frame)) {
+                                    // Queue are full, consumers are slow
+                                    return;
+                                }
+                                frame = null;
+                            }
+                        }
+                    }
+
+                    assert waitingForReadyToCommit;
+
+                } else {
+                    busy = true;
+                    while (nConnectionsToEnqueue > 0) {
+                        int n = connections.size() - nConnectionsToEnqueue;
+                        InitialMasterConnection connection = connections.get(n);
+                        if (!masterConnectionDemux.tryAddConnection(peerId, connection.fd)) {
+                            return;
+                        }
+                        nConnectionsToEnqueue--;
+                    }
+                }
+            }
+
+            private void clear() {
+                if (null != reader) {
+                    factory.close();
+                    factory = null;
+                    reader.close();
+                    reader = null;
+                }
+                for (int n = 0, sz = connections.size(); n < sz; n++) {
+                    InitialMasterConnection connection = connections.get(n);
+                    connection.close();
+                    connectionCache.add(connection);
+                }
+                connections.clear();
+                initialSymbolCounts.clear();
+            }
+
+            @Override
+            public void close() throws IOException {
+                if (null != streamGenerator) {
+                    clear();
+                    streamGenerator.close();
+                    streamGenerator = null;
                 }
             }
         }
