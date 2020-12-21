@@ -226,8 +226,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        //return Files.allocate(fd, size);
-        return Files.truncate(fd, size);
+        return Files.allocate(fd, size);
     }
 
     @Override

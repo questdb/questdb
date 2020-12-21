@@ -262,7 +262,7 @@ public final class Files {
 
     public native static boolean truncate(long fd, long size);
 
-//    public native static boolean allocate(long fd, long size);
+    public native static boolean allocate(long fd, long size);
 
     public native static long write(long fd, long address, long len, long offset);
 

@@ -188,14 +188,10 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         (JNIEnv *e, jclass cl, jlong fd, jlong len) {
-    if (ftruncate((int) fd, len) == 0) {
+    if (posix_fallocate(fd, 0, len) == 0) {
         return JNI_TRUE;
     }
     return JNI_FALSE;
-    // if (posix_fallocate(fd, 0, len) == 0) {
-    //     return JNI_TRUE;
-    // }
-    // return JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlong addr, jlong len, jboolean async) {
