@@ -1020,7 +1020,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private void alterTableDropPartition(TableWriter writer) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'list' or 'where'");
+        final int pos = lexer.lastTokenPosition();
+        final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
             alterTableDropPartitionByList(writer);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
@@ -1031,7 +1032,7 @@ public class SqlCompiler implements Closeable {
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && function.getType() == ColumnType.BOOLEAN) {
-                    writer.removePartition(function);
+                    writer.removePartition(function, pos);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
