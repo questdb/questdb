@@ -35,12 +35,12 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampLocale;
 
 public class ToTimestampVCFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private static final ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
 
     @Override
     public String getSignature() {

@@ -33,7 +33,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
-import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -116,7 +116,7 @@ public class TableBackupTest {
 
             @Override
             public TimestampFormat getBackupDirTimestampFormat() {
-                return new DateFormatCompiler().compile("ddMMMyyyy");
+                return new TimestampFormatCompiler().compile("ddMMMyyyy");
             }
         };
         mainEngine = new CairoEngine(mainConfiguration);

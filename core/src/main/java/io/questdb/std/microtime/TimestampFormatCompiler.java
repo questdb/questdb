@@ -28,7 +28,7 @@ package io.questdb.std.microtime;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-public class DateFormatCompiler {
+public class TimestampFormatCompiler {
     static final int OP_ERA = 1;
     static final int OP_YEAR_ONE_DIGIT = 2;
     static final int OP_YEAR_TWO_DIGITS = 3;
@@ -66,6 +66,8 @@ public class DateFormatCompiler {
     static final int OP_TIME_ZONE_ISO_8601_3 = 28;
     static final int OP_MICROS_ONE_DIGIT = 39;
     static final int OP_MICROS_THREE_DIGITS = 49;
+    static final int OP_NANOS_ONE_DIGIT = 40;
+    static final int OP_NANOS_THREE_DIGITS = 50;
     static final int OP_MICROS_GREEDY = 149;
     static final int OP_YEAR_GREEDY = 132;
     static final int OP_MONTH_GREEDY = 135;
@@ -77,6 +79,7 @@ public class DateFormatCompiler {
     static final int OP_MINUTE_GREEDY = 144;
     static final int OP_SECOND_GREEDY = 145;
     static final int OP_MILLIS_GREEDY = 146;
+    static final int OP_NANOS_GREEDY = 147;
     static final CharSequenceIntHashMap opMap;
     static final ObjList<String> opList;
     private static final int FA_LOCAL_DATETIME = 1;
@@ -93,6 +96,7 @@ public class DateFormatCompiler {
     private static final int FA_LEAP = 8;
     private static final int FA_DAY_OF_WEEK = 10;
     private static final int FA_MILLIS_MICROS = 11;
+    private static final int FA_NANOS = 12;
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_HI = 3;
@@ -145,6 +149,8 @@ public class DateFormatCompiler {
         addOp("ss", OP_SECOND_TWO_DIGITS);
         addOp("S", OP_MILLIS_ONE_DIGIT);
         addOp("SSS", OP_MILLIS_THREE_DIGITS);
+        addOp("N", OP_NANOS_ONE_DIGIT);
+        addOp("NNN", OP_NANOS_THREE_DIGITS);
         addOp("z", OP_TIME_ZONE_SHORT);
         addOp("zz", OP_TIME_ZONE_GMT_BASED);
         addOp("zzz", OP_TIME_ZONE_LONG);
@@ -164,7 +170,7 @@ public class DateFormatCompiler {
     private final LongList frameOffsets = new LongList();
     private final int[] fmtAttributeIndex = new int[32];
 
-    public DateFormatCompiler() {
+    public TimestampFormatCompiler() {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
@@ -278,108 +284,121 @@ public class DateFormatCompiler {
             int op = ops.getQuick(i);
             switch (op) {
                 // AM/PM
-                case DateFormatCompiler.OP_AM_PM:
+                case TimestampFormatCompiler.OP_AM_PM:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.invokeStatic(appendAmPmIndex);
                     break;
                 // MICROS
-                case DateFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case DateFormatCompiler.OP_MICROS_GREEDY:
+                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_MICROS_THREE_DIGITS:
+                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);
                     asm.invokeStatic(append00Index);
                     break;
+                // NANOS
+                case TimestampFormatCompiler.OP_NANOS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iconst(0);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case TimestampFormatCompiler.OP_NANOS_THREE_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iconst(0);
+                    asm.invokeStatic(append00Index);
+                    break;
                 // MILLIS
-                case DateFormatCompiler.OP_MILLIS_ONE_DIGIT:
-                case DateFormatCompiler.OP_MILLIS_GREEDY:
+                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_MILLIS_THREE_DIGITS:
+                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);
                     asm.invokeStatic(append00Index);
                     break;
                 // SECOND
-                case DateFormatCompiler.OP_SECOND_ONE_DIGIT:
-                case DateFormatCompiler.OP_SECOND_GREEDY:
+                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_SECOND_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_SECOND_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND]);
                     asm.invokeStatic(append0Index);
                     break;
                 // MINUTE
-                case DateFormatCompiler.OP_MINUTE_ONE_DIGIT:
-                case DateFormatCompiler.OP_MINUTE_GREEDY:
+                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MINUTE]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_MINUTE_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MINUTE]);
                     asm.invokeStatic(append0Index);
                     break;
                 // HOUR (0-11)
-                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
-                case DateFormatCompiler.OP_HOUR_12_GREEDY:
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour12Index);
                     break;
 
-                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour12PaddedIndex);
                     break;
 
                 // HOUR (1-12)
-                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour121Index);
                     break;
 
-                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(appendHour121PaddedIndex);
                     break;
                 // HOUR (0-23)
-                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
-                case DateFormatCompiler.OP_HOUR_24_GREEDY:
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.invokeStatic(append0Index);
                     break;
 
                 // HOUR (1 - 24)
-                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.iconst(1);
@@ -388,7 +407,7 @@ public class DateFormatCompiler {
                     asm.pop();
                     break;
 
-                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.iconst(1);
@@ -396,19 +415,19 @@ public class DateFormatCompiler {
                     asm.invokeStatic(append0Index);
                     break;
                 // DAY
-                case DateFormatCompiler.OP_DAY_ONE_DIGIT:
-                case DateFormatCompiler.OP_DAY_GREEDY:
+                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_DAY_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_DAY]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_DAY_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_DAY]);
                     asm.invokeStatic(append0Index);
                     break;
-                case DateFormatCompiler.OP_DAY_NAME_LONG:
+                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
@@ -416,7 +435,7 @@ public class DateFormatCompiler {
                     asm.invokeInterface(sinkPutStrIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_DAY_NAME_SHORT:
+                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
@@ -424,26 +443,26 @@ public class DateFormatCompiler {
                     asm.invokeInterface(sinkPutStrIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_DAY_OF_WEEK:
+                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
                 // MONTH
-                case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
-                case DateFormatCompiler.OP_MONTH_GREEDY:
+                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MONTH_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MONTH]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_MONTH_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MONTH]);
                     asm.invokeStatic(append0Index);
                     break;
-                case DateFormatCompiler.OP_MONTH_SHORT_NAME:
+                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.iload(fmtAttributeIndex[FA_MONTH]);
@@ -453,7 +472,7 @@ public class DateFormatCompiler {
                     asm.invokeInterface(sinkPutStrIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_MONTH_LONG_NAME:
+                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.iload(fmtAttributeIndex[FA_MONTH]);
@@ -464,27 +483,27 @@ public class DateFormatCompiler {
                     asm.pop();
                     break;
                 // YEAR
-                case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
-                case DateFormatCompiler.OP_YEAR_GREEDY:
+                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_YEAR_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case DateFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.iconst(100);
                     asm.irem();
                     asm.invokeStatic(append0Index);
                     break;
-                case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
+                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.invokeStatic(append000Index);
                     break;
                 // ERA
-                case DateFormatCompiler.OP_ERA:
+                case TimestampFormatCompiler.OP_ERA:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.aload(FA_LOCAL_LOCALE);
@@ -492,13 +511,13 @@ public class DateFormatCompiler {
                     break;
 
                 // TIMEZONE
-                case DateFormatCompiler.OP_TIME_ZONE_SHORT:
-                case DateFormatCompiler.OP_TIME_ZONE_GMT_BASED:
-                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
-                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
-                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
-                case DateFormatCompiler.OP_TIME_ZONE_LONG:
-                case DateFormatCompiler.OP_TIME_ZONE_RFC_822:
+                case TimestampFormatCompiler.OP_TIME_ZONE_SHORT:
+                case TimestampFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case TimestampFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case TimestampFormatCompiler.OP_TIME_ZONE_LONG:
+                case TimestampFormatCompiler.OP_TIME_ZONE_RFC_822:
                     asm.aload(FA_LOCAL_SINK);
                     asm.aload(FA_LOCAL_TIMEZONE);
                     asm.invokeInterface(sinkPutStrIndex, 1);
@@ -599,7 +618,37 @@ public class DateFormatCompiler {
         }
     }
 
-    private void assembleParseMethod(IntList ops, ObjList<String> delimiters, int thisClassIndex, int stackMapTableIndex, int dateLocaleClassIndex, int charSequenceClassIndex, int minLongIndex, int minMillisIndex, int matchWeekdayIndex, int matchMonthIndex, int matchZoneIndex, int matchAMPMIndex, int matchEraIndex, int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int assertRemainingIndex, int assertNoTailIndex, int parseIntIndex, int assertStringIndex, int assertCharIndex, int computeMillisIndex, int adjustYearIndex, int parseYearGreedyIndex, int parseOffsetIndex, int parseNameIndex, int parseSigIndex, IntList delimIndices, int charAtIndex) {
+    private void assembleParseMethod(
+            IntList ops,
+            ObjList<String> delimiters,
+            int thisClassIndex,
+            int stackMapTableIndex,
+            int dateLocaleClassIndex,
+            int charSequenceClassIndex,
+            int minLongIndex,
+            int minMillisIndex,
+            int matchWeekdayIndex,
+            int matchMonthIndex,
+            int matchZoneIndex,
+            int matchAMPMIndex,
+            int matchEraIndex,
+            int parseIntSafelyIndex,
+            int decodeLenIndex,
+            int decodeIntIndex,
+            int assertRemainingIndex,
+            int assertNoTailIndex,
+            int parseIntIndex,
+            int assertStringIndex,
+            int assertCharIndex,
+            int computeMillisIndex,
+            int adjustYearIndex,
+            int parseYearGreedyIndex,
+            int parseOffsetIndex,
+            int parseNameIndex,
+            int parseSigIndex,
+            IntList delimIndices,
+            int charAtIndex
+    ) {
 
         int stackState = computeParseMethodStack(ops);
 
@@ -715,6 +764,15 @@ public class DateFormatCompiler {
                     stackState &= ~(1 << LOCAL_MICROS);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
+                    break;
+                case OP_NANOS_ONE_DIGIT:
+                    parseDigits(assertRemainingIndex, parseIntIndex, 1, -1);
+                    break;
+                case OP_NANOS_THREE_DIGITS:
+                    parseDigits(assertRemainingIndex, parseIntIndex, 3, -1);
+                    break;
+                case OP_NANOS_GREEDY:
+                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, -1);
                     break;
                 case OP_MILLIS_ONE_DIGIT:
                     // assertRemaining(pos, hi);
@@ -1498,83 +1556,87 @@ public class DateFormatCompiler {
         for (int i = 0, n = ops.size(); i < n; i++) {
             switch (ops.getQuick(i)) {
                 // AM/PM
-                case DateFormatCompiler.OP_AM_PM:
+                case TimestampFormatCompiler.OP_AM_PM:
                     attributes |= (1 << FA_HOUR);
                     break;
                 // MICROS
-                case DateFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case DateFormatCompiler.OP_MICROS_GREEDY:
-                case DateFormatCompiler.OP_MICROS_THREE_DIGITS:
+                case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY:
+                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
                     attributes |= (1 << FA_MILLIS_MICROS);
                     break;
+
+                // NANOS we are parsing microsecond resolution time, it does not
+                // have nanos, therefore we do not need to store value on stack, it is constant 0
+
                 // MILLIS
-                case DateFormatCompiler.OP_MILLIS_ONE_DIGIT:
-                case DateFormatCompiler.OP_MILLIS_GREEDY:
-                case DateFormatCompiler.OP_MILLIS_THREE_DIGITS:
+                case TimestampFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MILLIS_GREEDY:
+                case TimestampFormatCompiler.OP_MILLIS_THREE_DIGITS:
                     attributes |= (1 << FA_SECOND_MILLIS);
                     break;
                 // SECOND
-                case DateFormatCompiler.OP_SECOND_ONE_DIGIT:
-                case DateFormatCompiler.OP_SECOND_GREEDY:
-                case DateFormatCompiler.OP_SECOND_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_SECOND_GREEDY:
+                case TimestampFormatCompiler.OP_SECOND_TWO_DIGITS:
                     attributes |= (1 << FA_SECOND);
                     break;
                 // MINUTE
-                case DateFormatCompiler.OP_MINUTE_ONE_DIGIT:
-                case DateFormatCompiler.OP_MINUTE_GREEDY:
-                case DateFormatCompiler.OP_MINUTE_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MINUTE_GREEDY:
+                case TimestampFormatCompiler.OP_MINUTE_TWO_DIGITS:
                     attributes |= (1 << FA_MINUTE);
                     break;
                 // HOUR
-                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
-                case DateFormatCompiler.OP_HOUR_12_GREEDY:
-                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
-                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
-                case DateFormatCompiler.OP_HOUR_24_GREEDY:
-                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
-                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
-                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY:
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY:
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     attributes |= (1 << FA_HOUR);
                     break;
 
                 // DAY OF MONTH
-                case DateFormatCompiler.OP_DAY_ONE_DIGIT:
-                case DateFormatCompiler.OP_DAY_GREEDY:
-                case DateFormatCompiler.OP_DAY_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_DAY_GREEDY:
+                case TimestampFormatCompiler.OP_DAY_TWO_DIGITS:
                     attributes |= (1 << FA_DAY);
                     attributes |= (1 << FA_MONTH);
                     attributes |= (1 << FA_YEAR);
                     attributes |= (1 << FA_LEAP);
                     break;
                 // DAY OF WEEK
-                case DateFormatCompiler.OP_DAY_NAME_LONG:
-                case DateFormatCompiler.OP_DAY_NAME_SHORT:
-                case DateFormatCompiler.OP_DAY_OF_WEEK:
+                case TimestampFormatCompiler.OP_DAY_NAME_LONG:
+                case TimestampFormatCompiler.OP_DAY_NAME_SHORT:
+                case TimestampFormatCompiler.OP_DAY_OF_WEEK:
                     attributes |= (1 << FA_DAY_OF_WEEK);
                     break;
                 // MONTH
-                case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
-                case DateFormatCompiler.OP_MONTH_GREEDY:
-                case DateFormatCompiler.OP_MONTH_TWO_DIGITS:
-                case DateFormatCompiler.OP_MONTH_SHORT_NAME:
-                case DateFormatCompiler.OP_MONTH_LONG_NAME:
+                case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_MONTH_GREEDY:
+                case TimestampFormatCompiler.OP_MONTH_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_MONTH_SHORT_NAME:
+                case TimestampFormatCompiler.OP_MONTH_LONG_NAME:
                     attributes |= (1 << FA_MONTH);
                     attributes |= (1 << FA_YEAR);
                     attributes |= (1 << FA_LEAP);
                     break;
                 // YEAR
-                case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
-                case DateFormatCompiler.OP_YEAR_GREEDY:
-                case DateFormatCompiler.OP_YEAR_TWO_DIGITS:
-                case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
+                case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case TimestampFormatCompiler.OP_YEAR_GREEDY:
+                case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     attributes |= (1 << FA_YEAR);
                     break;
                 // ERA
-                case DateFormatCompiler.OP_ERA:
+                case TimestampFormatCompiler.OP_ERA:
                     attributes |= (1 << FA_YEAR);
                     break;
                 default:
@@ -1715,7 +1777,11 @@ public class DateFormatCompiler {
         asm.invokeStatic(parseIntSafelyIndex);
         asm.lstore(LOCAL_TEMP_LONG);
         decodeInt(decodeIntIndex);
-        asm.istore(target);
+        if (target > -1) {
+            asm.istore(target);
+        } else {
+            asm.pop();
+        }
         addTempToPos(decodeLenIndex);
     }
 
@@ -1743,6 +1809,8 @@ public class DateFormatCompiler {
                 return OP_MILLIS_GREEDY;
             case OP_MICROS_ONE_DIGIT:
                 return OP_MICROS_GREEDY;
+            case OP_NANOS_ONE_DIGIT:
+                return OP_NANOS_GREEDY;
             default:
                 return oldOp;
         }
@@ -1775,7 +1843,11 @@ public class DateFormatCompiler {
         asm.iinc(LOCAL_POS, digitCount);
         asm.iload(LOCAL_POS);
         asm.invokeStatic(parseIntIndex);
-        asm.istore(target);
+        if(target > -1) {
+            asm.istore(target);
+        } else {
+            asm.pop();
+        }
     }
 
     private void parseDigitsSub1(int assertRemainingIndex, int parseIntIndex, int digitCount) {
@@ -1794,7 +1866,7 @@ public class DateFormatCompiler {
         asm.invokeStatic(parseIntIndex);
         asm.iconst(1);
         asm.isub();
-        asm.istore(DateFormatCompiler.LOCAL_HOUR);
+        asm.istore(TimestampFormatCompiler.LOCAL_HOUR);
     }
 
     private void parseTwoDigits(int assertRemainingIndex, int parseIntIndex, int target) {

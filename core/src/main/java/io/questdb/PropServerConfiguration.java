@@ -44,7 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormatCompiler;
 import io.questdb.std.microtime.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.time.*;
@@ -786,7 +786,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private TimestampFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env, String key, final String defaultPattern) {
         final String pattern = overrideWithEnv(properties, env, key);
-        DateFormatCompiler compiler = new DateFormatCompiler();
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         if (null != pattern) {
             return compiler.compile(pattern);
         }
