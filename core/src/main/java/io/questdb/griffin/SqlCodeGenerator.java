@@ -2523,7 +2523,12 @@ public class SqlCodeGenerator implements Mutable {
         return GenericRecordMetadata.removeTimestamp(masterMetadata);
     }
 
-    private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
+    private RecordCursorFactory generateUnionAllFactory(
+            QueryModel model,
+            RecordCursorFactory masterFactory,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory slaveFactory
+    ) throws SqlException {
         validateJoinColumnTypes(model, masterFactory, slaveFactory);
         final RecordCursorFactory unionAllFactory = new UnionAllRecordCursorFactory(
                 calculateSetMetadata(masterFactory.getMetadata()),
