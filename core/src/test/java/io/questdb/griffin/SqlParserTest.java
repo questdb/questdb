@@ -4128,7 +4128,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testQueryExceptQuery() throws SqlException {
         assertQuery(
-                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) except select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) except select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
                 "select * from x except select* from y",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -4150,7 +4150,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testQueryIntersectQuery() throws SqlException {
         assertQuery(
-                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) intersect select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) intersect select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
                 "select * from x intersect select* from y",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -5572,9 +5572,35 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnionColumnMisSelection() throws SqlException {
+        assertQuery(
+                "select-group-by ts, avg(bid_price) futures_price, spot_price from (select-virtual [ts, bid_price, 0.0 spot_price] ts, bid_price, 0.0 spot_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'futures')) sample by 1m union all select-group-by ts, futures_price, avg(bid_price) spot_price from (select-virtual [ts, 0.0 futures_price, bid_price] ts, 0.0 futures_price, bid_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'spot')) sample by 1m",
+                "select \n" +
+                        "    ts, \n" +
+                        "    avg(bid_price) AS futures_price, \n" +
+                        "    0.0 AS spot_price \n" +
+                        "FROM market_updates \n" +
+                        "WHERE market_type = 'futures' \n" +
+                        "SAMPLE BY 1m \n" +
+                        "UNION ALL\n" +
+                        "SELECT \n" +
+                        "    ts, \n" +
+                        "    0.0 AS futures_price, \n" +
+                        "    avg(bid_price) AS spot_price\n" +
+                        "FROM market_updates\n" +
+                        "WHERE market_type = 'spot' \n" +
+                        "SAMPLE BY 1m",
+                modelOf("market_updates")
+                        .col("bid_price", ColumnType.DOUBLE)
+                        .col("market_type", ColumnType.SYMBOL)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testWithTwoAliasesExcept() throws SqlException {
         assertQuery(
-                "select-choose a from (select-choose [a] a from (select [a] from tab)) x except select-choose [a] a from (select-choose [a] a from (select [a] from tab)) y",
+                "select-choose a from (select-choose [a] a from (select [a] from tab)) x except select-choose a from (select-choose [a] a from (select [a] from tab)) y",
                 "with x as (select * from tab)," +
                         " y as (select * from tab)" +
                         " select * from x except select * from y",
@@ -5585,7 +5611,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testWithTwoAliasesIntersect() throws SqlException {
         assertQuery(
-                "select-choose a from (select-choose [a] a from (select [a] from tab)) x intersect select-choose [a] a from (select-choose [a] a from (select [a] from tab)) y",
+                "select-choose a from (select-choose [a] a from (select [a] from tab)) x intersect select-choose a from (select-choose [a] a from (select [a] from tab)) y",
                 "with x as (select * from tab)," +
                         " y as (select * from tab)" +
                         " select * from x intersect select * from y",
@@ -5596,7 +5622,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testWithTwoAliasesUnion() throws SqlException {
         assertQuery(
-                "select-choose a from (select-choose [a] a from (select [a] from tab)) x union select-choose [a] a from (select-choose [a] a from (select [a] from tab)) y",
+                "select-choose a from (select-choose [a] a from (select [a] from tab)) x union select-choose a from (select-choose [a] a from (select [a] from tab)) y",
                 "with x as (select * from tab)," +
                         " y as (select * from tab)" +
                         " select * from x union select * from y",
@@ -5607,7 +5633,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testWithUnionWith() throws SqlException {
         assertQuery(
-                "select-choose a from (select-choose [a] a from (select [a] from tab)) x union select-choose [a] a from (select-choose [a] a from (select [a] from tab)) y",
+                "select-choose a from (select-choose [a] a from (select [a] from tab)) x union select-choose a from (select-choose [a] a from (select [a] from tab)) y",
                 "with x as (select * from tab) select * from x union with " +
                         " y as (select * from tab) select * from y",
                 modelOf("tab").col("a", ColumnType.INT)
