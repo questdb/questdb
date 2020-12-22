@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.CleanClosable;
 import io.questdb.std.IntList;
 import io.questdb.std.WeakAutoClosableObjectPool;
@@ -37,14 +38,21 @@ public abstract class AbstractTypeContainer<T extends CleanClosable> implements 
         this.parentPool = parentPool;
     }
 
-    public IntList getTypes() {
-        return types;
-    }
-
+    @SuppressWarnings("unchecked")
     @Override
     public void close() {
         getTypes().clear();
         this.parentPool.push((T) this);
+    }
+
+    public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
+        for (int i = 0, n = types.size(); i < n; i++) {
+            bindVariableService.define(i, types.getQuick(i), 0);
+        }
+    }
+
+    public IntList getTypes() {
+        return types;
     }
 
     protected void copyTypesFrom(BindVariableService bindVariableService) {

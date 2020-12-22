@@ -24,12 +24,23 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.std.WeakAutoClosableObjectPool;
 
-public class TypesAndInsert extends  AbstractTypeContainer<TypesAndInsert> {
+public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
     private InsertStatement insert;
+
     public TypesAndInsert(WeakAutoClosableObjectPool<TypesAndInsert> parentPool) {
         super(parentPool);
+    }
+
+    public InsertStatement getInsert() {
+        return insert;
+    }
+
+    public void of(InsertStatement insert, BindVariableService bindVariableService) {
+        this.insert = insert;
+        copyTypesFrom(bindVariableService);
     }
 }

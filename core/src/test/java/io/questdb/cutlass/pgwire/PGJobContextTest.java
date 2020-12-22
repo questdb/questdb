@@ -2141,7 +2141,7 @@ nodejs code:
     }
 
     @Test
-    public void testSendingBufferWhenFlushMessageReceivedeHex() throws Exception {
+    public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
                 ">70000000076f6800\n" +
@@ -2789,7 +2789,7 @@ nodejs code:
                 }
 
                 try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
-                    PreparedStatement statement = connection.prepareStatement("create table x (a int)");
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a int)");
                     statement.execute();
 
                     // exercise parameters on select statement

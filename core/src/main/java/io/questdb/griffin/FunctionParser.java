@@ -492,7 +492,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     final int sigArgTypeMask = descriptor.getArgTypeMask(k);
 
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
-                        candidateDescriptor = descriptor;
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }
@@ -500,7 +499,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     final boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
                     final boolean isScalar = arg instanceof ScalarFunction;
                     if ((isArray && isScalar) || (!isArray && !isScalar)) {
-                        candidateDescriptor = descriptor;
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }

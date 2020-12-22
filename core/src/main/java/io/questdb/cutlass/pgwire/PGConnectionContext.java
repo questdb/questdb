@@ -58,6 +58,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
+    public static final String TAG_DONE = "INSERT";
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
@@ -122,17 +123,18 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final BindVariableSetter charSetter = this::setCharBindVariable;
     private final BindVariableSetter strSetter = this::setStrBindVariable;
     private final ObjList<ColumnAppender> columnAppenders = new ObjList<>();
+    /// todo: config
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
+    private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, 8);
     private final TimestampLocale timestampLocale;
     private final DateLocale dateLocale;
     private final BindVariableSetter timestampSetter = this::setTimestampBindVariable;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
-    private final ObjHashSet<InsertMethod> cachedTransactionInsertWriters = new ObjHashSet<>();
-    private final DirectByteCharSequence parameterHolder = new DirectByteCharSequence();
+    private final ObjHashSet<InsertMethod> pendingInsertMethods = new ObjHashSet<>();
     private final IntList parameterFormats = new IntList();
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
-    private final AssociativeCache<InsertStatement> insertStatements = new AssociativeCache<>(8, 8);
+    private final AssociativeCache<TypesAndInsert> typesAndInsertCache = new AssociativeCache<>(8, 8);
     private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap = new CharSequenceObjHashMap<>();
     private int sendCurrentCursorTail = TAIL_NONE;
@@ -144,7 +146,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private int bufferRemainingSize = 0;
     private RecordCursor currentCursor = null;
     private TypesAndSelect typesAndSelect = null;
-    private InsertStatement currentInsertStatement = null;
+    private TypesAndInsert typesAndInsert = null;
     private long fd;
     private CharSequence queryText;
     private CharSequence queryTag;
@@ -156,8 +158,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private boolean isEmptyQuery;
     private int transactionState = NO_TRANSACTION;
     private NamedStatementWrapper wrapper;
-    private AssociativeCache<TypesAndSelect> selectAndTypesCache;
-    private WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool;
+    private AssociativeCache<TypesAndSelect> typesAndSelectCache;
+    private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -265,16 +267,17 @@ public class PGConnectionContext implements IOContext, Mutable {
         typeManager.clear();
         clearWriters();
         clearRecvBuffer();
-        insertStatements.clear();
+        typesAndInsertCache.clear();
+//        typesAndInsertPool.close();
         namedStatementMap.clear();
         bindVariableService.clear();
     }
 
     public void clearWriters() {
-        for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-            Misc.free(cachedTransactionInsertWriters.get(i));
+        for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
+            Misc.free(pendingInsertMethods.get(i));
         }
-        cachedTransactionInsertWriters.clear();
+        pendingInsertMethods.clear();
     }
 
     @Override
@@ -315,8 +318,8 @@ public class PGConnectionContext implements IOContext, Mutable {
             @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, BadProtocolException {
 
-        this.selectAndTypesCache = selectAndTypesCache;
-        this.selectAndTypesPool = selectAndTypesPool;
+        this.typesAndSelectCache = selectAndTypesCache;
+        this.typesAndSelectPool = selectAndTypesPool;
 
         if (bufferRemainingSize > 0) {
             doSend(bufferRemainingOffset, bufferRemainingSize);
@@ -388,7 +391,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         } catch (SqlException e) {
             sendExecuteTail(TAIL_ERROR);
             clearRecvBuffer();
-            queryTag = TAG_OK;
+            queryTag = TAG_DONE;
         }
     }
 
@@ -710,32 +713,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void bindParameterValues(
+    private void bindValuesUsingSetters(
             long lo,
             long msgLimit,
-            short parameterFormatCount,
-            short parameterValueCount,
-            @Transient ObjList<BindVariableSetter> bindVariableSetters
+            short parameterValueCount
     ) throws BadProtocolException, SqlException {
-        //format count can be:
-        //   0: default format is text for all parameters
-        //   1: client can specify one format for all parameters
-        //   2 or greater: format has been define for each parameter, so parameterFormatCount must equal parameterValueCount
-        boolean allTextFormat = parameterFormatCount == 0 || (parameterFormatCount == 1 && parameterFormats.get(0) == 0);
-        boolean allBinaryFormat = parameterFormatCount == 1 && parameterFormats.get(0) == 1;
-
-        LOG.debug()
-                .$("binding values [inferTypes=").$(false)
-                .$(", allTextFormat=").$(allTextFormat)
-                .$(", allBinaryFormat=").$(allBinaryFormat)
-                .$(", parameterValueCount=").$(parameterValueCount)
-                .$(']').$();
-
         for (int j = 0; j < parameterValueCount; j++) {
-            if (lo + Integer.BYTES > msgLimit) {
-                LOG.error().$("could not read parameter value length [index=").$(j).$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
+            assertMessageLimit(msgLimit, lo, j);
 
             int valueLen = getInt(lo);
             lo += Integer.BYTES;
@@ -754,7 +738,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
             ensureData(lo, valueLen, msgLimit, j);
             // apply parameter format
-            if (allTextFormat || (!allBinaryFormat) && parameterFormats.get(j) == 0) {
+            if (parameterFormats.getQuick(j) == 0) {
                 bindVariableSetters.setQuick(j * 2, bindVariableSetters.getQuick(j * 2 + 1));
             }
             // bind parameter value
@@ -776,34 +760,28 @@ public class PGConnectionContext implements IOContext, Mutable {
         recvBufferReadOffset = 0;
     }
 
-    private void compileQuery(
-            @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool
-    ) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void compileQuery(@Transient SqlCompiler compiler)
+            throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         if (queryText != null && queryText.length() > 0) {
 
             // try insert, peek because this is our private cache
             // and we do not want to remove statement from it
-            currentInsertStatement = insertStatements.peek(queryText);
+            typesAndInsert = typesAndInsertCache.peek(queryText);
 
             // not found or not insert, try select
             // poll this cache because it is shared and we do not want
             // select factory to be used by another thread concurrently
-            if (currentInsertStatement != null) {
+            if (typesAndInsert != null) {
                 queryTag = TAG_INSERT;
                 return;
             }
 
-            typesAndSelect = selectAndTypesCache.poll(queryText);
+            typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
                 // cache hit, define bind variables
                 bindVariableService.clear();
-                IntList types = typesAndSelect.getTypes();
-                for (int i = 0, n = types.size(); i < n; i++) {
-                    bindVariableService.define(i, types.getQuick(i), 0);
-                }
+                typesAndSelect.defineBindVariables(bindVariableService);
                 queryTag = TAG_SELECT;
                 return;
             }
@@ -815,16 +793,18 @@ public class PGConnectionContext implements IOContext, Mutable {
 
             switch (cc.getType()) {
                 case CompiledQuery.SELECT:
-                    typesAndSelect = selectAndTypesPool.pop();
+                    typesAndSelect = typesAndSelectPool.pop();
                     typesAndSelect.of(cc.getRecordCursorFactory(), bindVariableService);
                     queryTag = TAG_SELECT;
                     LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
                     break;
                 case CompiledQuery.INSERT:
-                    currentInsertStatement = cc.getInsertStatement();
+                    typesAndInsert = typesAndInsertPool.pop();
+                    typesAndInsert.of(cc.getInsertStatement(), bindVariableService);
                     queryTag = TAG_INSERT;
                     LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
-                    insertStatements.put(queryText, currentInsertStatement);
+                    // we can add insert to cache right away because it is local to the connection
+                    typesAndInsertCache.put(queryText, typesAndInsert);
                     break;
                 case CompiledQuery.COPY_LOCAL:
                     // uncached
@@ -861,13 +841,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void configureContextFromNamedStatement(
-            long lo,
-            long hi,
-            @Nullable @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool
-    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void configureContextFromNamedStatement(long lo, long hi, @Nullable @Transient SqlCompiler compiler)
+            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         if (wrapper != null) {
             LOG.debug().$("reusing existing wrapper").$();
             return;
@@ -880,7 +855,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             LOG.debug().$("named statement [name=").$(statementName).$(']').$();
             wrapper = namedStatementMap.get(statementName);
             if (wrapper != null) {
-                setupVariableSettersFromWrapper(wrapper, compiler, selectAndTypesCache, selectAndTypesPool);
+                setupVariableSettersFromWrapper(wrapper, compiler);
             }
             // todo: when we have nothing for prepared statement name we need to produce an error
         }
@@ -1000,16 +975,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         try {
             switch (transactionState) {
                 case IN_TRANSACTION:
-                    final InsertMethod m = currentInsertStatement.createMethod(sqlExecutionContext);
+                    final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext);
                     rowCount = m.execute();
-                    cachedTransactionInsertWriters.add(m);
+                    pendingInsertMethods.add(m);
                     break;
                 case ERROR_TRANSACTION:
                     // when transaction is in error state, skip execution
                     break;
                 default:
                     // in any other case we will commit in place
-                    try (final InsertMethod m2 = currentInsertStatement.createMethod(sqlExecutionContext)) {
+                    try (final InsertMethod m2 = typesAndInsert.getInsert().createMethod(sqlExecutionContext)) {
                         rowCount = m2.execute();
                         m2.commit();
                     }
@@ -1032,8 +1007,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             responseAsciiSink.putLen(addr);
             sendCurrentCursorTail = TAIL_ERROR;
             prepareExecuteTail(false);
-        } finally {
-            currentInsertStatement = null;
         }
     }
 
@@ -1050,7 +1023,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             prepareReadyForQuery();
             sendAndReset();
         } finally {
-            selectAndTypesCache.put(queryText, typesAndSelect);
+            typesAndSelectCache.put(queryText, typesAndSelect);
         }
     }
 
@@ -1131,7 +1104,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 processClose(msgLo, msgLimit);
                 break;
             case 'B': // bind
-                processBind(msgLo, msgLimit, compiler, selectAndTypesCache, selectAndTypesPool);
+                processBind(msgLo, msgLimit, compiler);
                 break;
             case 'E': // execute
                 processExecute();
@@ -1141,11 +1114,10 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // fall thru
             case 'H': // flush
                 sendAndReset();
-                // todo: we we need to prepare for new query here?
-                prepareForNewQuery();
+                queryTag = TAG_DONE;
                 break;
             case 'D': // describe
-                processDescribe(msgLo, msgLimit, compiler, selectAndTypesCache, selectAndTypesPool);
+                processDescribe(msgLo, msgLimit, compiler);
                 break;
             case 'Q':
                 processQuery(msgLo, msgLimit, compiler);
@@ -1166,7 +1138,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         if (Chars.utf8Decode(lo, hi, e)) {
             queryText = queryCharacterStore.toImmutable();
             LOG.info().$("parse [q=").utf8(queryText).$(']').$();
-            compileQuery(compiler, selectAndTypesCache, selectAndTypesPool);
+            compileQuery(compiler);
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();
             throw BadProtocolException.INSTANCE;
@@ -1257,10 +1229,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         portalCharacterStore.clear();
         bindVariableService.clear();
         currentCursor = Misc.free(currentCursor);
-        currentInsertStatement = null;
+        typesAndInsert = null;
         rowCount = 0;
         queryTag = TAG_OK;
-        typesAndSelect = Misc.free(typesAndSelect);
+//        typesAndSelect = Misc.free(typesAndSelect);
         queryText = null;
         bindVariableSetters.clear();
         wrapper = null;
@@ -1347,13 +1319,14 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.put('N');
     }
 
-    private void processBind(
-            long lo,
-            long msgLimit,
-            @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool
-    ) throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
+            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+
+        // response to client has been already sent
+        if (queryTag == TAG_DONE) {
+            return;
+        }
+
         long hi;
         short parameterFormatCount;
         short parameterValueCount;
@@ -1367,7 +1340,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         hi = getStringLength(lo, msgLimit);
         checkNotTrue(hi == -1, "bad prepared statement name length [msgType='B']");
 
-        configureContextFromNamedStatement(lo, hi, compiler, selectAndTypesCache, selectAndTypesPool);
+        configureContextFromNamedStatement(lo, hi, compiler);
 
         //parameter format count
         lo = hi + 1;
@@ -1391,13 +1364,46 @@ public class PGConnectionContext implements IOContext, Mutable {
         validateParameterCounts(parameterFormatCount, parameterValueCount, bindVariableSetters.size() / 2);
 
         if (parameterValueCount > 0) {
-            lo += Short.BYTES;
-            bindParameterValues(lo, msgLimit, parameterFormatCount, parameterValueCount, bindVariableSetters);
+            if (bindVariableSetters.size() == parameterValueCount) {
+                bindValuesUsingSetters(lo + Short.BYTES, msgLimit, parameterValueCount);
+            } else {
+                bindValuesAsStrings(lo, msgLimit, parameterValueCount);
+            }
         }
-
-//        compileQuery(compiler, selectAndTypesCache);
-
         prepareBindComplete();
+    }
+
+    private void bindValuesAsStrings(long lo, long msgLimit, short parameterValueCount) throws BadProtocolException, SqlException {
+        long lo1 = lo + Short.BYTES;
+        for (int j = 0; j < parameterValueCount; j++) {
+            assertMessageLimit(msgLimit, lo1, j);
+
+            int valueLen = getInt(lo1);
+            lo1 += Integer.BYTES;
+            if (valueLen == -1) {
+                // this is null we have already defaulted parameters to
+                continue;
+            }
+
+            if (lo1 + valueLen > msgLimit) {
+                LOG.error()
+                        .$("value length is outside of buffer [parameterIndex=").$(j)
+                        .$(", valueLen=").$(valueLen)
+                        .$(", messageRemaining=").$(msgLimit - lo1)
+                        .$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+            ensureData(lo1, valueLen, msgLimit, j);
+            setStrBindVariable(j, lo1, valueLen);
+            lo1 += valueLen;
+        }
+    }
+
+    private void assertMessageLimit(long msgLimit, long lo1, int j) throws BadProtocolException {
+        if (lo1 + Integer.BYTES > msgLimit) {
+            LOG.error().$("could not read parameter value length [index=").$(j).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
     }
 
     private void processClose(long lo, long msgLimit) throws BadProtocolException {
@@ -1426,17 +1432,12 @@ public class PGConnectionContext implements IOContext, Mutable {
         prepareCloseComplete();
     }
 
-    private void processDescribe(
-            long lo,
-            long msgLimit,
-            @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool
-    ) throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
+            throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
         lo = lo + 1;
         long hi = getStringLength(lo, msgLimit);
         checkNotTrue(hi == -1, "bad portal name length [msgType='D']");
-        configureContextFromNamedStatement(lo, hi, compiler, selectAndTypesCache, selectAndTypesPool);
+        configureContextFromNamedStatement(lo, hi, compiler);
 
         if (typesAndSelect != null) {
             prepareRowDescription();
@@ -1452,27 +1453,27 @@ public class PGConnectionContext implements IOContext, Mutable {
             // cache random if it was replaced
             this.rnd = sqlExecutionContext.getRandom();
             sendCursor();
-        } else if (currentInsertStatement != null) {
+        } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
             executeInsert();
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
             LOG.debug().$("executing [tag=").$(queryTag).$(']').$();
             if (queryTag != null && !Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
                 if (transactionState == COMMIT_TRANSACTION) {
-                    for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-                        final InsertMethod m = cachedTransactionInsertWriters.get(i);
+                    for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
+                        final InsertMethod m = pendingInsertMethods.get(i);
                         m.commit();
                         Misc.free(m);
                     }
-                    cachedTransactionInsertWriters.clear();
+                    pendingInsertMethods.clear();
                     transactionState = NO_TRANSACTION;
                 } else if (transactionState == ROLLING_BACK_TRANSACTION) {
-                    for (int i = 0, n = cachedTransactionInsertWriters.size(); i < n; i++) {
-                        InsertMethod m = cachedTransactionInsertWriters.get(i);
+                    for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
+                        InsertMethod m = pendingInsertMethods.get(i);
                         m.rollback();
                         Misc.free(m);
                     }
-                    cachedTransactionInsertWriters.clear();
+                    pendingInsertMethods.clear();
                     transactionState = NO_TRANSACTION;
                 }
             }
@@ -1639,6 +1640,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+
         // vanilla query
         prepareForNewQuery();
 
@@ -1650,39 +1652,49 @@ public class PGConnectionContext implements IOContext, Mutable {
             return;
         }
 
-        typesAndSelect = selectAndTypesCache.poll(queryText);
-        if (typesAndSelect == null) {
-            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
-
-            switch (cc.getType()) {
-                case CompiledQuery.SELECT:
-                    typesAndSelect = selectAndTypesPool.pop();
-                    typesAndSelect.of(cc.getRecordCursorFactory(), bindVariableService);
-                    executeSelect();
-                    break;
-                case CompiledQuery.COPY_LOCAL:
-                    queryTag = TAG_COPY;
-                    sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                    break;
-                case CompiledQuery.INSERT:
-                    // todo: we are throwing away insert model here
-                    //    we know what this is INSERT without parameters, we should
-                    //    execute it as we parse without generating models etc.
-                    queryTag = TAG_INSERT;
-                    currentInsertStatement = cc.getInsertStatement();
-                    executeInsert();
-                    prepareReadyForQuery();
-                    sendAndReset();
-                    break;
-                default:
-                    // DDL SQL
-                    queryTag = TAG_OK;
-                    sendExecuteTail(TAIL_SUCCESS);
-                    break;
-            }
-        } else {
+        typesAndSelect = typesAndSelectCache.poll(queryText);
+        if (typesAndSelect != null) {
             executeSelect();
+            return;
+        }
+
+        typesAndInsert = typesAndInsertCache.peek(queryText);
+        if (typesAndInsert != null) {
+            executeInsert();
+            prepareReadyForQuery();
+            sendAndReset();
+        }
+
+        final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
+        sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
+
+        switch (cc.getType()) {
+            case CompiledQuery.SELECT:
+                typesAndSelect = typesAndSelectPool.pop();
+                typesAndSelect.of(cc.getRecordCursorFactory(), bindVariableService);
+                executeSelect();
+                break;
+            case CompiledQuery.COPY_LOCAL:
+                queryTag = TAG_COPY;
+                sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
+                break;
+            case CompiledQuery.INSERT:
+                // todo: we are throwing away insert model here
+                //    we know what this is INSERT without parameters, we should
+                //    execute it as we parse without generating models etc.
+                queryTag = TAG_INSERT;
+                typesAndInsert = typesAndInsertPool.pop();
+                typesAndInsert.of(cc.getInsertStatement(), bindVariableService);
+                typesAndInsertCache.put(queryText, typesAndInsert);
+                executeInsert();
+                prepareReadyForQuery();
+                sendAndReset();
+                break;
+            default:
+                // DDL SQL
+                queryTag = TAG_OK;
+                sendExecuteTail(TAIL_SUCCESS);
+                break;
         }
     }
 
@@ -1786,7 +1798,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 }
             }
         } finally {
-            selectAndTypesCache.put(queryText, typesAndSelect);
+            typesAndSelectCache.put(queryText, typesAndSelect);
             // clear selectAndTypes so that context doesn't accidentally
             // free the factory when context finishes abnormally
             this.typesAndSelect = null;
@@ -1889,14 +1901,12 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void setupVariableSettersFromWrapper(
             @Transient NamedStatementWrapper wrapper,
-            @Nullable @Transient SqlCompiler compiler,
-            @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool
+            @Nullable @Transient SqlCompiler compiler
     ) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         queryText = wrapper.queryText;
         bindVariableSetters.clear();
         setupCachedBindVariables(wrapper.bindVariableTypes);
-        compileQuery(compiler, selectAndTypesCache, selectAndTypesPool);
+        compileQuery(compiler);
     }
 
     private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {
