@@ -196,7 +196,8 @@ public class FilesTest {
             Assert.assertEquals(5, Files.length(path));
 
             try {
-                boolean success = Files.allocate(fd, Long.MAX_VALUE);
+                long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
+                boolean success = Files.allocate(fd, tb10);
                 Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
                 Assert.assertEquals(5, Files.length(path));
             } finally {
