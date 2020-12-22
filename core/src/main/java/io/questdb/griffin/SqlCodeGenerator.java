@@ -1721,6 +1721,7 @@ public class SqlCodeGenerator implements Mutable {
         if (!timestampSet && executionContext.isTimestampRequired()) {
             selectMetadata.add(BaseRecordMetadata.copyOf(metadata, timestampIndex));
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
+            columnCrossIndex.add(timestampIndex);
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
