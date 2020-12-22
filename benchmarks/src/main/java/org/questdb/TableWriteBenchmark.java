@@ -77,6 +77,7 @@ public class TableWriteBenchmark {
     public void tearDown() {
         System.out.println("writer size = " + writer.size());
         writer.commit();
+        writer.truncate();
         writer.close();
     }
 
