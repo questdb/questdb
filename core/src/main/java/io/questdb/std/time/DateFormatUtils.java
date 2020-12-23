@@ -39,6 +39,7 @@ public class DateFormatUtils {
     public static final DateFormat PG_DATE_FORMAT;
     public static final DateFormat PG_DATE_Z_FORMAT;
     public static final DateFormat PG_DATE_MILLI_TIME_Z_FORMAT;
+    private static final DateFormat PG_DATE_TIME_Z_FORMAT;
     private static final DateFormat HTTP_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
@@ -108,6 +109,19 @@ public class DateFormatUtils {
 
     public static long getReferenceYear() {
         return referenceYear;
+    }
+
+    public static long parseDate(CharSequence values) throws NumericException {
+        return parseDate(values, 0, values.length());
+    }
+
+    public static long parseDate(CharSequence values, int lo, int lim) throws NumericException {
+        final int len = lim - lo;
+        if (len != 22) {
+            return UTC_FORMAT.parse(values, lo, lim, enLocale);
+        }
+        // 2017-08-04 08:09:26+00
+        return PG_DATE_TIME_Z_FORMAT.parse(values, lo, lim, enLocale);
     }
 
     // YYYY-MM-DDThh:mm:ss.mmm
@@ -303,7 +317,6 @@ public class DateFormatUtils {
         }
     }
 
-
     static {
         updateReferenceYear(System.currentTimeMillis());
         DateFormatCompiler compiler = new DateFormatCompiler();
@@ -311,6 +324,7 @@ public class DateFormatUtils {
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
         PG_DATE_FORMAT = compiler.compile("yyyy-MM-dd");
         PG_DATE_Z_FORMAT = compiler.compile("yyyy-MM-dd z");
+        PG_DATE_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ssz");
         PG_DATE_MILLI_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
     }
 }

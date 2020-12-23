@@ -47,27 +47,13 @@ public class TimestampFormatUtils {
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final TimestampLocale enLocale = TimestampLocaleFactory.INSTANCE.getLocale("en");
     private static final TimestampFormat HTTP_FORMAT;
+    private static final TimestampFormat[] FORMATS;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
     static int prevCenturyLow;
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
-
-    static {
-        updateReferenceYear(Os.currentTimeMicros());
-        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        UTC_FORMAT = compiler.compile(UTC_PATTERN);
-        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
-        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
-        SEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ssz");
-        GREEDY_MILLIS1_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.Sz");
-        GREEDY_MILLIS2_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSz");
-        PG_TIMESTAMP_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
-        PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ssz");
-        PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
-        NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
-    }
 
     public static void append0(CharSink sink, int val) {
         if (Math.abs(val) < 10) {
@@ -151,17 +137,21 @@ public class TimestampFormatUtils {
     }
 
     // YYYY-MM-DDThh:mm:ss.mmm
-    public static long parseDateTime(CharSequence seq) throws NumericException {
-        return parseDateTime(seq, 0, seq.length());
+    public static long parseTimestamp(CharSequence seq) throws NumericException {
+        return parseTimestamp(seq, 0, seq.length());
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmnnn
-    public static long parseTimestamp(CharSequence seq) throws NumericException {
+    public static long parseUTCTimestamp(CharSequence seq) throws NumericException {
         return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
     }
 
+    public static long parseDateTime(CharSequence seq) throws NumericException {
+        return NANOS_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
+    }
+
     public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {
-        return parseDateTime(s, lo, lim);
+        return parseTimestamp(s, lo, lim);
     }
 
     public static void updateReferenceYear(long micros) {
@@ -354,29 +344,36 @@ public class TimestampFormatUtils {
         }
     }
 
-    private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
-        switch (lim - lo) {
-            case 27:
-                return USEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-            case 20:
-                return SEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-            case 22:
-                return GREEDY_MILLIS1_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-            case 23:
-                return GREEDY_MILLIS2_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-            case 30:
-            case 35:
-                return NANOS_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-            default:
-                try {
-                    return UTC_FORMAT.parse(seq, lo, lim, enLocale);
-                } catch (NumericException ignore) {
-                    try {
-                        return USEC_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-                    } catch (NumericException ignore2) {
-                        return NANOS_UTC_FORMAT.parse(seq, lo, lim, enLocale);
-                    }
-                }
+    private static long parseTimestamp(CharSequence value, int lo, int hi) throws NumericException {
+        for (int i = 0, n = FORMATS.length; i < n; i++) {
+            try {
+                return FORMATS[i].parse(value, lo, hi, enLocale);
+            } catch (NumericException ignore) {
+            }
         }
+        throw NumericException.INSTANCE;
+    }
+
+    static {
+        updateReferenceYear(Os.currentTimeMicros());
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+        UTC_FORMAT = compiler.compile(UTC_PATTERN);
+        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
+        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
+        SEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ssz");
+        GREEDY_MILLIS1_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.Sz");
+        GREEDY_MILLIS2_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSz");
+        PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
+        PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ssz");
+        PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSz");
+        NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
+        FORMATS = new TimestampFormat[]{
+                PG_TIMESTAMP_MILLI_TIME_Z_FORMAT,
+                GREEDY_MILLIS1_UTC_FORMAT,
+                USEC_UTC_FORMAT,
+                SEC_UTC_FORMAT,
+                GREEDY_MILLIS2_UTC_FORMAT,
+                UTC_FORMAT
+        };
     }
 }

@@ -275,7 +275,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseDateTime("2015-05-03T10:35:00.000Z"), 1);
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1);
 
         try (Path path = new Path()) {
             // create rogue file that would be in a way of logger rolling existing files
@@ -359,7 +359,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
         try (LogFactory factory = new LogFactory()) {
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseDateTime("2015-05-03T11:35:00.000Z"), 1);
+            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1);
 
             factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
@@ -392,7 +392,7 @@ public class LogFactoryTest {
 
             String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
 
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseDateTime("2015-05-03T10:35:00.000Z"), 1);
+            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1);
 
             try (Path path = new Path()) {
 
@@ -500,7 +500,7 @@ public class LogFactoryTest {
             String mustContain
     ) throws NumericException {
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseDateTime("2015-05-03T10:35:00.000Z"), speed);
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed);
 
         long expectedFileCount = Files.getOpenFileCount();
         long expectedMemUsage = Unsafe.getMemUsed();

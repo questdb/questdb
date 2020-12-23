@@ -124,7 +124,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             long timestamp;
             final Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                timestamp = TimestampFormatUtils.parseDateTime("1970-01-03T08:00:00.000Z");
+                timestamp = TimestampFormatUtils.parseTimestamp("1970-01-03T08:00:00.000Z");
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putInt(0, rnd.nextInt());

@@ -752,7 +752,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestamp() throws SqlException, NumericException {
-        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseTimestamp("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_str(:xyz, 'yyyy-MM')")
                 .withFunction(new ToStrTimestampFunctionFactory())
@@ -761,14 +761,14 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseTimestamp("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 
     @Test
     public void testTimestampIndexed() throws SqlException, NumericException {
         bindVariableService.setTimestamp(1, 25);
-        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_str($1, 'yyyy-MM')")
                 .withFunction(new ToStrTimestampFunctionFactory())
@@ -777,7 +777,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 

@@ -60,7 +60,7 @@ public class TimestampSamplerFactoryTest {
             Assert.assertNotNull(sampler);
 
             final long n = Timestamps.MINUTE_MICROS * (k == 0 ? 1 : k);
-            long timestamp = TimestampFormatUtils.parseTimestamp("2018-04-15T10:23:00.000000Z");
+            long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-04-15T10:23:00.000000Z");
             timestamp = timestamp - timestamp % n;
             for (int i = 0; i < 60; i++) {
                 long actual = sampler.round(timestamp + i * Timestamps.SECOND_MICROS);
@@ -95,7 +95,7 @@ public class TimestampSamplerFactoryTest {
             Assert.assertNotNull(sampler);
 
             final long n = Timestamps.SECOND_MICROS * (k == 0 ? 1 : k);
-            long timestamp = TimestampFormatUtils.parseTimestamp("2018-04-15T10:23:00.000000Z");
+            long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-04-15T10:23:00.000000Z");
             timestamp = timestamp - timestamp % n;
             for (int i = 0; i < n; i += 4) {
                 long actual = sampler.round(timestamp + i);

@@ -1584,7 +1584,7 @@ public class TableReaderTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+                    long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
                     try (TableWriter writer = new TableWriter(configuration, "w")) {
                         for (int i = 0; i < N * scale; i++) {
                             TableWriter.Row row = writer.newRow(timestampUs);
@@ -2070,7 +2070,7 @@ public class TableReaderTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
 
             try (TableWriter writer = new TableWriter(configuration, tableName)) {
-                long timestamp = TimestampFormatUtils.parseTimestamp("2019-01-31T10:00:00.000001Z");
+                long timestamp = TimestampFormatUtils.parseUTCTimestamp("2019-01-31T10:00:00.000001Z");
                 long timestampStep = 500;
 
                 for (int i = 0; i < N; i++) {
@@ -2173,7 +2173,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -2427,7 +2427,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -2549,7 +2549,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             int N = 1000;
-            long ts = TimestampFormatUtils.parseDateTime("2018-01-06T10:00:00.000Z");
+            long ts = TimestampFormatUtils.parseTimestamp("2018-01-06T10:00:00.000Z");
             final Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 sink.clear();
@@ -3612,7 +3612,7 @@ public class TableReaderTest extends AbstractCairoTest {
         try {
             TestUtils.assertMemoryLeak(() -> {
                 CairoTestUtils.createAllTable(configuration, partitionBy);
-                long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
                 CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
@@ -3645,7 +3645,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
-            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             long blob = allocBlob();
             try {
@@ -3842,7 +3842,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -3913,7 +3913,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T10:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T10:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -3984,7 +3984,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -4073,7 +4073,7 @@ public class TableReaderTest extends AbstractCairoTest {
         try {
             TestUtils.assertMemoryLeak(() -> {
                 CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
-                long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                 CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -4102,7 +4102,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private void testTableCursor(long inc) throws NumericException {
         Rnd rnd = new Rnd();
         int N = 100;
-        long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z") / 1000;
+        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z") / 1000;
         long blob = allocBlob();
         try {
             testAppend(rnd, configuration, ts, N, inc, blob, 0);

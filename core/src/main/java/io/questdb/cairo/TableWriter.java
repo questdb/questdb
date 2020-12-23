@@ -4929,10 +4929,10 @@ public class TableWriter implements Closeable {
             // try UTC timestamp first (micro)
             long l;
             try {
-                l = TimestampFormatUtils.parseTimestamp(value);
+                l = TimestampFormatUtils.parseUTCTimestamp(value);
             } catch (NumericException e) {
                 try {
-                    l = TimestampFormatUtils.parseDateTime(value);
+                    l = TimestampFormatUtils.parseTimestamp(value);
                 } catch (NumericException numericException) {
                     throw CairoException.instance(0).put("could not convert to timestamp [value=").put(value).put(']');
                 }

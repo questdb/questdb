@@ -96,7 +96,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
 
                         // now add some more rows
 
-                        timestamp = TimestampFormatUtils.parseDateTime("1975-01-01T00:00:00.000Z");
+                        timestamp = TimestampFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
                         for (int i = 0; i < N; i++) {
                             TableWriter.Row row = w.newRow(timestamp);
                             row.putInt(0, rnd.nextInt());

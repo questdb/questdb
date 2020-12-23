@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
+import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.time.DateFormatUtils;
 import org.jetbrains.annotations.Nullable;
 
 public class BindVariableServiceImpl implements BindVariableService {
@@ -829,10 +831,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                     ((LongBindVariable) function).value = value != null ? Numbers.parseLong(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.TIMESTAMP:
-                    ((TimestampBindVariable) function).value = value != null ? Numbers.parseLong(value) : Numbers.LONG_NaN;
+                    ((TimestampBindVariable) function).value = value != null ? TimestampFormatUtils.parseTimestamp(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.DATE:
-                    ((DateBindVariable) function).value = value != null ? Numbers.parseLong(value) : Numbers.LONG_NaN;
+                    ((DateBindVariable) function).value = value != null ? DateFormatUtils.parseDate(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.FLOAT:
                     ((FloatBindVariable) function).value = value != null ? Numbers.parseFloat(value) : Float.NaN;

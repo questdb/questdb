@@ -744,7 +744,7 @@ public class TimestampFormatCompilerTest {
 
     private void assertFormat(String expected, String pattern, String date, int mic) throws NumericException {
         sink.clear();
-        long micros = TimestampFormatUtils.parseDateTime(date) + mic;
+        long micros = TimestampFormatUtils.parseTimestamp(date) + mic;
         get(pattern).format(micros, defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
         sink.clear();

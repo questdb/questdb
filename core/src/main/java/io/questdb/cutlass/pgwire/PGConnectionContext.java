@@ -113,11 +113,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final BindVariableSetter intSetter = this::setIntBindVariable;
     private final BindVariableSetter longSetter = this::setLongBindVariable;
     private final BindVariableSetter floatSetter = this::setFloatBindVariable;
-    private final BindVariableSetter byteSetter = this::setByteBindVariable;
+    private final BindVariableSetter shortSetter = this::setShortBindVariable;
     private final BindVariableSetter booleanSetter = this::setBooleanBindVariable;
     private final BindVariableSetter charSetter = this::setCharBindVariable;
     private final BindVariableSetter strSetter = this::setStrBindVariable;
-    private final ObjList<ColumnAppender> columnAppenders = new ObjList<>();
     /// todo: config
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
     private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, 8);
@@ -195,7 +194,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.timestampLocale = configuration.getDefaultTimestampLocale();
         this.dateLocale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
-        populateAppender();
     }
 
     public static int getInt(long address) {
@@ -264,7 +262,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         clearWriters();
         clearRecvBuffer();
         typesAndInsertCache.clear();
-//        typesAndInsertPool.close();
         namedStatementMap.clear();
         bindVariableService.clear();
     }
@@ -405,11 +402,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         bindVariableService.setBoolean(index, valueLen == 4);
     }
 
-    public void setByteBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Short.BYTES, valueLen);
-        bindVariableService.setByte(index, (byte) getShort(address));
-    }
-
     public void setByteTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
         try {
             bindVariableService.setByte(index, (byte) Numbers.parseInt(dbcs.of(address, address + valueLen)));
@@ -491,6 +483,11 @@ public class PGConnectionContext implements IOContext, Mutable {
             LOG.error().$("bad long variable value [index=").$(index).$(", value=`").$(dbcs).$("`]").$();
             throw BadProtocolException.INSTANCE;
         }
+    }
+
+    public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(Short.BYTES, valueLen);
+        bindVariableService.setShort(index, getShort(address));
     }
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -647,7 +644,52 @@ public class PGConnectionContext implements IOContext, Mutable {
         final long offset = responseAsciiSink.skip();
         responseAsciiSink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            columnAppenders.getQuick(metadata.getColumnType(i)).append(record, i);
+            switch (metadata.getColumnType(i)) {
+                case ColumnType.INT:
+                    appendIntCol(record, i);
+                    break;
+                case ColumnType.STRING:
+                    appendStrColumn(record, i);
+                    break;
+                case ColumnType.SYMBOL:
+                    appendSymbolColumn(record, i);
+                    break;
+                case ColumnType.LONG:
+                    appendLongColumn(record, i);
+                    break;
+                case ColumnType.SHORT:
+                    appendShortColumn(record, i);
+                    break;
+                case ColumnType.DOUBLE:
+                    appendDoubleColumn(record, i);
+                    break;
+                case ColumnType.FLOAT:
+                    appendFloatColumn(record, i);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    appendTimestampColumn(record, i);
+                    break;
+                case ColumnType.DATE:
+                    appendDateColumn(record, i);
+                    break;
+                case ColumnType.BOOLEAN:
+                    appendBooleanColumn(record, i);
+                    break;
+                case ColumnType.BYTE:
+                    appendByteColumn(record, i);
+                    break;
+                case ColumnType.BINARY:
+                    appendBinColumn(record, i);
+                    break;
+                case ColumnType.CHAR:
+                    appendCharColumn(record, i);
+                    break;
+                case ColumnType.LONG256:
+                    appendLong256Column(record, i);
+                    break;
+                default:
+                    assert false;
+            }
         }
         responseAsciiSink.putLen(offset);
     }
@@ -800,6 +842,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             // poll this cache because it is shared and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
+                typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
                 return;
             }
@@ -1038,9 +1081,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void executeSelect() throws PeerDisconnectedException, PeerIsSlowToReadException {
-
         assert queryText != null;
-
         queryTag = TAG_SELECT;
         // todo: test what happens when fetch cursor fails
         currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
@@ -1167,23 +1208,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void populateAppender() {
-        columnAppenders.extendAndSet(ColumnType.INT, this::appendIntCol);
-        columnAppenders.extendAndSet(ColumnType.STRING, this::appendStrColumn);
-        columnAppenders.extendAndSet(ColumnType.SYMBOL, this::appendSymbolColumn);
-        columnAppenders.extendAndSet(ColumnType.LONG, this::appendLongColumn);
-        columnAppenders.extendAndSet(ColumnType.SHORT, this::appendShortColumn);
-        columnAppenders.extendAndSet(ColumnType.DOUBLE, this::appendDoubleColumn);
-        columnAppenders.extendAndSet(ColumnType.FLOAT, this::appendFloatColumn);
-        columnAppenders.extendAndSet(ColumnType.TIMESTAMP, this::appendTimestampColumn);
-        columnAppenders.extendAndSet(ColumnType.DATE, this::appendDateColumn);
-        columnAppenders.extendAndSet(ColumnType.BOOLEAN, this::appendBooleanColumn);
-        columnAppenders.extendAndSet(ColumnType.BYTE, this::appendByteColumn);
-        columnAppenders.extendAndSet(ColumnType.BINARY, this::appendBinColumn);
-        columnAppenders.extendAndSet(ColumnType.CHAR, this::appendCharColumn);
-        columnAppenders.extendAndSet(ColumnType.LONG256, this::appendLong256Column);
-    }
-
     private void prepareBindComplete() {
         responseAsciiSink.put(MESSAGE_TYPE_BIND_COMPLETE);
         responseAsciiSink.putNetworkInt(Integer.BYTES);
@@ -1262,7 +1286,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         typesAndInsert = null;
         rowCount = 0;
         queryTag = TAG_OK;
-//        typesAndSelect = Misc.free(typesAndSelect);
         queryText = null;
         bindVariableSetters.clear();
         wrapper = null;
@@ -1444,7 +1467,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             executeInsert();
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
             LOG.debug().$("executing [tag=").$(queryTag).$(']').$();
-            if (queryTag != null && !Chars.equals(TAG_OK, queryTag)) {  //do not run this for OK tag (i.e.: create table)
+            if (queryTag != null && TAG_OK != queryTag) {  //do not run this for OK tag (i.e.: create table)
                 if (transactionState == COMMIT_TRANSACTION) {
                     for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
                         final InsertMethod m = pendingInsertMethods.get(i);
@@ -1626,30 +1649,15 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-
-        // vanilla query
+        // simple query, typically a script, which we don't yet support
         prepareForNewQuery();
-        // todo: test sending ';' with simple query
         parseQueryText(lo, limit - 1, compiler);
-//        prepareDescribeResponse();
-//        processExecute();
-//        prepareReadyForQuery();
-//        sendAndReset();
 
-
-        if (SqlKeywords.isSemicolon(queryText)) {
-            queryTag = TAG_OK;
-            sendExecuteTail(TAIL_SUCCESS);
-            return;
-        }
-
-//        typesAndSelect = typesAndSelectCache.poll(queryText);
         if (typesAndSelect != null) {
             executeSelect();
             return;
         }
 
-//        typesAndInsert = typesAndInsertCache.peek(queryText);
         if (typesAndInsert != null) {
             executeInsert();
             prepareReadyForQuery();
@@ -1658,40 +1666,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
 
         sendExecuteTail(TAIL_SUCCESS);
-
-/*
-        final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-        sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
-
-        switch (cc.getType()) {
-            case CompiledQuery.SELECT:
-                typesAndSelect = typesAndSelectPool.pop();
-                typesAndSelect.of(cc.getRecordCursorFactory(), bindVariableService);
-                executeSelect();
-                break;
-            case CompiledQuery.COPY_LOCAL:
-                queryTag = TAG_COPY;
-                sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                break;
-            case CompiledQuery.INSERT:
-                // todo: we are throwing away insert model here
-                //    we know what this is INSERT without parameters, we should
-                //    execute it as we parse without generating models etc.
-                queryTag = TAG_INSERT;
-                typesAndInsert = typesAndInsertPool.pop();
-                typesAndInsert.of(cc.getInsertStatement(), bindVariableService);
-                typesAndInsertCache.put(queryText, typesAndInsert);
-                executeInsert();
-                prepareReadyForQuery();
-                sendAndReset();
-                break;
-            default:
-                // DDL SQL
-                queryTag = TAG_OK;
-                sendExecuteTail(TAIL_SUCCESS);
-                break;
-        }
-*/
     }
 
     void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
@@ -1815,69 +1789,47 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void setupBindVariable(int idx, int pgType) throws SqlException {
         switch (pgType) {
             case PG_FLOAT8: // FLOAT8 - double
-//                bindVariableService.setDouble(idx);
                 bindVariableSetters.setQuick(idx * 2, doubleSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_INT4: // INT
-//                bindVariableService.setInt(idx);
                 bindVariableSetters.setQuick(idx * 2, intSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_INT8:
-//                bindVariableService.setLong(idx);
                 bindVariableSetters.setQuick(idx * 2, longSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_FLOAT4:
-//                bindVariableService.setFloat(idx);
                 bindVariableSetters.setQuick(idx * 2, floatSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_INT2:
-                // todo: is this not short?
-//                bindVariableService.setByte(idx);
-                bindVariableSetters.setQuick(idx * 2, byteSetter);
+                bindVariableSetters.setQuick(idx * 2, shortSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_BOOL:
-//                bindVariableService.setBoolean(idx);
                 bindVariableSetters.setQuick(idx * 2, booleanSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_VARCHAR:
             case PG_UNSPECIFIED:
-//                bindVariableService.setStr(idx);
                 bindVariableSetters.setQuick(idx * 2, strSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_CHAR:
-//                bindVariableService.setChar(idx);
                 bindVariableSetters.setQuick(idx * 2, charSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, charSetter);
                 break;
             case PG_DATE:
-//                bindVariableService.setDate(idx);
                 bindVariableSetters.setQuick(idx * 2, dateSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
             case PG_TIMESTAMP:
             case PG_TIMESTAMPZ:
-//                bindVariableService.setTimestamp(idx, Numbers.LONG_NaN);
                 bindVariableSetters.setQuick(idx * 2, timestampSetter);
                 bindVariableSetters.setQuick(idx * 2 + 1, strSetter);
                 break;
-//            case PG_UNSPECIFIED:
-            // postgres JDBC driver does not seem to send
-            // microseconds with its text timestamp
-            // on top of this parameters such as setDate, setTimestamp
-            // cause driver to send UNSPECIFIED type
-            // QuestDB has to know types to resolve function linkage
-            // at compile time rather than at runtime.
-//                bindVariableService.setLong(idx);
-//                bindVariableSetters.add(timestampAsLongSetter);
-//                bindVariableSetters.add(timestampAsLongSetter);
-//                break;
             default:
                 throw SqlException.$(0, "unsupported parameter [type=").put(pgType).put(", index=").put(idx).put(']');
         }
@@ -1916,11 +1868,6 @@ public class PGConnectionContext implements IOContext, Mutable {
                 throw BadProtocolException.INSTANCE;
             }
         }
-    }
-
-    @FunctionalInterface
-    private interface ColumnAppender {
-        void append(Record record, int columnIndex) throws SqlException;
     }
 
     public static class NamedStatementWrapper implements Mutable {

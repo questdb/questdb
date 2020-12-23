@@ -37,7 +37,7 @@ public class MonthTimestampSamplerTest {
         StringSink sink = new StringSink();
         MonthTimestampSampler sampler = new MonthTimestampSampler(6);
 
-        long timestamp = TimestampFormatUtils.parseTimestamp("2018-11-16T15:00:00.000000Z");
+        long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
 
         for (int i = 0; i < 20; i++) {
             long ts = sampler.nextTimestamp(timestamp);

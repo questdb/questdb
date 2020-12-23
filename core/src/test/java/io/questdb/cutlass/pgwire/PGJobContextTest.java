@@ -1395,7 +1395,7 @@ nodejs code:
                         "2019-02-11 13:48:11.124016\n" +
                         "2019-02-11 13:48:11.124017\n";
 
-                long ts = TimestampFormatUtils.parseTimestamp("2019-02-11T13:48:11.123998Z");
+                long ts = TimestampFormatUtils.parseUTCTimestamp("2019-02-11T13:48:11.123998Z");
                 for (int i = 0; i < 20; i++) {
                     statement.setLong(1, ts + i);
                     statement.execute();
@@ -2121,6 +2121,16 @@ nodejs code:
     }
 
     @Test
+    public void testSemicolonExtendedMode() throws Exception {
+        testSemicolon(false);
+    }
+
+    @Test
+    public void testSemicolonSimpleMode() throws Exception {
+        testSemicolon(true);
+    }
+
+    @Test
     public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -2380,11 +2390,11 @@ nodejs code:
                             // dump metadata
                             assertResultSet(
                                     "x[BIGINT],$1[VARCHAR]\n" +
-                                    "1,01:00:00.1+01\n" +
-                                    "2,01:00:00.1+01\n" +
-                                    "3,01:00:00.1+01\n" +
-                                    "4,01:00:00.1+01\n" +
-                                    "5,01:00:00.1+01\n",
+                                            "1,01:00:00.1+01\n" +
+                                            "2,01:00:00.1+01\n" +
+                                            "3,01:00:00.1+01\n" +
+                                            "4,01:00:00.1+01\n" +
+                                            "5,01:00:00.1+01\n",
                                     sink,
                                     rs
                             );
@@ -2779,17 +2789,21 @@ nodejs code:
                 }
 
                 try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a int)");
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp) timestamp(t)");
                     statement.execute();
 
                     // exercise parameters on select statement
                     PreparedStatement select = connection.prepareStatement("x where a = ?");
                     execSelectWithParam(select, 9);
 
-                    PreparedStatement insert = connection.prepareStatement("insert into x (a) values (?)");
-                    for (int i = 0; i < 30; i++) {
+                    final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?)");
+                    long t = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                    for (int i = 0; i < 90; i++) {
                         insert.setInt(1, i);
+                        insert.setDate(2, new Date(t / 1000));
+                        insert.setTimestamp(3, new Timestamp(t));
                         insert.execute();
+                        t += 1000;
                     }
 
                     try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
@@ -2978,6 +2992,39 @@ nodejs code:
                 // dump metadata
                 assertResultSet(expected, sink, rs);
                 connection.close();
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
+    private void testSemicolon(boolean simpleQueryMode) throws Exception {
+        assertMemoryLeak(() -> {
+
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(
+                        NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                if (simpleQueryMode) {
+                    properties.setProperty("preferQueryMode", "simple");
+                }
+
+                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
+                    try (final PreparedStatement statement = connection.prepareStatement(";;")) {
+                        statement.execute();
+                    }
+                }
             } finally {
                 running.set(false);
                 haltLatch.await();

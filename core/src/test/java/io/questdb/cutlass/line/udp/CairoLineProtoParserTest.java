@@ -91,7 +91,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
-                    return new TestMicroClock(TimestampFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
@@ -271,7 +271,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
-                    return new TestMicroClock(TimestampFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
@@ -320,7 +320,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
-                    return new TestMicroClock(TimestampFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
@@ -393,7 +393,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
-                    return new TestMicroClock(TimestampFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
@@ -535,7 +535,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
-                    return new TestMicroClock(TimestampFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw CairoException.instance(0).put("numeric");
                 }

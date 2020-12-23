@@ -46,7 +46,7 @@ public class ToCharTimestampVCFunctionFactoryTest extends AbstractFunctionFactor
 
     @Test
     public void testSimple() throws SqlException, NumericException {
-        call(TimestampFormatUtils.parseDateTime("2018-03-10T11:03:33.123Z"),
+        call(TimestampFormatUtils.parseTimestamp("2018-03-10T11:03:33.123Z"),
                 "dd/MM/yyyy hh:mm:ss").andAssert("10/03/2018 12:03:33");
     }
 
