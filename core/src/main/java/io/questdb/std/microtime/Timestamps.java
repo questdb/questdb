@@ -38,7 +38,7 @@ final public class Timestamps {
     public static final long MINUTE_MICROS = 60000000;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
-    public static final int MILLI_MICROS = 1000;
+    public static final long MILLI_MICROS = 1000;
     public static final int STATE_INIT = 0;
     public static final int STATE_UTC = 1;
     public static final int STATE_GMT = 2;
@@ -267,6 +267,43 @@ final public class Timestamps {
         return Math.abs(a - b) / DAY_MICROS;
     }
 
+    public static long getWeeksBetween(long a, long b) {
+        return Math.abs(a - b) / WEEK_MICROS;
+    }
+
+    public static long getSecondsBetween(long a, long b) {
+        return Math.abs(a - b) / SECOND_MICROS;
+    }
+
+    public static long getMinutesBetween(long a, long b) {
+        return Math.abs(a - b) / MINUTE_MICROS;
+    }
+
+    public static long getHoursBetween(long a, long b) {
+        return Math.abs(a - b) / HOUR_MICROS;
+    }
+
+    public static long getPeriodBetween(char type, long start, long end) {
+        switch (type) {
+            case 's':
+                return Timestamps.getSecondsBetween(start, end);
+            case 'm':
+                return Timestamps.getMinutesBetween(start, end);
+            case 'h':
+                return Timestamps.getHoursBetween(start, end);
+            case 'd':
+                return Timestamps.getDaysBetween(start, end);
+            case 'w':
+                return Timestamps.getWeeksBetween(start, end);
+            case 'M':
+                return Timestamps.getMonthsBetween(start, end);
+            case 'y':
+                return Timestamps.getYearsBetween(start, end);
+            default:
+                return Numbers.LONG_NaN;
+        }
+    }
+
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
@@ -286,15 +323,12 @@ final public class Timestamps {
         }
     }
 
-    public static long getHoursBetween(long a, long b) {
-        return Math.abs(a - b) / HOUR_MICROS;
-    }
 
     public static int getMicrosOfSecond(long micros) {
         if (micros > -1) {
             return (int) (micros % MILLI_MICROS);
         } else {
-            return MILLI_MICROS - 1 + (int) ((micros + 1) % MILLI_MICROS);
+            return (int) (MILLI_MICROS - 1 + ((micros + 1) % MILLI_MICROS));
         }
     }
 
@@ -312,10 +346,6 @@ final public class Timestamps {
         } else {
             return HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % HOUR_MINUTES);
         }
-    }
-
-    public static long getMinutesBetween(long a, long b) {
-        return Math.abs(a - b) / MINUTE_MICROS;
     }
 
     /**
@@ -368,41 +398,12 @@ final public class Timestamps {
         }
     }
 
-    public static long getPeriodBetween(char type, long start, long end) {
-        switch (type) {
-            case 's':
-                return Timestamps.getSecondsBetween(start, end);
-            case 'm':
-                return Timestamps.getMinutesBetween(start, end);
-            case 'h':
-                return Timestamps.getHoursBetween(start, end);
-            case 'd':
-                return Timestamps.getDaysBetween(start, end);
-            case 'w':
-                return Timestamps.getWeeksBetween(start, end);
-            case 'M':
-                return Timestamps.getMonthsBetween(start, end);
-            case 'y':
-                return Timestamps.getYearsBetween(start, end);
-            default:
-                return Numbers.LONG_NaN;
-        }
-    }
-
     public static int getSecondOfMinute(long micros) {
         if (micros > -1) {
             return (int) ((micros / SECOND_MICROS) % MINUTE_SECONDS);
         } else {
             return MINUTE_SECONDS - 1 + (int) (((micros + 1) / SECOND_MICROS) % MINUTE_SECONDS);
         }
-    }
-
-    public static long getSecondsBetween(long a, long b) {
-        return Math.abs(a - b) / SECOND_MICROS;
-    }
-
-    public static long getWeeksBetween(long a, long b) {
-        return Math.abs(a - b) / WEEK_MICROS;
     }
 
     /**
