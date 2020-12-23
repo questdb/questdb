@@ -32,16 +32,10 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.time.DateFormat;
-import io.questdb.std.time.DateFormatUtils;
 import io.questdb.std.time.DateLocale;
-
-import static io.questdb.std.microtime.TimestampFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
-import static io.questdb.std.microtime.TimestampFormatUtils.PG_DATE_TIME_Z_FORMAT;
-import static io.questdb.std.time.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class TypeManager implements Mutable {
     private final ObjList<TypeAdapter> probes = new ObjList<>();
@@ -76,9 +70,6 @@ public class TypeManager implements Mutable {
             }
         }
 
-        // add PG date format
-        probes.add(new DateAdapter().of(PG_DATE_Z_FORMAT, DateFormatUtils.enLocale));
-
         final ObjList<TimestampFormat> timestampFormats = inputFormatConfiguration.getTimestampFormats();
         final ObjList<TimestampLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
         final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
@@ -89,9 +80,6 @@ public class TypeManager implements Mutable {
                 probes.add(new TimestampAdapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
             }
         }
-        // add PG timestamp format
-        probes.add(new TimestampAdapter().of(PG_DATE_TIME_Z_FORMAT, TimestampFormatUtils.enLocale));
-        probes.add(new TimestampAdapter().of(PG_DATE_MILLI_TIME_Z_FORMAT, TimestampFormatUtils.enLocale));
         this.probeCount = probes.size();
     }
 

@@ -30,7 +30,6 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.microtime.TimestampFormatUtils;
@@ -1810,25 +1809,6 @@ nodejs code:
     }
 
     @Test
-    public void testPreparedStatementParamBadDouble() throws Exception {
-        assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
-                ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
-                        "<520000000800000003\n" +
-                        ">700000000a717565737400\n" +
-                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
-                        ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
-                        "<310000000432000000044300000008534554005a0000000549\n" +
-                        ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
-                        "<310000000432000000044300000008534554005a0000000549\n" +
-                        ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331323300000004352f343300000007302e353637383900000002393100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
-                        "<!!",
-                new DefaultPGWireConfiguration()
-        );
-    }
-
-    @Test
     public void testPreparedStatementParamBadInt() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -2165,7 +2145,7 @@ nodejs code:
 
     @Test
     public void testSimple() throws Exception {
-        testQuery("rnd_double(4) d, ", "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[NUMERIC]\n");
+        testQuery("rnd_double(4) d, ", "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[DATE],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[NUMERIC]\n");
     }
 
     @Test
@@ -2222,7 +2202,7 @@ nodejs code:
                                 "rnd_bin(10,20,2) " +
                                 "from long_sequence(50)");
 
-                final String expected = "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY]\n" +
+                final String expected = "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[DATE],rnd_bin[BINARY]\n" +
                         "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.4620000123977661,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\n" +
                         "XYSB,142,0.5793466326862211,1970-01-01 00:00:00.01,0.968999981880188,20088,1517490,2015-01-17 20:41:19.480685,100,true,PEHN,2015-06-20 01:10:58.599,00000000 79 5f 8b 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0 fb\n" +
                         "00000010 64\n" +
@@ -2387,20 +2367,30 @@ nodejs code:
                 properties.setProperty("sslmode", "disable");
                 properties.setProperty("binaryTransfer", "false");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
-                PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)");
-                // TIME is passed over protocol as UNSPECIFIED type
-                // it will rely on date parser to work out what it is
-                // for now date parser does not parse just time, it could i guess if required.
-                statement.setTime(1, new Time(100L));
+                try (final Connection ignored = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties)) {
+                    try (PreparedStatement statement = ignored.prepareStatement("select x, ? from long_sequence(5)")) {
+                        // TIME is passed over protocol as UNSPECIFIED type
+                        // it will rely on date parser to work out what it is
+                        // for now date parser does not parse just time, it could i guess if required.
+                        statement.setTime(1, new Time(100L));
 
-                try {
-                    statement.executeQuery();
-                    Assert.fail();
-                } catch (SQLException e) {
-                    assertTrue(Chars.startsWith(e.getMessage(), "ERROR: bad parameter value"));
+                        // todo: we need to pass unspecified parameter type to where clause, where it will be cast to something we support
+                        try (ResultSet rs = statement.executeQuery()) {
+                            StringSink sink = new StringSink();
+                            // dump metadata
+                            assertResultSet(
+                                    "x[BIGINT],$1[VARCHAR]\n" +
+                                    "1,01:00:00.1+01\n" +
+                                    "2,01:00:00.1+01\n" +
+                                    "3,01:00:00.1+01\n" +
+                                    "4,01:00:00.1+01\n" +
+                                    "5,01:00:00.1+01\n",
+                                    sink,
+                                    rs
+                            );
+                        }
+                    }
                 }
-                connection.close();
             } finally {
                 running.set(false);
                 haltLatch.await();
@@ -2412,7 +2402,7 @@ nodejs code:
     public void testUtf8QueryText() throws Exception {
         testQuery(
                 "rnd_double(4) расход, ",
-                "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[NUMERIC]\n"
+                "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[DATE],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[NUMERIC]\n"
         );
     }
 
@@ -2985,7 +2975,6 @@ nodejs code:
                         "BPTU,205,0.430214712409255,1970-01-01 00:00:00.49,0.9049999713897705,31266,8271557,2015-01-07 05:53:03.838005,14,true,VTJW,2015-10-30 05:33:15.819,00000000 24 0b c5 1a 5a 8d 85 50 39 42 9e 8a 86 17 89 6b,S,0x4e272e9dfde7bb12618178f7feba5021382a8c47a28fefa475d743cf0c2c4bcd\n";
 
                 StringSink sink = new StringSink();
-
                 // dump metadata
                 assertResultSet(expected, sink, rs);
                 connection.close();

@@ -41,8 +41,8 @@ public class TimestampFormatUtils {
     public static final TimestampFormat NANOS_UTC_FORMAT;
     public static final TimestampFormat USEC_UTC_FORMAT;
     public static final TimestampFormat PG_TIMESTAMP_FORMAT;
-    public static final TimestampFormat PG_DATE_MILLI_TIME_Z_FORMAT;
-    public static final TimestampFormat PG_DATE_TIME_Z_FORMAT;
+    public static final TimestampFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
+    public static final TimestampFormat PG_TIMESTAMP_TIME_Z_FORMAT;
 
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final TimestampLocale enLocale = TimestampLocaleFactory.INSTANCE.getLocale("en");
@@ -53,6 +53,21 @@ public class TimestampFormatUtils {
     static int prevCenturyLow;
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
+
+    static {
+        updateReferenceYear(Os.currentTimeMicros());
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+        UTC_FORMAT = compiler.compile(UTC_PATTERN);
+        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
+        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
+        SEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ssz");
+        GREEDY_MILLIS1_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.Sz");
+        GREEDY_MILLIS2_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSz");
+        PG_TIMESTAMP_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
+        PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ssz");
+        PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
+        NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
+    }
 
     public static void append0(CharSink sink, int val) {
         if (Math.abs(val) < 10) {
@@ -363,20 +378,5 @@ public class TimestampFormatUtils {
                     }
                 }
         }
-    }
-
-    static {
-        updateReferenceYear(Os.currentTimeMicros());
-        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        UTC_FORMAT = compiler.compile(UTC_PATTERN);
-        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
-        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
-        SEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ssz");
-        GREEDY_MILLIS1_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.Sz");
-        GREEDY_MILLIS2_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSz");
-        NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
-        PG_TIMESTAMP_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
-        PG_DATE_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ssz");
-        PG_DATE_MILLI_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
     }
 }
