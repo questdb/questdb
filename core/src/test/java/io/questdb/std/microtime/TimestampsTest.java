@@ -210,6 +210,20 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testFormatNanosTz() throws Exception {
+        final long micros = TimestampFormatUtils.parseDateTime("2008-05-10T12:31:02.008998991+01:00");
+        TimestampFormatUtils.USEC_UTC_FORMAT.format(micros, TimestampLocaleFactory.INSTANCE.getLocale("en"), null, sink);
+        TestUtils.assertEquals("2008-05-10T11:31:02.008998", sink);
+    }
+
+    @Test
+    public void testFormatNanosZ() throws Exception {
+        final long micros = TimestampFormatUtils.parseDateTime("2008-05-10T12:31:02.008998991Z");
+        TimestampFormatUtils.USEC_UTC_FORMAT.format(micros, TimestampLocaleFactory.INSTANCE.getLocale("en"), null, sink);
+        TestUtils.assertEquals("2008-05-10T12:31:02.008998", sink);
+    }
+
+    @Test
     public void testMonthsBetween() throws Exception {
         // a < b, same year
         Assert.assertEquals(2,

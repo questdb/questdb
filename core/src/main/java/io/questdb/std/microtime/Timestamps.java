@@ -71,17 +71,6 @@ final public class Timestamps {
     private static final char BEFORE_ZERO = '0' - 1;
     private static final char AFTER_NINE = '9' + 1;
 
-    static {
-        long minSum = 0;
-        long maxSum = 0;
-        for (int i = 0; i < 11; i++) {
-            minSum += DAYS_PER_MONTH[i] * DAY_MICROS;
-            MIN_MONTH_OF_YEAR_MICROS[i + 1] = minSum;
-            maxSum += getDaysPerMonth(i + 1, true) * DAY_MICROS;
-            MAX_MONTH_OF_YEAR_MICROS[i + 1] = maxSum;
-        }
-    }
-
     private Timestamps() {
     }
 
@@ -278,51 +267,6 @@ final public class Timestamps {
         return Math.abs(a - b) / DAY_MICROS;
     }
 
-    public static long getWeeksBetween(long a, long b) {
-        return Math.abs(a - b) / WEEK_MICROS;
-    }
-
-    public static long getMicrosBetween(long a, long b) {
-        return Math.abs(a - b);
-    }
-
-    public static long getMillisBetween(long a, long b) {
-        return Math.abs(a - b) / MILLI_MICROS;
-    }
-
-    public static long getSecondsBetween(long a, long b) {
-        return Math.abs(a - b) / SECOND_MICROS;
-    }
-
-    public static long getMinutesBetween(long a, long b) {
-        return Math.abs(a - b) / MINUTE_MICROS;
-    }
-
-    public static long getHoursBetween(long a, long b) {
-        return Math.abs(a - b) / HOUR_MICROS;
-    }
-
-    public static long getPeriodBetween(char type, long start, long end) {
-        switch (type) {
-            case 's':
-                return Timestamps.getSecondsBetween(start, end);
-            case 'm':
-                return Timestamps.getMinutesBetween(start, end);
-            case 'h':
-                return Timestamps.getHoursBetween(start, end);
-            case 'd':
-                return Timestamps.getDaysBetween(start, end);
-            case 'w':
-                return Timestamps.getWeeksBetween(start, end);
-            case 'M':
-                return Timestamps.getMonthsBetween(start, end);
-            case 'y':
-                return Timestamps.getYearsBetween(start, end);
-            default:
-                return Numbers.LONG_NaN;
-        }
-    }
-
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
@@ -334,7 +278,7 @@ final public class Timestamps {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
-    public static int getHourOfDay0(long micros) {
+    public static int getHourOfDay(long micros) {
         if (micros > -1) {
             return (int) ((micros / HOUR_MICROS) % DAY_HOURS);
         } else {
@@ -342,20 +286,8 @@ final public class Timestamps {
         }
     }
 
-    public static int getHourOfDay(long micros) {
-        if (micros > -1) {
-            return (int) ((micros / HOUR_MICROS) % DAY_HOURS);
-        } else {
-            return DAY_HOURS - 1 + (int) (((micros + 1) / HOUR_MICROS) % DAY_HOURS);
-        }
-
-        // branchless version of the above
-
-//        long signMask = micros & Numbers.SIGN_BIT_MASK;
-//        long increment = signMask >> 63;
-//        long mask = increment | signMask >> 62 | signMask >> 61 | signMask >> 60 | signMask >> 59;
-//        long res = ((DAY_HOURS - 1) & mask) + ((micros + increment) / HOUR_MICROS) % DAY_HOURS;
-//        return (int) res;
+    public static long getHoursBetween(long a, long b) {
+        return Math.abs(a - b) / HOUR_MICROS;
     }
 
     public static int getMicrosOfSecond(long micros) {
@@ -380,6 +312,10 @@ final public class Timestamps {
         } else {
             return HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % HOUR_MINUTES);
         }
+    }
+
+    public static long getMinutesBetween(long a, long b) {
+        return Math.abs(a - b) / MINUTE_MICROS;
     }
 
     /**
@@ -423,12 +359,33 @@ final public class Timestamps {
 
         long aResidual = a - yearMicros(aYear, aLeap) - monthOfYearMicros(aMonth, aLeap);
         long bResidual = b - yearMicros(bYear, bLeap) - monthOfYearMicros(bMonth, bLeap);
-        long months = 12 * (bYear - aYear) + (bMonth - aMonth);
+        long months = 12L * (bYear - aYear) + (bMonth - aMonth);
 
         if (aResidual > bResidual) {
             return months - 1;
         } else {
             return months;
+        }
+    }
+
+    public static long getPeriodBetween(char type, long start, long end) {
+        switch (type) {
+            case 's':
+                return Timestamps.getSecondsBetween(start, end);
+            case 'm':
+                return Timestamps.getMinutesBetween(start, end);
+            case 'h':
+                return Timestamps.getHoursBetween(start, end);
+            case 'd':
+                return Timestamps.getDaysBetween(start, end);
+            case 'w':
+                return Timestamps.getWeeksBetween(start, end);
+            case 'M':
+                return Timestamps.getMonthsBetween(start, end);
+            case 'y':
+                return Timestamps.getYearsBetween(start, end);
+            default:
+                return Numbers.LONG_NaN;
         }
     }
 
@@ -438,6 +395,14 @@ final public class Timestamps {
         } else {
             return MINUTE_SECONDS - 1 + (int) (((micros + 1) / SECOND_MICROS) % MINUTE_SECONDS);
         }
+    }
+
+    public static long getSecondsBetween(long a, long b) {
+        return Math.abs(a - b) / SECOND_MICROS;
+    }
+
+    public static long getWeeksBetween(long a, long b) {
+        return Math.abs(a - b) / WEEK_MICROS;
     }
 
     /**
@@ -695,5 +660,16 @@ final public class Timestamps {
     @FunctionalInterface
     public interface TimestampAddMethod {
         long calculate(long minTimestamp, int partitionIndex);
+    }
+
+    static {
+        long minSum = 0;
+        long maxSum = 0;
+        for (int i = 0; i < 11; i++) {
+            minSum += DAYS_PER_MONTH[i] * DAY_MICROS;
+            MIN_MONTH_OF_YEAR_MICROS[i + 1] = minSum;
+            maxSum += getDaysPerMonth(i + 1, true) * DAY_MICROS;
+            MAX_MONTH_OF_YEAR_MICROS[i + 1] = maxSum;
+        }
     }
 }

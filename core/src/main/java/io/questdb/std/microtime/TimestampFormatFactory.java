@@ -30,7 +30,7 @@ import io.questdb.std.ConcurrentHashMap;
 import java.util.function.Function;
 
 public class TimestampFormatFactory {
-    private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private final static ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
     private static final Function<CharSequence, TimestampFormat> mapper = TimestampFormatFactory::map;
     private final ConcurrentHashMap<TimestampFormat> cache = new ConcurrentHashMap<>();
 

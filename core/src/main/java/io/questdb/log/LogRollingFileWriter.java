@@ -39,7 +39,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     public static final long DEFAULT_SPIN_BEFORE_FLUSH = 100_000;
     private static final int DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
-    private final DateFormatCompiler compiler = new DateFormatCompiler();
+    private final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
     private final RingQueue<LogRecordSink> ring;
     private final SCSequence subSeq;
     private final int level;

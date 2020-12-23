@@ -29,7 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampFormatUtils;
 import io.questdb.std.microtime.Timestamps;
@@ -214,7 +214,7 @@ public final class TableUtils {
     }
 
     public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
-        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8;
+        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8L;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
@@ -632,7 +632,7 @@ public final class TableUtils {
     }
 
     static {
-        DateFormatCompiler compiler = new DateFormatCompiler();
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");
         fmtMonth = compiler.compile("yyyy-MM");
         fmtYear = compiler.compile("yyyy");

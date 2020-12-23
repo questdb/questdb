@@ -34,9 +34,9 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class DateFormatCompilerTest {
+public class TimestampFormatCompilerTest {
 
-    private static final DateFormatCompiler compiler = new DateFormatCompiler();
+    private static final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
     private static final TimestampLocale defaultLocale = TimestampLocaleFactory.INSTANCE.getLocale("en-GB");
     private final static StringSink sink = new StringSink();
     private final static TimestampFormat REFERENCE = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
@@ -612,13 +612,13 @@ public class DateFormatCompilerTest {
     @Test
     public void testOperationUniqueness() {
 
-        Assert.assertTrue(DateFormatCompiler.opList.size() > 0);
+        Assert.assertTrue(TimestampFormatCompiler.opList.size() > 0);
 
         IntHashSet codeSet = new IntHashSet();
         CharSequenceHashSet nameSet = new CharSequenceHashSet();
-        for (int i = 0, n = DateFormatCompiler.opList.size(); i < n; i++) {
-            String name = DateFormatCompiler.opList.getQuick(i);
-            int code = DateFormatCompiler.opMap.get(name);
+        for (int i = 0, n = TimestampFormatCompiler.opList.size(); i < n; i++) {
+            String name = TimestampFormatCompiler.opList.getQuick(i);
+            int code = TimestampFormatCompiler.opMap.get(name);
             Assert.assertTrue(codeSet.add(code));
             Assert.assertTrue(nameSet.add(name));
         }
@@ -730,6 +730,12 @@ public class DateFormatCompilerTest {
     public void testWeekdayShort() throws Exception {
         assertThat("E, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
         assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
+    }
+
+    @Test
+    public void testIgnoredNanos() throws Exception {
+        assertThat("E, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
+        assertThat("EE, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
     }
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {

@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.constants.NullStrConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.DateFormatCompiler;
+import io.questdb.std.microtime.TimestampFormatCompiler;
 import io.questdb.std.microtime.TimestampFormat;
 import io.questdb.std.microtime.TimestampLocale;
 import io.questdb.std.str.CharSink;
@@ -45,7 +45,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
-    private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private static final ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
     private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
 
     @Override
