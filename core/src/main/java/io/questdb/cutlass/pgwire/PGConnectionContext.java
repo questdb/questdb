@@ -501,6 +501,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     public void setTimestampBindVariable(int index, long address, int valueLen) throws SqlException {
+        // todo: lets investigate how this is used
+        //    - PG will send timestamp as STRING or LONG, we should perhaps double down on those two
+        //    - PG can send timestamp as its own, non-JDBC type, may be this is where it is used?
+
         dbcs.of(address, address + valueLen);
         try {
             bindVariableService.setTimestamp(index, PG_TIMESTAMP_TIME_Z_FORMAT.parse(dbcs, timestampLocale));

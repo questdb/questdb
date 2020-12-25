@@ -242,7 +242,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testDate() throws SqlException, NumericException {
-        bindVariableService.setDate("xyz", DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setDate("xyz", DateFormatUtils.parseUTCDate("2015-04-10T10:00:00.000Z"));
         Function func = expr("to_str(:xyz, 'yyyy-MM')")
                 .withFunction(new ToStrDateFunctionFactory())
                 .$();
@@ -250,7 +250,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        bindVariableService.setDate("xyz", DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setDate("xyz", DateFormatUtils.parseUTCDate("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 
@@ -270,7 +270,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     @Test
     public void testDateIndexed() throws SqlException, NumericException {
         bindVariableService.setDate(1, 0);
-        bindVariableService.setDate(0, DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setDate(0, DateFormatUtils.parseUTCDate("2015-04-10T10:00:00.000Z"));
         Function func = expr("to_str($1, 'yyyy-MM')")
                 .withFunction(new ToStrDateFunctionFactory())
                 .$();
@@ -278,7 +278,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        bindVariableService.setDate(0, DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setDate(0, DateFormatUtils.parseUTCDate("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 

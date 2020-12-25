@@ -76,7 +76,7 @@ public class FilesTest {
     @Test
     public void testLastModified() throws IOException, NumericException {
         try (Path path = new Path()) {
-            assertLastModified(path, DateFormatUtils.parseDateTime("2015-10-17T10:00:00.000Z"));
+            assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
             assertLastModified(path, 122222212222L);
         }
     }

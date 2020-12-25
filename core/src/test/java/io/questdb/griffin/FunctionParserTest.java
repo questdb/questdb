@@ -925,7 +925,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public MillisecondClock getMillisecondClock() {
                         return () -> {
                             try {
-                                return DateFormatUtils.parseDateTime("2018-03-04T21:40:00.000Z");
+                                return DateFormatUtils.parseUTCDate("2018-03-04T21:40:00.000Z");
                             } catch (NumericException e) {
                                 Assert.fail();
                             }

@@ -2789,21 +2789,45 @@ nodejs code:
                 }
 
                 try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp) timestamp(t)");
+                    //
+                    // test methods of inserting QuestDB's DATA and TIMESTAMP values
+                    //
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, d2 date, t2 timestamp, t3 timestamp) timestamp(t)");
                     statement.execute();
 
                     // exercise parameters on select statement
                     PreparedStatement select = connection.prepareStatement("x where a = ?");
                     execSelectWithParam(select, 9);
 
-                    final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?)");
-                    long t = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                    final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?, ?)");
+                    long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
                     for (int i = 0; i < 90; i++) {
                         insert.setInt(1, i);
-                        insert.setDate(2, new Date(t / 1000));
-                        insert.setTimestamp(3, new Timestamp(t));
+                        // DATE as jdbc's DATE
+                        // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
+                        // just date
+                        insert.setDate(2, new Date(micros / 1000));
+
+                        // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
+                        insert.setTimestamp(3, new Timestamp(micros));
+
+                        // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
+                        insert.setTimestamp(4, new Timestamp(micros / 1000L));
+
+                        // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
+                        insert.setDate(5, new Date(micros / 1000));
+
+                        // DATE as LONG millis
+                        insert.setLong(6, micros / 1000L);
+
+                        // TIMESTAMP as LONG micros
+                        insert.setLong(7, micros);
+
+                        // TIMESTAMP as PG specific TIMESTAMP type
+                        insert.setTimestamp(8, new PGTimestamp(micros));
+
                         insert.execute();
-                        t += 1000;
+                        micros += 1000;
                     }
 
                     try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {

@@ -706,10 +706,10 @@ public class DateFormatCompilerTest {
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {
         sink.clear();
-        get(pattern).format(DateFormatUtils.parseDateTime(date), defaultLocale, "GMT", sink);
+        get(pattern).format(DateFormatUtils.parseUTCDate(date), defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
         sink.clear();
-        compiler.compile(pattern, false).format(DateFormatUtils.parseDateTime(date), defaultLocale, "GMT", sink);
+        compiler.compile(pattern, false).format(DateFormatUtils.parseUTCDate(date), defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
     }
 
