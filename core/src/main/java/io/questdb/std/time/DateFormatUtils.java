@@ -41,6 +41,7 @@ public class DateFormatUtils {
     public static final DateFormat PG_DATE_MILLI_TIME_Z_FORMAT;
     private static final DateFormat PG_DATE_TIME_Z_FORMAT;
     private static final DateFormat HTTP_FORMAT;
+    private static final DateFormat[] FORMATS;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
@@ -111,22 +112,23 @@ public class DateFormatUtils {
         return referenceYear;
     }
 
-    public static long parseDate(CharSequence values) throws NumericException {
-        return parseDate(values, 0, values.length());
+    public static long parseDate(CharSequence value) throws NumericException {
+        return parseDate(value, 0, value.length());
     }
 
-    public static long parseDate(CharSequence values, int lo, int lim) throws NumericException {
-        final int len = lim - lo;
-        if (len != 22) {
-            return UTC_FORMAT.parse(values, lo, lim, enLocale);
+    public static long parseDate(CharSequence value, int lo, int hi) throws NumericException {
+        for (int i = 0, n = FORMATS.length; i < n; i++) {
+            try {
+                return FORMATS[i].parse(value, lo, hi, enLocale);
+            } catch (NumericException ignore) {
+            }
         }
-        // 2017-08-04 08:09:26+00
-        return PG_DATE_TIME_Z_FORMAT.parse(values, lo, lim, enLocale);
+        throw NumericException.INSTANCE;
     }
 
     // YYYY-MM-DDThh:mm:ss.mmm
-    public static long parseDateTime(CharSequence seq) throws NumericException {
-        return UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
+    public static long parseUTCDate(CharSequence value) throws NumericException {
+        return UTC_FORMAT.parse(value, 0, value.length(), enLocale);
     }
 
     public static void updateReferenceYear(long millis) {
@@ -326,5 +328,11 @@ public class DateFormatUtils {
         PG_DATE_Z_FORMAT = compiler.compile("yyyy-MM-dd z");
         PG_DATE_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ssz");
         PG_DATE_MILLI_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
+        FORMATS = new DateFormat[]{
+                PG_DATE_TIME_Z_FORMAT,
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                UTC_FORMAT
+        };
     }
 }
