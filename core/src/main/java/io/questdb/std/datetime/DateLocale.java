@@ -53,8 +53,69 @@ public class DateLocale {
         indexZones(symbols.getZoneStrings(), timeZoneRuleFactory, cache);
     }
 
+    @SuppressWarnings("unchecked")
+    public static void sort(IntObjHashMap<ObjList<CharSequence>> map) {
+        Object[] values = map.getValues();
+        for (int i = 0, n = values.length; i < n; i++) {
+            if (values[i] != null) {
+                ObjList<CharSequence> l = (ObjList<CharSequence>) values[i];
+                if (l.size() > 1) {
+                    l.sort(GenericLexer.COMPARATOR);
+                }
+            }
+        }
+    }
+
     public String getAMPM(int index) {
         return ampmArray[index];
+    }
+
+    public String getEra(int index) {
+        return eraArray[index];
+    }
+
+    public String getMonth(int index) {
+        return monthArray[index];
+    }
+
+    public TimeZoneRules getRules(CharSequence timeZoneName, int resolution) throws NumericException {
+        return getZoneRules(Numbers.decodeLowInt(matchZone(timeZoneName, 0, timeZoneName.length())), resolution);
+    }
+
+    public String getShortMonth(int index) {
+        return shortMonthArray[index];
+    }
+
+    public String getShortWeekday(int index) {
+        return shortWeekdayArray[index];
+    }
+
+    public String getWeekday(int index) {
+        return weekdayArray[index];
+    }
+
+    public TimeZoneRules getZoneRules(int index, int resolution) {
+        return factory.getTimeZoneRulesQuick(index, resolution);
+    }
+
+    public long matchAMPM(CharSequence content, int lo, int hi) throws NumericException {
+        return findToken(content, lo, hi, amspms);
+    }
+
+    public long matchEra(CharSequence content, int lo, int hi) throws NumericException {
+        return findToken(content, lo, hi, eras);
+    }
+
+    public long matchMonth(CharSequence content, int lo, int hi) throws NumericException {
+        return findToken(content, lo, hi, months);
+    }
+
+    public long matchWeekday(CharSequence content, int lo, int hi) throws NumericException {
+        return findToken(content, lo, hi, weekdays);
+    }
+
+    public long matchZone(CharSequence content, int lo, int hi) throws NumericException {
+        return findToken(content, lo, hi, zones);
     }
 
     private static void defineToken(String token, int pos, IntObjHashMap<ObjList<CharSequence>> map) {
@@ -72,7 +133,6 @@ public class DateLocale {
             l = map.valueAtQuick(index);
         }
         l.add(((char) pos) + token.toUpperCase());
-        l.sort(GenericLexer.COMPARATOR);
     }
 
     private static long findToken(CharSequence content, int lo, int hi, IntObjHashMap<ObjList<CharSequence>> map) throws NumericException {
@@ -109,58 +169,11 @@ public class DateLocale {
         throw NumericException.INSTANCE;
     }
 
-    public String getEra(int index) {
-        return eraArray[index];
-    }
-
-    public String getMonth(int index) {
-        return monthArray[index];
-    }
-
-    public String getShortMonth(int index) {
-        return shortMonthArray[index];
-    }
-
-    public TimeZoneRules getRules(CharSequence timeZoneName, int resolution) throws NumericException {
-        return getZoneRules(Numbers.decodeLowInt(matchZone(timeZoneName, 0, timeZoneName.length())), resolution);
-    }
-
-    public String getShortWeekday(int index) {
-        return shortWeekdayArray[index];
-    }
-
-    public String getWeekday(int index) {
-        return weekdayArray[index];
-    }
-
     private static void index(String[] tokens, IntObjHashMap<ObjList<CharSequence>> map) {
         for (int i = 0, n = tokens.length; i < n; i++) {
             defineToken(tokens[i], i, map);
         }
-    }
-
-    public TimeZoneRules getZoneRules(int index, int resolution) {
-        return factory.getTimeZoneRulesQuick(index, resolution);
-    }
-
-    public long matchAMPM(CharSequence content, int lo, int hi) throws NumericException {
-        return findToken(content, lo, hi, amspms);
-    }
-
-    public long matchEra(CharSequence content, int lo, int hi) throws NumericException {
-        return findToken(content, lo, hi, eras);
-    }
-
-    public long matchMonth(CharSequence content, int lo, int hi) throws NumericException {
-        return findToken(content, lo, hi, months);
-    }
-
-    public long matchWeekday(CharSequence content, int lo, int hi) throws NumericException {
-        return findToken(content, lo, hi, weekdays);
-    }
-
-    public long matchZone(CharSequence content, int lo, int hi) throws NumericException {
-        return findToken(content, lo, hi, zones);
+        sort(map);
     }
 
     private void indexZones(String[][] zones, TimeZoneRuleFactory timeZoneRuleFactory, CharSequenceHashSet cache) {
@@ -193,5 +206,6 @@ public class DateLocale {
                 }
             }
         }
+        sort(this.zones);
     }
 }
