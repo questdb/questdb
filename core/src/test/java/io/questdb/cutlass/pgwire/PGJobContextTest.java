@@ -32,7 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;

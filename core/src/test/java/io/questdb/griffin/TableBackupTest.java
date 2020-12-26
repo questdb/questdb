@@ -33,8 +33,8 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
-import io.questdb.std.microtime.TimestampFormatCompiler;
-import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -115,7 +115,7 @@ public class TableBackupTest {
             }
 
             @Override
-            public TimestampFormat getBackupDirTimestampFormat() {
+            public DateFormat getBackupDirTimestampFormat() {
                 return new TimestampFormatCompiler().compile("ddMMMyyyy");
             }
         };
@@ -522,9 +522,9 @@ public class TableBackupTest {
     }
 
     private void setFinalBackupPath(int n) {
-        TimestampFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
+        DateFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
         finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR);
-        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultTimestampLocale(), null, finalBackupPath);
+        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultDateLocale(), null, finalBackupPath);
         if (n > 0) {
             finalBackupPath.put('.');
             finalBackupPath.put(n);

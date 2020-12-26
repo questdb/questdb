@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import org.junit.Test;
 
 public class ToCharTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTest {

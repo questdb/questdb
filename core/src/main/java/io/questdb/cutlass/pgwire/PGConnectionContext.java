@@ -38,17 +38,16 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
-import io.questdb.std.time.DateLocale;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.std.microtime.TimestampFormatUtils.PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
-import static io.questdb.std.microtime.TimestampFormatUtils.PG_TIMESTAMP_TIME_Z_FORMAT;
-import static io.questdb.std.time.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
-import static io.questdb.std.time.DateFormatUtils.PG_DATE_Z_FORMAT;
+import static io.questdb.std.datetime.microtime.TimestampFormatUtils.PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
+import static io.questdb.std.datetime.microtime.TimestampFormatUtils.PG_TIMESTAMP_TIME_Z_FORMAT;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class PGConnectionContext implements IOContext, Mutable {
     public static final String TAG_SET = "SET";
@@ -120,8 +119,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     /// todo: config
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
     private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, 8);
-    private final TimestampLocale timestampLocale;
-    private final DateLocale dateLocale;
+    private final DateLocale locale;
     private final BindVariableSetter timestampSetter = this::setTimestampBindVariable;
     private final BindVariableSetter dateSetter = this::setDateBindVariable;
     private final ObjHashSet<InsertMethod> pendingInsertMethods = new ObjHashSet<>();
@@ -191,8 +189,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
-        this.timestampLocale = configuration.getDefaultTimestampLocale();
-        this.dateLocale = configuration.getDefaultDateLocale();
+        this.locale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
     }
 
@@ -424,7 +421,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
         dbcs.of(address, address + valueLen);
         try {
-            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, dateLocale));
+            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, locale));
         } catch (NumericException ex) {
             throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
         }
@@ -507,10 +504,10 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         dbcs.of(address, address + valueLen);
         try {
-            bindVariableService.setTimestamp(index, PG_TIMESTAMP_TIME_Z_FORMAT.parse(dbcs, timestampLocale));
+            bindVariableService.setTimestamp(index, PG_TIMESTAMP_TIME_Z_FORMAT.parse(dbcs, locale));
         } catch (NumericException exc) {
             try {
-                bindVariableService.setTimestamp(index, PG_TIMESTAMP_MILLI_TIME_Z_FORMAT.parse(dbcs, timestampLocale));
+                bindVariableService.setTimestamp(index, PG_TIMESTAMP_MILLI_TIME_Z_FORMAT.parse(dbcs, locale));
             } catch (NumericException excc) {
                 throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
             }

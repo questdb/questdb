@@ -27,7 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.io.Closeable;
 

@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 public class CastStrToTimestampFunctionFactory implements FunctionFactory {
     @Override

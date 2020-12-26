@@ -36,9 +36,9 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -93,7 +93,7 @@ public class TableWriter implements Closeable {
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
-    private final TimestampFormat partitionDirFmt;
+    private final DateFormat partitionDirFmt;
     private final AppendMemory ddlMem;
     private final int mkDirMode;
     private final int fileOperationRetryCount;
@@ -305,7 +305,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public static TimestampFormat selectPartitionDirFmt(int partitionBy) {
+    public static DateFormat selectPartitionDirFmt(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.DAY:
                 return fmtDay;

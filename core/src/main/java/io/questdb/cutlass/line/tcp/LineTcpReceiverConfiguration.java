@@ -29,8 +29,8 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
     boolean isEnabled();

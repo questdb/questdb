@@ -31,7 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import io.questdb.std.time.DateFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;

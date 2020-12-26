@@ -33,14 +33,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.microtime.TimestampLocaleFactory;
-import io.questdb.std.time.DateFormat;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.DateLocaleFactory;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -62,37 +59,31 @@ public class InputFormatConfiguration {
     private final ObjList<DateFormat> dateFormats = new ObjList<>();
     private final ObjList<DateLocale> dateLocales = new ObjList<>();
     private final IntList dateUtf8Flags = new IntList();
-    private final ObjList<TimestampFormat> timestampFormats = new ObjList<>();
-    private final ObjList<TimestampLocale> timestampLocales = new ObjList<>();
+    private final ObjList<DateFormat> timestampFormats = new ObjList<>();
+    private final ObjList<DateLocale> timestampLocales = new ObjList<>();
     private final IntList timestampUtf8Flags = new IntList();
     private final DateFormatFactory dateFormatFactory;
     private final DateLocaleFactory dateLocaleFactory;
     private final TimestampFormatFactory timestampFormatFactory;
-    private final TimestampLocaleFactory timestampLocaleFactory;
     private int jsonState = STATE_EXPECT_TOP; // expect start of object
     private DateFormat jsonDateFormat;
     private DateLocale jsonDateLocale;
     private boolean jsonDateUtf8;
-    private TimestampFormat jsonTimestampFormat;
-    private TimestampLocale jsonTimestampLocale;
+    private DateFormat jsonTimestampFormat;
+    private DateLocale jsonTimestampLocale;
     private boolean jsonTimestampUtf8;
     private final DateLocale dateLocale;
-    private final TimestampLocale timestampLocale;
 
     public InputFormatConfiguration(
             DateFormatFactory dateFormatFactory,
             DateLocaleFactory dateLocaleFactory,
             TimestampFormatFactory timestampFormatFactory,
-            TimestampLocaleFactory timestampLocaleFactory,
-            DateLocale dateLocale,
-            TimestampLocale timestampLocale
+            DateLocale dateLocale
     ) {
         this.dateFormatFactory = dateFormatFactory;
         this.dateLocaleFactory = dateLocaleFactory;
         this.timestampFormatFactory = timestampFormatFactory;
-        this.timestampLocaleFactory = timestampLocaleFactory;
         this.dateLocale = dateLocale;
-        this.timestampLocale = timestampLocale;
     }
 
     public void clear() {
@@ -135,15 +126,11 @@ public class InputFormatConfiguration {
         return timestampFormatFactory;
     }
 
-    public ObjList<TimestampFormat> getTimestampFormats() {
+    public ObjList<DateFormat> getTimestampFormats() {
         return timestampFormats;
     }
 
-    public TimestampLocaleFactory getTimestampLocaleFactory() {
-        return timestampLocaleFactory;
-    }
-
-    public ObjList<TimestampLocale> getTimestampLocales() {
+    public ObjList<DateLocale> getTimestampLocales() {
         return timestampLocales;
     }
 
@@ -229,7 +216,7 @@ public class InputFormatConfiguration {
                         }
 
                         timestampFormats.add(jsonTimestampFormat);
-                        timestampLocales.add(jsonTimestampLocale == null ? timestampLocale : jsonTimestampLocale);
+                        timestampLocales.add(jsonTimestampLocale == null ? dateLocale : jsonTimestampLocale);
                         timestampUtf8Flags.add(jsonTimestampUtf8 ? 1 : 0);
                         break;
                     default:
@@ -292,7 +279,7 @@ public class InputFormatConfiguration {
                         break;
                     case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:
                         assert jsonTimestampLocale == null;
-                        jsonTimestampLocale = timestampLocaleFactory.getLocale(tag);
+                        jsonTimestampLocale = dateLocaleFactory.getLocale(tag);
                         if (jsonTimestampLocale == null) {
                             throw JsonException.$(position, "invalid [locale=").put(tag).put(']');
                         }

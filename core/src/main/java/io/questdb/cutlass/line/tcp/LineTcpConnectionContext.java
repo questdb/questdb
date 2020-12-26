@@ -32,8 +32,8 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.time.MillisecondClock;
 
 class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);

@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.time.DateFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.Nullable;
 
 public class BindVariableServiceImpl implements BindVariableService {

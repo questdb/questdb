@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;

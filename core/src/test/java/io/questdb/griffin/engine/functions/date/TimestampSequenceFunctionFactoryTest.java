@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.tools.StationaryMicrosClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;

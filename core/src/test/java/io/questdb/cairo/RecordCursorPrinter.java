@@ -29,9 +29,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.time.DateFormatUtils;
 
 public class RecordCursorPrinter {
     private final CharSink sink;

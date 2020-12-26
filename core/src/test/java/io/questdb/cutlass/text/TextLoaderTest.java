@@ -25,18 +25,18 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
-import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.DateLocale;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -620,7 +620,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testDateFormatNoLocale() throws Exception {
-        DateLocale locale = io.questdb.std.time.DateFormatUtils.enLocale;
+        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.enLocale;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +

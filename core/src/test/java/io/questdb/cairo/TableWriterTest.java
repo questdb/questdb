@@ -29,7 +29,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -3967,8 +3971,8 @@ public class TableWriterTest extends AbstractCairoTest {
     void verifyTimestampPartitions(ContiguousVirtualMemory vmem) {
         int i;
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        TimestampFormat fmt = compiler.compile("yyyy-MM-dd");
-        TimestampLocale enGb = TimestampLocaleFactory.INSTANCE.getLocale("en-gb");
+        DateFormat fmt = compiler.compile("yyyy-MM-dd");
+        DateLocale enGb = DateLocaleFactory.INSTANCE.getLocale("en-gb");
 
         try (Path vp = new Path()) {
             for (i = 0; i < 10000; i++) {

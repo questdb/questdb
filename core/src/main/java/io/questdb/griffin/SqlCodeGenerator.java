@@ -47,7 +47,7 @@ import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

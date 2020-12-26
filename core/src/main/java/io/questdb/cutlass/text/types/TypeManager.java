@@ -31,11 +31,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.time.DateFormat;
-import io.questdb.std.time.DateLocale;
 
 public class TypeManager implements Mutable {
     private final ObjList<TypeAdapter> probes = new ObjList<>();
@@ -70,8 +68,8 @@ public class TypeManager implements Mutable {
             }
         }
 
-        final ObjList<TimestampFormat> timestampFormats = inputFormatConfiguration.getTimestampFormats();
-        final ObjList<TimestampLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
+        final ObjList<DateFormat> timestampFormats = inputFormatConfiguration.getTimestampFormats();
+        final ObjList<DateLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
         final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
             if (timestampUtf8Flags.getQuick(i) == 1) {
@@ -135,7 +133,7 @@ public class TypeManager implements Mutable {
         return dateAdapterPool.next();
     }
 
-    public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, TimestampFormat format, TimestampLocale locale) {
+    public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, DateFormat format, DateLocale locale) {
         if (decodeUtf8) {
             TimestampUtf8Adapter adapter = timestampUtf8AdapterPool.next();
             adapter.of(format, locale);
