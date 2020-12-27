@@ -35,7 +35,6 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
@@ -128,6 +127,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final TypeManager typeManager;
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache = new AssociativeCache<>(8, 8);
     private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
+    private final IntList bindVariableTypes = new IntList();
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap = new CharSequenceObjHashMap<>();
     private int parsePhaseBindVariableCount;
     private int sendCurrentCursorTail = TAIL_NONE;
@@ -193,14 +193,17 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
     }
 
-    public static int getInt(long address) {
-        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
-        return (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
+    public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
+        // todo: make sure we have enough data to read
+        if (address + Integer.BYTES <= msgLimit) {
+            return getIntUnsafe(address);
+        }
+        LOG.error().$(errorMessage).$();
+        throw BadProtocolException.INSTANCE;
     }
 
     public static long getLong(long address) {
+        // todo: make sure we have enough data to read
         long b = Unsafe.getUnsafe().getByte(address) & 0xff;
         b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
         b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
@@ -211,13 +214,31 @@ public class PGConnectionContext implements IOContext, Mutable {
         return (b << 8) | Unsafe.getUnsafe().getByte(address + 7) & 0xff;
     }
 
-    public static short getShort(long address) {
-        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
-        return (short) ((b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff);
+    public static short getShort(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
+        if (address + Short.BYTES <= msgLimit) {
+            return getShortUnsafe(address);
+        }
+        LOG.error().$(errorMessage).$();
+        throw BadProtocolException.INSTANCE;
     }
 
-    public static long getStringLength(long x, long limit) {
-        return Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
+    public static long getStringLength(
+            long x,
+            long limit,
+            CharSequence errorMessage
+    ) throws BadProtocolException {
+        long len = Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
+        if (len > -1) {
+            return len;
+        }
+        // we did not find 0 within message limit
+        LOG.error().$(errorMessage).$();
+        throw BadProtocolException.INSTANCE;
+    }
+
+    @Override
+    public boolean invalid() {
+        return fd == -1;
     }
 
     public static long getStringLengthTedious(long x, long limit) {
@@ -286,16 +307,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         return fd;
     }
 
+    public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(Float.BYTES, valueLen);
+        bindVariableService.setFloat(index, Float.intBitsToFloat(getIntUnsafe(address)));
+    }
+
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
     // the rationale is to be able to return "selectAndTypes" instance to thread-local
     // cache, which is "selectAndTypesCache". We typically do this after query results are
     // served to client or query errored out due to network issues
-
-    @Override
-    public boolean invalid() {
-        return fd == -1;
-    }
 
     @Override
     public IODispatcher<PGConnectionContext> getDispatcher() {
@@ -441,9 +462,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Float.BYTES, valueLen);
-        bindVariableService.setFloat(index, Float.intBitsToFloat(getInt(address)));
+    public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(Integer.BYTES, valueLen);
+        bindVariableService.setInt(index, getIntUnsafe(address));
     }
 
     public void setFloatTextBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -454,9 +475,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Integer.BYTES, valueLen);
-        bindVariableService.setInt(index, getInt(address));
+    public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(Short.BYTES, valueLen);
+        bindVariableService.setShort(index, getShortUnsafe(address));
     }
 
     public void setIntTextBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -482,9 +503,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        ensureValueLength(Short.BYTES, valueLen);
-        bindVariableService.setShort(index, getShort(address));
+    private static int getIntUnsafe(long address) {
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
+        return (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
     }
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -514,19 +537,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
+    private static short getShortUnsafe(long address) {
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        return (short) ((b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff);
+    }
+
     private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
         if (required == valueLen) {
             return;
         }
         LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
-        throw BadProtocolException.INSTANCE;
-    }
-
-    private static void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
-        if (lo + required <= msgLimit) {
-            return;
-        }
-        LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
         throw BadProtocolException.INSTANCE;
     }
 
@@ -735,11 +755,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void assertMessageLimit(long msgLimit, long lo1, int j) throws BadProtocolException {
-        if (lo1 + Integer.BYTES > msgLimit) {
-            LOG.error().$("could not read parameter value length [index=").$(j).$(']').$();
-            throw BadProtocolException.INSTANCE;
+    private void assertTrue(boolean check, String message) throws BadProtocolException {
+        if (check) {
+            return;
         }
+        // we did not find 0 within message limit
+        LOG.error().$(message).$();
+        throw BadProtocolException.INSTANCE;
     }
 
     private void bindParameterFormats(long lo,
@@ -753,46 +775,38 @@ public class PGConnectionContext implements IOContext, Mutable {
         LOG.debug().$("processing bind formats [count=").$(parameterFormatCount).$(']').$();
 
         for (int i = 0; i < parameterFormatCount; i++) {
-            final short code = getShort(lo + i * Short.BYTES);
+            final short code = getShortUnsafe(lo + i * Short.BYTES);
             parameterFormats.add(code);
         }
     }
 
-    private void bindValuesAsStrings(long lo, long msgLimit, short parameterValueCount) throws BadProtocolException, SqlException {
-        long lo1 = lo + Short.BYTES;
+    private long bindValuesAsStrings(long lo, long msgLimit, short parameterValueCount) throws BadProtocolException, SqlException {
         for (int j = 0; j < parameterValueCount; j++) {
-            assertMessageLimit(msgLimit, lo1, j);
+            final int valueLen = getInt(lo, msgLimit, "malformed bind variable");
+            lo += Integer.BYTES;
 
-            int valueLen = getInt(lo1);
-            lo1 += Integer.BYTES;
-            if (valueLen == -1) {
-                // this is null we have already defaulted parameters to
-                continue;
-            }
-
-            if (lo1 + valueLen > msgLimit) {
+            if (valueLen != -1 && lo + valueLen <= msgLimit) {
+                setStrBindVariable(j, lo, valueLen);
+                lo += valueLen;
+            } else if (valueLen != -1) {
                 LOG.error()
                         .$("value length is outside of buffer [parameterIndex=").$(j)
                         .$(", valueLen=").$(valueLen)
-                        .$(", messageRemaining=").$(msgLimit - lo1)
+                        .$(", messageRemaining=").$(msgLimit - lo)
                         .$(']').$();
                 throw BadProtocolException.INSTANCE;
             }
-            ensureData(lo1, valueLen, msgLimit, j);
-            setStrBindVariable(j, lo1, valueLen);
-            lo1 += valueLen;
         }
+        return lo;
     }
 
-    private void bindValuesUsingSetters(
+    private long bindValuesUsingSetters(
             long lo,
             long msgLimit,
             short parameterValueCount
     ) throws BadProtocolException, SqlException {
         for (int j = 0; j < parameterValueCount; j++) {
-            assertMessageLimit(msgLimit, lo, j);
-
-            int valueLen = getInt(lo);
+            final int valueLen = getInt(lo, msgLimit, "malformed bind variable");
             lo += Integer.BYTES;
             if (valueLen == -1) {
                 // this is null we have already defaulted parameters to
@@ -807,7 +821,6 @@ public class PGConnectionContext implements IOContext, Mutable {
                         .$(']').$();
                 throw BadProtocolException.INSTANCE;
             }
-            ensureData(lo, valueLen, msgLimit, j);
             // apply parameter format
             if (parameterFormats.getQuick(j) == 0) {
                 bindVariableSetters.setQuick(j * 2, bindVariableSetters.getQuick(j * 2 + 1));
@@ -816,14 +829,8 @@ public class PGConnectionContext implements IOContext, Mutable {
             bindVariableSetters.getQuick(j * 2).set(j, lo, valueLen);
             lo += valueLen;
         }
-    }
 
-    private void checkNotTrue(boolean check, String message) throws BadProtocolException {
-        if (check) {
-            // we did not find 0 within message limit
-            LOG.error().$(message).$();
-            throw BadProtocolException.INSTANCE;
-        }
+        return lo;
     }
 
     void clearRecvBuffer() {
@@ -958,7 +965,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             types.ensureCapacity(parameterCount);
             for (int idx = 0; idx < parameterCount; idx++) {
                 // todo: we can key PG types in low-endian to save us twiddling bits
-                types.setQuick(idx, getInt(lo + Short.BYTES + idx * 4L));
+                types.setQuick(idx, getIntUnsafe(lo + Short.BYTES + idx * 4L));
             }
         }
     }
@@ -1130,7 +1137,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         final byte type = Unsafe.getUnsafe().getByte(address);
         LOG.debug().$("received msg [type=").$((char) type).$(']').$();
-        final int msgLen = getInt(address + 1);
+        final int msgLen = getIntUnsafe(address + 1);
         if (msgLen < 1) {
             LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(']').$();
             throw BadProtocolException.INSTANCE;
@@ -1288,7 +1295,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         rowCount = 0;
         queryTag = TAG_OK;
         queryText = null;
-        bindVariableSetters.clear();
+//        bindVariableSetters.clear();
+//        bindVariableTypes.clear();
         wrapper = null;
     }
 
@@ -1380,31 +1388,26 @@ public class PGConnectionContext implements IOContext, Mutable {
         short parameterValueCount;
 
         // portal name
-        hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad portal name length [msgType='B']");
+        hi = getStringLength(lo, msgLimit, "bad portal name length [msgType='B']");
 
         // named statement
         lo = hi + 1;
-        hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad prepared statement name length [msgType='B']");
+        hi = getStringLength(lo, msgLimit, "bad prepared statement name length [msgType='B']");
 
         configureContextFromNamedStatement(lo, hi, compiler);
 
         //parameter format count
         lo = hi + 1;
-        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter format code count");
-
-        parameterFormats.clear();
-        parameterFormatCount = getShort(lo);
+        parameterFormatCount = getShort(lo, msgLimit, "could not read parameter format code count");
         lo += Short.BYTES;
         if (parameterFormatCount > 0) {
+            parameterFormats.clear();
             bindParameterFormats(lo, msgLimit, parameterFormatCount);
         }
 
         //parameter value count
         lo += parameterFormatCount * Short.BYTES;
-        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter value count");
-        parameterValueCount = getShort(lo);
+        parameterValueCount = getShort(lo, msgLimit, "could not read parameter value count");
 
         LOG.debug().$("binding [parameterValueCount=").$(parameterValueCount).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
 
@@ -1413,11 +1416,18 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         if (parameterValueCount > 0) {
             if (this.parsePhaseBindVariableCount == parameterValueCount) {
-                bindValuesUsingSetters(lo + Short.BYTES, msgLimit, parameterValueCount);
+                lo = bindValuesUsingSetters(lo + Short.BYTES, msgLimit, parameterValueCount);
             } else {
-                bindValuesAsStrings(lo, msgLimit, parameterValueCount);
+                lo = bindValuesAsStrings(lo + Short.BYTES, msgLimit, parameterValueCount);
             }
         }
+
+
+        // todo: read requested formats
+        // int count = getShort(lo, msglimit, "ooopsie"):
+        // check send formats
+        System.out.println(msgLimit - lo);
+
         prepareBindComplete();
     }
 
@@ -1425,8 +1435,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         final byte type = Unsafe.getUnsafe().getByte(lo);
         if (type == 'S') {
             lo = lo + 1;
-            long hi = getStringLength(lo, msgLimit);
-            checkNotTrue(hi == -1, "bad prepared statement name length");
+            final long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
             CharSequence statementName = getStatementName(lo, hi);
             if (statementName != null) {
                 final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
@@ -1450,8 +1459,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
             throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
         lo = lo + 1;
-        long hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad portal name length [msgType='D']");
+        final long hi = getStringLength(lo, msgLimit, "bad portal name length [msgType='D']");
         configureContextFromNamedStatement(lo, hi, compiler);
         prepareDescribeResponse();
     }
@@ -1501,7 +1509,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         // there is data for length
         // this is quite specific to message type :(
-        msgLen = getInt(address); // postgresql includes length bytes in length of message
+        msgLen = getIntUnsafe(address); // postgresql includes length bytes in length of message
 
         // do we have the rest of the message?
         if (msgLen > len) {
@@ -1514,7 +1522,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         // consume message
         // process protocol
-        int protocol = getInt(address + Integer.BYTES);
+        int protocol = getIntUnsafe(address + Integer.BYTES);
         switch (protocol) {
             case INIT_SSL_REQUEST:
                 // SSLRequest
@@ -1537,42 +1545,24 @@ public class PGConnectionContext implements IOContext, Mutable {
 
                 while (lo < msgLimit - 1) {
 
-                    final LogRecord log = LOG.info();
-                    log.$("property [");
-                    try {
-                        long hi = getStringLength(lo, msgLimit);
-                        if (hi == -1) {
-                            // we did not find 0 within message limit
-                            log.$("malformed property name");
-                            throw BadProtocolException.INSTANCE;
-                        }
+                    final long nameLo = lo;
+                    final long nameHi = getStringLength(lo, msgLimit, "malformed property name");
+                    lo = nameHi + 1;
+                    final long valueLo = lo;
+                    final long valueHi = getStringLength(valueLo, msgLimit, "malformed property value");
 
-                        log.$("name=").$(dbcs.of(lo, hi));
-
-                        final boolean username = Chars.equals("user", dbcs);
-
-                        // name is ready
-                        lo = hi + 1;
-                        hi = getStringLength(lo, msgLimit);
-                        if (hi == -1) {
-                            // we did not find 0 within message limit
-                            log.$(", malformed property value");
-                            throw BadProtocolException.INSTANCE;
-                        }
-
-                        log.$(", value=").$(dbcs.of(lo, hi));
-                        lo = hi + 1;
-                        if (username) {
-                            CharacterStoreEntry e = connectionCharacterStore.newEntry();
-                            e.put(dbcs);
-                            this.username = e.toImmutable();
-                        }
-                    } finally {
-                        log.$(']').$(); // release under all circumstances
+                    // store user
+                    dbcs.of(nameLo, nameHi);
+                    if (Chars.equals(dbcs, "user")) {
+                        CharacterStoreEntry e = connectionCharacterStore.newEntry();
+                        e.put(dbcs.of(valueLo, valueHi));
+                        this.username = e.toImmutable();
                     }
+
+                    LOG.info().$("propertry [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
                 }
 
-                checkNotTrue(this.username == null, "user is not specified");
+                assertTrue(this.username != null, "user is not specified");
                 prepareLoginResponse();
                 sendAndReset();
                 break;
@@ -1592,8 +1582,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         // 'Parse'
         //message length
-        long hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad prepared statement name length");
+        long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
 
         // When we encounter statement name in the "parse" message
         // we need to ensure the wrapper is properly setup to deal with
@@ -1605,8 +1594,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         //query text
         lo = hi + 1;
-        hi = getStringLength(lo, msgLimit);
-        checkNotTrue(hi == -1, "bad query text length");
+        hi = getStringLength(lo, msgLimit, "bad query text length");
 
         // clear the context as parse usually is the first message
         prepareForNewQuery();
@@ -1615,9 +1603,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         //parameter type count
         lo = hi + 1;
-        checkNotTrue(lo + Short.BYTES > msgLimit, "could not read parameter type count");
-
-        this.parsePhaseBindVariableCount = getShort(lo);
+        this.parsePhaseBindVariableCount = getShort(lo, msgLimit, "could not read parameter type count");
 
         if (statementName != null) {
             configurePreparedStatement(address, lo, msgLimit, statementName, this.parsePhaseBindVariableCount);
@@ -1672,7 +1658,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
-        checkNotTrue(remaining < 1, "undersized receive buffer or someone is abusing protocol");
+        assertTrue(remaining > 0, "undersized receive buffer or someone is abusing protocol");
 
         int n = doReceive(remaining);
         if (n < 0) {
@@ -1838,7 +1824,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void setupBindVariables(long lo) throws SqlException {
         for (int i = 0; i < this.parsePhaseBindVariableCount; i++) {
-            setupBindVariable(i, getInt(lo + i * 4L));
+            setupBindVariable(i, getIntUnsafe(lo + i * 4L));
         }
     }
 
