@@ -618,6 +618,12 @@ final public class Timestamps {
         return sink.toString();
     }
 
+    public static String toUsecString(long micros) {
+        CharSink sink = Misc.getThreadLocalBuilder();
+        TimestampFormatUtils.appendDateTimeUSec(sink, micros);
+        return sink.toString();
+    }
+
     /**
      * Calculated start of year in millis. For example of year 2008 this is
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.

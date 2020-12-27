@@ -209,17 +209,21 @@ public class TimestampFormatCompiler {
         }
 
         while (this.lexer.hasNext()) {
-            CharSequence cs = lexer.next();
-            int op = opMap.get(cs);
-            if (op == -1) {
-                makeLastOpGreedy(ops);
-                delimiters.add(Chars.toString(cs));
-                ops.add(-(delimiters.size()));
-            } else {
-                if (op == OP_AM_PM) {
+            final CharSequence cs = lexer.next();
+            final int op = opMap.get(cs);
+            switch (op) {
+                case -1:
                     makeLastOpGreedy(ops);
-                }
-                ops.add(op);
+                    delimiters.add(Chars.toString(cs));
+                    ops.add(-(delimiters.size()));
+                    break;
+                case OP_AM_PM:
+                case OP_TIME_ZONE_SHORT:
+                    makeLastOpGreedy(ops);
+                    // fall thru
+                default:
+                    ops.add(op);
+                    break;
             }
         }
 
@@ -265,7 +269,8 @@ public class TimestampFormatCompiler {
             int sinkPutStrIndex,
             int sinkPutChrIndex,
             int formatNameIndex,
-            int formatSigIndex) {
+            int formatSigIndex
+    ) {
         int formatAttributes = computeFormatAttributes(ops);
         asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
 
@@ -636,6 +641,7 @@ public class TimestampFormatCompiler {
             int matchAMPMIndex,
             int matchEraIndex,
             int parseIntSafelyIndex,
+            int parseInt000GreedyIndex,
             int decodeLenIndex,
             int decodeIntIndex,
             int assertRemainingIndex,
@@ -766,7 +772,7 @@ public class TimestampFormatCompiler {
                     // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MICROS);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
-                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
+                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
                     break;
                 case OP_NANOS_ONE_DIGIT:
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, -1);
@@ -790,12 +796,9 @@ public class TimestampFormatCompiler {
                     parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MILLIS);
                     break;
                 case OP_MILLIS_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // millis = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MILLIS);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
-                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MILLIS);
+                    invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MILLIS);
                     break;
                 case OP_SECOND_ONE_DIGIT:
                     // assertRemaining(pos, hi);
@@ -1417,6 +1420,7 @@ public class TimestampFormatCompiler {
         int getShortMonthIndex = asm.poolMethod(DateLocale.class, "getShortMonth", "(I)Ljava/lang/String;");
 
         int parseIntSafelyIndex = asm.poolMethod(Numbers.class, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
+        int parseInt000GreedyIndex = asm.poolMethod(Numbers.class, "parseInt000Greedy", "(Ljava/lang/CharSequence;II)J");
         int decodeLenIndex = asm.poolMethod(Numbers.class, "decodeHighInt", "(J)I");
         int decodeIntIndex = asm.poolMethod(Numbers.class, "decodeLowInt", "(J)I");
         int parseIntIndex = asm.poolMethod(Numbers.class, "parseInt", "(Ljava/lang/CharSequence;II)I");
@@ -1498,6 +1502,7 @@ public class TimestampFormatCompiler {
                 matchAMPMIndex,
                 matchEraIndex,
                 parseIntSafelyIndex,
+                parseInt000GreedyIndex,
                 decodeLenIndex,
                 decodeIntIndex,
                 assertRemainingIndex,

@@ -587,7 +587,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr(0, "xyz");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='xyz', as=FLOAT]", e.getFlyweightMessage());
+            TestUtils.assertContains("could not parse [value='xyz', as=FLOAT, index=0]", e.getFlyweightMessage());
         }
     }
 
@@ -750,7 +750,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr(0, "ok");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='ok', as=LONG]", e.getFlyweightMessage());
+            TestUtils.assertContains("could not parse [value='ok', as=LONG, index=0]", e.getFlyweightMessage());
         }
     }
 
@@ -761,7 +761,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr("a", "ok");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='ok', as=LONG]", e.getFlyweightMessage());
+            TestUtils.assertContains("could not parse [value='ok', as=LONG, index=-1]", e.getFlyweightMessage());
         }
     }
 

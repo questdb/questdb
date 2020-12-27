@@ -196,17 +196,22 @@ public class DateFormatCompiler {
         }
 
         while (this.lexer.hasNext()) {
-            CharSequence cs = lexer.next();
-            int op = opMap.get(cs);
-            if (op == -1) {
-                makeLastOpGreedy(ops);
-                delimiters.add(Chars.toString(cs));
-                ops.add(-(delimiters.size()));
-            } else {
-                if (op == OP_AM_PM) {
+            final CharSequence cs = lexer.next();
+            final int op = opMap.get(cs);
+            switch (op) {
+                case -1:
                     makeLastOpGreedy(ops);
-                }
-                ops.add(op);
+                    delimiters.add(Chars.toString(cs));
+                    ops.add(-(delimiters.size()));
+                    break;
+                case OP_AM_PM:
+                case OP_TIME_ZONE_SHORT:
+                    makeLastOpGreedy(ops);
+                    // fall thru
+                default:
+                    ops.add(op);
+                    break;
+
             }
         }
 
@@ -536,7 +541,38 @@ public class DateFormatCompiler {
         }
     }
 
-    private void assembleParseMethod(IntList ops, ObjList<String> delimiters, int thisClassIndex, int stackMapTableIndex, int dateLocaleClassIndex, int charSequenceClassIndex, int minLongIndex, int minMillisIndex, int matchWeekdayIndex, int matchMonthIndex, int matchZoneIndex, int matchAMPMIndex, int matchEraIndex, int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int assertRemainingIndex, int assertNoTailIndex, int parseIntIndex, int assertStringIndex, int assertCharIndex, int computeMillisIndex, int adjustYearIndex, int parseYearGreedyIndex, int parseOffsetIndex, int parseNameIndex, int parseSigIndex, IntList delimIndices, int charAtIndex) {
+    private void assembleParseMethod(
+            IntList ops,
+            ObjList<String> delimiters,
+            int thisClassIndex,
+            int stackMapTableIndex,
+            int dateLocaleClassIndex,
+            int charSequenceClassIndex,
+            int minLongIndex,
+            int minMillisIndex,
+            int matchWeekdayIndex,
+            int matchMonthIndex,
+            int matchZoneIndex,
+            int matchAMPMIndex,
+            int matchEraIndex,
+            int parseIntSafelyIndex,
+            int parseInt000Greedy,
+            int decodeLenIndex,
+            int decodeIntIndex,
+            int assertRemainingIndex,
+            int assertNoTailIndex,
+            int parseIntIndex,
+            int assertStringIndex,
+            int assertCharIndex,
+            int computeMillisIndex,
+            int adjustYearIndex,
+            int parseYearGreedyIndex,
+            int parseOffsetIndex,
+            int parseNameIndex,
+            int parseSigIndex,
+            IntList delimIndices,
+            int charAtIndex
+    ) {
 
         int stackState = computeParseMethodStack(ops);
 
@@ -646,7 +682,7 @@ public class DateFormatCompiler {
                     // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MILLIS);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
-                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MILLIS);
+                    invokeParseIntSafelyAndStore(parseInt000Greedy, decodeLenIndex, decodeIntIndex, LOCAL_MILLIS);
                     break;
                 case OP_SECOND_ONE_DIGIT:
                     // assertRemaining(pos, hi);
@@ -1260,6 +1296,7 @@ public class DateFormatCompiler {
         int getShortMonthIndex = asm.poolMethod(DateLocale.class, "getShortMonth", "(I)Ljava/lang/String;");
 
         int parseIntSafelyIndex = asm.poolMethod(Numbers.class, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
+        int parseInt000Greedy = asm.poolMethod(Numbers.class, "parseInt000Greedy", "(Ljava/lang/CharSequence;II)J");
         int decodeLenIndex = asm.poolMethod(Numbers.class, "decodeHighInt", "(J)I");
         int decodeIntIndex = asm.poolMethod(Numbers.class, "decodeLowInt", "(J)I");
         int parseIntIndex = asm.poolMethod(Numbers.class, "parseInt", "(Ljava/lang/CharSequence;II)I");
@@ -1340,6 +1377,7 @@ public class DateFormatCompiler {
                 matchAMPMIndex,
                 matchEraIndex,
                 parseIntSafelyIndex,
+                parseInt000Greedy,
                 decodeLenIndex,
                 decodeIntIndex,
                 assertRemainingIndex,
@@ -1589,7 +1627,11 @@ public class DateFormatCompiler {
         asm.lstore(LOCAL_TEMP_LONG);
     }
 
-    private void invokeParseIntSafelyAndStore(int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int target) {
+    private void invokeParseIntSafelyAndStore(
+            int parseIntSafelyIndex,
+            int decodeLenIndex,
+            int decodeIntIndex,
+            int target) {
         asm.aload(P_INPUT_STR);
         asm.iload(LOCAL_POS);
         asm.iload(P_HI);

@@ -363,8 +363,8 @@ public class TimestampsTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testParseWrongmicros() throws Exception {
-        TimestampFormatUtils.parseTimestamp("2013-09-30T22:04:34.1024Z");
+    public void testParseWrongMicros() throws Exception {
+        TimestampFormatUtils.parseTimestamp("2013-09-30T22:04:34.1024091Z");
     }
 
     @Test

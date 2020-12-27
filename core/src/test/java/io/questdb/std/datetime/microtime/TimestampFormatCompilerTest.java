@@ -51,17 +51,6 @@ public class TimestampFormatCompilerTest {
         TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(1997, 1, 1, 0, 0));
     }
 
-    @Test
-    public void testBasicParserCompiler() throws Exception {
-        DateFormat fmt = compiler.compile("E, dd MMM yyyy a KK:m:s.S Z");
-        String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
-        DateFormat utc = compiler.compile(utcPattern);
-        long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", defaultLocale);
-        sink.clear();
-        utc.format(millis, defaultLocale, "Z", sink);
-        TestUtils.assertEquals("2017-04-08T23:11:10.123Z", sink);
-    }
-
     @Test(expected = NumericException.class)
     public void testBadAmPm() throws Exception {
         assertThat("KaMMy", "", "11 0910 am");
@@ -83,16 +72,14 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testFormatBSTtoMSK() throws Exception {
-        DateFormat fmt = get("dd-MM-yyyy HH:mm:ss Z");
-        String targetTimezoneName = "MSK";
-
-        long millis = fmt.parse("06-04-2017 01:09:30 BST", defaultLocale);
-        millis += defaultLocale.getRules(targetTimezoneName, RESOLUTION_MICROS).getOffset(millis);
+    public void testBasicParserCompiler() throws Exception {
+        DateFormat fmt = compiler.compile("E, dd MMM yyyy a KK:m:s.S Z");
+        String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
+        DateFormat utc = compiler.compile(utcPattern);
+        long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", defaultLocale);
         sink.clear();
-        fmt.format(millis, defaultLocale, targetTimezoneName, sink);
-        TestUtils.assertEquals("06-04-2017 03:09:30 MSK", sink);
-//        assertThat("dd-MM-yyyy HH:mm:ss Z", "06-04-2017 03:09:30 MSK", "06-04-2017 01:09:30 BST");
+        utc.format(millis, defaultLocale, "Z", sink);
+        TestUtils.assertEquals("2017-04-08T23:11:10.123Z", sink);
     }
 
     @Test
@@ -132,17 +119,16 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testGreedyYear2() throws Exception {
-        long referenceYear = TimestampFormatUtils.getReferenceYear();
-        try {
-            TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(2015, 1, 20, 0, 0));
-            assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
-            assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
-            assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");
-            assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
-        } finally {
-            TimestampFormatUtils.updateReferenceYear(referenceYear);
-        }
+    public void testFormatBSTtoMSK() throws Exception {
+        DateFormat fmt = get("dd-MM-yyyy HH:mm:ss Z");
+        String targetTimezoneName = "MSK";
+
+        long millis = fmt.parse("06-04-2017 01:09:30 BST", defaultLocale);
+        millis += defaultLocale.getRules(targetTimezoneName, RESOLUTION_MICROS).getOffset(millis);
+        sink.clear();
+        fmt.format(millis, defaultLocale, targetTimezoneName, sink);
+        TestUtils.assertEquals("06-04-2017 03:09:30 MSK", sink);
+//        assertThat("dd-MM-yyyy HH:mm:ss Z", "06-04-2017 03:09:30 MSK", "06-04-2017 01:09:30 BST");
     }
 
     @Test
@@ -419,6 +405,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testGreedyMillis() throws NumericException {
+        assertThat("y-MM-dd HH:mm:ss.Sz", "2014-04-03T04:32:49.010Z", "2014-04-03 04:32:49.01Z");
+    }
+
+    @Test
     public void testGreedyYear() throws Exception {
         assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
         assertThat("y-MM", "1936-03-01T00:00:00.000Z", "36-03");
@@ -427,16 +418,17 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testNegativeYear() throws Exception {
-        assertThat("yyyy MMM dd", "-2010-09-01T00:00:00.000Z", "-2010 Sep 01");
-
-        DateFormat fmt1 = compiler.compile("G yyyy MMM", true);
-        DateFormat fmt2 = compiler.compile("yyyy MMM dd", true);
-
-        long millis = fmt2.parse("-2010 Sep 01", defaultLocale);
-        sink.clear();
-        fmt1.format(millis, defaultLocale, "Z", sink);
-        TestUtils.assertEquals("BC -2010 Sep", sink);
+    public void testGreedyYear2() throws Exception {
+        long referenceYear = TimestampFormatUtils.getReferenceYear();
+        try {
+            TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(2015, 1, 20, 0, 0));
+            assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
+            assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
+            assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");
+            assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
+        } finally {
+            TimestampFormatUtils.updateReferenceYear(referenceYear);
+        }
     }
 
     @Test(expected = NumericException.class)
@@ -542,7 +534,8 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testMicrosGreedy() throws Exception {
-        assertMicros("yyyy U", "2017-01-01T00:00:00.000055Z", "2017 55");
+        assertMicros("y-MM-dd HH:mm:ss.SSSUz", "2014-04-03T04:32:49.010330Z", "2014-04-03 04:32:49.01033Z");
+        assertMicros("yyyy U", "2017-01-01T00:00:00.000550Z", "2017 55");
         assertMicros("U dd-MM-yyyy", "2014-10-03T00:00:00.000314Z", "314 03-10-2014");
     }
 
@@ -610,8 +603,17 @@ public class TimestampFormatCompilerTest {
         assertThat("My", "2010-04-01T00:00:00.000Z", "410");
     }
 
-    private static DateFormat get(CharSequence pattern) {
-        return compiler.compile(pattern, true);
+    @Test
+    public void testNegativeYear() throws Exception {
+        assertThat("yyyy MMM dd", "-2010-09-01T00:00:00.000Z", "-2010 Sep 01");
+
+        DateFormat fmt1 = compiler.compile("G yyyy MMM", true);
+        DateFormat fmt2 = compiler.compile("yyyy MMM dd", true);
+
+        long millis = fmt2.parse("-2010 Sep 01", defaultLocale);
+        sink.clear();
+        fmt1.format(millis, defaultLocale, "Z", sink);
+        TestUtils.assertEquals("BC -2010 Sep", sink);
     }
 
     @Test
@@ -741,6 +743,10 @@ public class TimestampFormatCompilerTest {
     public void testIgnoredNanos() throws Exception {
         assertThat("E, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
         assertThat("EE, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
+    }
+
+    private static DateFormat get(CharSequence pattern) {
+        return compiler.compile(pattern, true);
     }
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {

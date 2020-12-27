@@ -44,9 +44,7 @@ public class DateFormatUtils {
     public static final DateFormat PG_DATE_FORMAT;
     public static final DateFormat PG_DATE_Z_FORMAT;
     public static final DateFormat PG_DATE_MILLI_TIME_Z_FORMAT;
-    private static final DateFormat PG_DATE_TIME_Z_FORMAT;
     private static final DateFormat HTTP_FORMAT;
-    private static final DateFormat[] FORMATS;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
@@ -115,20 +113,6 @@ public class DateFormatUtils {
 
     public static long getReferenceYear() {
         return referenceYear;
-    }
-
-    public static long parseDate(CharSequence value) throws NumericException {
-        return parseDate(value, 0, value.length());
-    }
-
-    public static long parseDate(CharSequence value, int lo, int hi) throws NumericException {
-        for (int i = 0, n = FORMATS.length; i < n; i++) {
-            try {
-                return FORMATS[i].parse(value, lo, hi, enLocale);
-            } catch (NumericException ignore) {
-            }
-        }
-        throw NumericException.INSTANCE;
     }
 
     // YYYY-MM-DDThh:mm:ss.mmm
@@ -327,18 +311,11 @@ public class DateFormatUtils {
 
     static {
         updateReferenceYear(System.currentTimeMillis());
-        DateFormatCompiler compiler = new DateFormatCompiler();
+        final DateFormatCompiler compiler = new DateFormatCompiler();
         UTC_FORMAT = compiler.compile(UTC_PATTERN);
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
-        PG_DATE_FORMAT = compiler.compile("yyyy-MM-dd");
-        PG_DATE_Z_FORMAT = compiler.compile("yyyy-MM-dd z");
-        PG_DATE_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ssz");
-        PG_DATE_MILLI_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
-        FORMATS = new DateFormat[]{
-                PG_DATE_TIME_Z_FORMAT,
-                PG_DATE_Z_FORMAT,
-                PG_DATE_MILLI_TIME_Z_FORMAT,
-                UTC_FORMAT
-        };
+        PG_DATE_FORMAT = compiler.compile("y-MM-dd");
+        PG_DATE_Z_FORMAT = compiler.compile("y-MM-dd z");
+        PG_DATE_MILLI_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.Sz");
     }
 }

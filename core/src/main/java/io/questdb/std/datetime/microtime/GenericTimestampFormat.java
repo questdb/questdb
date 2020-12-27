@@ -403,7 +403,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 case TimestampFormatCompiler.OP_MICROS_GREEDY:
-                    l = Numbers.parseIntSafely(in, pos, hi);
+                    l = Numbers.parseInt000Greedy(in, pos, hi);
                     micros = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
@@ -434,7 +434,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 case TimestampFormatCompiler.OP_MILLIS_GREEDY:
-                    l = Numbers.parseIntSafely(in, pos, hi);
+                    l = Numbers.parseInt000Greedy(in, pos, hi);
                     millis = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;

@@ -114,6 +114,11 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testGreedyMillis() throws NumericException {
+        assertThat("y-MM-dd HH:mm:ss.Sz", "2014-04-03T04:32:49.010Z", "2014-04-03 04:32:49.01Z");
+    }
+
+    @Test
     public void testFormatAMPM() throws Exception {
         assertFormat("pm, 31", "a, dd", "2017-03-31T14:00:00.000Z");
         assertFormat("pm, 31", "a, dd", "2017-03-31T12:00:00.000Z");
