@@ -44,11 +44,34 @@ public class PGOids {
     public static final int PG_CHAR = 18;
     public static final int PG_DATE = 1082;
     public static final int PG_BYTEA = 17;
-    public static final int PG_UNSPECIFIED = 0;
     public static final IntList TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];
+
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_FLOAT8 = ((PG_FLOAT8 >> 24) & 0xff) | ((PG_FLOAT8 << 8) & 0xff0000) | ((PG_FLOAT8 >> 8) & 0xff00) | ((PG_FLOAT8 << 24) & 0xff000000);
+    public static final int X_B_PG_FLOAT8 = (1 << 30) | X_PG_FLOAT8;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_FLOAT4 = ((PG_FLOAT4 >> 24) & 0xff) | ((PG_FLOAT4 << 8) & 0xff0000) | ((PG_FLOAT4 >> 8) & 0xff00) | ((PG_FLOAT4 << 24) & 0xff000000);
+    public static final int X_B_PG_FLOAT4 = (1 << 30) | X_PG_FLOAT4;
+    public static final int X_PG_INT4 = ((PG_INT4 >> 24) & 0xff) | ((PG_INT4 << 8) & 0xff0000) | ((PG_INT4 >> 8) & 0xff00) | ((PG_INT4 << 24) & 0xff000000);
+    public static final int X_B_PG_INT4 = (1 << 30) | X_PG_INT4;
+    public static final int X_PG_INT8 = ((PG_INT8 >> 24) & 0xff) | ((PG_INT8 << 8) & 0xff0000) | ((PG_INT8 >> 8) & 0xff00) | ((PG_INT8 << 24) & 0xff000000);
+    public static final int X_B_PG_INT8 = (1 << 30) | X_PG_INT8;
+    public static final int X_PG_INT2 = ((PG_INT2 >> 24) & 0xff) | ((PG_INT2 << 8) & 0xff0000) | ((PG_INT2 >> 8) & 0xff00) | ((PG_INT2 << 24) & 0xff000000);
+    public static final int X_B_PG_INT2 = (1 << 30) | X_PG_INT2;
+    public static final int X_PG_CHAR = ((PG_CHAR >> 24) & 0xff) | ((PG_CHAR << 8) & 0xff0000) | ((PG_CHAR >> 8) & 0xff00) | ((PG_CHAR << 24) & 0xff000000);
+    public static final int X_B_PG_CHAR = (1 << 30) | X_PG_CHAR;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_DATE = ((PG_DATE >> 24) & 0xff) | ((PG_DATE << 8) & 0xff0000) | ((PG_DATE >> 8) & 0xff00) | ((PG_DATE << 24) & 0xff000000);
+    public static final int X_B_PG_DATE = (1 << 30) | X_PG_DATE;
+    public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
+    public static final int X_B_PG_BOOL = (1 << 30) | X_PG_BOOL;
+
+    static int toBinaryType(short code, int type) {
+        return (((int) code) << 30) | type;
+    }
 
     static {
         TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR

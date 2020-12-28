@@ -767,4 +767,11 @@ public class NumbersTest {
             Assert.assertTrue(d + " " + n + " " + (n - d - 1E-8), n - d - 1E-8 < Numbers.TOLERANCE);
         }
     }
+
+    @Test
+    public void testBswap() {
+        int expected = rnd.nextInt();
+        int x = Numbers.bswap(expected);
+        Assert.assertEquals(expected, Numbers.bswap(x));
+    }
 }
