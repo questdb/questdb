@@ -38,13 +38,31 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Vect;
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.net.URL;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.Properties;
+import java.util.ServiceLoader;
 import io.questdb.std.datetime.millitime.Dates;
 import sun.misc.Signal;
 
-import java.io.*;
-import java.net.*;
-import java.util.*;
 import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
@@ -53,10 +71,18 @@ import java.util.zip.ZipInputStream;
 
 public class ServerMain {
     private static final String VERSION_TXT = "version.txt";
+
     protected PropServerConfiguration configuration;
 
     public ServerMain(String[] args) throws Exception {
-        System.err.printf("QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n", getVersion(), Dates.getYear(System.currentTimeMillis()));
+        //properties fetched from sources other than server.conf
+        final Properties internalProperties = buildInternalProperties();
+
+        System.err.printf(
+                "QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n",
+                internalProperties.getProperty("build.questdb.version"),
+                Dates.getYear(System.currentTimeMillis())
+        );
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;
@@ -84,7 +110,8 @@ public class ServerMain {
         try (InputStream is = new FileInputStream(configurationFile)) {
             properties.load(is);
         }
-        readServerConfiguration(rootDirectory, properties, log);
+
+        readServerConfiguration(rootDirectory, properties, internalProperties, log);
 
         // create database directory
         try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
@@ -126,7 +153,10 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
+                configuration.getCairoConfiguration(),
+                ServiceLoader.load(FunctionFactory.class)
+        );
         final ObjList<Closeable> instancesToClean = new ObjList<>();
 
         LogFactory.configureFromSystemProperties(workerPool);
@@ -225,6 +255,60 @@ public class ServerMain {
 
     public static void main(String[] args) throws Exception {
         new ServerMain(args);
+    }
+
+    protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
+        workerPool.halt();
+        Misc.freeObjList(instancesToClean);
+    }
+
+    protected HttpServer createHttpServer(final WorkerPool workerPool,
+                                          final Log log,
+                                          final CairoEngine cairoEngine,
+                                          FunctionFactoryCache functionFactoryCache) {
+        return HttpServer.create(
+                configuration.getHttpServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine,
+                functionFactoryCache
+        );
+    }
+
+    protected HttpServer createMinHttpServer(final WorkerPool workerPool,
+                                             final Log log,
+                                             final CairoEngine cairoEngine,
+                                             FunctionFactoryCache functionFactoryCache) {
+        return HttpServer.createMin(
+                configuration.getHttpMinServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine,
+                functionFactoryCache
+        );
+    }
+
+    protected void initQuestDb(
+            final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
+            final Log log
+    ) {
+        // For extension
+    }
+
+    protected void readServerConfiguration(final String rootDirectory,
+                                           final Properties properties,
+                                           final Properties internalProperties,
+                                           Log log) throws ServerConfigurationException, JsonException {
+        configuration = new PropServerConfiguration(rootDirectory, properties, internalProperties, System.getenv(), log);
+    }
+
+    protected void startQuestDb(
+            final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
+            final Log log
+    ) {
+        workerPool.start(log);
     }
 
     private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
@@ -392,63 +476,54 @@ public class ServerMain {
         return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
     }
 
-    private static String getVersion() throws IOException {
-        Enumeration<URL> resources = ServerMain.class.getClassLoader()
-                .getResources("META-INF/MANIFEST.MF");
-        while (resources.hasMoreElements()) {
-            try (InputStream is = resources.nextElement().openStream()) {
-                Manifest manifest = new Manifest(is);
-                Attributes attributes = manifest.getMainAttributes();
-                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
-                    return manifest.getMainAttributes().getValue("Implementation-Version");
-                }
-            }
+    private static String getQuestDbVersion(final Attributes manifestAttributes) {
+        final String value = manifestAttributes.getValue("Implementation-Version");
+        if (value != null) {
+            return value;
         }
         return "[DEVELOPMENT]";
     }
 
-    protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
-        workerPool.halt();
-        Misc.freeObjList(instancesToClean);
+    private static String getCommitHash(final Attributes manifestAttributes) {
+        final String value = manifestAttributes.getValue("Build-Commit-Hash");
+        if (value != null) {
+            return value;
+        }
+        return "[DEVELOPMENT]";
     }
 
-    protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
-        return HttpServer.create(
-                configuration.getHttpServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                functionFactoryCache
-        );
+    private static String getJdkVersion(final Attributes manifestAttributes) {
+        final String value = manifestAttributes.getValue("Build-Jdk");
+        if (value != null) {
+            return value;
+        }
+        return "[DEVELOPMENT]";
     }
 
-    protected HttpServer createMinHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
-        return HttpServer.createMin(
-                configuration.getHttpMinServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                functionFactoryCache
-        );
+    private static Properties buildInternalProperties() throws IOException {
+        final Attributes manifestAttributes = getManifestAttributes();
+
+        final Properties properties = new Properties();
+        properties.setProperty("build.questdb.version", getQuestDbVersion(manifestAttributes));
+        properties.setProperty("build.jdk.version", getJdkVersion(manifestAttributes));
+        properties.setProperty("build.commit.hash", getCommitHash(manifestAttributes));
+
+        return properties;
     }
 
-    protected void initQuestDb(
-            final WorkerPool workerPool,
-            final CairoEngine cairoEngine,
-            final Log log
-    ) {
-        // For extension
-    }
+    private static Attributes getManifestAttributes() throws IOException {
+        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
+                                                           .getResources("META-INF/MANIFEST.MF");
+        while (resources.hasMoreElements()) {
+            try (InputStream is = resources.nextElement().openStream()) {
+                final Manifest manifest = new Manifest(is);
+                final Attributes attributes = manifest.getMainAttributes();
+                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
+                    return manifest.getMainAttributes();
+                }
+            }
+        }
 
-    protected void readServerConfiguration(final String rootDirectory, final Properties properties, Log log) throws ServerConfigurationException, JsonException {
-        configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log);
-    }
-
-    protected void startQuestDb(
-            final WorkerPool workerPool,
-            final CairoEngine cairoEngine,
-            final Log log
-    ) {
-        workerPool.start(log);
+        return new Attributes();
     }
 }

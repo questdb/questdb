@@ -500,6 +500,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory,
 
             // analytic functions
-            io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
+            io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
+
+            // metadata function
+            io.questdb.griffin.engine.functions.metadata.BuildFuntionFactory
             ;
 }

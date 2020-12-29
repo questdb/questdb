@@ -295,10 +295,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
+    private BuildInformation buildInformation = new PropBuildInformation();
+    private CharSequence questDbVersion;
+    private CharSequence jdkVersion;
+    private CharSequence commitHash;
 
     public PropServerConfiguration(
             String root,
             Properties properties,
+            Properties internalProperties,
             @Nullable Map<String, String> env,
             Log log
     ) throws ServerConfigurationException, JsonException {
@@ -611,6 +616,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
         }
+
+        this.questDbVersion = getString(internalProperties, env, "build.questdb.version", "[DEVELOPMENT]");
+        this.jdkVersion = getString(internalProperties, env, "build.jdk.version", "[DEVELOPMENT]");
+        this.commitHash = getString(internalProperties, env, "build.commit.hash", "[DEVELOPMENT]");
     }
 
     @Override
@@ -1656,6 +1665,28 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTableBlockWriterQueueSize() {
             return tableBlockWriterQueueSize;
+        }
+
+        @Override
+        public BuildInformation getBuildInformation() {
+            return buildInformation;
+        }
+    }
+
+    private class PropBuildInformation implements BuildInformation {
+        @Override
+        public CharSequence getQuestDbVersion() {
+            return questDbVersion;
+        }
+
+        @Override
+        public CharSequence getJdkVersion() {
+            return jdkVersion;
+        }
+
+        @Override
+        public CharSequence getCommitHash() {
+            return commitHash;
         }
     }
 

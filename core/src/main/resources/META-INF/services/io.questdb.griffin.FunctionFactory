@@ -511,3 +511,6 @@ io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
 
 # analytic functions
 io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
+
+# metadata functions
+io.questdb.griffin.engine.functions.metadata.BuildFuntionFactory
