@@ -155,10 +155,7 @@ public class ServerMain {
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
-        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
-                configuration.getCairoConfiguration(),
-                ServiceLoader.load(FunctionFactory.class)
-        );
+        final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(configuration.getCairoConfiguration(), ServiceLoader.load(FunctionFactory.class));
         final ObjList<Closeable> instancesToClean = new ObjList<>();
 
         LogFactory.configureFromSystemProperties(workerPool);
@@ -259,6 +256,30 @@ public class ServerMain {
         new ServerMain(args);
     }
 
+    private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
+        final LogRecord record = log.info().$("web console URL(s):").$('\n').$('\n');
+        final int httpBindIP = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address();
+        final int httpBindPort = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
+        if (httpBindIP == 0) {
+            Enumeration<NetworkInterface> nets = NetworkInterface.getNetworkInterfaces();
+            for (NetworkInterface networkInterface : Collections.list(nets)) {
+                Enumeration<InetAddress> inetAddresses = networkInterface.getInetAddresses();
+                for (InetAddress inetAddress : Collections.list(inetAddresses)) {
+                    if (inetAddress instanceof Inet4Address) {
+                        record.$('\t').$("http:/").$(inetAddress).$(':').$(httpBindPort).$('\n');
+                    }
+                }
+            }
+            record.$('\n').$();
+        } else {
+            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n').$();
+        }
+    }
+    
+    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
+        return manifestAttributes.getValue("Implementation-Version");
+    }
+
     protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
         workerPool.halt();
         Misc.freeObjList(instancesToClean);
@@ -311,26 +332,6 @@ public class ServerMain {
             final Log log
     ) {
         workerPool.start(log);
-    }
-
-    private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
-        final LogRecord record = log.info().$("web console URL(s):").$('\n').$('\n');
-        final int httpBindIP = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address();
-        final int httpBindPort = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
-        if (httpBindIP == 0) {
-            Enumeration<NetworkInterface> nets = NetworkInterface.getNetworkInterfaces();
-            for (NetworkInterface networkInterface : Collections.list(nets)) {
-                Enumeration<InetAddress> inetAddresses = networkInterface.getInetAddresses();
-                for (InetAddress inetAddress : Collections.list(inetAddresses)) {
-                    if (inetAddress instanceof Inet4Address) {
-                        record.$('\t').$("http:/").$(inetAddress).$(':').$(httpBindPort).$('\n');
-                    }
-                }
-            }
-            record.$('\n').$();
-        } else {
-            record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n').$();
-        }
     }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
@@ -476,10 +477,6 @@ public class ServerMain {
         }
 
         return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
-    }
-
-    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
-        return manifestAttributes.getValue("Implementation-Version");
     }
 
     private static CharSequence getCommitHash(final Attributes manifestAttributes) {
