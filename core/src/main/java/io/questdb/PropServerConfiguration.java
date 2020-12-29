@@ -303,7 +303,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public PropServerConfiguration(
             String root,
             Properties properties,
-            Properties internalProperties,
+            Map<CharSequence, CharSequence> internalProperties,
             @Nullable Map<String, String> env,
             Log log
     ) throws ServerConfigurationException, JsonException {
@@ -617,9 +617,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        this.questDbVersion = getString(internalProperties, env, "build.questdb.version", "[DEVELOPMENT]");
-        this.jdkVersion = getString(internalProperties, env, "build.jdk.version", "[DEVELOPMENT]");
-        this.commitHash = getString(internalProperties, env, "build.commit.hash", "[DEVELOPMENT]");
+        this.questDbVersion = internalProperties.getOrDefault("build.questdb.version", "Unknown Version");
+        this.jdkVersion = internalProperties.getOrDefault("build.jdk.version", "Unknown Version");
+        this.commitHash = internalProperties.getOrDefault("build.commit.hash", "Unknown Version");
     }
 
     @Override

@@ -58,6 +58,8 @@ import java.net.URL;
 import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.ServiceLoader;
 import io.questdb.std.datetime.millitime.Dates;
@@ -76,11 +78,11 @@ public class ServerMain {
 
     public ServerMain(String[] args) throws Exception {
         //properties fetched from sources other than server.conf
-        final Properties internalProperties = buildInternalProperties();
+        final Map<CharSequence, CharSequence> internalProperties = buildInternalProperties();
 
         System.err.printf(
                 "QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n",
-                internalProperties.getProperty("build.questdb.version"),
+                internalProperties.getOrDefault("build.questdb.version", "Unknown Version"),
                 Dates.getYear(System.currentTimeMillis())
         );
         if (args.length < 1) {
@@ -298,7 +300,7 @@ public class ServerMain {
 
     protected void readServerConfiguration(final String rootDirectory,
                                            final Properties properties,
-                                           final Properties internalProperties,
+                                           final Map<CharSequence, CharSequence> internalProperties,
                                            Log log) throws ServerConfigurationException, JsonException {
         configuration = new PropServerConfiguration(rootDirectory, properties, internalProperties, System.getenv(), log);
     }
@@ -476,37 +478,25 @@ public class ServerMain {
         return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
     }
 
-    private static String getQuestDbVersion(final Attributes manifestAttributes) {
-        final String value = manifestAttributes.getValue("Implementation-Version");
-        if (value != null) {
-            return value;
-        }
-        return "[DEVELOPMENT]";
+    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
+        return manifestAttributes.getValue("Implementation-Version");
     }
 
-    private static String getCommitHash(final Attributes manifestAttributes) {
-        final String value = manifestAttributes.getValue("Build-Commit-Hash");
-        if (value != null) {
-            return value;
-        }
-        return "[DEVELOPMENT]";
+    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
+        return manifestAttributes.getValue("Build-Commit-Hash");
     }
 
-    private static String getJdkVersion(final Attributes manifestAttributes) {
-        final String value = manifestAttributes.getValue("Build-Jdk");
-        if (value != null) {
-            return value;
-        }
-        return "[DEVELOPMENT]";
+    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
+        return manifestAttributes.getValue("Build-Jdk");
     }
 
-    private static Properties buildInternalProperties() throws IOException {
+    private static Map<CharSequence, CharSequence> buildInternalProperties() throws IOException {
         final Attributes manifestAttributes = getManifestAttributes();
 
-        final Properties properties = new Properties();
-        properties.setProperty("build.questdb.version", getQuestDbVersion(manifestAttributes));
-        properties.setProperty("build.jdk.version", getJdkVersion(manifestAttributes));
-        properties.setProperty("build.commit.hash", getCommitHash(manifestAttributes));
+        final Map<CharSequence, CharSequence> properties = new HashMap<>(3);
+        properties.put("build.questdb.version", getQuestDbVersion(manifestAttributes));
+        properties.put("build.jdk.version", getJdkVersion(manifestAttributes));
+        properties.put("build.commit.hash", getCommitHash(manifestAttributes));
 
         return properties;
     }
