@@ -27,16 +27,16 @@ package io.questdb;
 public class DefaultBuildInformation implements BuildInformation {
     @Override
     public CharSequence getQuestDbVersion() {
-        return "[DEVELOPMENT]";
+        return "Unknown Version";
     }
 
     @Override
     public CharSequence getJdkVersion() {
-        return "[DEVELOPMENT]";
+        return "Unknown Version";
     }
 
     @Override
     public CharSequence getCommitHash() {
-        return "[DEVELOPMENT]";
+        return "Unknown Version";
     }
 }
