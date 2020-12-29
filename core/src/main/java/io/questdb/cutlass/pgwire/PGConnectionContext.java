@@ -60,6 +60,9 @@ public class PGConnectionContext implements IOContext, Mutable {
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
+    private static final int SYNC_PARSE = 1;
+    private static final int SYNC_DESCRIBE = 2;
+    private static final int SYNC_BIND = 3;
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
@@ -108,6 +111,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path path = new Path();
     private final IntList bindVariableTypes = new IntList();
+    private final IntList selectColumnTypes = new IntList();
     /// todo: config
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
     private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, 8);
@@ -117,6 +121,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final TypeManager typeManager;
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache = new AssociativeCache<>(8, 8);
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap = new CharSequenceObjHashMap<>();
+    private final IntList syncActions = new IntList(4);
+    private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
@@ -126,6 +132,11 @@ public class PGConnectionContext implements IOContext, Mutable {
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private RecordCursor currentCursor = null;
+    // these references are held by context only for a period of processing single request
+    // in PF world this request can span multiple messages, but still, only for one request
+    // the rationale is to be able to return "selectAndTypes" instance to thread-local
+    // cache, which is "typesAndSelectCache". We typically do this after query results are
+    // served to client or query errored out due to network issues
     private TypesAndSelect typesAndSelect = null;
     private TypesAndInsert typesAndInsert = null;
     private long fd;
@@ -142,7 +153,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
     // this is a reference to types either from the context or named statement, where it is provided
-    private IntList currentBindVariableTypes;
+    private IntList activeBindVariableTypes;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -231,6 +242,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         Unsafe.getUnsafe().putInt(address, Numbers.bswap(value));
     }
 
+    public static void putLong(long address, long value) {
+        Unsafe.getUnsafe().putLong(address, Numbers.bswap(value));
+    }
+
     public static void putShort(long address, short value) {
         Unsafe.getUnsafe().putShort(address, Numbers.bswap(value));
     }
@@ -289,12 +304,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     public IODispatcher<PGConnectionContext> getDispatcher() {
         return dispatcher;
     }
-
-    // these references are held by context only for a period of processing single request
-    // in PF world this request can span multiple messages, but still, only for one request
-    // the rationale is to be able to return "selectAndTypes" instance to thread-local
-    // cache, which is "selectAndTypesCache". We typically do this after query results are
-    // served to client or query errored out due to network issues
 
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
@@ -532,6 +541,31 @@ public class PGConnectionContext implements IOContext, Mutable {
         sink.putLen(addr);
     }
 
+    private static void bindParameterFormats(
+            long lo,
+            long msgLimit,
+            short parameterFormatCount,
+            IntList bindVariableTypes
+    ) throws BadProtocolException {
+        if (lo + Short.BYTES * parameterFormatCount <= msgLimit) {
+            LOG.debug().$("processing bind formats [count=").$(parameterFormatCount).$(']').$();
+            for (int i = 0; i < parameterFormatCount; i++) {
+                final short code = getShortUnsafe(lo + i * Short.BYTES);
+                bindVariableTypes.setQuick(i, toBinaryType(code, bindVariableTypes.getQuick(i)));
+            }
+        } else {
+            LOG.error().$("invalid format code count [value=").$(parameterFormatCount).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private static void setupBindVariables(long lo, IntList bindVariableTypes, int count) {
+        bindVariableTypes.setPos(count);
+        for (int i = 0; i < count; i++) {
+            bindVariableTypes.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
+        }
+    }
+
     private void appendBinColumn(Record record, int i) throws SqlException {
         BinarySequence sequence = record.getBin(i);
         if (sequence == null) {
@@ -630,16 +664,22 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void appendRecord(
-            Record record,
-            RecordMetadata metadata,
-            int columnCount
-    ) throws SqlException {
+    private void appendLongColumnBin(Record record, int columnIndex) {
+        final long longValue = record.getLong(columnIndex);
+        if (longValue == Numbers.LONG_NaN) {
+            responseAsciiSink.setNullValue();
+        } else {
+            responseAsciiSink.putNetworkInt(Long.BYTES);
+            responseAsciiSink.putNetworkLong(longValue);
+        }
+    }
+
+    private void appendRecord(Record record, int columnCount) throws SqlException {
         responseAsciiSink.put(MESSAGE_TYPE_DATA_ROW); // data
         final long offset = responseAsciiSink.skip();
         responseAsciiSink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            switch (metadata.getColumnType(i)) {
+            switch (activeSelectColumnTypes.getQuick(i)) {
                 case ColumnType.INT:
                     appendIntCol(record, i);
                     break;
@@ -648,6 +688,10 @@ public class PGConnectionContext implements IOContext, Mutable {
                     break;
                 case ColumnType.SYMBOL:
                     appendSymbolColumn(record, i);
+                    break;
+                case 1073741829:
+                    // binary long
+                    appendLongColumnBin(record, i);
                     break;
                 case ColumnType.LONG:
                     appendLongColumn(record, i);
@@ -738,24 +782,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         throw BadProtocolException.INSTANCE;
     }
 
-    private static void bindParameterFormats(long lo,
-                                             long msgLimit,
-                                             short parameterFormatCount,
-                                             IntList bindVariableTypes
-    ) throws BadProtocolException {
-        if (lo + Short.BYTES * parameterFormatCount > msgLimit) {
-            LOG.error().$("invalid format code count [value=").$(parameterFormatCount).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-
-        LOG.debug().$("processing bind formats [count=").$(parameterFormatCount).$(']').$();
-
-        for (int i = 0; i < parameterFormatCount; i++) {
-            final short code = getShortUnsafe(lo + i * Short.BYTES);
-            bindVariableTypes.setQuick(i, toBinaryType(code, bindVariableTypes.getQuick(i)));
-        }
-    }
-
     private long bindValuesAsStrings(long lo, long msgLimit, short parameterValueCount) throws BadProtocolException, SqlException {
         for (int j = 0; j < parameterValueCount; j++) {
             final int valueLen = getInt(lo, msgLimit, "malformed bind variable");
@@ -776,10 +802,68 @@ public class PGConnectionContext implements IOContext, Mutable {
         return lo;
     }
 
-    private static void setupBindVariables(long lo, IntList bindVariableTypes, int count) {
-        bindVariableTypes.setPos(count);
-        for (int i = 0; i < count; i++) {
-            bindVariableTypes.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
+    private long bindValuesUsingSetters(
+            long lo,
+            long msgLimit,
+            short parameterValueCount
+    ) throws BadProtocolException, SqlException {
+        for (int j = 0; j < parameterValueCount; j++) {
+            final int valueLen = getInt(lo, msgLimit, "malformed bind variable");
+            lo += Integer.BYTES;
+            if (valueLen == -1) {
+                // this is null we have already defaulted parameters to
+                continue;
+            }
+
+            if (lo + valueLen <= msgLimit) {
+                switch (activeBindVariableTypes.getQuick(j)) {
+                    case X_B_PG_INT4:
+                        setIntBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_INT8:
+                        setLongBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_INT2:
+                        setShortBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_FLOAT8:
+                        setDoubleBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_FLOAT4:
+                        setFloatBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_CHAR:
+                        setCharBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_DATE:
+                        setDateBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_BOOL:
+                        setBooleanBindVariable(j, valueLen);
+                        break;
+                    default:
+                        setStrBindVariable(j, lo, valueLen);
+                        break;
+                }
+                lo += valueLen;
+            } else {
+                LOG.error()
+                        .$("value length is outside of buffer [parameterIndex=").$(j)
+                        .$(", valueLen=").$(valueLen)
+                        .$(", messageRemaining=").$(msgLimit - lo)
+                        .$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+        }
+        return lo;
+    }
+
+    private void buildSelectColumnTypes() {
+        final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
+        final int columnCount = m.getColumnCount();
+        activeSelectColumnTypes.setPos(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            activeSelectColumnTypes.setQuick(i, m.getColumnType(i));
         }
     }
 
@@ -788,7 +872,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         recvBufferReadOffset = 0;
     }
 
-    private void compileQuery(@Transient SqlCompiler compiler)
+    private boolean compileQuery(@Transient SqlCompiler compiler)
             throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         if (queryText != null && queryText.length() > 0) {
 
@@ -802,7 +886,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             if (typesAndInsert != null) {
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
-                return;
+                return false;
             }
 
             typesAndSelect = typesAndSelectCache.poll(queryText);
@@ -812,7 +896,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 bindVariableService.clear();
                 typesAndSelect.defineBindVariables(bindVariableService);
                 queryTag = TAG_SELECT;
-                return;
+                return false;
             }
 
             // not cached - compile to see what it is
@@ -850,6 +934,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         } else {
             isEmptyQuery = true;
         }
+
+        return true;
     }
 
     private void configureContextForSet() {
@@ -889,61 +975,19 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private long bindValuesUsingSetters(
-            long lo,
-            long msgLimit,
-            short parameterValueCount
-    ) throws BadProtocolException, SqlException {
-        for (int j = 0; j < parameterValueCount; j++) {
-            final int valueLen = getInt(lo, msgLimit, "malformed bind variable");
-            lo += Integer.BYTES;
-            if (valueLen == -1) {
-                // this is null we have already defaulted parameters to
-                continue;
-            }
-
-            if (lo + valueLen <= msgLimit) {
-                switch (currentBindVariableTypes.getQuick(j)) {
-                    case X_B_PG_INT4:
-                        setIntBindVariable(j, lo, valueLen);
-                        break;
-                    case X_B_PG_INT8:
-                        setLongBindVariable(j, lo, valueLen);
-                        break;
-                    case X_B_PG_INT2:
-                        setShortBindVariable(j, lo, valueLen);
-                        break;
-                    case X_B_PG_FLOAT8:
-                        setDoubleBindVariable(j, lo, valueLen);
-                        break;
-                    case X_B_PG_FLOAT4:
-                        setFloatBindVariable(j, lo, valueLen);
-                        break;
-                    case X_B_PG_CHAR:
-                        setCharBindVariable(j, lo, valueLen);
-                        break;
-                    case X_B_PG_DATE:
-                        setDateBindVariable(j, lo, valueLen);
-                        break;
-                    case X_B_PG_BOOL:
-                        setBooleanBindVariable(j, valueLen);
-                        break;
-                    default:
-                        setStrBindVariable(j, lo, valueLen);
-                        break;
-                }
-                lo += valueLen;
-            } else {
-                LOG.error()
-                        .$("value length is outside of buffer [parameterIndex=").$(j)
-                        .$(", valueLen=").$(valueLen)
-                        .$(", messageRemaining=").$(msgLimit - lo)
-                        .$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
-        }
-
-        return lo;
+    private void configurePreparedStatement(CharSequence statementName) {
+        // this is a PARSE message asking us to setup named SQL
+        // we need to keep SQL text in case our SQL cache expires
+        // as well as PG types of the bind variables, which we will need to configure setters
+        LOG.debug().$("'P' statement [name=").$(statementName).$(']').$();
+        wrapper = namedStatementMap.get(statementName);
+        // todo: check if this can ever be null, perhaps only by exception or protocol violation
+        assert wrapper == null;
+        wrapper = namedStatementWrapperPool.pop();
+        wrapper.queryText = Chars.toString(queryText);
+        namedStatementMap.put(Chars.toString(statementName), wrapper);
+        this.activeBindVariableTypes = wrapper.bindVariableTypes;
+        this.activeSelectColumnTypes = wrapper.selectColumnTypes;
     }
 
     private void doAuthentication(long msgLo, long msgLimit) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1155,10 +1199,12 @@ public class PGConnectionContext implements IOContext, Mutable {
                 processBind(msgLo, msgLimit, compiler);
                 break;
             case 'E': // execute
-                processExecute();
+                processExec();
                 break;
             case 'S': // sync
+                processSyncActions();
                 prepareReadyForQuery();
+                prepareForNewQuery();
                 // fall thru
             case 'H': // flush
                 sendAndReset();
@@ -1186,10 +1232,10 @@ public class PGConnectionContext implements IOContext, Mutable {
             queryText = queryCharacterStore.toImmutable();
             LOG.info().$("parse [q=").utf8(queryText).$(']').$();
             compileQuery(compiler);
-        } else {
-            LOG.error().$("invalid UTF8 bytes in parse query").$();
-            throw BadProtocolException.INSTANCE;
+            return;
         }
+        LOG.error().$("invalid UTF8 bytes in parse query").$();
+        throw BadProtocolException.INSTANCE;
     }
 
     private void prepareBindComplete() {
@@ -1271,9 +1317,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         rowCount = 0;
         queryTag = TAG_OK;
         queryText = null;
-//        bindVariableSetters.clear();
-//        bindVariableTypes.clear();
         wrapper = null;
+        syncActions.clear();
     }
 
     private void prepareLoginOk() {
@@ -1328,10 +1373,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         ResponseAsciiSink sink = responseAsciiSink;
         sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
         final long addr = sink.skip();
-        final int n = metadata.getColumnCount();
+        final int n = activeSelectColumnTypes.size();
         sink.putNetworkShort((short) n);
         for (int i = 0; i < n; i++) {
-            final int columnType = metadata.getColumnType(i);
+            final int typeFlag = activeSelectColumnTypes.getQuick(i);
+            final int columnType = getType(typeFlag);
             sink.encodeUtf8Z(metadata.getColumnName(i));
             sink.putNetworkInt(0); //tableOid ?
             sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
@@ -1344,31 +1390,18 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // type size
                 sink.put((short) -1);
             }
+
             //type modifier
             sink.putNetworkInt(-1);
             // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
             // format code
-            sink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
+            sink.putNetworkShort(typeFlag == ColumnType.BINARY ? 1 : getBinaryFlag(typeFlag)); // format code
         }
         sink.putLen(addr);
     }
 
     private void prepareSslResponse() {
         responseAsciiSink.put('N');
-    }
-
-    private void configurePreparedStatement(CharSequence statementName) {
-        // this is a PARSE message asking us to setup named SQL
-        // we need to keep SQL text in case our SQL cache expires
-        // as well as PG types of the bind variables, which we will need to configure setters
-        LOG.debug().$("'P' statement [name=").$(statementName).$(']').$();
-        wrapper = namedStatementMap.get(statementName);
-        // todo: check if this can ever be null, perhaps only by exception or protocol violation
-        assert wrapper == null;
-        wrapper = namedStatementWrapperPool.pop();
-        wrapper.queryText = Chars.toString(queryText);
-        namedStatementMap.put(Chars.toString(statementName), wrapper);
-        this.currentBindVariableTypes = wrapper.bindVariableTypes;
     }
 
     private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
@@ -1390,13 +1423,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         lo = hi + 1;
         parameterFormatCount = getShort(lo, msgLimit, "could not read parameter format code count");
         lo += Short.BYTES;
-        if (parameterFormatCount > 0) {
-            if (parameterFormatCount == parsePhaseBindVariableCount) {
-                bindParameterFormats(lo, msgLimit, parameterFormatCount, currentBindVariableTypes);
-            }
+        if (parameterFormatCount > 0 && parameterFormatCount == parsePhaseBindVariableCount) {
+            bindParameterFormats(lo, msgLimit, parameterFormatCount, activeBindVariableTypes);
         }
 
-        //parameter value count
+        // parameter value count
         lo += parameterFormatCount * Short.BYTES;
         parameterValueCount = getShort(lo, msgLimit, "could not read parameter value count");
 
@@ -1413,13 +1444,36 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
         }
 
+        if (typesAndSelect != null) {
+            short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
+            if (columnFormatCodeCount > 0) {
 
-        // todo: read requested formats
-        // int count = getShort(lo, msglimit, "ooopsie"):
-        // check send formats
-        System.out.println(msgLimit - lo);
+                final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
+                final int columnCount = m.getColumnCount();
+                // apply format codes to the cursor column types
+                // but check if there is message is consistent
 
-        prepareBindComplete();
+                final long spaceNeeded = lo + (columnFormatCodeCount + 1) * Short.BYTES;
+                if (spaceNeeded <= msgLimit && columnFormatCodeCount == columnCount) {
+                    // good to go
+                    for (int i = 0; i < columnCount; i++) {
+                        lo += Short.BYTES;
+                        activeSelectColumnTypes.setQuick(i, toBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
+                    }
+                } else {
+                    LOG.error()
+                            .$("could not process column format codes [fmtCount=").$(columnFormatCodeCount)
+                            .$(", columnCount=").$(columnCount)
+                            .$(", bufSpaceNeeded=").$(spaceNeeded)
+                            .$(", bufSpaceAvail=").$(msgLimit)
+                            .$(']').$();
+                    throw BadProtocolException.INSTANCE;
+                }
+            }
+        }
+
+        syncActions.add(SYNC_BIND);
+//        prepareBindComplete();
     }
 
     private void processClose(long lo, long msgLimit) throws BadProtocolException {
@@ -1445,6 +1499,21 @@ public class PGConnectionContext implements IOContext, Mutable {
             throw BadProtocolException.INSTANCE;
         }
         prepareCloseComplete();
+    }
+
+    private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
+            throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
+        configureContextFromNamedStatement(
+                lo + 1,
+                getStringLength(lo + 1, msgLimit, "bad portal name length [msgType='D']"),
+                compiler
+        );
+        syncActions.add(SYNC_DESCRIBE);
+    }
+
+    private void processExec() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        processSyncActions();
+        processExecute();
     }
 
     private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1561,14 +1630,67 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
-        configureContextFromNamedStatement(
-                lo + 1,
-                getStringLength(lo + 1, msgLimit, "bad portal name length [msgType='D']"),
-                compiler
-        );
-        prepareDescribeResponse();
+    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler)
+            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        // 'Parse'
+        //message length
+        long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
+
+        // When we encounter statement name in the "parse" message
+        // we need to ensure the wrapper is properly setup to deal with
+        // "describe", "bind" message sequence that will follow next.
+        // In that all parameter types that we need to infer will have to be added to the
+        // "bindVariableTypes" list.
+        // Perhaps this is a good idea to make named statement writer a part of the context
+        final CharSequence statementName = getStatementName(lo, hi);
+
+        //query text
+        lo = hi + 1;
+        hi = getStringLength(lo, msgLimit, "bad query text length");
+
+        // clear the context as parse usually is the first message
+        prepareForNewQuery();
+
+        parseQueryText(lo, hi, compiler);
+
+        //parameter type count
+        lo = hi + 1;
+        this.parsePhaseBindVariableCount = getShort(lo, msgLimit, "could not read parameter type count");
+
+        if (statementName != null) {
+            configurePreparedStatement(statementName);
+        } else {
+            this.activeBindVariableTypes = bindVariableTypes;
+            this.activeSelectColumnTypes = selectColumnTypes;
+        }
+
+        //process parameter types
+        if (this.parsePhaseBindVariableCount > 0) {
+            if (lo + Short.BYTES + this.parsePhaseBindVariableCount * 4L > msgLimit) {
+                LOG.error()
+                        .$("could not read parameters [parameterCount=").$(this.parsePhaseBindVariableCount)
+                        .$(", offset=").$(lo - address)
+                        .$(", remaining=").$(msgLimit - lo)
+                        .$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+
+            LOG.debug().$("params [count=").$(this.parsePhaseBindVariableCount).$(']').$();
+            setupBindVariables(lo + Short.BYTES, activeBindVariableTypes, this.parsePhaseBindVariableCount);
+        } else if (this.parsePhaseBindVariableCount < 0) {
+            LOG.error()
+                    .$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount)
+                    .$(", offset=").$(lo - address)
+                    .$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+
+        if (typesAndSelect != null) {
+            buildSelectColumnTypes();
+        }
+
+        syncActions.add(SYNC_PARSE);
+//        prepareParseComplete();
     }
 
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
@@ -1578,6 +1700,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         parseQueryText(lo, limit - 1, compiler);
 
         if (typesAndSelect != null) {
+            activeSelectColumnTypes = selectColumnTypes;
+            buildSelectColumnTypes();
             executeSelect();
             return;
         }
@@ -1590,6 +1714,26 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
 
         sendExecuteTail(TAIL_SUCCESS);
+    }
+
+    private void processSyncActions() {
+        try {
+            for (int i = 0, n = syncActions.size(); i < n; i++) {
+                switch (syncActions.getQuick(i)) {
+                    case SYNC_PARSE:
+                        prepareParseComplete();
+                        break;
+                    case SYNC_DESCRIBE:
+                        prepareDescribeResponse();
+                        break;
+                    case SYNC_BIND:
+                        prepareBindComplete();
+                        break;
+                }
+            }
+        } finally {
+            syncActions.clear();
+        }
     }
 
     void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
@@ -1674,20 +1818,19 @@ public class PGConnectionContext implements IOContext, Mutable {
                 responseAsciiSink.bookmark();
                 try {
                     try {
-                        appendRecord(record, metadata, columnCount);
+                        appendRecord(record, columnCount);
                         rowCount++;
                     } catch (NoSpaceLeftInResponseBufferException e) {
                         responseAsciiSink.resetToBookmark();
                         sendAndReset();
                         // this is now start of send buffer, when this fails we need to log and disconnect
-                        appendRecord(record, metadata, columnCount);
+                        appendRecord(record, columnCount);
                     }
                 } catch (SqlException e) {
                     responseAsciiSink.resetToBookmark();
                     LOG.error().$(e.getFlyweightMessage()).$();
                     sendCurrentCursorTail = TAIL_ERROR;
                     prepareExecuteTail(true);
-                    prepareReadyForQuery();
                     return;
                 }
             }
@@ -1696,7 +1839,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             // clear selectAndTypes so that context doesn't accidentally
             // free the factory when context finishes abnormally
             this.typesAndSelect = null;
-            prepareForNewQuery();
         }
 
         sendCurrentCursorTail = TAIL_SUCCESS;
@@ -1710,69 +1852,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         sendAndReset();
     }
 
-    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        // 'Parse'
-        //message length
-        long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
-
-        // When we encounter statement name in the "parse" message
-        // we need to ensure the wrapper is properly setup to deal with
-        // "describe", "bind" message sequence that will follow next.
-        // In that all parameter types that we need to infer will have to be added to the
-        // "bindVariableTypes" list.
-        // Perhaps this is a good idea to make named statement writer a part of the context
-        final CharSequence statementName = getStatementName(lo, hi);
-
-        //query text
-        lo = hi + 1;
-        hi = getStringLength(lo, msgLimit, "bad query text length");
-
-        // clear the context as parse usually is the first message
-        prepareForNewQuery();
-
-        parseQueryText(lo, hi, compiler);
-
-        //parameter type count
-        lo = hi + 1;
-        this.parsePhaseBindVariableCount = getShort(lo, msgLimit, "could not read parameter type count");
-
-        if (statementName != null) {
-            configurePreparedStatement(statementName);
-        } else {
-            this.currentBindVariableTypes = bindVariableTypes;
-        }
-
-        //process parameter types
-        if (this.parsePhaseBindVariableCount > 0) {
-            if (lo + Short.BYTES + this.parsePhaseBindVariableCount * 4L > msgLimit) {
-                LOG.error()
-                        .$("could not read parameters [parameterCount=").$(this.parsePhaseBindVariableCount)
-                        .$(", offset=").$(lo - address)
-                        .$(", remaining=").$(msgLimit - lo)
-                        .$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
-
-            LOG.debug().$("params [count=").$(this.parsePhaseBindVariableCount).$(']').$();
-            setupBindVariables(lo + Short.BYTES, currentBindVariableTypes, this.parsePhaseBindVariableCount);
-        } else if (this.parsePhaseBindVariableCount < 0) {
-            LOG.error()
-                    .$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount)
-                    .$(", offset=").$(lo - address)
-                    .$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-        prepareParseComplete();
-    }
-
     private void setupVariableSettersFromWrapper(
             @Transient NamedStatementWrapper wrapper,
             @Nullable @Transient SqlCompiler compiler
     ) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         queryText = wrapper.queryText;
-        this.currentBindVariableTypes = wrapper.bindVariableTypes;
-        compileQuery(compiler);
+        this.activeBindVariableTypes = wrapper.bindVariableTypes;
+        this.activeSelectColumnTypes = wrapper.selectColumnTypes;
+        if (compileQuery(compiler) && typesAndSelect != null) {
+            buildSelectColumnTypes();
+        }
     }
 
     private void validateParameterCounts(short parameterFormatCount, short parameterValueCount, int parameterTypeCount) throws BadProtocolException {
@@ -1791,11 +1880,13 @@ public class PGConnectionContext implements IOContext, Mutable {
     public static class NamedStatementWrapper implements Mutable {
 
         public final IntList bindVariableTypes = new IntList();
+        public final IntList selectColumnTypes = new IntList();
         public CharSequence queryText = null;
 
         public void clear() {
             queryText = null;
             bindVariableTypes.clear();
+            selectColumnTypes.clear();
         }
     }
 
@@ -1873,10 +1964,16 @@ public class PGConnectionContext implements IOContext, Mutable {
             putInt(start, (int) (sendBufferPtr - start - Integer.BYTES));
         }
 
-        public void putNetworkInt(int len) {
+        public void putNetworkInt(int value) {
             ensureCapacity(Integer.BYTES);
-            putInt(sendBufferPtr, len);
+            putInt(sendBufferPtr, value);
             sendBufferPtr += Integer.BYTES;
+        }
+
+        public void putNetworkLong(long value) {
+            ensureCapacity(Long.BYTES);
+            putLong(sendBufferPtr, value);
+            sendBufferPtr += Long.BYTES;
         }
 
         public void putNetworkShort(short value) {

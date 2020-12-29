@@ -73,6 +73,15 @@ public class PGOids {
         return (((int) code) << 30) | type;
     }
 
+    static short getBinaryFlag(int type) {
+        return (short) ((type >> 30) & 0xff);
+    }
+
+    static int getType(int type) {
+        // clear format flag
+        return type & (~(1 << 30));
+    }
+
     static {
         TYPE_OIDS.extendAndSet(ColumnType.STRING, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.TIMESTAMP, PG_TIMESTAMP); // TIMESTAMP
