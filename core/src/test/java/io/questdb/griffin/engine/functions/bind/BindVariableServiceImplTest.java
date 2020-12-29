@@ -733,6 +733,8 @@ public class BindVariableServiceImplTest {
         Assert.assertEquals(21, bindVariableService.getFunction(0).getTimestamp(null));
         bindVariableService.setStr(0, null);
         Assert.assertEquals(Numbers.LONG_NaN, bindVariableService.getFunction(0).getTimestamp(null));
+        bindVariableService.setStr(0, "2019-10-31 15:05:22+08:00");
+        Assert.assertEquals(1572505522000L, bindVariableService.getFunction(0).getTimestamp(null));
     }
 
     @Test

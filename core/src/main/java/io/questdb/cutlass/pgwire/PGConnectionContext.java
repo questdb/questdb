@@ -501,17 +501,13 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     public void setTimestampBindVariable(int index, long address, int valueLen) throws SqlException {
-        // todo: lets investigate how this is used
-        //    - PG will send timestamp as STRING or LONG, we should perhaps double down on those two
-        //    - PG can send timestamp as its own, non-JDBC type, may be this is where it is used?
-
         dbcs.of(address, address + valueLen);
         try {
             bindVariableService.setTimestamp(index, PG_TIMESTAMP_TIME_Z_FORMAT.parse(dbcs, locale));
-        } catch (NumericException exc) {
+        } catch (NumericException e1) {
             try {
                 bindVariableService.setTimestamp(index, PG_TIMESTAMP_MILLI_TIME_Z_FORMAT.parse(dbcs, locale));
-            } catch (NumericException excc) {
+            } catch (NumericException e2) {
                 throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
             }
         }
@@ -596,6 +592,12 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putLenEx(a);
     }
 
+    private void appendByteColumnBin(Record record, int columnIndex) {
+        final byte value = record.getByte(columnIndex);
+        responseAsciiSink.putNetworkInt(Short.BYTES);
+        responseAsciiSink.putNetworkShort(value);
+    }
+
     private void appendCharColumn(Record record, int columnIndex) {
         long a = responseAsciiSink.skip();
         responseAsciiSink.putUtf8(record.getChar(columnIndex));
@@ -604,45 +606,86 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void appendDateColumn(Record record, int columnIndex) {
         final long longValue = record.getDate(columnIndex);
-        if (longValue == Numbers.LONG_NaN) {
-            responseAsciiSink.setNullValue();
-        } else {
+        if (longValue != Numbers.LONG_NaN) {
             final long a = responseAsciiSink.skip();
             PG_DATE_MILLI_TIME_Z_FORMAT.format(longValue, null, null, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
+        } else {
+            responseAsciiSink.setNullValue();
+        }
+    }
+
+    private void appendDateColumnBin(Record record, int columnIndex) {
+        final long longValue = record.getLong(columnIndex);
+        if (longValue != Numbers.LONG_NaN) {
+            responseAsciiSink.putNetworkInt(Long.BYTES);
+            // PG epoch starts at 2000 rather than 1970
+            responseAsciiSink.putNetworkLong(longValue * 1000 - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        } else {
+            responseAsciiSink.setNullValue();
         }
     }
 
     private void appendDoubleColumn(Record record, int columnIndex) {
         final double doubleValue = record.getDouble(columnIndex);
-        if (Double.isNaN(doubleValue)) {
-            responseAsciiSink.setNullValue();
-        } else {
+        if (doubleValue == doubleValue) {
             final long a = responseAsciiSink.skip();
             responseAsciiSink.put(doubleValue);
             responseAsciiSink.putLenEx(a);
+        } else {
+            responseAsciiSink.setNullValue();
+        }
+    }
+
+    private void appendDoubleColumnBin(Record record, int columnIndex) {
+        final double value = record.getDouble(columnIndex);
+        if (value == value) {
+            responseAsciiSink.putNetworkInt(Double.BYTES);
+            responseAsciiSink.putNetworkDouble(value);
+        } else {
+            responseAsciiSink.setNullValue();
         }
     }
 
     private void appendFloatColumn(Record record, int columnIndex) {
         final float floatValue = record.getFloat(columnIndex);
-        if (Float.isNaN(floatValue)) {
-            responseAsciiSink.setNullValue();
-        } else {
+        if (floatValue == floatValue) {
             final long a = responseAsciiSink.skip();
             responseAsciiSink.put(floatValue, 3);
             responseAsciiSink.putLenEx(a);
+        } else {
+            responseAsciiSink.setNullValue();
+        }
+    }
+
+    private void appendFloatColumnBin(Record record, int columnIndex) {
+        final float value = record.getFloat(columnIndex);
+        if (value == value) {
+            responseAsciiSink.putNetworkInt(Float.BYTES);
+            responseAsciiSink.putNetworkFloat(value);
+        } else {
+            responseAsciiSink.setNullValue();
         }
     }
 
     private void appendIntCol(Record record, int i) {
         final int intValue = record.getInt(i);
-        if (intValue == Numbers.INT_NaN) {
-            responseAsciiSink.setNullValue();
-        } else {
+        if (intValue != Numbers.INT_NaN) {
             final long a = responseAsciiSink.skip();
             responseAsciiSink.put(intValue);
             responseAsciiSink.putLenEx(a);
+        } else {
+            responseAsciiSink.setNullValue();
+        }
+    }
+
+    private void appendIntColumnBin(Record record, int columnIndex) {
+        final int value = record.getInt(columnIndex);
+        if (value != Numbers.INT_NaN) {
+            responseAsciiSink.putNetworkInt(Integer.BYTES);
+            responseAsciiSink.putNetworkInt(value);
+        } else {
+            responseAsciiSink.setNullValue();
         }
     }
 
@@ -655,22 +698,22 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void appendLongColumn(Record record, int columnIndex) {
         final long longValue = record.getLong(columnIndex);
-        if (longValue == Numbers.LONG_NaN) {
-            responseAsciiSink.setNullValue();
-        } else {
+        if (longValue != Numbers.LONG_NaN) {
             final long a = responseAsciiSink.skip();
             responseAsciiSink.put(longValue);
             responseAsciiSink.putLenEx(a);
+        } else {
+            responseAsciiSink.setNullValue();
         }
     }
 
     private void appendLongColumnBin(Record record, int columnIndex) {
         final long longValue = record.getLong(columnIndex);
-        if (longValue == Numbers.LONG_NaN) {
-            responseAsciiSink.setNullValue();
-        } else {
+        if (longValue != Numbers.LONG_NaN) {
             responseAsciiSink.putNetworkInt(Long.BYTES);
             responseAsciiSink.putNetworkLong(longValue);
+        } else {
+            responseAsciiSink.setNullValue();
         }
     }
 
@@ -680,6 +723,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
             switch (activeSelectColumnTypes.getQuick(i)) {
+                case BINARY_TYPE_INT:
+                    appendIntColumnBin(record, i);
+                    break;
                 case ColumnType.INT:
                     appendIntCol(record, i);
                     break;
@@ -689,8 +735,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 case ColumnType.SYMBOL:
                     appendSymbolColumn(record, i);
                     break;
-                case 1073741829:
-                    // binary long
+                case BINARY_TYPE_LONG:
                     appendLongColumnBin(record, i);
                     break;
                 case ColumnType.LONG:
@@ -699,8 +744,26 @@ public class PGConnectionContext implements IOContext, Mutable {
                 case ColumnType.SHORT:
                     appendShortColumn(record, i);
                     break;
+                case BINARY_TYPE_DOUBLE:
+                    appendDoubleColumnBin(record, i);
+                    break;
                 case ColumnType.DOUBLE:
                     appendDoubleColumn(record, i);
+                    break;
+                case BINARY_TYPE_FLOAT:
+                    appendFloatColumnBin(record, i);
+                    break;
+                case BINARY_TYPE_SHORT:
+                    appendShortColumnBin(record, i);
+                    break;
+                case BINARY_TYPE_DATE:
+                    appendDateColumnBin(record, i);
+                    break;
+                case BINARY_TYPE_TIMESTAMP:
+                    appendTimestampColumnBin(record, i);
+                    break;
+                case BINARY_TYPE_BYTE:
+                    appendByteColumnBin(record, i);
                     break;
                 case ColumnType.FLOAT:
                     appendFloatColumn(record, i);
@@ -718,6 +781,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     appendByteColumn(record, i);
                     break;
                 case ColumnType.BINARY:
+                case BINARY_TYPE_BINARY:
                     appendBinColumn(record, i);
                     break;
                 case ColumnType.CHAR:
@@ -737,6 +801,12 @@ public class PGConnectionContext implements IOContext, Mutable {
         final long a = responseAsciiSink.skip();
         responseAsciiSink.put(record.getShort(columnIndex));
         responseAsciiSink.putLenEx(a);
+    }
+
+    private void appendShortColumnBin(Record record, int columnIndex) {
+        final short value = record.getShort(columnIndex);
+        responseAsciiSink.putNetworkInt(Short.BYTES);
+        responseAsciiSink.putNetworkShort(value);
     }
 
     private void appendStrColumn(Record record, int columnIndex) {
@@ -770,6 +840,17 @@ public class PGConnectionContext implements IOContext, Mutable {
             a = responseAsciiSink.skip();
             TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, null, null, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
+        }
+    }
+
+    private void appendTimestampColumnBin(Record record, int columnIndex) {
+        final long longValue = record.getLong(columnIndex);
+        if (longValue == Numbers.LONG_NaN) {
+            responseAsciiSink.setNullValue();
+        } else {
+            responseAsciiSink.putNetworkInt(Long.BYTES);
+            // PG epoch starts at 2000 rather than 1970
+            responseAsciiSink.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
         }
     }
 
@@ -970,8 +1051,11 @@ public class PGConnectionContext implements IOContext, Mutable {
             wrapper = namedStatementMap.get(statementName);
             if (wrapper != null) {
                 setupVariableSettersFromWrapper(wrapper, compiler);
+            } else {
+                // todo: when we have nothing for prepared statement name we need to produce an error
+                LOG.error().$("statement does not exist [name=").$(statementName).$(']').$();
+                throw BadProtocolException.INSTANCE;
             }
-            // todo: when we have nothing for prepared statement name we need to produce an error
         }
     }
 
@@ -1436,11 +1520,12 @@ public class PGConnectionContext implements IOContext, Mutable {
         //we now have all parameter counts, validate them
         validateParameterCounts(parameterFormatCount, parameterValueCount, parsePhaseBindVariableCount);
 
+        lo += Short.BYTES;
         if (parameterValueCount > 0) {
             if (this.parsePhaseBindVariableCount == parameterValueCount) {
-                lo = bindValuesUsingSetters(lo + Short.BYTES, msgLimit, parameterValueCount);
+                lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
             } else {
-                lo = bindValuesAsStrings(lo + Short.BYTES, msgLimit, parameterValueCount);
+                lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
             }
         }
 
@@ -1962,6 +2047,18 @@ public class PGConnectionContext implements IOContext, Mutable {
 
         public void putLenEx(long start) {
             putInt(start, (int) (sendBufferPtr - start - Integer.BYTES));
+        }
+
+        public void putNetworkDouble(double value) {
+            ensureCapacity(Double.BYTES);
+            Unsafe.getUnsafe().putDouble(sendBufferPtr, Double.longBitsToDouble(Numbers.bswap(Double.doubleToLongBits(value))));
+            sendBufferPtr += Double.BYTES;
+        }
+
+        public void putNetworkFloat(float value) {
+            ensureCapacity(Float.BYTES);
+            Unsafe.getUnsafe().putFloat(sendBufferPtr, Float.intBitsToFloat(Numbers.bswap(Float.floatToIntBits(value))));
+            sendBufferPtr += Float.BYTES;
         }
 
         public void putNetworkInt(int value) {

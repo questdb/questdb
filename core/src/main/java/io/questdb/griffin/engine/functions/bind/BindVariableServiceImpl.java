@@ -886,10 +886,10 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     static {
         final DateFormatCompiler milliCompiler = new DateFormatCompiler();
-        final TimestampFormatCompiler microCompiler = new TimestampFormatCompiler();
+        final DateFormat pgDateTimeFormat = milliCompiler.compile("yyyy-MM-dd HH:mm:ssz");
 
         DATE_FORMATS = new DateFormat[]{
-                milliCompiler.compile("yyyy-MM-dd HH:mm:ssz"),
+                pgDateTimeFormat,
                 PG_DATE_Z_FORMAT,
                 PG_DATE_MILLI_TIME_Z_FORMAT,
                 UTC_FORMAT
@@ -897,10 +897,11 @@ public class BindVariableServiceImpl implements BindVariableService {
 
         DATE_FORMATS_SIZE = DATE_FORMATS.length;
 
-        // we are using "millis" compiler delibrately because clients encode millis into strings
+        // we are using "millis" compiler deliberately because clients encode millis into strings
         TIMESTAMP_FORMATS = new DateFormat[]{
-                microCompiler.compile("y-MM-dd z"),
-                PG_DATE_MILLI_TIME_Z_FORMAT
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                pgDateTimeFormat
         };
 
         TIMESTAMP_FORMATS_SIZE = TIMESTAMP_FORMATS.length;

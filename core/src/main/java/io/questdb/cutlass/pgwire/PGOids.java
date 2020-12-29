@@ -33,7 +33,6 @@ public class PGOids {
 
     public static final int PG_VARCHAR = 1043;
     public static final int PG_TIMESTAMP = 1114;
-    public static final int PG_TIMESTAMPZ = 1184;
     public static final int PG_FLOAT8 = 701;
     public static final int PG_FLOAT4 = 700;
     public static final int PG_INT4 = 23;
@@ -68,6 +67,19 @@ public class PGOids {
     public static final int X_B_PG_DATE = (1 << 30) | X_PG_DATE;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = (1 << 30) | X_PG_BOOL;
+    public static final int PG_CATALOG_OID = 11;
+    public static final int PG_CLASS_OID = 1259;
+    public static final int PG_PUBLIC_OID = 2200;
+
+    public static final int BINARY_TYPE_INT = (1 << 30) | ColumnType.INT;
+    public static final int BINARY_TYPE_BYTE = (1 << 30) | ColumnType.BYTE;
+    public static final int BINARY_TYPE_SHORT = (1 << 30) | ColumnType.SHORT;
+    public static final int BINARY_TYPE_LONG = (1 << 30) | ColumnType.LONG;
+    public static final int BINARY_TYPE_DOUBLE = (1 << 30) | ColumnType.DOUBLE;
+    public static final int BINARY_TYPE_FLOAT = (1 << 30) | ColumnType.FLOAT;
+    public static final int BINARY_TYPE_DATE = (1 << 30) | ColumnType.DATE;
+    public static final int BINARY_TYPE_TIMESTAMP = (1 << 30) | ColumnType.TIMESTAMP;
+    public static final int BINARY_TYPE_BINARY = (1 << 30) | ColumnType.BINARY;
 
     static int toBinaryType(short code, int type) {
         return (((int) code) << 30) | type;
@@ -94,7 +106,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
         TYPE_OIDS.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
         TYPE_OIDS.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_DATE); // DATE
+        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
         TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
         TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_NUMERIC); // NUMERIC
 
