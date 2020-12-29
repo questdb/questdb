@@ -275,64 +275,6 @@ public class ServerMain {
             record.$('\t').$("http://").$ip(httpBindIP).$(':').$(httpBindPort).$('\n').$();
         }
     }
-    
-    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
-        return manifestAttributes.getValue("Implementation-Version");
-    }
-
-    protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
-        workerPool.halt();
-        Misc.freeObjList(instancesToClean);
-    }
-
-    protected HttpServer createHttpServer(final WorkerPool workerPool,
-                                          final Log log,
-                                          final CairoEngine cairoEngine,
-                                          FunctionFactoryCache functionFactoryCache) {
-        return HttpServer.create(
-                configuration.getHttpServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                functionFactoryCache
-        );
-    }
-
-    protected HttpServer createMinHttpServer(final WorkerPool workerPool,
-                                             final Log log,
-                                             final CairoEngine cairoEngine,
-                                             FunctionFactoryCache functionFactoryCache) {
-        return HttpServer.createMin(
-                configuration.getHttpMinServerConfiguration(),
-                workerPool,
-                log,
-                cairoEngine,
-                functionFactoryCache
-        );
-    }
-
-    protected void initQuestDb(
-            final WorkerPool workerPool,
-            final CairoEngine cairoEngine,
-            final Log log
-    ) {
-        // For extension
-    }
-
-    protected void readServerConfiguration(final String rootDirectory,
-                                           final Properties properties,
-                                           final Map<CharSequence, CharSequence> internalProperties,
-                                           Log log) throws ServerConfigurationException, JsonException {
-        configuration = new PropServerConfiguration(rootDirectory, properties, internalProperties, System.getenv(), log);
-    }
-
-    protected void startQuestDb(
-            final WorkerPool workerPool,
-            final CairoEngine cairoEngine,
-            final Log log
-    ) {
-        workerPool.start(log);
-    }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
         CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
@@ -360,6 +302,7 @@ public class ServerMain {
 
         return optHash;
     }
+
 
     private static long getPublicVersion(String publicDir) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
@@ -479,12 +422,70 @@ public class ServerMain {
         return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
     }
 
-    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
-        return manifestAttributes.getValue("Build-Commit-Hash");
+    protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
+        workerPool.halt();
+        Misc.freeObjList(instancesToClean);
+    }
+
+    protected HttpServer createHttpServer(final WorkerPool workerPool,
+                                          final Log log,
+                                          final CairoEngine cairoEngine,
+                                          FunctionFactoryCache functionFactoryCache) {
+        return HttpServer.create(
+                configuration.getHttpServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine,
+                functionFactoryCache
+        );
+    }
+
+    protected HttpServer createMinHttpServer(final WorkerPool workerPool,
+                                             final Log log,
+                                             final CairoEngine cairoEngine,
+                                             FunctionFactoryCache functionFactoryCache) {
+        return HttpServer.createMin(
+                configuration.getHttpMinServerConfiguration(),
+                workerPool,
+                log,
+                cairoEngine,
+                functionFactoryCache
+        );
+    }
+
+    protected void initQuestDb(
+            final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
+            final Log log
+    ) {
+        // For extension
+    }
+
+    protected void readServerConfiguration(final String rootDirectory,
+                                           final Properties properties,
+                                           final Map<CharSequence, CharSequence> internalProperties,
+                                           Log log) throws ServerConfigurationException, JsonException {
+        configuration = new PropServerConfiguration(rootDirectory, properties, internalProperties, System.getenv(), log);
+    }
+
+    protected void startQuestDb(
+            final WorkerPool workerPool,
+            final CairoEngine cairoEngine,
+            final Log log
+    ) {
+        workerPool.start(log);
+    }
+
+    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
+        return manifestAttributes.getValue("Implementation-Version");
     }
 
     private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
         return manifestAttributes.getValue("Build-Jdk");
+    }
+
+    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
+        return manifestAttributes.getValue("Build-Commit-Hash");
     }
 
     private static Map<CharSequence, CharSequence> buildInternalProperties() throws IOException {
