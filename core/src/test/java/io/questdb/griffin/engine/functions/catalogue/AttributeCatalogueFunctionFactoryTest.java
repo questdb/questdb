@@ -183,7 +183,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                             "public\ty\th\t1700\tfalse\t0\t32\t0\t7\t\t\tcolumn\t0\tb\n" +
                             "public\ty\ti\t700\tfalse\t0\t4\t0\t8\t\t\tcolumn\t0\tb\n" +
                             "public\ty\tj\t701\tfalse\t0\t8\t0\t9\t\t\tcolumn\t0\tb\n" +
-                            "public\ty\tk\t1082\tfalse\t0\t-1\t0\t10\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tk\t1114\tfalse\t0\t-1\t0\t10\t\t\tcolumn\t0\tb\n" +
                             "public\ty\tl\t1114\tfalse\t0\t-1\t0\t11\t\t\tcolumn\t0\tb\n",
                     "SELECT * FROM (\n" +
                             "    SELECT \n" +
@@ -246,7 +246,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                             "public\ty\th\t1700\tfalse\t0\t32\t0\t7\t\t\tcolumn\t0\tb\n" +
                             "public\ty\ti\t700\tfalse\t0\t4\t0\t8\t\t\tcolumn\t0\tb\n" +
                             "public\ty\tj\t701\tfalse\t0\t8\t0\t9\t\t\tcolumn\t0\tb\n" +
-                            "public\ty\tk\t1082\tfalse\t0\t-1\t0\t10\t\t\tcolumn\t0\tb\n" +
+                            "public\ty\tk\t1114\tfalse\t0\t-1\t0\t10\t\t\tcolumn\t0\tb\n" +
                             "public\ty\tl\t1114\tfalse\t0\t-1\t0\t11\t\t\tcolumn\t0\tb\n",
                     "SELECT * FROM (\n" +
                             "    SELECT \n" +

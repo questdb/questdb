@@ -2381,6 +2381,8 @@ nodejs code:
                         running
                 );
 
+                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
@@ -2400,11 +2402,11 @@ nodejs code:
                             // dump metadata
                             assertResultSet(
                                     "x[BIGINT],$1[VARCHAR]\n" +
-                                            "1,01:00:00.1+01\n" +
-                                            "2,01:00:00.1+01\n" +
-                                            "3,01:00:00.1+01\n" +
-                                            "4,01:00:00.1+01\n" +
-                                            "5,01:00:00.1+01\n",
+                                            "1,00:00:00.1+00\n" +
+                                            "2,00:00:00.1+00\n" +
+                                            "3,00:00:00.1+00\n" +
+                                            "4,00:00:00.1+00\n" +
+                                            "5,00:00:00.1+00\n",
                                     sink,
                                     rs
                             );
