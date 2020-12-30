@@ -58,7 +58,6 @@ import java.net.URL;
 import java.util.Collections;
 import java.util.Date;
 import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.ServiceLoader;
@@ -78,11 +77,11 @@ public class ServerMain {
 
     public ServerMain(String[] args) throws Exception {
         //properties fetched from sources other than server.conf
-        final Map<CharSequence, CharSequence> internalProperties = buildInternalProperties();
+        final BuildInformation buildInformation = fetchBuildInformation();
 
         System.err.printf(
                 "QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n",
-                internalProperties.getOrDefault("build.questdb.version", "Unknown Version"),
+                buildInformation.getQuestDbVersion(),
                 Dates.getYear(System.currentTimeMillis())
         );
         if (args.length < 1) {
@@ -113,7 +112,7 @@ public class ServerMain {
             properties.load(is);
         }
 
-        readServerConfiguration(rootDirectory, properties, internalProperties, log);
+        readServerConfiguration(rootDirectory, properties, log, buildInformation);
 
         // create database directory
         try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
@@ -457,9 +456,9 @@ public class ServerMain {
 
     protected void readServerConfiguration(final String rootDirectory,
                                            final Properties properties,
-                                           final Map<CharSequence, CharSequence> internalProperties,
-                                           Log log) throws ServerConfigurationException, JsonException {
-        configuration = new PropServerConfiguration(rootDirectory, properties, internalProperties, System.getenv(), log);
+                                           Log log,
+                                           final BuildInformation buildInformation) throws ServerConfigurationException, JsonException {
+        configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
     }
 
     protected void startQuestDb(
@@ -471,26 +470,28 @@ public class ServerMain {
     }
 
     private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
-        return manifestAttributes.getValue("Implementation-Version");
+        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
+        return version != null ? version : "[DEVELOPMENT]";
     }
 
     private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
-        return manifestAttributes.getValue("Build-Jdk");
+        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
+        return version != null ? version : "Unknown Version";
     }
 
     private static CharSequence getCommitHash(final Attributes manifestAttributes) {
-        return manifestAttributes.getValue("Build-Commit-Hash");
+        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
+        return version != null ? version : "Unknown Version";
     }
 
-    private static Map<CharSequence, CharSequence> buildInternalProperties() throws IOException {
+    private static BuildInformation fetchBuildInformation() throws IOException {
         final Attributes manifestAttributes = getManifestAttributes();
 
-        final Map<CharSequence, CharSequence> properties = new HashMap<>(3);
-        properties.put("build.questdb.version", getQuestDbVersion(manifestAttributes));
-        properties.put("build.jdk.version", getJdkVersion(manifestAttributes));
-        properties.put("build.commit.hash", getCommitHash(manifestAttributes));
-
-        return properties;
+        return new BuildInformationHolder(
+                getQuestDbVersion(manifestAttributes),
+                getJdkVersion(manifestAttributes),
+                getCommitHash(manifestAttributes)
+        );
     }
 
     private static Attributes getManifestAttributes() throws IOException {

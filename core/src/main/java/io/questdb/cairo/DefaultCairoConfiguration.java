@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.BuildInformation;
-import io.questdb.DefaultBuildInformation;
+import io.questdb.BuildInformationHolder;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
@@ -52,7 +52,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
 
-    private final BuildInformation buildInformation = new DefaultBuildInformation();
+    private final BuildInformation buildInformation = new BuildInformationHolder();
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);

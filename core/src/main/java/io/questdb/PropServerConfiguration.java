@@ -295,17 +295,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
-    private BuildInformation buildInformation = new PropBuildInformation();
-    private CharSequence questDbVersion;
-    private CharSequence jdkVersion;
-    private CharSequence commitHash;
+    private final BuildInformation buildInformation;
 
     public PropServerConfiguration(
             String root,
             Properties properties,
-            Map<CharSequence, CharSequence> internalProperties,
             @Nullable Map<String, String> env,
-            Log log
+            Log log,
+            final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
@@ -617,9 +614,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        this.questDbVersion = internalProperties.getOrDefault("build.questdb.version", "Unknown Version");
-        this.jdkVersion = internalProperties.getOrDefault("build.jdk.version", "Unknown Version");
-        this.commitHash = internalProperties.getOrDefault("build.commit.hash", "Unknown Version");
+        this.buildInformation = buildInformation;
     }
 
     @Override
@@ -1670,23 +1665,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public BuildInformation getBuildInformation() {
             return buildInformation;
-        }
-    }
-
-    private class PropBuildInformation implements BuildInformation {
-        @Override
-        public CharSequence getQuestDbVersion() {
-            return questDbVersion;
-        }
-
-        @Override
-        public CharSequence getJdkVersion() {
-            return jdkVersion;
-        }
-
-        @Override
-        public CharSequence getCommitHash() {
-            return commitHash;
         }
     }
 
