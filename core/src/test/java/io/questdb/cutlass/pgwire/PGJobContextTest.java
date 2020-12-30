@@ -871,6 +871,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertExtendedBinaryAndCommit() throws Exception {
+        testInsertAndCommit(false, true);
+    }
+
+    @Test
     public void testInsertExtendedText() throws Exception {
         testInsert0(false, false);
     }
@@ -2958,6 +2963,7 @@ nodejs code:
                     PreparedStatement select = connection.prepareStatement("x where a = ?");
                     execSelectWithParam(select, 9);
 
+
                     final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?, ?)");
                     long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
                     for (int i = 0; i < 90; i++) {
@@ -2986,10 +2992,112 @@ nodejs code:
                         insert.setTimestamp(8, new PGTimestamp(micros));
 
                         insert.execute();
+                        Assert.assertEquals(1, insert.getUpdateCount());
                         micros += 1000;
                     }
 
                     try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expectedAll, sink, resultSet);
+                    }
+
+                    TestUtils.assertEquals(expectedAll, sink);
+
+                    // exercise parameters on select statement
+                    execSelectWithParam(select, 9);
+                    TestUtils.assertEquals("9\n", sink);
+
+                    execSelectWithParam(select, 11);
+                    TestUtils.assertEquals("11\n", sink);
+
+                }
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
+    private void testInsertAndCommit(boolean simpleQueryMode, boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            String expectedAll = "count[BIGINT]\n" +
+                    "10000\n";
+
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(
+                        NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                properties.setProperty("binaryTransfer", Boolean.toString(binary));
+                if (simpleQueryMode) {
+                    properties.setProperty("preferQueryMode", "simple");
+                }
+
+                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
+                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
+
+                    connection.setAutoCommit(false);
+                    //
+                    // test methods of inserting QuestDB's DATA and TIMESTAMP values
+                    //
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, d2 date, t2 timestamp, t3 timestamp, b1 short) timestamp(t)");
+                    statement.execute();
+
+                    // exercise parameters on select statement
+                    PreparedStatement select = connection.prepareStatement("x where a = ?");
+                    execSelectWithParam(select, 9);
+
+
+                    final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                    for (int i = 0; i < 10_000; i++) {
+                        insert.setInt(1, i);
+                        // DATE as jdbc's DATE
+                        // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
+                        // just date
+                        insert.setDate(2, new Date(micros / 1000));
+
+                        // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
+                        insert.setTimestamp(3, new Timestamp(micros));
+
+                        // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
+                        insert.setTimestamp(4, new Timestamp(micros / 1000L));
+
+                        // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
+                        insert.setDate(5, new Date(micros));
+
+                        // DATE as LONG millis
+                        insert.setLong(6, micros / 1000L);
+
+                        // TIMESTAMP as LONG micros
+                        insert.setLong(7, micros);
+
+                        // TIMESTAMP as PG specific TIMESTAMP type
+                        insert.setTimestamp(8, new PGTimestamp(micros));
+
+                        insert.setByte(9, (byte) 'A');
+
+                        insert.execute();
+                        Assert.assertEquals(1, insert.getUpdateCount());
+                        micros += 1000;
+
+                        if (i % 128 == 0) {
+                            connection.commit();
+                        }
+                    }
+                    connection.commit();
+
+                    try (ResultSet resultSet = connection.prepareStatement("select count() from x").executeQuery()) {
                         sink.clear();
                         assertResultSet(expectedAll, sink, resultSet);
                     }

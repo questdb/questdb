@@ -43,8 +43,6 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.PG_TIMESTAMP_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
@@ -92,10 +90,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
-    private final CharacterStore connectionCharacterStore;
-    private final CharacterStore queryCharacterStore;
-    private final CharacterStore portalCharacterStore;
-    private final CharacterStore queryTextCharacterStore;
+    private final CharacterStore characterStore;
     private final BindVariableService bindVariableService;
     private final long sendBufferLimit;
     private final int sendBufferSize;
@@ -171,19 +166,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.sendBuffer = Unsafe.malloc(this.sendBufferSize);
         this.sendBufferPtr = sendBuffer;
         this.sendBufferLimit = sendBuffer + sendBufferSize;
-        this.queryCharacterStore = new CharacterStore(
+        this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
         );
-        this.portalCharacterStore = new CharacterStore(
-                configuration.getCharacterStoreCapacity(),
-                configuration.getCharacterStorePoolCapacity()
-        );
-        this.queryTextCharacterStore = new CharacterStore(
-                configuration.getCharacterStoreCapacity(),
-                configuration.getCharacterStorePoolCapacity()
-        );
-        this.connectionCharacterStore = new CharacterStore(256, 2);
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
@@ -259,7 +245,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         bufferRemainingSize = 0;
         responseAsciiSink.reset();
         prepareForNewQuery();
-        queryTextCharacterStore.clear();
         // todo: test that both of these are cleared (unit test)
         authenticationRequired = true;
         username = null;
@@ -402,19 +387,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         bindVariableService.setBoolean(index, valueLen == 4);
     }
 
-    public void setByteTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
-        try {
-            bindVariableService.setByte(index, (byte) Numbers.parseInt(dbcs.of(address, address + valueLen)));
-        } catch (NumericException | SqlException e) {
-            LOG.error().$("bad byte variable value [index=").$(index).$(", value=`").$(dbcs).$("`").$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
     public void setCharBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        CharacterStoreEntry e = queryCharacterStore.newEntry();
+        CharacterStoreEntry e = characterStore.newEntry();
         if (Chars.utf8Decode(address, address + valueLen, e)) {
-            bindVariableService.setChar(index, queryCharacterStore.toImmutable().charAt(0));
+            bindVariableService.setChar(index, characterStore.toImmutable().charAt(0));
         } else {
             LOG.error().$("invalid char UTF8 bytes [index=").$(index).$(']').$();
             throw BadProtocolException.INSTANCE;
@@ -435,26 +411,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         bindVariableService.setDouble(index, Double.longBitsToDouble(getLongUnsafe(address)));
     }
 
-    public void setDoubleTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
-        try {
-            bindVariableService.setDouble(index, Numbers.parseDouble(dbcs.of(address, address + valueLen)));
-        } catch (NumericException | SqlException e) {
-            LOG.error().$("bad double variable value [index=").$(index).$(", value=`").$(dbcs).$("`]").$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
     public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Float.BYTES, valueLen);
         bindVariableService.setFloat(index, Float.intBitsToFloat(getIntUnsafe(address)));
-    }
-
-    public void setFloatTextBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        try {
-            bindVariableService.setFloat(index, Numbers.parseFloat(dbcs.of(address, address + valueLen)));
-        } catch (NumericException e) {
-            throw BadProtocolException.INSTANCE;
-        }
     }
 
     public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -462,27 +421,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         bindVariableService.setInt(index, getIntUnsafe(address));
     }
 
-    public void setIntTextBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        try {
-            bindVariableService.setInt(index, Numbers.parseInt(dbcs.of(address, address + valueLen)));
-        } catch (NumericException e) {
-            LOG.error().$("bad int variable value [index=").$(index).$(", value=`").$(dbcs).$("`]").$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
     public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Long.BYTES, valueLen);
         bindVariableService.setLong(index, getLongUnsafe(address));
-    }
-
-    public void setLongTextBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        try {
-            bindVariableService.setLong(index, Numbers.parseLong(dbcs.of(address, address + valueLen)));
-        } catch (NumericException e) {
-            LOG.error().$("bad long variable value [index=").$(index).$(", value=`").$(dbcs).$("`]").$();
-            throw BadProtocolException.INSTANCE;
-        }
     }
 
     public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -491,25 +432,12 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
-        CharacterStoreEntry e = queryCharacterStore.newEntry();
+        CharacterStoreEntry e = characterStore.newEntry();
         if (Chars.utf8Decode(address, address + valueLen, e)) {
-            bindVariableService.setStr(index, queryCharacterStore.toImmutable());
+            bindVariableService.setStr(index, characterStore.toImmutable());
         } else {
             LOG.error().$("invalid str UTF8 bytes [index=").$(index).$(']').$();
             throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    public void setTimestampBindVariable(int index, long address, int valueLen) throws SqlException {
-        dbcs.of(address, address + valueLen);
-        try {
-            bindVariableService.setTimestamp(index, PG_TIMESTAMP_TIME_Z_FORMAT.parse(dbcs, locale));
-        } catch (NumericException e1) {
-            try {
-                bindVariableService.setTimestamp(index, PG_TIMESTAMP_MILLI_TIME_Z_FORMAT.parse(dbcs, locale));
-            } catch (NumericException e2) {
-                throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
-            }
         }
     }
 
@@ -1069,6 +997,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         assert wrapper == null;
         wrapper = namedStatementWrapperPool.pop();
         wrapper.queryText = Chars.toString(queryText);
+        wrapper.tag = queryTag;
         namedStatementMap.put(Chars.toString(statementName), wrapper);
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
@@ -1203,19 +1132,22 @@ public class PGConnectionContext implements IOContext, Mutable {
         sendAndReset();
     }
 
+    private CharSequence getStatement0(long lo, long hi) throws BadProtocolException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Chars.utf8Decode(lo, hi, e)) {
+            return characterStore.toImmutable();
+        } else {
+            LOG.error().$("invalid UTF8 bytes in statement name").$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
     @Nullable
     private CharSequence getStatementName(long lo, long hi) throws BadProtocolException {
-        CharacterStoreEntry e = portalCharacterStore.newEntry();
-        CharSequence statementName = null;
         if (hi - lo > 0) {
-            if (Chars.utf8Decode(lo, hi, e)) {
-                statementName = portalCharacterStore.toImmutable();
-            } else {
-                LOG.error().$("invalid UTF8 bytes in statement name").$();
-                throw BadProtocolException.INSTANCE;
-            }
+            return getStatement0(lo, hi);
         }
-        return statementName;
+        return null;
     }
 
     /**
@@ -1311,9 +1243,9 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void parseQueryText(long lo, long hi, @Transient SqlCompiler compiler)
             throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        CharacterStoreEntry e = queryCharacterStore.newEntry();
+        CharacterStoreEntry e = characterStore.newEntry();
         if (Chars.utf8Decode(lo, hi, e)) {
-            queryText = queryCharacterStore.toImmutable();
+            queryText = characterStore.toImmutable();
             LOG.info().$("parse [q=").utf8(queryText).$(']').$();
             compileQuery(compiler);
             return;
@@ -1334,6 +1266,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     void prepareCommandComplete(boolean addRowCount) {
         if (isEmptyQuery) {
+            LOG.debug().$("empty").$();
             responseAsciiSink.put(MESSAGE_TYPE_EMPTY_QUERY);
             responseAsciiSink.putNetworkInt(Integer.BYTES);
         } else {
@@ -1341,11 +1274,14 @@ public class PGConnectionContext implements IOContext, Mutable {
             long addr = responseAsciiSink.skip();
             if (addRowCount) {
                 if (queryTag == TAG_INSERT) {
+                    LOG.debug().$("insert [rowCount=").$(rowCount).$(']').$();
                     responseAsciiSink.encodeUtf8(queryTag).put(" 0 ").put(rowCount).put((char) 0);
                 } else {
+                    LOG.debug().$("other [rowCount=").$(rowCount).$(']').$();
                     responseAsciiSink.encodeUtf8(queryTag).put(' ').put(rowCount).put((char) 0);
                 }
             } else {
+                LOG.debug().$("now row count").$();
                 responseAsciiSink.encodeUtf8(queryTag).put((char) 0);
             }
             responseAsciiSink.putLen(addr);
@@ -1383,7 +1319,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             case PGConnectionContext.TAIL_ERROR:
                 SqlException e = SqlException.last();
                 prepareError(e);
-                LOG.info().$("SQL exception [pos=").$(e.getPosition()).$(", msg=`").$(e.getFlyweightMessage()).$("`]").$();
+                LOG.error().$("SQL exception [pos=").$(e.getPosition()).$(", msg=`").$(e.getFlyweightMessage()).$("`]").$();
                 break;
             default:
                 break;
@@ -1393,8 +1329,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void prepareForNewQuery() {
         LOG.debug().$("prepare for new query").$();
         isEmptyQuery = false;
-        queryCharacterStore.clear();
-        portalCharacterStore.clear();
+        characterStore.clear();
         bindVariableService.clear();
         currentCursor = Misc.free(currentCursor);
         typesAndInsert = null;
@@ -1443,9 +1378,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             case ERROR_TRANSACTION:
                 responseAsciiSink.put(STATUS_IN_ERROR);
                 break;
-            case NO_TRANSACTION:
-            case COMMIT_TRANSACTION:
-            case ROLLING_BACK_TRANSACTION:
             default:
                 responseAsciiSink.put(STATUS_IDLE);
                 break;
@@ -1494,6 +1426,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         short parameterFormatCount;
         short parameterValueCount;
 
+        LOG.debug().$("bind").$();
         // portal name
         hi = getStringLength(lo, msgLimit, "bad portal name length [msgType='B']");
 
@@ -1558,36 +1491,38 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
 
         syncActions.add(SYNC_BIND);
-//        prepareBindComplete();
     }
 
     private void processClose(long lo, long msgLimit) throws BadProtocolException {
         final byte type = Unsafe.getUnsafe().getByte(lo);
-        if (type == 'S') {
-            lo = lo + 1;
-            final long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
-            CharSequence statementName = getStatementName(lo, hi);
-            if (statementName != null) {
-                final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
-                if (wrapper != null) {
-                    namedStatementWrapperPool.push(wrapper);
-                } else {
-                    LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
-                    throw BadProtocolException.INSTANCE;
+        switch (type) {
+            case 'S':
+                lo = lo + 1;
+                final long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
+                CharSequence statementName = getStatementName(lo, hi);
+                if (statementName != null) {
+                    final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
+                    if (wrapper != null) {
+                        namedStatementWrapperPool.push(wrapper);
+                    } else {
+                        LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
+                        throw BadProtocolException.INSTANCE;
+                    }
                 }
-            }
-            queryTextCharacterStore.clear();
-        } else if (type == 'P') {
-            LOG.info().$("close message for portal - ignoring").$();
-        } else {
-            LOG.error().$("invalid type for close message [type=").$(type).$(']').$();
-            throw BadProtocolException.INSTANCE;
+                break;
+            case 'P':
+                LOG.info().$("close message for portal - ignoring").$();
+                break;
+            default:
+                LOG.error().$("invalid type for close message [type=").$(type).$(']').$();
+                throw BadProtocolException.INSTANCE;
         }
         prepareCloseComplete();
     }
 
     private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
             throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
+        LOG.debug().$("describe").$();
         configureContextFromNamedStatement(
                 lo + 1,
                 getStringLength(lo + 1, msgLimit, "bad portal name length [msgType='D']"),
@@ -1597,8 +1532,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void processExec() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        LOG.debug().$("execute").$();
         processSyncActions();
         processExecute();
+        wrapper = null;
     }
 
     private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1678,8 +1615,6 @@ public class PGConnectionContext implements IOContext, Mutable {
                         .$(", minor=").$((short) protocol)
                         .$(']').$();
 
-                connectionCharacterStore.clear();
-
                 while (lo < msgLimit - 1) {
 
                     final long nameLo = lo;
@@ -1691,13 +1626,15 @@ public class PGConnectionContext implements IOContext, Mutable {
                     // store user
                     dbcs.of(nameLo, nameHi);
                     if (Chars.equals(dbcs, "user")) {
-                        CharacterStoreEntry e = connectionCharacterStore.newEntry();
+                        CharacterStoreEntry e = characterStore.newEntry();
                         e.put(dbcs.of(valueLo, valueHi));
                         this.username = e.toImmutable();
                     }
 
                     LOG.info().$("propertry [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
                 }
+
+                characterStore.clear();
 
                 assertTrue(this.username != null, "user is not specified");
                 prepareLoginResponse();
@@ -1732,9 +1669,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         //query text
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
-
-        // clear the context as parse usually is the first message
-        prepareForNewQuery();
 
         parseQueryText(lo, hi, compiler);
 
@@ -1942,7 +1876,9 @@ public class PGConnectionContext implements IOContext, Mutable {
             @Nullable @Transient SqlCompiler compiler
     ) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         queryText = wrapper.queryText;
+        LOG.debug().$("wrapper query [q=`").$(wrapper.queryText).$("`]").$();
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
+        this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
         if (compileQuery(compiler) && typesAndSelect != null) {
             buildSelectColumnTypes();
@@ -1967,8 +1903,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         public final IntList bindVariableTypes = new IntList();
         public final IntList selectColumnTypes = new IntList();
         public CharSequence queryText = null;
+        public CharSequence tag;
 
         public void clear() {
+            tag = null;
             queryText = null;
             bindVariableTypes.clear();
             selectColumnTypes.clear();
