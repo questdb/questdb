@@ -190,7 +190,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCaseInFunction() throws SqlException {
         x(
                 "xyab+10>'a'ab-3<'b'0case10+zf*",
-                "x*f(y,case when (a+b) > 10 then 'a' when (a-b)<3 then 'b' else 0 end + 10,z)");
+                "x*f(y,case when (a+b) > 10 then 'a' when (a-b)<3 then 'b' else 0 end + 10,z)"
+        );
+    }
+
+    @Test
+    public void testTypeQualifier() throws SqlException {
+        x("'hello'something::", "'hello'::something");
     }
 
     @Test

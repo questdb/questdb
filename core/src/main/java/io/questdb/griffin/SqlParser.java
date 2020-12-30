@@ -63,6 +63,7 @@ public final class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteTypeQualifier0Ref = this::rewriteTypeQualifier0;
     private boolean subQueryMode = false;
     SqlParser(
             CairoConfiguration configuration,
@@ -1420,6 +1421,11 @@ public final class SqlParser {
         return parent;
     }
 
+    private ExpressionNode rewriteTypeQualifier(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, rewriteTypeQualifier0Ref);
+        return parent;
+    }
+
     private void rewriteConcat0(ExpressionNode node) {
         if (node.type == ExpressionNode.OPERATION && isConcatOperator(node.token)) {
             node.type = ExpressionNode.FUNCTION;
@@ -1459,8 +1465,24 @@ public final class SqlParser {
         }
     }
 
+    /**
+     * Rewrites 'abc'::blah - type qualifier
+     *
+     * @param node expression node, provided by tree walking algo
+     */
+    private void rewriteTypeQualifier0(ExpressionNode node) {
+        if (node.type == ExpressionNode.OPERATION && isColonColonKeyword(node.token)) {
+            if (node.paramCount == 2) {
+                ExpressionNode that = node.rhs;
+                if (that.type == ExpressionNode.LITERAL) {
+                    that.type = ExpressionNode.MEMBER_ACCESS;
+                }
+            }
+        }
+    }
+
     private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
-        return rewriteConcat(rewriteCase(rewriteCount(parent)));
+        return rewriteConcat(rewriteCase(rewriteCount(rewriteTypeQualifier(parent))));
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
