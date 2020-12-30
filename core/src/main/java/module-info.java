@@ -503,6 +503,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
 
             // metadata functions
-            io.questdb.griffin.engine.functions.metadata.BuildFuntionFactory
+            io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory
             ;
 }
