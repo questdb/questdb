@@ -76,15 +76,12 @@ public class BuildFunctionFactory implements FunctionFactory {
             final CharSink sink = new StringSink();
             final BuildInformation buildInformation = configuration.getBuildInformation();
 
-            sink.put("Build Information:")
-                .put(Misc.EOL)
-                .put("QuestDB server ")
+            sink.put("Build Information: ")
+                .put("QuestDB ")
                 .put(buildInformation.getQuestDbVersion())
-                .put(Misc.EOL)
-                .put("JDK ")
+                .put(", JDK ")
                 .put(buildInformation.getJdkVersion())
-                .put(Misc.EOL)
-                .put("Commit Hash ")
+                .put(", Commit Hash ")
                 .put(buildInformation.getCommitHash());
 
             return sink.toString();
