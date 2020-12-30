@@ -235,7 +235,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         ex.put(". expected args: ");
         ex.put('(');
         if (descriptor != null) {
-            for (int i = 0, n = descriptor.getSigCount(); i < n; i++) {
+            for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                 if (i > 0) {
                     ex.put(',');
                 }
@@ -413,10 +413,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return new CursorFunction(node.position, sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
     }
 
-    private Function createFunction(
-            ExpressionNode node,
-            @Transient ObjList<Function> args
-    ) throws SqlException {
+    private Function createFunction(ExpressionNode node, @Transient ObjList<Function> args) throws SqlException {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         boolean isNegated = functionFactoryCache.isNegated(node.token);
         boolean isFlipped = functionFactoryCache.isFlipped(node.token);
@@ -451,7 +448,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         for (int i = 0, n = overload.size(); i < n; i++) {
             final FunctionFactoryDescriptor descriptor = overload.getQuick(i);
             final FunctionFactory factory = descriptor.getFactory();
-            int sigArgCount = descriptor.getSigCount();
+            int sigArgCount = descriptor.getSigArgCount();
 
             final boolean sigVarArg;
             final boolean sigVarArgConst;
@@ -726,6 +723,22 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw SqlException.$(0, "bind variable service is not provided");
         }
         return bindVariableService;
+    }
+
+    public boolean isValidNoArgFunction(ExpressionNode node) {
+        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
+        if (overload == null) {
+            return false;
+        }
+
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            FunctionFactoryDescriptor ffd = overload.getQuick(i);
+            if (ffd.getSigArgCount() == 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     static {

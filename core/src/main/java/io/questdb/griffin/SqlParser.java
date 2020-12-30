@@ -955,12 +955,29 @@ public final class SqlParser {
 
     private QueryModel parseJoin(GenericLexer lexer, CharSequence tok, int joinType, QueryModel parent) throws SqlException {
         QueryModel joinModel = queryModelPool.next();
-        joinModel.setJoinType(joinType);
-        joinModel.setJoinKeywordPosition(lexer.lastTokenPosition());
 
-        if (!isJoinKeyword(tok) && !Chars.equals(tok, ',')) {
-            expectTok(lexer, "join");
+        int errorPos = lexer.lastTokenPosition();
+
+        if (isNotJoinKeyword(tok) && !Chars.equals(tok, ',')) {
+            // not already a join?
+            // was it "left" ?
+            if (isLeftKeyword(tok)) {
+                tok = tok(lexer, "join");
+                if (isOuterKeyword(tok)) {
+                    // LEFT OUTER
+                    joinType = QueryModel.JOIN_OUTER;
+                    tok = tok(lexer, "join");
+                }
+            } else {
+                tok = tok(lexer, "join");
+            }
+            if (isNotJoinKeyword(tok)) {
+                throw SqlException.position(errorPos).put("'join' expected");
+            }
         }
+
+        joinModel.setJoinType(joinType);
+        joinModel.setJoinKeywordPosition(errorPos);
 
         tok = expectTableNameOrSubQuery(lexer);
 

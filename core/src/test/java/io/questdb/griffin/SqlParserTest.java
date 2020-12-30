@@ -3982,6 +3982,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLeftOuterJoin() throws Exception {
+        assertQuery(
+                "select-choose a.x x from (select [x] from a a outer join select [x] from b on b.x = a.x) a",
+                "select a.x from a a left outer join b on b.x = a.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testOuterJoinColumnAlias() throws SqlException {
         assertQuery("select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +

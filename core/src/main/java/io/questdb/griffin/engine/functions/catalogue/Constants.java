@@ -24,21 +24,10 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.ObjList;
 
-public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_get_userbyid(I)";
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return Constants.PUBLIC_CONSTANT;
-    }
+public class Constants {
+    public static final String PUBLIC = "public";
+    static final StrFunction PUBLIC_CONSTANT = new StrConstant(0, PUBLIC);
 }

@@ -34,7 +34,7 @@ import io.questdb.cutlass.pgwire.PGOids;
 
 class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
-    private static final String[] namespaces = {"pg_catalog", "public"};
+    private static final String[] namespaces = {"pg_catalog", Constants.PUBLIC};
     private static final int[] oids = {PGOids.PG_CATALOG_OID, PGOids.PG_PUBLIC_OID};
     private static final int rowCount = namespaces.length;
     private final NamespaceCatalogueRecord record = new NamespaceCatalogueRecord();
