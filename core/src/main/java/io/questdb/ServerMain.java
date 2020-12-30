@@ -427,10 +427,7 @@ public class ServerMain {
         Misc.freeObjList(instancesToClean);
     }
 
-    protected HttpServer createHttpServer(final WorkerPool workerPool,
-                                          final Log log,
-                                          final CairoEngine cairoEngine,
-                                          FunctionFactoryCache functionFactoryCache) {
+    protected HttpServer createHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
         return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
                 workerPool,
@@ -440,10 +437,7 @@ public class ServerMain {
         );
     }
 
-    protected HttpServer createMinHttpServer(final WorkerPool workerPool,
-                                             final Log log,
-                                             final CairoEngine cairoEngine,
-                                             FunctionFactoryCache functionFactoryCache) {
+    protected HttpServer createMinHttpServer(final WorkerPool workerPool, final Log log, final CairoEngine cairoEngine, FunctionFactoryCache functionFactoryCache) {
         return HttpServer.createMin(
                 configuration.getHttpMinServerConfiguration(),
                 workerPool,
@@ -453,7 +447,7 @@ public class ServerMain {
         );
     }
 
-    protected void initQuestDb(
+    protected void i    nitQuestDb(
             final WorkerPool workerPool,
             final CairoEngine cairoEngine,
             final Log log

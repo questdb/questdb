@@ -502,7 +502,7 @@ open module io.questdb {
             // analytic functions
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
 
-            // metadata function
+            // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFuntionFactory
             ;
 }
