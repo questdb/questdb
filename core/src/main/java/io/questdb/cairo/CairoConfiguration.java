@@ -28,11 +28,10 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface CairoConfiguration {
 
@@ -88,7 +87,7 @@ public interface CairoConfiguration {
     // null disables backups
     CharSequence getBackupRoot();
 
-    TimestampFormat getBackupDirTimestampFormat();
+    DateFormat getBackupDirTimestampFormat();
 
     CharSequence getBackupTempDirName();
 
@@ -186,8 +185,6 @@ public interface CairoConfiguration {
     int getCommitMode();
 
     DateLocale getDefaultDateLocale();
-
-    TimestampLocale getDefaultTimestampLocale();
 
     int getGroupByPoolCapacity();
 

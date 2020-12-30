@@ -59,6 +59,13 @@ public class NumbersTest {
     }
 
     @Test
+    public void testAppendZeroLong256() {
+        sink.clear();
+        Numbers.appendLong256(0, 0, 0, 0, sink);
+        TestUtils.assertEquals("0x00", sink);
+    }
+
+    @Test
     public void testCeilPow2() {
         Assert.assertEquals(16, Numbers.ceilPow2(15));
         Assert.assertEquals(16, Numbers.ceilPow2(16));
@@ -103,6 +110,168 @@ public class NumbersTest {
     }
 
     @Test
+    public void testFormatDouble2() {
+        sink.clear();
+        Numbers.append(sink, 0.8998893432);
+        TestUtils.assertEquals("0.8998893432", sink);
+    }
+
+    @Test
+    public void testFormatDoubleAsRandomFloat() {
+        Random random = new Random();
+        for (int i = 0; i < 1_000_000; i++) {
+            float d1 = random.nextFloat();
+            float d2 = (float) random.nextGaussian();
+            float d3 = random.nextFloat() * Float.MAX_VALUE;
+            sink.clear();
+            Numbers.append(sink, d1);
+            TestUtils.assertEquals(Double.toString(d1), sink);
+
+            sink.clear();
+            Numbers.append(sink, d2);
+            TestUtils.assertEquals(Double.toString(d2), sink);
+
+            sink.clear();
+            Numbers.append(sink, d3);
+            TestUtils.assertEquals(Double.toString(d3), sink);
+        }
+    }
+
+    @Test
+    public void testFormatDoubleExp() {
+        sink.clear();
+        Numbers.append(sink, 112333.989922222);
+        TestUtils.assertEquals("112333.989922222", sink);
+    }
+
+    @Test
+    public void testFormatDoubleExp10() {
+        sink.clear();
+        Numbers.append(sink, 1.23E3);
+        TestUtils.assertEquals("1230.0", sink);
+    }
+
+    @Test
+    public void testFormatDoubleExp100() {
+        sink.clear();
+        Numbers.append(sink, 1.23E105);
+        TestUtils.assertEquals("1.23E105", sink);
+    }
+
+    @Test
+    public void testFormatDoubleExpNeg() {
+        sink.clear();
+        Numbers.append(sink, -8892.88001);
+        TestUtils.assertEquals("-8892.88001", sink);
+    }
+
+    @Test
+    public void testFormatDoubleFast() {
+        sink.clear();
+        Numbers.append(sink, -5.9522650387500933e18);
+        TestUtils.assertEquals("-5.9522650387500933E18", sink);
+    }
+
+    @Test
+    public void testFormatDoubleFastInteractive() {
+        sink.clear();
+        Numbers.append(sink, 0.872989018674569);
+        TestUtils.assertEquals("0.872989018674569", sink);
+    }
+
+    @Test
+    public void testFormatDoubleHugeZero() {
+        sink.clear();
+        Numbers.append(sink, -0.000000000000001);
+        TestUtils.assertEquals("-1.0E-15", sink);
+    }
+
+    @Test
+    public void testFormatDoubleInt() {
+        sink.clear();
+        Numbers.append(sink, 44556d);
+        TestUtils.assertEquals("44556.0", sink);
+    }
+
+    @Test
+    public void testFormatDoubleLargeExp() {
+        sink.clear();
+        Numbers.append(sink, 1123338789079878978979879d);
+        TestUtils.assertEquals("1.123338789079879E24", sink);
+    }
+
+    @Test
+    public void testFormatDoubleNegZero() {
+        sink.clear();
+        Numbers.append(sink, -0d);
+        TestUtils.assertEquals("-0.0", sink);
+    }
+
+    @Test
+    public void testFormatDoubleNoExponent() {
+        sink.clear();
+        Numbers.append(sink, 0.2213323334);
+        TestUtils.assertEquals("0.2213323334", sink);
+    }
+
+    @Test
+    public void testFormatDoubleNoExponentNeg() {
+        sink.clear();
+        Numbers.append(sink, -0.2213323334);
+        TestUtils.assertEquals("-0.2213323334", sink);
+    }
+
+    @Test
+    public void testFormatDoubleRandom() {
+        Random random = new Random();
+        for (int i = 0; i < 1_000_000; i++) {
+            double d1 = random.nextDouble();
+            double d2 = random.nextGaussian();
+            double d3 = random.nextDouble() * Double.MAX_VALUE;
+            sink.clear();
+            Numbers.append(sink, d1);
+            TestUtils.assertEquals(Double.toString(d1), sink);
+
+            sink.clear();
+            Numbers.append(sink, d2);
+            TestUtils.assertEquals(Double.toString(d2), sink);
+
+            sink.clear();
+            Numbers.append(sink, d3);
+            TestUtils.assertEquals(Double.toString(d3), sink);
+
+        }
+    }
+
+    @Test
+    public void testFormatDoubleRound() {
+        sink.clear();
+        Numbers.append(sink, 4455630333333333333333334444d);
+        TestUtils.assertEquals("4.4556303333333335E27", sink);
+    }
+
+    @Test
+    public void testFormatDoubleSlowInteractive() {
+        sink.clear();
+        Numbers.append(sink, 1.1317400099603851e308);
+        TestUtils.assertEquals("1.1317400099603851E308", sink);
+    }
+
+    @Test
+    public void testFormatDoubleZero() {
+        sink.clear();
+        Numbers.append(sink, 0d);
+        TestUtils.assertEquals("0.0", sink);
+    }
+
+    @Test
+    public void testFormatDoubleZeroExp() {
+        sink.clear();
+        Numbers.append(sink, -2.225073858507201E-308);
+        TestUtils.assertEquals("-2.225073858507201E-308", sink);
+    }
+
+    @Test
     public void testFormatFloat() {
         Numbers.append(sink, Float.POSITIVE_INFINITY, 3);
         Assert.assertEquals(Float.toString(Float.POSITIVE_INFINITY), sink.toString());
@@ -134,175 +303,6 @@ public class NumbersTest {
             Numbers.append(sink, n);
             Assert.assertEquals(Integer.toString(n), sink.toString());
         }
-    }
-
-    @Test
-    public void testFormatDoubleNoExponent() {
-        sink.clear();
-        Numbers.append(sink, 0.2213323334);
-        TestUtils.assertEquals("0.2213323334", sink);
-    }
-
-    @Test
-    public void testFormatDoubleInt() {
-        sink.clear();
-        Numbers.append(sink, 44556d);
-        TestUtils.assertEquals("44556.0", sink);
-    }
-
-    @Test
-    public void testFormatDoubleRound() {
-        sink.clear();
-        Numbers.append(sink, 4455630333333333333333334444d);
-        TestUtils.assertEquals("4.4556303333333335E27", sink);
-    }
-
-    @Test
-    public void testFormatDoubleZero() {
-        sink.clear();
-        Numbers.append(sink, 0d);
-        TestUtils.assertEquals("0.0", sink);
-    }
-
-    @Test
-    public void testFormatDoubleNegZero() {
-        sink.clear();
-        Numbers.append(sink, -0d);
-        TestUtils.assertEquals("-0.0", sink);
-    }
-
-    @Test
-    public void testAppendZeroLong256() {
-        sink.clear();
-        Numbers.appendLong256(0, 0, 0, 0, sink);
-        TestUtils.assertEquals("0x00", sink);
-    }
-
-    @Test
-    public void testFormatDoubleHugeZero() {
-        sink.clear();
-        Numbers.append(sink, -0.000000000000001);
-        TestUtils.assertEquals("-1.0E-15", sink);
-    }
-
-    @Test
-    public void testFormatDoubleZeroExp() {
-        sink.clear();
-        Numbers.append(sink, -2.225073858507201E-308);
-        TestUtils.assertEquals("-2.225073858507201E-308", sink);
-    }
-
-    @Test
-    public void testFormatDouble2() {
-        sink.clear();
-        Numbers.append(sink, 0.8998893432);
-        TestUtils.assertEquals("0.8998893432", sink);
-    }
-
-    @Test
-    public void testFormatDoubleNoExponentNeg() {
-        sink.clear();
-        Numbers.append(sink, -0.2213323334);
-        TestUtils.assertEquals("-0.2213323334", sink);
-    }
-
-    @Test
-    public void testFormatDoubleExp() {
-        sink.clear();
-        Numbers.append(sink, 112333.989922222);
-        TestUtils.assertEquals("112333.989922222", sink);
-    }
-
-    @Test
-    public void testFormatDoubleRandom() {
-        Random random = new Random();
-        for (int i = 0; i < 1_000_000; i++) {
-            double d1 = random.nextDouble();
-            double d2 = random.nextGaussian();
-            double d3 = random.nextDouble() * Double.MAX_VALUE;
-            sink.clear();
-            Numbers.append(sink, d1);
-            TestUtils.assertEquals(Double.toString(d1), sink);
-
-            sink.clear();
-            Numbers.append(sink, d2);
-            TestUtils.assertEquals(Double.toString(d2), sink);
-
-            sink.clear();
-            Numbers.append(sink, d3);
-            TestUtils.assertEquals(Double.toString(d3), sink);
-
-        }
-    }
-
-    @Test
-    public void testFormatDoubleAsRandomFloat() {
-        Random random = new Random();
-        for (int i = 0; i < 1_000_000; i++) {
-            float d1 = random.nextFloat();
-            float d2 = (float) random.nextGaussian();
-            float d3 = random.nextFloat() * Float.MAX_VALUE;
-            sink.clear();
-            Numbers.append(sink, d1);
-            TestUtils.assertEquals(Double.toString(d1), sink);
-
-            sink.clear();
-            Numbers.append(sink, d2);
-            TestUtils.assertEquals(Double.toString(d2), sink);
-
-            sink.clear();
-            Numbers.append(sink, d3);
-            TestUtils.assertEquals(Double.toString(d3), sink);
-        }
-    }
-
-    @Test
-    public void testFormatDoubleLargeExp() {
-        sink.clear();
-        Numbers.append(sink, 1123338789079878978979879d);
-        TestUtils.assertEquals("1.123338789079879E24", sink);
-    }
-
-    @Test
-    public void testFormatDoubleExpNeg() {
-        sink.clear();
-        Numbers.append(sink, -8892.88001);
-        TestUtils.assertEquals("-8892.88001", sink);
-    }
-
-    @Test
-    public void testFormatDoubleExp10() {
-        sink.clear();
-        Numbers.append(sink, 1.23E3);
-        TestUtils.assertEquals("1230.0", sink);
-    }
-
-    @Test
-    public void testFormatDoubleFast() {
-        sink.clear();
-        Numbers.append(sink, -5.9522650387500933e18);
-        TestUtils.assertEquals("-5.9522650387500933E18", sink);
-    }
-
-    @Test
-    public void testFormatDoubleFastInteractive() {
-        sink.clear();
-        Numbers.append(sink, 0.872989018674569);
-        TestUtils.assertEquals("0.872989018674569", sink);
-    }
-
-    @Test
-    public void testFormatDoubleSlowInteractive() {
-        sink.clear();
-        Numbers.append(sink, 1.1317400099603851e308);
-        TestUtils.assertEquals("1.1317400099603851E308", sink);
-    }
-
-    @Test
-    public void testFormatDoubleExp100() {
-        sink.clear();
-        Numbers.append(sink, 1.23E105);
-        TestUtils.assertEquals("1.23E105", sink);
     }
 
     @Test
@@ -374,6 +374,17 @@ public class NumbersTest {
     }
 
     @Test
+    public void testLongEdge() throws Exception {
+        Numbers.append(sink, Long.MAX_VALUE);
+        Assert.assertEquals(Long.MAX_VALUE, Numbers.parseLong(sink));
+
+        sink.clear();
+
+        Numbers.append(sink, Long.MIN_VALUE);
+        Assert.assertEquals(Long.MIN_VALUE, Numbers.parseLongQuiet(sink));
+    }
+
+    @Test
     public void testLongToHex() {
         long value = -8372462554923253491L;
         StringSink sink = new StringSink();
@@ -398,20 +409,43 @@ public class NumbersTest {
     }
 
     @Test
-    public void testLongEdge() throws Exception {
-        Numbers.append(sink, Long.MAX_VALUE);
-        Assert.assertEquals(Long.MAX_VALUE, Numbers.parseLong(sink));
-
-        sink.clear();
-
-        Numbers.append(sink, Long.MIN_VALUE);
-        Assert.assertEquals(Long.MIN_VALUE, Numbers.parseLongQuiet(sink));
-    }
-
-    @Test
     public void testLongToString() {
         Numbers.append(sink, 6103390276L);
         TestUtils.assertEquals("6103390276", sink);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParse000Greedy0() throws NumericException {
+        Numbers.parseInt000Greedy("", 0, 0);
+    }
+
+    @Test
+    public void testParse000Greedy1() throws NumericException {
+        String input = "2";
+        long val = Numbers.parseInt000Greedy(input, 0, input.length());
+        Assert.assertEquals(input.length(), Numbers.decodeHighInt(val));
+        Assert.assertEquals(200, Numbers.decodeLowInt(val));
+    }
+
+    @Test
+    public void testParse000Greedy2() throws NumericException {
+        String input = "06";
+        long val = Numbers.parseInt000Greedy(input, 0, input.length());
+        Assert.assertEquals(input.length(), Numbers.decodeHighInt(val));
+        Assert.assertEquals(60, Numbers.decodeLowInt(val));
+    }
+
+    @Test
+    public void testParse000Greedy3() throws NumericException {
+        String input = "219";
+        long val = Numbers.parseInt000Greedy(input, 0, input.length());
+        Assert.assertEquals(input.length(), Numbers.decodeHighInt(val));
+        Assert.assertEquals(219, Numbers.decodeLowInt(val));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParse000Greedy4() throws NumericException {
+        Numbers.parseInt000Greedy("1234", 0, 4);
     }
 
     @Test
@@ -530,6 +564,38 @@ public class NumbersTest {
         Numbers.parseInt("-");
     }
 
+    @Test(expected = NumericException.class)
+    public void testParseIntSizeFail() throws Exception {
+        Numbers.parseIntSize("5Kb");
+    }
+
+    @Test
+    public void testParseIntSizeKb() throws Exception {
+        Assert.assertEquals(5 * 1024, Numbers.parseIntSize("5K"));
+        Assert.assertEquals(5 * 1024, Numbers.parseIntSize("5k"));
+    }
+
+    @Test
+    public void testParseIntSizeMb() throws Exception {
+        Assert.assertEquals(5 * 1024 * 1024, Numbers.parseIntSize("5M"));
+        Assert.assertEquals(5 * 1024 * 1024, Numbers.parseIntSize("5m"));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIntSizeOverflowAtK() throws Exception {
+        Numbers.parseIntSize("4194304K");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIntSizeOverflowAtM() throws Exception {
+        Numbers.parseIntSize("10240M");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIntSizeOverflowNoQualifier() throws Exception {
+        Numbers.parseIntSize("10737418240");
+    }
+
     @Test
     public void testParseIntToDelim() throws Exception {
         String in = "1234x5";
@@ -589,43 +655,6 @@ public class NumbersTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testParseLongWrongChars() throws Exception {
-        Numbers.parseLong("123ab");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testParseIntSizeFail() throws Exception {
-        Numbers.parseIntSize("5Kb");
-    }
-
-    @Test
-    public void testParseIntSizeKb() throws Exception {
-        Assert.assertEquals(5 * 1024, Numbers.parseIntSize("5K"));
-        Assert.assertEquals(5 * 1024, Numbers.parseIntSize("5k"));
-    }
-
-    @Test
-    public void testParseIntSizeMb() throws Exception {
-        Assert.assertEquals(5 * 1024 * 1024, Numbers.parseIntSize("5M"));
-        Assert.assertEquals(5 * 1024 * 1024, Numbers.parseIntSize("5m"));
-    }
-
-    @Test(expected = NumericException.class)
-    public void testParseIntSizeOverflowAtK() throws Exception {
-        Numbers.parseIntSize("4194304K");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testParseIntSizeOverflowAtM() throws Exception {
-        Numbers.parseIntSize("10240M");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testParseIntSizeOverflowNoQualifier() throws Exception {
-        Numbers.parseIntSize("10737418240");
-    }
-
-    @Test(expected = NumericException.class)
     public void testParseLongSizeFail() throws Exception {
         Numbers.parseLongSize("5Kb");
     }
@@ -666,6 +695,11 @@ public class NumbersTest {
     @Test(expected = NumericException.class)
     public void testParseLongSizeOverflowNoQualifier() throws Exception {
         Numbers.parseLongSize("45035996273704960000000");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongWrongChars() throws Exception {
+        Numbers.parseLong("123ab");
     }
 
     @Test(expected = NumericException.class)
@@ -732,5 +766,12 @@ public class NumbersTest {
             double n = Numbers.roundUp(d, 8);
             Assert.assertTrue(d + " " + n + " " + (n - d - 1E-8), n - d - 1E-8 < Numbers.TOLERANCE);
         }
+    }
+
+    @Test
+    public void testBswap() {
+        int expected = rnd.nextInt();
+        int x = Numbers.bswap(expected);
+        Assert.assertEquals(expected, Numbers.bswap(x));
     }
 }

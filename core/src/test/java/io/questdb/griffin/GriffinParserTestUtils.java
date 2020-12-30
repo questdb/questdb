@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.LongList;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 
 public class GriffinParserTestUtils {

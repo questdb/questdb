@@ -37,7 +37,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;

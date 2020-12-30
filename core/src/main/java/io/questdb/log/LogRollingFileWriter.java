@@ -29,7 +29,8 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
-import io.questdb.std.microtime.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 
@@ -407,9 +408,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private class DateSinkable implements Sinkable {
-        private final TimestampFormat format;
+        private final DateFormat format;
 
-        public DateSinkable(TimestampFormat format) {
+        public DateSinkable(DateFormat format) {
             this.format = format;
         }
 

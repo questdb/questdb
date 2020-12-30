@@ -27,14 +27,13 @@ package io.questdb.cairo.pool;
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 

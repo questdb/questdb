@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 public class MicrosOfSecondFunctionFactory implements FunctionFactory {
 

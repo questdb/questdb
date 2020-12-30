@@ -25,8 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.time.DateLocale;
+import io.questdb.std.datetime.DateLocale;
 
 public interface TextConfiguration {
 
@@ -57,6 +56,4 @@ public interface TextConfiguration {
     InputFormatConfiguration getInputFormatConfiguration();
 
     DateLocale getDefaultDateLocale();
-
-    TimestampLocale getDefaultTimestampLocale();
 }

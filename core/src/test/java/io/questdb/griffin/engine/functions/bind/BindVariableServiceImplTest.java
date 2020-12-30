@@ -587,7 +587,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr(0, "xyz");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='xyz', as=FLOAT]", e.getFlyweightMessage());
+            TestUtils.assertContains("could not parse [value='xyz', as=FLOAT, index=0]", e.getFlyweightMessage());
         }
     }
 
@@ -733,6 +733,8 @@ public class BindVariableServiceImplTest {
         Assert.assertEquals(21, bindVariableService.getFunction(0).getTimestamp(null));
         bindVariableService.setStr(0, null);
         Assert.assertEquals(Numbers.LONG_NaN, bindVariableService.getFunction(0).getTimestamp(null));
+        bindVariableService.setStr(0, "2019-10-31 15:05:22+08:00");
+        Assert.assertEquals(1572505522000L, bindVariableService.getFunction(0).getTimestamp(null));
     }
 
     @Test
@@ -750,7 +752,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr(0, "ok");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='ok', as=LONG]", e.getFlyweightMessage());
+            TestUtils.assertContains("could not parse [value='ok', as=LONG, index=0]", e.getFlyweightMessage());
         }
     }
 
@@ -761,7 +763,7 @@ public class BindVariableServiceImplTest {
             bindVariableService.setStr("a", "ok");
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains("could not parse [value='ok', as=LONG]", e.getFlyweightMessage());
+            TestUtils.assertContains("could not parse [value='ok', as=LONG, index=-1]", e.getFlyweightMessage());
         }
     }
 

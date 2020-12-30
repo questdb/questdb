@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 public class DateDiffTimestampFunctionFactory implements FunctionFactory {
     private static final ObjList<LongDiffFunction> diffFunctions = new ObjList<>();

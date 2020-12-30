@@ -49,8 +49,8 @@ import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -925,7 +925,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public MillisecondClock getMillisecondClock() {
                         return () -> {
                             try {
-                                return DateFormatUtils.parseDateTime("2018-03-04T21:40:00.000Z");
+                                return DateFormatUtils.parseUTCDate("2018-03-04T21:40:00.000Z");
                             } catch (NumericException e) {
                                 Assert.fail();
                             }

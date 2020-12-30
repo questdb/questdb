@@ -24,8 +24,8 @@
 
 package io.questdb.network;
 
-import io.questdb.std.time.MillisecondClock;
-import io.questdb.std.time.MillisecondClockImpl;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
 

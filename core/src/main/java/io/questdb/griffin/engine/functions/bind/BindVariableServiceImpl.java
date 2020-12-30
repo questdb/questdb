@@ -31,9 +31,19 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.millitime.DateFormatCompiler;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
+
 public class BindVariableServiceImpl implements BindVariableService {
+    private static final DateFormat[] DATE_FORMATS;
+    private static final int DATE_FORMATS_SIZE;
+    private static final DateFormat[] TIMESTAMP_FORMATS;
+    private static final int TIMESTAMP_FORMATS_SIZE;
     private final CharSequenceObjHashMap<Function> namedVariables = new CharSequenceObjHashMap<>();
     private final ObjList<Function> indexedVariables = new ObjList<>();
     private final ObjectPool<DoubleBindVariable> doubleVarPool;
@@ -63,6 +73,17 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.strVarPool = new ObjectPool<>(() -> new StrBindVariable(configuration.getFloatToStrCastScale()), poolSize);
         this.charVarPool = new ObjectPool<>(CharBindVariable::new, 8);
         this.long256VarPool = new ObjectPool<>(Long256BindVariable::new, 8);
+    }
+
+    public static long parseDate(CharSequence value) throws NumericException {
+        final int hi = value.length();
+        for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
+            try {
+                return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.enLocale);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Numbers.parseLong(value, 0, hi);
     }
 
     @Override
@@ -579,6 +600,17 @@ public class BindVariableServiceImpl implements BindVariableService {
         setByte(index, (byte) 0);
     }
 
+    private static long parseTimestamp(CharSequence value) throws NumericException {
+        final int hi = value.length();
+        for (int i = 0; i < TIMESTAMP_FORMATS_SIZE; i++) {
+            try {
+                return TIMESTAMP_FORMATS[i].parse(value, 0, hi, enLocale);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Numbers.parseLong(value, 0, hi);
+    }
+
     private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {
         if (name == null) {
             throw SqlException.$(0, "bind variable at ").put(index).put(" is defined as ").put(ColumnType.nameOf(function.getType())).put(" and cannot accept ").put(ColumnType.nameOf(srcType));
@@ -829,10 +861,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                     ((LongBindVariable) function).value = value != null ? Numbers.parseLong(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.TIMESTAMP:
-                    ((TimestampBindVariable) function).value = value != null ? Numbers.parseLong(value) : Numbers.LONG_NaN;
+                    ((TimestampBindVariable) function).value = value != null ? parseTimestamp(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.DATE:
-                    ((DateBindVariable) function).value = value != null ? Numbers.parseLong(value) : Numbers.LONG_NaN;
+                    ((DateBindVariable) function).value = value != null ? parseDate(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.FLOAT:
                     ((FloatBindVariable) function).value = value != null ? Numbers.parseFloat(value) : Float.NaN;
@@ -848,7 +880,30 @@ public class BindVariableServiceImpl implements BindVariableService {
                     break;
             }
         } catch (NumericException e) {
-            throw SqlException.$(0, "could not parse [value='").put(value).put("', as=").put(ColumnType.nameOf(functionType)).put(']');
+            throw SqlException.$(0, "could not parse [value='").put(value).put("', as=").put(ColumnType.nameOf(functionType)).put(", index=").put(index).put(']');
         }
+    }
+
+    static {
+        final DateFormatCompiler milliCompiler = new DateFormatCompiler();
+        final DateFormat pgDateTimeFormat = milliCompiler.compile("yyyy-MM-dd HH:mm:ssz");
+
+        DATE_FORMATS = new DateFormat[]{
+                pgDateTimeFormat,
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                UTC_FORMAT
+        };
+
+        DATE_FORMATS_SIZE = DATE_FORMATS.length;
+
+        // we are using "millis" compiler deliberately because clients encode millis into strings
+        TIMESTAMP_FORMATS = new DateFormat[]{
+                PG_DATE_Z_FORMAT,
+                PG_DATE_MILLI_TIME_Z_FORMAT,
+                pgDateTimeFormat
+        };
+
+        TIMESTAMP_FORMATS_SIZE = TIMESTAMP_FORMATS.length;
     }
 }

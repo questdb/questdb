@@ -54,6 +54,11 @@ public class IntList implements Mutable {
         System.arraycopy(that.buffer, 0, this.buffer, p, s);
     }
 
+    public void setPos(int capacity) {
+        ensureCapacity(capacity);
+        pos = capacity;
+    }
+
     public void arrayCopy(int srcPos, int dstPos, int length) {
         System.arraycopy(buffer, srcPos, buffer, dstPos, length);
     }

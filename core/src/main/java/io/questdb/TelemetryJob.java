@@ -38,7 +38,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClock;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;

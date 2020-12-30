@@ -31,7 +31,7 @@ import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;

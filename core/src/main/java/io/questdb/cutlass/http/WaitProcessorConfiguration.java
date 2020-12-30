@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface WaitProcessorConfiguration {
     MillisecondClock getClock();

@@ -30,7 +30,7 @@ import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;

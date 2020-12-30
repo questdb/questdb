@@ -29,15 +29,15 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 
 public class TimestampUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     private final DirectCharSink utf8Sink;
-    private TimestampLocale locale;
-    private TimestampFormat format;
+    private DateLocale locale;
+    private DateFormat format;
 
     public TimestampUtf8Adapter(DirectCharSink utf8Sink) {
         this.utf8Sink = utf8Sink;
@@ -71,7 +71,7 @@ public class TimestampUtf8Adapter extends AbstractTypeAdapter implements Mutable
         row.putDate(column, format.parse(utf8Sink, locale));
     }
 
-    public TimestampUtf8Adapter of(TimestampFormat format, TimestampLocale locale) {
+    public TimestampUtf8Adapter of(DateFormat format, DateLocale locale) {
         this.format = format;
         this.locale = locale;
         return this;

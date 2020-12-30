@@ -38,7 +38,7 @@ import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -1020,7 +1020,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private void alterTableDropPartition(TableWriter writer) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'list' or 'where'");
+        final int pos = lexer.lastTokenPosition();
+        final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
             alterTableDropPartitionByList(writer);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
@@ -1031,7 +1032,7 @@ public class SqlCompiler implements Closeable {
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && function.getType() == ColumnType.BOOLEAN) {
-                    writer.removePartition(function);
+                    writer.removePartition(function, pos);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
@@ -1799,7 +1800,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void setupBackupRenamePath() {
-        TimestampFormat format = configuration.getBackupDirTimestampFormat();
+        DateFormat format = configuration.getBackupDirTimestampFormat();
         long epochMicros = configuration.getMicrosecondClock().getTicks();
         int n = 0;
         // There is a race here, two threads could try and create the same renamePath, only one will succeed the other will throw
@@ -1808,7 +1809,7 @@ public class SqlCompiler implements Closeable {
         int plen = renamePath.length();
         do {
             renamePath.trimTo(plen);
-            format.format(epochMicros, configuration.getDefaultTimestampLocale(), null, renamePath);
+            format.format(epochMicros, configuration.getDefaultDateLocale(), null, renamePath);
             if (n > 0) {
                 renamePath.put('.').put(n);
             }

@@ -166,7 +166,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         if (base == null) {
             throw CairoException.instance(0).put("undefined bind variable: ").put(variableIndex);
         }
-        assert base.getType() == type;
         base.init(symbolTableSource, executionContext);
     }
 
