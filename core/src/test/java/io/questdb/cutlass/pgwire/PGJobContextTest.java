@@ -872,7 +872,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertExtendedBinaryAndCommit() throws Exception {
-        testInsertAndCommit(false, true);
+        testInsertAndCommit();
     }
 
     @Test
@@ -3018,7 +3018,7 @@ nodejs code:
         });
     }
 
-    private void testInsertAndCommit(boolean simpleQueryMode, boolean binary) throws Exception {
+    private void testInsertAndCommit() throws Exception {
         assertMemoryLeak(() -> {
             String expectedAll = "count[BIGINT]\n" +
                     "10000\n";
@@ -3037,10 +3037,7 @@ nodejs code:
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", Boolean.toString(binary));
-                if (simpleQueryMode) {
-                    properties.setProperty("preferQueryMode", "simple");
-                }
+                properties.setProperty("binaryTransfer", "true");
 
                 TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
 
