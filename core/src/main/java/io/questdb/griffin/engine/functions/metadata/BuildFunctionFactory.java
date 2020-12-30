@@ -51,14 +51,14 @@ public class BuildFunctionFactory implements FunctionFactory {
         if (instance == null) {
             instance = createInstance(configuration);
         }
-        
+
         return instance;
     }
 
     private StrFunction createInstance(final CairoConfiguration configuration) {
         final BuildInformation buildInformation = configuration.getBuildInformation();
 
-        final CharSequence info = new StringBuilder("Build Information: QuestDB ")
+        final CharSequence information = new StringBuilder("Build Information: QuestDB ")
                 .append(buildInformation.getQuestDbVersion())
                 .append(", JDK ")
                 .append(buildInformation.getJdkVersion())
@@ -66,6 +66,6 @@ public class BuildFunctionFactory implements FunctionFactory {
                 .append(buildInformation.getCommitHash())
                 .toString();
 
-        return new StrConstant(0, info);
+        return new StrConstant(0, information);
     }
 }
