@@ -32,12 +32,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 
 public class BuildFunctionFactory implements FunctionFactory {
+    private StrFunction instance;
+
     @Override
     public String getSignature() {
         return "build()";
@@ -49,42 +48,24 @@ public class BuildFunctionFactory implements FunctionFactory {
                                 final CairoConfiguration configuration,
                                 final SqlExecutionContext sqlExecutionContext) throws SqlException {
 
-        return Memoizer.getInstance(configuration).function;
+        if (instance == null) {
+            instance = createInstance(configuration);
+        }
+        
+        return instance;
     }
 
-    private static class Memoizer {
-        private static Memoizer instance;
+    private StrFunction createInstance(final CairoConfiguration configuration) {
+        final BuildInformation buildInformation = configuration.getBuildInformation();
 
-        private final StrFunction function;
+        final CharSequence info = new StringBuilder("Build Information: QuestDB ")
+                .append(buildInformation.getQuestDbVersion())
+                .append(", JDK ")
+                .append(buildInformation.getJdkVersion())
+                .append(", Commit Hash ")
+                .append(buildInformation.getCommitHash())
+                .toString();
 
-        private Memoizer(final CharSequence message) {
-            this.function = new StrConstant(0, message);
-        }
-
-        public static Memoizer getInstance(final CairoConfiguration configuration) {
-            if (instance == null) {
-                synchronized (Memoizer.class) {
-                    if (instance == null) {
-                        instance = new Memoizer(message(configuration));
-                    }
-                }
-            }
-            return instance;
-        }
-
-        private static CharSequence message(final CairoConfiguration configuration) {
-            final CharSink sink = new StringSink();
-            final BuildInformation buildInformation = configuration.getBuildInformation();
-
-            sink.put("Build Information: ")
-                .put("QuestDB ")
-                .put(buildInformation.getQuestDbVersion())
-                .put(", JDK ")
-                .put(buildInformation.getJdkVersion())
-                .put(", Commit Hash ")
-                .put(buildInformation.getCommitHash());
-
-            return sink.toString();
-        }
+        return new StrConstant(0, info);
     }
 }
