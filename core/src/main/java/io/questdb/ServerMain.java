@@ -447,7 +447,7 @@ public class ServerMain {
         );
     }
 
-    protected void i    nitQuestDb(
+    protected void initQuestDb(
             final WorkerPool workerPool,
             final CairoEngine cairoEngine,
             final Log log
