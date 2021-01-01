@@ -149,6 +149,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
+    private boolean sendParameterDescription;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -487,6 +488,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         bindVariableTypes.setPos(count);
         for (int i = 0; i < count; i++) {
             bindVariableTypes.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
+        }
+    }
+
+    private static void bindSingleFormatForAll(long lo, long msgLimit, IntList activeBindVariableTypes) throws BadProtocolException {
+        short code = getShort(lo, msgLimit, "could not read parameter formats");
+        for (int i = 0, n = activeBindVariableTypes.size(); i < n; i++) {
+            activeBindVariableTypes.setQuick(i, toBinaryType(code, activeBindVariableTypes.getQuick(i)));
         }
     }
 
@@ -966,12 +974,15 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private void configureContextFromNamedStatement(long lo, long hi, @Nullable @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        final CharSequence statementName = getStatementName(lo, hi);
+
+        this.sendParameterDescription = statementName != null;
+
         if (wrapper != null) {
             LOG.debug().$("reusing existing wrapper").$();
             return;
         }
 
-        final CharSequence statementName = getStatementName(lo, hi);
         // make sure there is no current wrapper is set, so that we don't assign values
         // from the wrapper back to context on the first pass where named statement is setup
         if (statementName != null) {
@@ -1108,6 +1119,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;
             }
+            // todo: this is a mess
             responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
             final long addr = responseAsciiSink.skip();
             responseAsciiSink.put('M');
@@ -1246,6 +1258,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Chars.utf8Decode(lo, hi, e)) {
             queryText = characterStore.toImmutable();
+
             LOG.info().$("parse [q=").utf8(queryText).$(']').$();
             compileQuery(compiler);
             return;
@@ -1289,6 +1302,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void prepareDescribeResponse() {
+        // only send parameter description when we have named statement
+        if (sendParameterDescription) {
+            prepareParameterDescription();
+        }
         if (typesAndSelect != null) {
             prepareRowDescription();
         } else {
@@ -1299,6 +1316,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void prepareError(SqlException e) {
         responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = responseAsciiSink.skip();
+        responseAsciiSink.put('C');
+        responseAsciiSink.encodeUtf8Z("00000");
         responseAsciiSink.put('M');
         responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
         responseAsciiSink.put('S');
@@ -1338,6 +1357,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         queryText = null;
         wrapper = null;
         syncActions.clear();
+        sendParameterDescription = false;
     }
 
     private void prepareLoginOk() {
@@ -1361,6 +1381,19 @@ public class PGConnectionContext implements IOContext, Mutable {
     private void prepareNoDataMessage() {
         responseAsciiSink.put(MESSAGE_TYPE_NO_DATA);
         responseAsciiSink.putNetworkInt(Integer.BYTES);
+    }
+
+    private void prepareParameterDescription() {
+        responseAsciiSink.put('t');
+        final long l = responseAsciiSink.skip();
+        final int n = bindVariableService.getIndexedVariableCount();
+        responseAsciiSink.putNetworkShort((short) n);
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                responseAsciiSink.putNetworkInt(TYPE_OIDS.getQuick(bindVariableService.getFunction(i).getType()));
+            }
+        }
+        responseAsciiSink.putLen(l);
     }
 
     private void prepareParseComplete() {
@@ -1440,8 +1473,13 @@ public class PGConnectionContext implements IOContext, Mutable {
         lo = hi + 1;
         parameterFormatCount = getShort(lo, msgLimit, "could not read parameter format code count");
         lo += Short.BYTES;
-        if (parameterFormatCount > 0 && parameterFormatCount == parsePhaseBindVariableCount) {
-            bindParameterFormats(lo, msgLimit, parameterFormatCount, activeBindVariableTypes);
+        if (parameterFormatCount > 0) {
+            if (parameterFormatCount == 1) {
+                // same format applies to all parameters
+                bindSingleFormatForAll(lo, msgLimit, activeBindVariableTypes);
+            } else if (parameterFormatCount == parsePhaseBindVariableCount) {
+                bindParameterFormats(lo, msgLimit, parameterFormatCount, activeBindVariableTypes);
+            }
         }
 
         // parameter value count
@@ -1499,11 +1537,12 @@ public class PGConnectionContext implements IOContext, Mutable {
             case 'S':
                 lo = lo + 1;
                 final long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
-                CharSequence statementName = getStatementName(lo, hi);
+                final CharSequence statementName = getStatementName(lo, hi);
                 if (statementName != null) {
-                    final NamedStatementWrapper wrapper = namedStatementMap.get(statementName);
-                    if (wrapper != null) {
-                        namedStatementWrapperPool.push(wrapper);
+                    final int index = namedStatementMap.keyIndex(statementName);
+                    if (index < 0) {
+                        namedStatementWrapperPool.push(namedStatementMap.valueAt(index));
+                        namedStatementMap.removeAt(index);
                     } else {
                         LOG.error().$("invalid statement name [value=").$(statementName).$(']').$();
                         throw BadProtocolException.INSTANCE;
@@ -1528,6 +1567,15 @@ public class PGConnectionContext implements IOContext, Mutable {
                 getStringLength(lo + 1, msgLimit, "bad portal name length [msgType='D']"),
                 compiler
         );
+
+        // initialize activeBindVariableTypes from bind variable service
+        final int n = bindVariableService.getIndexedVariableCount();
+        if (sendParameterDescription && n > 0) {
+            activeBindVariableTypes.setPos(n);
+            for (int i = 0; i < n; i++) {
+                activeBindVariableTypes.setQuick(i, Numbers.bswap(TYPE_OIDS.getQuick(bindVariableService.getFunction(i).getType())));
+            }
+        }
         syncActions.add(SYNC_DESCRIBE);
     }
 
