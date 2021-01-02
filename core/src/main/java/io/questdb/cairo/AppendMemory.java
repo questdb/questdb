@@ -141,7 +141,7 @@ public class AppendMemory extends VirtualMemory {
             if (ff.isRestrictedFileSystem()) {
                 // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
                 // To make it work size needs to be rounded up to nearest page.
-                long n = size / mapPageSize;
+                long n = (size - 1) / mapPageSize;
                 if (ff.truncate(Math.abs(fd), (n + 1) * mapPageSize)) {
                     log.info().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
                     return;
@@ -172,7 +172,7 @@ public class AppendMemory extends VirtualMemory {
 
     public void ensureFileSize(int page) {
         long target = pageOffset(page + 1);
-        if (ff.length(fd) < target && !ff.truncate(fd, target)) {
+        if (ff.length(fd) < target && !ff.allocate(fd, target)) {
             throw CairoException.instance(ff.errno()).put("Appender resize failed fd=").put(fd).put(", size=").put(target);
         }
     }

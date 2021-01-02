@@ -188,8 +188,7 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
                     nextRerun.add(retry);
                     return true;
                 }
-            }
-            else {
+            } else {
                 // All reruns are in the future.
                 return useful;
             }

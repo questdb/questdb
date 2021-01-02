@@ -296,7 +296,7 @@ public class CairoMemoryTest {
     }
 
     @Test
-    public void testAppendTruncateError() throws Exception {
+    public void testAppendAllocateError() throws Exception {
         long used = Unsafe.getMemUsed();
 
         class X extends FilesFacadeImpl {
@@ -304,9 +304,9 @@ public class CairoMemoryTest {
             boolean allClear = false;
 
             @Override
-            public boolean truncate(long fd, long size) {
+            public boolean allocate(long fd, long size) {
                 if (allClear || --count > 0) {
-                    return super.truncate(fd, size);
+                    return super.allocate(fd, size);
                 }
                 allClear = true;
                 return false;

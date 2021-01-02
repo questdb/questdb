@@ -114,8 +114,8 @@ public class TableBlockWriter implements Closeable {
         long fileSz = ff.length(fd);
         long minFileSz = mapOffset + alignedMapSz;
         if (fileSz < minFileSz) {
-            if (!ff.truncate(fd, minFileSz)) {
-                throw CairoException.instance(ff.errno()).put("Could not truncate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
+            if (!ff.allocate(fd, minFileSz)) {
+                throw CairoException.instance(ff.errno()).put("Could not allocate file for append fd=").put(fd).put(", offset=").put(mapOffset).put(", size=")
                         .put(mapSz);
             }
         }
