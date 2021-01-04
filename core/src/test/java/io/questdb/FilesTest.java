@@ -25,9 +25,9 @@
 package io.questdb;
 
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.DateFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -76,7 +76,7 @@ public class FilesTest {
     @Test
     public void testLastModified() throws IOException, NumericException {
         try (Path path = new Path()) {
-            assertLastModified(path, DateFormatUtils.parseDateTime("2015-10-17T10:00:00.000Z"));
+            assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
             assertLastModified(path, 122222212222L);
         }
     }

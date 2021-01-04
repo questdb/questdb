@@ -30,11 +30,12 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.pgwire.PGOids;
 
 class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
     private static final String[] namespaces = {"pg_catalog", "public"};
-    private static final int[] oids = {PgOIDs.PG_CATALOG_OID, PgOIDs.PG_PUBLIC_OID};
+    private static final int[] oids = {PGOids.PG_CATALOG_OID, PGOids.PG_PUBLIC_OID};
     private static final int rowCount = namespaces.length;
     private final NamespaceCatalogueRecord record = new NamespaceCatalogueRecord();
     private int row = -1;

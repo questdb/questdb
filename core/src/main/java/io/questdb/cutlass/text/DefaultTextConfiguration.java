@@ -28,14 +28,11 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.microtime.TimestampLocaleFactory;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.DateLocaleFactory;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 
 public class DefaultTextConfiguration implements TextConfiguration {
     private final InputFormatConfiguration inputFormatConfiguration;
@@ -49,9 +46,7 @@ public class DefaultTextConfiguration implements TextConfiguration {
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                TimestampLocaleFactory.INSTANCE,
-                DateFormatUtils.enLocale,
-                TimestampFormatUtils.enLocale
+                DateFormatUtils.enLocale
         );
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
@@ -129,10 +124,5 @@ public class DefaultTextConfiguration implements TextConfiguration {
     @Override
     public DateLocale getDefaultDateLocale() {
         return DateFormatUtils.enLocale;
-    }
-
-    @Override
-    public TimestampLocale getDefaultTimestampLocale() {
-        return TimestampFormatUtils.enLocale;
     }
 }

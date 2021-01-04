@@ -53,13 +53,7 @@ public class PGBasicAuthenticator implements PGAuthenticator {
         if (Chars.equals(this.username, username)) {
             // check 'p' message
             // +1 is 'type' byte that message length does not account for
-            long hi = PGConnectionContext.getStringLength(msg, msgLimit);
-            if (hi == -1) {
-                // we did not find 0 within message limit
-                LOG.error().$("bad password length").$();
-                throw BadProtocolException.INSTANCE;
-            }
-
+            long hi = PGConnectionContext.getStringLength(msg, msgLimit, "bad password length");
             dbcs.of(msg, hi);
 
             // check password

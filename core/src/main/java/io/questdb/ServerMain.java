@@ -39,7 +39,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
-import io.questdb.std.time.Dates;
+import io.questdb.std.datetime.millitime.Dates;
 import sun.misc.Signal;
 
 import java.io.*;

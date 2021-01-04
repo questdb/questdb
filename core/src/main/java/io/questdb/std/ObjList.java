@@ -48,13 +48,13 @@ public class ObjList<T> implements Mutable, Sinkable {
      * {@inheritDoc}
      */
     public void add(T value) {
-        ensureCapacity0(pos + 1);
+        ensureCapacity(pos + 1);
         buffer[pos++] = value;
     }
 
     public void addAll(ObjList<T> that) {
         int n = that.size();
-        ensureCapacity0(pos + n);
+        ensureCapacity(pos + n);
         for (int i = 0; i < n; i++) {
             buffer[pos++] = that.getQuick(i);
         }
@@ -68,8 +68,19 @@ public class ObjList<T> implements Mutable, Sinkable {
         Arrays.fill(buffer, null);
     }
 
+    @SuppressWarnings("unchecked")
+    public void ensureCapacity(int capacity) {
+        int l = buffer.length;
+        if (capacity > l) {
+            int newCap = Math.max(l << 1, capacity);
+            T[] buf = (T[]) new Object[newCap];
+            System.arraycopy(buffer, 0, buf, 0, l);
+            this.buffer = buf;
+        }
+    }
+
     public void extendAndSet(int index, T value) {
-        ensureCapacity0(index + 1);
+        ensureCapacity(index + 1);
         if (index >= pos) {
             pos = index + 1;
         }
@@ -226,14 +237,19 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     public void setAll(int capacity, T value) {
-        ensureCapacity0(capacity);
+        ensureCapacity(capacity);
         pos = capacity;
         Arrays.fill(buffer, value);
     }
 
     public void setPos(int capacity) {
-        ensureCapacity0(capacity);
+        ensureCapacity(capacity);
         pos = capacity;
+    }
+
+    public void extendPos(int capacity) {
+        ensureCapacity(capacity);
+        pos = Math.max(pos, capacity);
     }
 
     public void setQuick(int index, T value) {
@@ -272,17 +288,6 @@ public class ObjList<T> implements Mutable, Sinkable {
             }
         }
         sink.put(']');
-    }
-
-    @SuppressWarnings("unchecked")
-    private void ensureCapacity0(int capacity) {
-        int l = buffer.length;
-        if (capacity > l) {
-            int newCap = Math.max(l << 1, capacity);
-            T[] buf = (T[]) new Object[newCap];
-            System.arraycopy(buffer, 0, buf, 0, l);
-            this.buffer = buf;
-        }
     }
 
     private boolean equals(ObjList<?> that) {

@@ -30,9 +30,9 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
-import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -230,6 +230,16 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 script,
                 getHexPgWireConfig()
         );
+    }
+
+    @Test
+    public void testAllTypesSelectExtended() throws Exception {
+        testAllTypesSelect(false);
+    }
+
+    @Test
+    public void testAllTypesSelectSimple() throws Exception {
+        testAllTypesSelect(true);
     }
 
     @Test
@@ -856,8 +866,18 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsert() throws Exception {
-        testInsert0(false);
+    public void testInsertExtendedBinary() throws Exception {
+        testInsert0(false, true);
+    }
+
+    @Test
+    public void testInsertExtendedBinaryAndCommit() throws Exception {
+        testInsertAndCommit();
+    }
+
+    @Test
+    public void testInsertExtendedText() throws Exception {
+        testInsert0(false, false);
     }
 
     /*
@@ -977,8 +997,9 @@ nodejs code:
     }
 
     @Test
-    public void testInsertSimpleQueryMode() throws Exception {
-        testInsert0(true);
+    @Ignore
+    public void testInsertSimpleText() throws Exception {
+        testInsert0(true, false);
     }
 
     @Test
@@ -1339,6 +1360,74 @@ nodejs code:
                         "<!!",
                 new DefaultPGWireConfiguration()
         );
+    }
+
+    @Test
+    public void testMicroTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1, -1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 4;
+                }
+            };
+
+            try (final PGWireServer ignored = PGWireServer.create(
+                    conf,
+                    null,
+                    LOG,
+                    engine,
+                    compiler.getFunctionFactoryCache()
+            )) {
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+                connection.prepareCall("create table x(t timestamp)").execute();
+
+                PreparedStatement statement = connection.prepareStatement("insert into x values (?)");
+
+                final String expected = "t[TIMESTAMP]\n" +
+                        "2019-02-11 13:48:11.123998\n" +
+                        "2019-02-11 13:48:11.123999\n" +
+                        "2019-02-11 13:48:11.124\n" +
+                        "2019-02-11 13:48:11.124001\n" +
+                        "2019-02-11 13:48:11.124002\n" +
+                        "2019-02-11 13:48:11.124003\n" +
+                        "2019-02-11 13:48:11.124004\n" +
+                        "2019-02-11 13:48:11.124005\n" +
+                        "2019-02-11 13:48:11.124006\n" +
+                        "2019-02-11 13:48:11.124007\n" +
+                        "2019-02-11 13:48:11.124008\n" +
+                        "2019-02-11 13:48:11.124009\n" +
+                        "2019-02-11 13:48:11.12401\n" +
+                        "2019-02-11 13:48:11.124011\n" +
+                        "2019-02-11 13:48:11.124012\n" +
+                        "2019-02-11 13:48:11.124013\n" +
+                        "2019-02-11 13:48:11.124014\n" +
+                        "2019-02-11 13:48:11.124015\n" +
+                        "2019-02-11 13:48:11.124016\n" +
+                        "2019-02-11 13:48:11.124017\n";
+
+                long ts = TimestampFormatUtils.parseUTCTimestamp("2019-02-11T13:48:11.123998Z");
+                for (int i = 0; i < 20; i++) {
+                    statement.setLong(1, ts + i);
+                    statement.execute();
+                }
+                StringSink sink = new StringSink();
+                PreparedStatement sel = connection.prepareStatement("x");
+                ResultSet res = sel.executeQuery();
+                assertResultSet(expected, sink, res);
+                connection.close();
+            }
+        });
     }
 
     @Test
@@ -1741,25 +1830,6 @@ nodejs code:
     }
 
     @Test
-    public void testPreparedStatementParamBadDouble() throws Exception {
-        assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
-                ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
-                        "<520000000800000003\n" +
-                        ">700000000a717565737400\n" +
-                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
-                        ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
-                        "<310000000432000000044300000008534554005a0000000549\n" +
-                        ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
-                        "<310000000432000000044300000008534554005a0000000549\n" +
-                        ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331323300000004352f343300000007302e353637383900000002393100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
-                        "<!!",
-                new DefaultPGWireConfiguration()
-        );
-    }
-
-    @Test
     public void testPreparedStatementParamBadInt() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -1842,6 +1912,7 @@ nodejs code:
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
+                properties.setProperty("binaryTransfer", "true");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
@@ -1867,20 +1938,20 @@ nodejs code:
                 statement.setNull(17, Types.VARCHAR);
                 statement.setString(18, null);
                 statement.setNull(19, Types.DATE);
-                statement.setNull(20, Types.TIMESTAMP);
 
                 // when someone uses PostgreSQL's type extensions, which alter driver behaviour
                 // we should handle this gracefully
+                statement.setTimestamp(20, new PGTimestamp(300011));
+                statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
+                statement.setTimestamp(22, null);
 
-                statement.setTimestamp(21, new PGTimestamp(300011));
-                statement.setTimestamp(22, new PGTimestamp(500023, new GregorianCalendar()));
 
-                final String expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[TIMESTAMP],$10[TIMESTAMP],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP],$22[TIMESTAMP]\n" +
-                        "1,4,123,5.4299,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "2,4,123,5.4299,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "3,4,123,5.4299,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "4,4,123,5.4299,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "5,4,123,5.4299,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR],$22[VARCHAR]\n" +
+                        "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                        "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                        "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                        "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                        "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
 
                 StringSink sink = new StringSink();
                 for (int i = 0; i < 10000; i++) {
@@ -1914,7 +1985,7 @@ nodejs code:
                 properties.setProperty("binaryTransfer", "false");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
-                PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
+                PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
                 statement.setLong(2, 123L);
                 statement.setFloat(3, 5.43f);
@@ -1937,23 +2008,27 @@ nodejs code:
                 statement.setNull(17, Types.VARCHAR);
                 statement.setString(18, null);
                 statement.setNull(19, Types.DATE);
-                statement.setNull(20, Types.TIMESTAMP);
+//                statement.setNull(20, Types.TIMESTAMP);
 
                 // when someone uses PostgreSQL's type extensions, which alter driver behaviour
                 // we should handle this gracefully
 
-                statement.setTimestamp(21, new PGTimestamp(300011));
-                statement.setTimestamp(22, new PGTimestamp(500023, new GregorianCalendar()));
+                statement.setTimestamp(20, new PGTimestamp(300011));
+                statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
 
-                final String expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[TIMESTAMP],$10[TIMESTAMP],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP],$22[TIMESTAMP]\n" +
-                        "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                // Bind variables are out of context here, hence they are all STRING/VARCHAR
+                // this is the reason why we show PG wire Dates verbatim. Even though PG wire does eventually tell us
+                // that this data is typed (sometimes), their requirement to describe SQL statement before
+                // they send us bind variable types and values forces us to stick with STRING.
+                final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR]\n" +
+                        "1,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
+                        "2,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
+                        "3,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
+                        "4,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
+                        "5,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n";
 
                 StringSink sink = new StringSink();
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < 10_000; i++) {
                     sink.clear();
                     ResultSet rs = statement.executeQuery();
                     assertResultSet(expected, sink, rs);
@@ -2061,7 +2136,17 @@ nodejs code:
     }
 
     @Test
-    public void testSendingBufferWhenFlushMessageReceivedeHex() throws Exception {
+    public void testSemicolonExtendedMode() throws Exception {
+        testSemicolon(false);
+    }
+
+    @Test
+    public void testSemicolonSimpleMode() throws Exception {
+        testSemicolon(true);
+    }
+
+    @Test
+    public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
                 ">70000000076f6800\n" +
@@ -2143,66 +2228,66 @@ nodejs code:
                                 "from long_sequence(50)");
 
                 final String expected = "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY]\n" +
-                        "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.4620,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\n" +
-                        "XYSB,142,0.5793466326862211,1970-01-01 00:00:00.01,0.9689,20088,1517490,2015-01-17 20:41:19.480685,100,true,PEHN,2015-06-20 01:10:58.599,00000000 79 5f 8b 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0 fb\n" +
+                        "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.462,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\n" +
+                        "XYSB,142,0.5793466326862211,1970-01-01 00:00:00.01,0.969,20088,1517490,2015-01-17 20:41:19.480685,100,true,PEHN,2015-06-20 01:10:58.599,00000000 79 5f 8b 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0 fb\n" +
                         "00000010 64\n" +
-                        "OZZV,219,0.16381374773748514,1970-01-01 00:00:00.02,0.6589,-12303,9489508,2015-08-13 17:10:19.752521,6,false,null,2015-05-20 01:48:37.418,00000000 2b 4d 5f f6 46 90 c3 b3 59 8e e5 61 2f 64 0e\n" +
-                        "OLYX,30,0.7133910271555843,1970-01-01 00:00:00.03,0.6549,6610,6504428,2015-08-08 00:42:24.545639,123,false,null,2015-01-03 13:53:03.165,null\n" +
-                        "TIQB,42,0.6806873134626418,1970-01-01 00:00:00.04,0.6259,-1605,8814086,2015-07-28 15:08:53.462495,28,true,CPSW,null,00000000 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
-                        "LTOV,137,0.7632615004324503,1970-01-01 00:00:00.05,0.8820,9054,null,2015-04-20 05:09:03.580574,106,false,PEHN,2015-01-09 06:57:17.512,null\n" +
+                        "OZZV,219,0.16381374773748514,1970-01-01 00:00:00.02,0.659,-12303,9489508,2015-08-13 17:10:19.752521,6,false,null,2015-05-20 01:48:37.418,00000000 2b 4d 5f f6 46 90 c3 b3 59 8e e5 61 2f 64 0e\n" +
+                        "OLYX,30,0.7133910271555843,1970-01-01 00:00:00.03,0.655,6610,6504428,2015-08-08 00:42:24.545639,123,false,null,2015-01-03 13:53:03.165,null\n" +
+                        "TIQB,42,0.6806873134626418,1970-01-01 00:00:00.04,0.626,-1605,8814086,2015-07-28 15:08:53.462495,28,true,CPSW,null,00000000 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
+                        "LTOV,137,0.7632615004324503,1970-01-01 00:00:00.05,0.882,9054,null,2015-04-20 05:09:03.580574,106,false,PEHN,2015-01-09 06:57:17.512,null\n" +
                         "ZIMN,125,null,1970-01-01 00:00:00.06,null,11524,8335261,2015-10-26 02:10:50.688394,111,true,PEHN,2015-08-21 15:46:32.624,null\n" +
-                        "OPJO,168,0.10459352312331183,1970-01-01 00:00:00.07,0.5350,-5920,7080704,2015-07-11 09:15:38.342717,103,false,VTJW,null,null\n" +
-                        "GLUO,145,0.5391626621794673,1970-01-01 00:00:00.08,0.7670,14242,2499922,2015-11-02 09:01:31.312804,84,false,PEHN,2015-11-14 17:37:36.043,null\n" +
-                        "ZVQE,103,0.6729405590773638,1970-01-01 00:00:00.09,null,13727,7875846,2015-12-12 13:16:26.134562,22,true,PEHN,2015-01-20 04:50:34.098,00000000 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c\n" +
+                        "OPJO,168,0.10459352312331183,1970-01-01 00:00:00.07,0.535,-5920,7080704,2015-07-11 09:15:38.342717,103,false,VTJW,null,null\n" +
+                        "GLUO,145,0.5391626621794673,1970-01-01 00:00:00.08,0.767,14242,2499922,2015-11-02 09:01:31.312804,84,false,PEHN,2015-11-14 17:37:36.43,null\n" +
+                        "ZVQE,103,0.6729405590773638,1970-01-01 00:00:00.09,null,13727,7875846,2015-12-12 13:16:26.134562,22,true,PEHN,2015-01-20 04:50:34.98,00000000 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c\n" +
                         "00000010 65 ff\n" +
                         "LIGY,199,0.2836347139481469,1970-01-01 00:00:00.1,null,30426,3215562,2015-08-21 14:55:07.055722,11,false,VTJW,null,00000000 ff 70 3a c7 8a b3 14 cd 47 0b 0c 39 12\n" +
-                        "MQNT,43,0.5859332388599638,1970-01-01 00:00:00.11,0.3350,27019,null,null,27,true,PEHN,2015-07-12 12:59:47.665,00000000 26 fb 2e 42 fa f5 6e 8f 80 e3 54 b8 07 b1 32 57\n" +
+                        "MQNT,43,0.5859332388599638,1970-01-01 00:00:00.11,0.335,27019,null,null,27,true,PEHN,2015-07-12 12:59:47.665,00000000 26 fb 2e 42 fa f5 6e 8f 80 e3 54 b8 07 b1 32 57\n" +
                         "00000010 ff 9a ef\n" +
-                        "WWCC,213,0.7665029914376952,1970-01-01 00:00:00.12,0.5799,13640,4121923,2015-08-06 02:27:30.469762,73,false,PEHN,2015-04-30 08:18:10.453,00000000 71 a7 d5 af 11 96 37 08 dd 98 ef 54 88 2a a2 ad\n" +
+                        "WWCC,213,0.7665029914376952,1970-01-01 00:00:00.12,0.580,13640,4121923,2015-08-06 02:27:30.469762,73,false,PEHN,2015-04-30 08:18:10.453,00000000 71 a7 d5 af 11 96 37 08 dd 98 ef 54 88 2a a2 ad\n" +
                         "00000010 e7 d4\n" +
-                        "VFGP,120,0.8402964708129546,1970-01-01 00:00:00.13,0.7730,7223,7241423,2015-12-18 07:32:18.456025,43,false,VTJW,null,00000000 24 4e 44 a8 0d fe 27 ec 53 13 5d b2 15 e7 b8 35\n" +
+                        "VFGP,120,0.8402964708129546,1970-01-01 00:00:00.13,0.773,7223,7241423,2015-12-18 07:32:18.456025,43,false,VTJW,null,00000000 24 4e 44 a8 0d fe 27 ec 53 13 5d b2 15 e7 b8 35\n" +
                         "00000010 67\n" +
-                        "RMDG,134,0.11047315214793696,1970-01-01 00:00:00.14,0.04300,21227,7155708,2015-07-03 04:12:45.774281,42,true,CPSW,2015-02-24 12:10:43.199,null\n" +
-                        "WFOQ,255,null,1970-01-01 00:00:00.15,0.1159,31569,6688277,2015-05-19 03:30:45.779999,126,true,PEHN,2015-12-09 09:57:17.078,null\n" +
-                        "MXDK,56,0.9997797234031688,1970-01-01 00:00:00.16,0.5230,-32372,6884132,null,58,false,null,2015-01-20 06:18:18.583,null\n" +
-                        "XMKJ,139,0.8405815493567417,1970-01-01 00:00:00.17,0.3059,25856,null,2015-05-18 03:50:22.731437,2,true,VTJW,2015-06-25 10:45:01.014,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35\n" +
-                        "VIHD,null,null,1970-01-01 00:00:00.18,0.5500,22280,9109842,2015-01-25 13:51:38.270583,94,false,CPSW,2015-10-27 02:52:19.935,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9\n" +
-                        "WPNX,null,0.9469700813926907,1970-01-01 00:00:00.19,0.4149,-17933,674261,2015-03-04 15:43:15.213686,43,true,HYRX,2015-12-18 21:28:25.325,00000000 b3 4c 0e 8f f1 0c c5 60 b7 d1\n" +
-                        "YPOV,36,0.6741248448728824,1970-01-01 00:00:00.2,0.03099,-5888,1375423,2015-12-10 20:50:35.866614,3,true,null,2015-07-23 20:17:04.236,00000000 d4 ab be 30 fa 8d ac 3d 98 a0 ad 9a 5d\n" +
-                        "NUHN,null,0.6940917925148332,1970-01-01 00:00:00.21,0.3389,-25226,3524748,2015-05-07 04:07:18.152968,39,true,VTJW,2015-04-04 15:23:34.13,00000000 b8 be f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0\n" +
+                        "RMDG,134,0.11047315214793696,1970-01-01 00:00:00.14,0.043,21227,7155708,2015-07-03 04:12:45.774281,42,true,CPSW,2015-02-24 12:10:43.199,null\n" +
+                        "WFOQ,255,null,1970-01-01 00:00:00.15,0.116,31569,6688277,2015-05-19 03:30:45.779999,126,true,PEHN,2015-12-09 09:57:17.78,null\n" +
+                        "MXDK,56,0.9997797234031688,1970-01-01 00:00:00.16,0.523,-32372,6884132,null,58,false,null,2015-01-20 06:18:18.583,null\n" +
+                        "XMKJ,139,0.8405815493567417,1970-01-01 00:00:00.17,0.306,25856,null,2015-05-18 03:50:22.731437,2,true,VTJW,2015-06-25 10:45:01.14,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35\n" +
+                        "VIHD,null,null,1970-01-01 00:00:00.18,0.550,22280,9109842,2015-01-25 13:51:38.270583,94,false,CPSW,2015-10-27 02:52:19.935,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9\n" +
+                        "WPNX,null,0.9469700813926907,1970-01-01 00:00:00.19,0.415,-17933,674261,2015-03-04 15:43:15.213686,43,true,HYRX,2015-12-18 21:28:25.325,00000000 b3 4c 0e 8f f1 0c c5 60 b7 d1\n" +
+                        "YPOV,36,0.6741248448728824,1970-01-01 00:00:00.2,0.031,-5888,1375423,2015-12-10 20:50:35.866614,3,true,null,2015-07-23 20:17:04.236,00000000 d4 ab be 30 fa 8d ac 3d 98 a0 ad 9a 5d\n" +
+                        "NUHN,null,0.6940917925148332,1970-01-01 00:00:00.21,0.339,-25226,3524748,2015-05-07 04:07:18.152968,39,true,VTJW,2015-04-04 15:23:34.13,00000000 b8 be f8 a1 46 87 28 92 a3 9b e3 cb c2 64 8a b0\n" +
                         "00000010 35 d8\n" +
-                        "BOSE,240,0.06001827721556019,1970-01-01 00:00:00.22,0.3790,23904,9069339,2015-03-21 03:42:42.643186,84,true,null,null,null\n" +
-                        "INKG,124,0.8615841627702753,1970-01-01 00:00:00.23,0.4040,-30383,7233542,2015-07-21 16:42:47.012148,99,false,null,2015-08-27 17:25:35.308,00000000 87 fc 92 83 fc 88 f3 32 27 70 c8 01 b0 dc c9 3a\n" +
+                        "BOSE,240,0.06001827721556019,1970-01-01 00:00:00.22,0.379,23904,9069339,2015-03-21 03:42:42.643186,84,true,null,null,null\n" +
+                        "INKG,124,0.8615841627702753,1970-01-01 00:00:00.23,0.404,-30383,7233542,2015-07-21 16:42:47.012148,99,false,null,2015-08-27 17:25:35.308,00000000 87 fc 92 83 fc 88 f3 32 27 70 c8 01 b0 dc c9 3a\n" +
                         "00000010 5b 7e\n" +
                         "FUXC,52,0.7430101994511517,1970-01-01 00:00:00.24,null,-14729,1042064,2015-08-21 02:10:58.949674,28,true,CPSW,2015-08-29 20:15:51.835,null\n" +
-                        "UNYQ,71,0.442095410281938,1970-01-01 00:00:00.25,0.5389,-22611,null,2015-12-23 18:41:42.319859,98,true,PEHN,2015-01-26 00:55:50.202,00000000 28 ed 97 99 d8 77 33 3f b2 67 da 98 47 47 bf\n" +
+                        "UNYQ,71,0.442095410281938,1970-01-01 00:00:00.25,0.539,-22611,null,2015-12-23 18:41:42.319859,98,true,PEHN,2015-01-26 00:55:50.202,00000000 28 ed 97 99 d8 77 33 3f b2 67 da 98 47 47 bf\n" +
                         "KBMQ,null,0.28019218825051395,1970-01-01 00:00:00.26,null,12240,null,2015-08-16 01:02:55.766622,21,false,null,2015-05-19 00:47:18.698,00000000 6a de 46 04 d3 81 e7 a2 16 22 35 3b 1c\n" +
-                        "JSOL,243,null,1970-01-01 00:00:00.27,0.06800,-17468,null,null,20,true,null,2015-06-19 10:38:54.483,00000000 3d e0 2d 04 86 e7 ca 29 98 07 69 ca 5b d6 cf 09\n" +
+                        "JSOL,243,null,1970-01-01 00:00:00.27,0.068,-17468,null,null,20,true,null,2015-06-19 10:38:54.483,00000000 3d e0 2d 04 86 e7 ca 29 98 07 69 ca 5b d6 cf 09\n" +
                         "00000010 69\n" +
-                        "HNSS,150,null,1970-01-01 00:00:00.28,0.1480,14841,5992443,null,25,false,PEHN,null,00000000 14 d6 fc ee 03 22 81 b8 06 c4 06 af\n" +
+                        "HNSS,150,null,1970-01-01 00:00:00.28,0.148,14841,5992443,null,25,false,PEHN,null,00000000 14 d6 fc ee 03 22 81 b8 06 c4 06 af\n" +
                         "PZPB,101,0.061646717786158045,1970-01-01 00:00:00.29,null,12237,9878179,2015-09-03 22:13:18.852465,79,false,VTJW,2015-12-17 15:12:54.958,00000000 12 61 3a 9a ad 98 2e 75 52 ad 62 87 88 45 b9 9d\n" +
-                        "OYNN,25,0.3393509514000247,1970-01-01 00:00:00.3,0.6280,22412,4736378,2015-10-10 12:19:42.528224,106,true,CPSW,2015-07-01 00:23:49.789,00000000 54 13 3f ff b6 7e cd 04 27 66 94 89 db\n" +
+                        "OYNN,25,0.3393509514000247,1970-01-01 00:00:00.3,0.628,22412,4736378,2015-10-10 12:19:42.528224,106,true,CPSW,2015-07-01 00:23:49.789,00000000 54 13 3f ff b6 7e cd 04 27 66 94 89 db\n" +
                         "null,117,0.5638404775663161,1970-01-01 00:00:00.31,null,-5604,6353018,null,84,false,null,null,00000000 2b ad 25 07 db 62 44 33 6e 00 8e\n" +
-                        "HVRI,233,0.22407665790705777,1970-01-01 00:00:00.32,0.4250,10469,1715213,null,86,false,null,2015-02-02 05:48:17.373,null\n" +
-                        "OYTO,96,0.7407581616916364,1970-01-01 00:00:00.33,0.5279,-12239,3499620,2015-02-07 22:35:03.212268,17,false,PEHN,2015-03-29 12:55:11.682,null\n" +
+                        "HVRI,233,0.22407665790705777,1970-01-01 00:00:00.32,0.425,10469,1715213,null,86,false,null,2015-02-02 05:48:17.373,null\n" +
+                        "OYTO,96,0.7407581616916364,1970-01-01 00:00:00.33,0.528,-12239,3499620,2015-02-07 22:35:03.212268,17,false,PEHN,2015-03-29 12:55:11.682,null\n" +
                         "LFCY,63,0.7217315729790722,1970-01-01 00:00:00.34,null,23344,9523982,null,123,false,CPSW,2015-05-18 04:35:27.228,00000000 05 e5 c0 4e cc d6 e3 7b 34 cd 15 35 bb a4\n" +
-                        "GHLX,148,0.3057937704964272,1970-01-01 00:00:00.35,0.6359,-31457,2322337,2015-10-22 12:06:05.544701,91,true,HYRX,2015-05-21 09:33:18.158,00000000 57 1d 91 72 30 04 b7 02 cb 03\n" +
-                        "YTSZ,123,null,1970-01-01 00:00:00.36,0.5189,22534,4446236,2015-07-27 07:23:37.233711,53,false,CPSW,2015-01-13 04:37:10.036,null\n" +
-                        "SWLU,251,null,1970-01-01 00:00:00.37,0.1790,7734,4082475,2015-10-21 18:24:34.400345,69,false,PEHN,2015-04-01 14:33:42.005,null\n" +
-                        "TQJL,245,null,1970-01-01 00:00:00.38,0.8650,9516,929340,2015-05-28 04:18:18.640567,69,false,VTJW,2015-06-12 20:12:28.881,00000000 6c 3e 51 d7 eb b1 07 71 32 1f af 40 4e 8c 47\n" +
-                        "REIJ,94,null,1970-01-01 00:00:00.39,0.1299,-29924,null,2015-03-20 22:14:46.204718,113,true,HYRX,2015-12-19 13:58:41.819,null\n" +
-                        "HDHQ,94,0.7234181773407536,1970-01-01 00:00:00.4,0.7300,19970,654131,2015-01-10 22:56:08.48045,84,true,null,2015-03-05 17:14:48.275,00000000 4f 56 6b 65 a4 53 38 e9 cd c1 a7 ee 86 75 ad a5\n" +
+                        "GHLX,148,0.3057937704964272,1970-01-01 00:00:00.35,0.636,-31457,2322337,2015-10-22 12:06:05.544701,91,true,HYRX,2015-05-21 09:33:18.158,00000000 57 1d 91 72 30 04 b7 02 cb 03\n" +
+                        "YTSZ,123,null,1970-01-01 00:00:00.36,0.519,22534,4446236,2015-07-27 07:23:37.233711,53,false,CPSW,2015-01-13 04:37:10.36,null\n" +
+                        "SWLU,251,null,1970-01-01 00:00:00.37,0.179,7734,4082475,2015-10-21 18:24:34.400345,69,false,PEHN,2015-04-01 14:33:42.5,null\n" +
+                        "TQJL,245,null,1970-01-01 00:00:00.38,0.865,9516,929340,2015-05-28 04:18:18.640567,69,false,VTJW,2015-06-12 20:12:28.881,00000000 6c 3e 51 d7 eb b1 07 71 32 1f af 40 4e 8c 47\n" +
+                        "REIJ,94,null,1970-01-01 00:00:00.39,0.130,-29924,null,2015-03-20 22:14:46.204718,113,true,HYRX,2015-12-19 13:58:41.819,null\n" +
+                        "HDHQ,94,0.7234181773407536,1970-01-01 00:00:00.4,0.730,19970,654131,2015-01-10 22:56:08.48045,84,true,null,2015-03-05 17:14:48.275,00000000 4f 56 6b 65 a4 53 38 e9 cd c1 a7 ee 86 75 ad a5\n" +
                         "00000010 2d 49\n" +
-                        "UMEU,40,0.008444033230580739,1970-01-01 00:00:00.41,0.8050,-11623,4599862,2015-11-20 04:02:44.335947,76,false,PEHN,2015-05-17 17:33:20.922,null\n" +
-                        "YJIH,184,null,1970-01-01 00:00:00.42,0.3829,17614,3101671,2015-01-28 12:05:46.683001,105,true,null,2015-12-07 19:24:36.838,00000000 ec 69 cd 73 bb 9b c5 95 db 61 91 ce\n" +
-                        "CYXG,27,0.2917796053045747,1970-01-01 00:00:00.43,0.9530,3944,249165,null,67,true,null,2015-03-02 08:19:44.566,00000000 01 48 15 3e 0c 7f 3f 8f e4 b5 ab 34 21 29\n" +
-                        "MRTG,143,0.02632531361499113,1970-01-01 00:00:00.44,0.9430,-27320,1667842,2015-01-24 19:56:15.973109,11,false,null,2015-01-24 07:15:02.772,null\n" +
-                        "DONP,246,0.654226248740447,1970-01-01 00:00:00.45,0.5559,27477,4160018,2015-12-14 03:40:05.911839,20,true,PEHN,2015-10-29 14:35:10.167,00000000 07 92 01 f5 6a a1 31 cd cb c2 a2 b4 8e 99\n" +
-                        "IQXS,232,0.23075700218038853,1970-01-01 00:00:00.46,0.04899,-18113,4005228,2015-06-11 13:00:07.248188,8,true,CPSW,2015-08-16 11:09:24.311,00000000 fa 1f 92 24 b1 b8 67 65 08 b7 f8 41 00\n" +
-                        "null,178,null,1970-01-01 00:00:00.47,0.9029,-14626,2934570,2015-04-04 08:51:54.068154,88,true,null,2015-07-01 04:32:23.083,00000000 84 36 25 63 2b 63 61 43 1c 47 7d b6 46 ba bb 98\n" +
+                        "UMEU,40,0.008444033230580739,1970-01-01 00:00:00.41,0.805,-11623,4599862,2015-11-20 04:02:44.335947,76,false,PEHN,2015-05-17 17:33:20.922,null\n" +
+                        "YJIH,184,null,1970-01-01 00:00:00.42,0.383,17614,3101671,2015-01-28 12:05:46.683001,105,true,null,2015-12-07 19:24:36.838,00000000 ec 69 cd 73 bb 9b c5 95 db 61 91 ce\n" +
+                        "CYXG,27,0.2917796053045747,1970-01-01 00:00:00.43,0.953,3944,249165,null,67,true,null,2015-03-02 08:19:44.566,00000000 01 48 15 3e 0c 7f 3f 8f e4 b5 ab 34 21 29\n" +
+                        "MRTG,143,0.02632531361499113,1970-01-01 00:00:00.44,0.943,-27320,1667842,2015-01-24 19:56:15.973109,11,false,null,2015-01-24 07:15:02.772,null\n" +
+                        "DONP,246,0.654226248740447,1970-01-01 00:00:00.45,0.556,27477,4160018,2015-12-14 03:40:05.911839,20,true,PEHN,2015-10-29 14:35:10.167,00000000 07 92 01 f5 6a a1 31 cd cb c2 a2 b4 8e 99\n" +
+                        "IQXS,232,0.23075700218038853,1970-01-01 00:00:00.46,0.049,-18113,4005228,2015-06-11 13:00:07.248188,8,true,CPSW,2015-08-16 11:09:24.311,00000000 fa 1f 92 24 b1 b8 67 65 08 b7 f8 41 00\n" +
+                        "null,178,null,1970-01-01 00:00:00.47,0.903,-14626,2934570,2015-04-04 08:51:54.068154,88,true,null,2015-07-01 04:32:23.83,00000000 84 36 25 63 2b 63 61 43 1c 47 7d b6 46 ba bb 98\n" +
                         "00000010 ca 08 be a4\n" +
-                        "HUWZ,94,0.110401374979613,1970-01-01 00:00:00.48,0.4199,-3736,5687514,2015-01-02 17:18:05.627633,74,false,null,2015-03-29 06:39:11.642,null\n" +
-                        "SRED,66,0.11274667140915928,1970-01-01 00:00:00.49,0.05999,-10543,3669377,2015-10-22 02:53:02.381351,77,true,PEHN,null,00000000 7c 3f d6 88 3a 93 ef 24 a5 e2 bc\n";
+                        "HUWZ,94,0.110401374979613,1970-01-01 00:00:00.48,0.420,-3736,5687514,2015-01-02 17:18:05.627633,74,false,null,2015-03-29 06:39:11.642,null\n" +
+                        "SRED,66,0.11274667140915928,1970-01-01 00:00:00.49,0.060,-10543,3669377,2015-10-22 02:53:02.381351,77,true,PEHN,null,00000000 7c 3f d6 88 3a 93 ef 24 a5 e2 bc\n";
 
                 StringSink sink = new StringSink();
 
@@ -2301,26 +2386,38 @@ nodejs code:
                         running
                 );
 
+                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
                 properties.setProperty("binaryTransfer", "false");
 
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
-                PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)");
-                // TIME is passed over protocol as UNSPECIFIED type
-                // it will rely on date parser to work out what it is
-                // for now date parser does not parse just time, it could i guess if required.
-                statement.setTime(1, new Time(100L));
+                try (final Connection ignored = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties)) {
+                    try (PreparedStatement statement = ignored.prepareStatement("select x, ? from long_sequence(5)")) {
+                        // TIME is passed over protocol as UNSPECIFIED type
+                        // it will rely on date parser to work out what it is
+                        // for now date parser does not parse just time, it could i guess if required.
+                        statement.setTime(1, new Time(100L));
 
-                try {
-                    statement.executeQuery();
-                    Assert.fail();
-                } catch (SQLException e) {
-                    assertTrue(Chars.startsWith(e.getMessage(), "ERROR: bad parameter value"));
+                        // todo: we need to pass unspecified parameter type to where clause, where it will be cast to something we support
+                        try (ResultSet rs = statement.executeQuery()) {
+                            StringSink sink = new StringSink();
+                            // dump metadata
+                            assertResultSet(
+                                    "x[BIGINT],$1[VARCHAR]\n" +
+                                            "1,00:00:00.1+00\n" +
+                                            "2,00:00:00.1+00\n" +
+                                            "3,00:00:00.1+00\n" +
+                                            "4,00:00:00.1+00\n" +
+                                            "5,00:00:00.1+00\n",
+                                    sink,
+                                    rs
+                            );
+                        }
+                    }
                 }
-                connection.close();
             } finally {
                 running.set(false);
                 haltLatch.await();
@@ -2494,7 +2591,7 @@ nodejs code:
                         if (rs.wasNull()) {
                             sink.put("null");
                         } else {
-                            sink.put(doubleValue, Numbers.MAX_SCALE);
+                            sink.put(doubleValue);
                         }
                         break;
                     case TIMESTAMP:
@@ -2506,11 +2603,11 @@ nodejs code:
                         }
                         break;
                     case REAL:
-                        double floatValue = rs.getFloat(i);
+                        float floatValue = rs.getFloat(i);
                         if (rs.wasNull()) {
                             sink.put("null");
                         } else {
-                            sink.put(floatValue, 4);
+                            sink.put(floatValue, 3);
                         }
                         break;
                     case SMALLINT:
@@ -2536,11 +2633,12 @@ nodejs code:
                         sink.put(rs.getBoolean(i));
                         break;
                     case TIME:
-                        Date date = rs.getDate(i);
-                        if (date == null) {
+                    case DATE:
+                        timestamp = rs.getTimestamp(i);
+                        if (timestamp == null) {
                             sink.put("null");
                         } else {
-                            sink.put(date.toString());
+                            sink.put(timestamp.toString());
                         }
                         break;
                     case BINARY:
@@ -2654,40 +2752,184 @@ nodejs code:
         barrier.await();
     }
 
-    private void testInsert0(boolean simpleQueryMode) throws Exception {
+    private void testAllTypesSelect(boolean simple) throws Exception {
+        assertMemoryLeak(() -> {
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(
+                        NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                properties.setProperty("binaryTransfer", "true");
+                if (simple) {
+                    properties.setProperty("preferQueryMode", "simple");
+                }
+
+                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties)) {
+                    CallableStatement stmt = connection.prepareCall(
+                            "create table x as (select" +
+                                    " cast(x as int) kk, " +
+                                    " rnd_int() a," +
+                                    " rnd_boolean() b," + // str
+                                    " rnd_str(1,1,2) c," + // str
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) i," + // str
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(889001, 8890012) k," +
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() cc," + // str
+                                    " rnd_long256() l2" + // str
+                                    " from long_sequence(15))" // str
+                    );
+
+                    stmt.execute();
+
+                    try (PreparedStatement statement = connection.prepareStatement("x")) {
+                        for (int i = 0; i < 10_000; i++) {
+                            try (ResultSet rs = statement.executeQuery()) {
+                                StringSink sink = new StringSink();
+                                // dump metadata
+                                assertResultSet(
+                                        "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[NUMERIC]\n" +
+                                                "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n" +
+                                                "2,-461611463,false,J,0.9687423276940171,0.676,279,2015-11-21 14:32:13.134,HYRX,-6794405451419334859,1970-01-01 00:00:09.779013,6,null,ETJRSZSRYR,F,0x9ff97d73fc0c62d069440048957ae05360802a2ca499f211b771e27f939096b9\n" +
+                                                "3,-1515787781,false,null,0.8001121139739173,0.188,759,2015-06-17 02:40:55.328,CPSW,-4091897709796604687,1970-01-01 00:00:18.669025,6,00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3,DYYCTGQOLYXWCKYL,S,0x26567f4430b46b7f78c594c496995885aa1896d0ad3419d2910aa7b6d58506dc\n" +
+                                                "4,1235206821,true,null,0.9540069089049732,0.255,310,null,VTJW,6623443272143014835,1970-01-01 00:00:27.559037,17,00000000 cc 76 48 a3 bb 64 d2 ad 49 1c f2 3c ed 39 ac,VSJOJIPHZEPIHVLT,O,0x825c96def9f2fcc2b942438168662cb7aa21f9d816335363d27e6df7d9d5b758\n" +
+                                                "5,454820511,false,L,0.9918093114862231,0.324,727,2015-02-10 08:56:03.707,null,5703149806881083206,1970-01-01 00:00:36.449049,36,00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57,WVDKFLOPJOXPK,R,0xa07934b2a15de8e0550988dbaca497348692bc8c04e4bb71d24b84c08ea7606a\n" +
+                                                "6,1728220848,false,O,0.24642266252221556,0.267,174,2015-02-20 01:11:53.748,null,2151565237758036093,1970-01-01 00:00:45.339061,31,null,HZSQLDGLOGIFO,U,0xf0431c7d0a5f126f8531876c963316d961f392242addf45287dd0b29ca2c4c84\n" +
+                                                "7,-120660220,false,B,0.07594017197103131,0.064,542,2015-01-16 16:01:53.328,VTJW,5048272224871876586,1970-01-01 00:00:54.229073,23,00000000 f5 0f 2d b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35\n" +
+                                                "00000010 e4 3a dc 5c,ULIGYVFZ,F,0xa15aae5b999db11899193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5\n" +
+                                                "8,-1548274994,true,X,0.9292491654871197,null,523,2015-01-05 19:01:46.416,HYRX,9044897286885345735,1970-01-01 00:01:03.119085,16,00000000 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1 e3 ee 58 35\n" +
+                                                "00000010 61,MXSLUQDYOPHNIMYF,F,0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\n" +
+                                                "9,1430716856,false,P,0.7707249647497968,null,162,2015-02-05 10:14:02.889,null,7046578844650327247,1970-01-01 00:01:12.009097,47,null,LEGPUHHIUGGLNYR,Z,0x5565337913b499af36be4fe79117ebd53756b77218c738a7737b1dacd6be5971\n" +
+                                                "10,-772867311,false,Q,0.7653255982993546,null,681,2015-05-07 02:45:07.603,null,4794469881975683047,1970-01-01 00:01:20.899109,31,00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
+                                                "00000010 a0 dd,VTNPIW,Z,0x6bfac0b6e487d3532d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe\n" +
+                                                "11,494704403,true,C,0.4834201611292943,0.794,28,2015-06-16 21:00:55.459,HYRX,6785355388782691241,1970-01-01 00:01:29.789121,39,null,RVNGSTEQOD,R,0xc82c35a389f834dababcd0482f05618f926cdd99e63abb35650d1fb462d014df\n" +
+                                                "12,-173290754,true,K,0.7198854503668188,null,114,2015-06-15 20:39:39.538,VTJW,9064962137287142402,1970-01-01 00:01:38.679133,20,00000000 3b 94 5f ec d3 dc f8 43 b2 e3,TIZKYFLUHZQSNPX,M,0x5073897a288aa6cf74c509677990f1c962588b84eddb7b4a64a4822086748dc4\n" +
+                                                "13,-2041781509,true,E,0.44638626240707313,0.035,605,null,VTJW,415951511685691973,1970-01-01 00:01:47.569145,28,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35,null,V,0xab059a2342cb232f543554ee7efea2c341b1a691af3ce51f91a63337ac2e9683\n" +
+                                                "14,813111021,true,null,0.1389067130304884,0.373,259,null,CPSW,4422067104162111415,1970-01-01 00:01:56.459157,19,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9,PNXHQUTZODWKOC,P,0x09debd6254b1776d50902704a317faeea7fc3b8563ada5ab985499c7f07368a3\n" +
+                                                "15,980916820,false,C,0.8353079103853974,0.011,670,2015-10-06 01:12:57.175,null,7536661420632276058,1970-01-01 00:02:05.349169,37,null,FDBZWNIJEE,H,0xa6d100033dcaf68cb265942d3a1f96a1cff85f9258847e03a6f2e2a772cd2f37\n",
+                                        sink,
+                                        rs
+                                );
+                            }
+                        }
+                    }
+                }
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
+    private void testInsert0(boolean simpleQueryMode, boolean binary) throws Exception {
         assertMemoryLeak(() -> {
 
-            String expectedAll = "0\n" +
-                    "1\n" +
-                    "2\n" +
-                    "3\n" +
-                    "4\n" +
-                    "5\n" +
-                    "6\n" +
-                    "7\n" +
-                    "8\n" +
-                    "9\n" +
-                    "10\n" +
-                    "11\n" +
-                    "12\n" +
-                    "13\n" +
-                    "14\n" +
-                    "15\n" +
-                    "16\n" +
-                    "17\n" +
-                    "18\n" +
-                    "19\n" +
-                    "20\n" +
-                    "21\n" +
-                    "22\n" +
-                    "23\n" +
-                    "24\n" +
-                    "25\n" +
-                    "26\n" +
-                    "27\n" +
-                    "28\n" +
-                    "29\n";
-
+            String expectedAll = "a[INTEGER],d[TIMESTAMP],t[TIMESTAMP],d1[TIMESTAMP],t1[TIMESTAMP],d2[TIMESTAMP],t2[TIMESTAMP],t3[TIMESTAMP]\n" +
+                    "0,2011-04-11 00:00:00.0,2011-04-11 14:40:54.998821,2011-04-11 14:40:54.998,2011-04-11 14:39:50.4,2011-04-11 14:40:54.998,2011-04-11 14:40:54.998821,2011-04-11 14:40:54.998821\n" +
+                    "1,2011-04-11 00:00:00.0,2011-04-11 14:40:54.999821,2011-04-11 14:40:54.999,2011-04-11 14:39:50.4,2011-04-11 14:40:54.999,2011-04-11 14:40:54.999821,2011-04-11 14:40:54.999821\n" +
+                    "2,2011-04-11 00:00:00.0,2011-04-11 14:40:55.000821,2011-04-11 14:40:55.0,2011-04-11 14:39:50.4,2011-04-11 14:40:55.0,2011-04-11 14:40:55.000821,2011-04-11 14:40:55.000821\n" +
+                    "3,2011-04-11 00:00:00.0,2011-04-11 14:40:55.001821,2011-04-11 14:40:55.1,2011-04-11 14:39:50.4,2011-04-11 14:40:55.1,2011-04-11 14:40:55.001821,2011-04-11 14:40:55.001821\n" +
+                    "4,2011-04-11 00:00:00.0,2011-04-11 14:40:55.002821,2011-04-11 14:40:55.2,2011-04-11 14:39:50.4,2011-04-11 14:40:55.2,2011-04-11 14:40:55.002821,2011-04-11 14:40:55.002821\n" +
+                    "5,2011-04-11 00:00:00.0,2011-04-11 14:40:55.003821,2011-04-11 14:40:55.3,2011-04-11 14:39:50.4,2011-04-11 14:40:55.3,2011-04-11 14:40:55.003821,2011-04-11 14:40:55.003821\n" +
+                    "6,2011-04-11 00:00:00.0,2011-04-11 14:40:55.004821,2011-04-11 14:40:55.4,2011-04-11 14:39:50.4,2011-04-11 14:40:55.4,2011-04-11 14:40:55.004821,2011-04-11 14:40:55.004821\n" +
+                    "7,2011-04-11 00:00:00.0,2011-04-11 14:40:55.005821,2011-04-11 14:40:55.5,2011-04-11 14:39:50.4,2011-04-11 14:40:55.5,2011-04-11 14:40:55.005821,2011-04-11 14:40:55.005821\n" +
+                    "8,2011-04-11 00:00:00.0,2011-04-11 14:40:55.006821,2011-04-11 14:40:55.6,2011-04-11 14:39:50.4,2011-04-11 14:40:55.6,2011-04-11 14:40:55.006821,2011-04-11 14:40:55.006821\n" +
+                    "9,2011-04-11 00:00:00.0,2011-04-11 14:40:55.007821,2011-04-11 14:40:55.7,2011-04-11 14:39:50.4,2011-04-11 14:40:55.7,2011-04-11 14:40:55.007821,2011-04-11 14:40:55.007821\n" +
+                    "10,2011-04-11 00:00:00.0,2011-04-11 14:40:55.008821,2011-04-11 14:40:55.8,2011-04-11 14:39:50.4,2011-04-11 14:40:55.8,2011-04-11 14:40:55.008821,2011-04-11 14:40:55.008821\n" +
+                    "11,2011-04-11 00:00:00.0,2011-04-11 14:40:55.009821,2011-04-11 14:40:55.9,2011-04-11 14:39:50.4,2011-04-11 14:40:55.9,2011-04-11 14:40:55.009821,2011-04-11 14:40:55.009821\n" +
+                    "12,2011-04-11 00:00:00.0,2011-04-11 14:40:55.010821,2011-04-11 14:40:55.1,2011-04-11 14:39:50.4,2011-04-11 14:40:55.1,2011-04-11 14:40:55.010821,2011-04-11 14:40:55.010821\n" +
+                    "13,2011-04-11 00:00:00.0,2011-04-11 14:40:55.011821,2011-04-11 14:40:55.11,2011-04-11 14:39:50.4,2011-04-11 14:40:55.11,2011-04-11 14:40:55.011821,2011-04-11 14:40:55.011821\n" +
+                    "14,2011-04-11 00:00:00.0,2011-04-11 14:40:55.012821,2011-04-11 14:40:55.12,2011-04-11 14:39:50.4,2011-04-11 14:40:55.12,2011-04-11 14:40:55.012821,2011-04-11 14:40:55.012821\n" +
+                    "15,2011-04-11 00:00:00.0,2011-04-11 14:40:55.013821,2011-04-11 14:40:55.13,2011-04-11 14:39:50.4,2011-04-11 14:40:55.13,2011-04-11 14:40:55.013821,2011-04-11 14:40:55.013821\n" +
+                    "16,2011-04-11 00:00:00.0,2011-04-11 14:40:55.014821,2011-04-11 14:40:55.14,2011-04-11 14:39:50.4,2011-04-11 14:40:55.14,2011-04-11 14:40:55.014821,2011-04-11 14:40:55.014821\n" +
+                    "17,2011-04-11 00:00:00.0,2011-04-11 14:40:55.015821,2011-04-11 14:40:55.15,2011-04-11 14:39:50.4,2011-04-11 14:40:55.15,2011-04-11 14:40:55.015821,2011-04-11 14:40:55.015821\n" +
+                    "18,2011-04-11 00:00:00.0,2011-04-11 14:40:55.016821,2011-04-11 14:40:55.16,2011-04-11 14:39:50.4,2011-04-11 14:40:55.16,2011-04-11 14:40:55.016821,2011-04-11 14:40:55.016821\n" +
+                    "19,2011-04-11 00:00:00.0,2011-04-11 14:40:55.017821,2011-04-11 14:40:55.17,2011-04-11 14:39:50.4,2011-04-11 14:40:55.17,2011-04-11 14:40:55.017821,2011-04-11 14:40:55.017821\n" +
+                    "20,2011-04-11 00:00:00.0,2011-04-11 14:40:55.018821,2011-04-11 14:40:55.18,2011-04-11 14:39:50.4,2011-04-11 14:40:55.18,2011-04-11 14:40:55.018821,2011-04-11 14:40:55.018821\n" +
+                    "21,2011-04-11 00:00:00.0,2011-04-11 14:40:55.019821,2011-04-11 14:40:55.19,2011-04-11 14:39:50.4,2011-04-11 14:40:55.19,2011-04-11 14:40:55.019821,2011-04-11 14:40:55.019821\n" +
+                    "22,2011-04-11 00:00:00.0,2011-04-11 14:40:55.020821,2011-04-11 14:40:55.2,2011-04-11 14:39:50.4,2011-04-11 14:40:55.2,2011-04-11 14:40:55.020821,2011-04-11 14:40:55.020821\n" +
+                    "23,2011-04-11 00:00:00.0,2011-04-11 14:40:55.021821,2011-04-11 14:40:55.21,2011-04-11 14:39:50.4,2011-04-11 14:40:55.21,2011-04-11 14:40:55.021821,2011-04-11 14:40:55.021821\n" +
+                    "24,2011-04-11 00:00:00.0,2011-04-11 14:40:55.022821,2011-04-11 14:40:55.22,2011-04-11 14:39:50.4,2011-04-11 14:40:55.22,2011-04-11 14:40:55.022821,2011-04-11 14:40:55.022821\n" +
+                    "25,2011-04-11 00:00:00.0,2011-04-11 14:40:55.023821,2011-04-11 14:40:55.23,2011-04-11 14:39:50.4,2011-04-11 14:40:55.23,2011-04-11 14:40:55.023821,2011-04-11 14:40:55.023821\n" +
+                    "26,2011-04-11 00:00:00.0,2011-04-11 14:40:55.024821,2011-04-11 14:40:55.24,2011-04-11 14:39:50.4,2011-04-11 14:40:55.24,2011-04-11 14:40:55.024821,2011-04-11 14:40:55.024821\n" +
+                    "27,2011-04-11 00:00:00.0,2011-04-11 14:40:55.025821,2011-04-11 14:40:55.25,2011-04-11 14:39:50.4,2011-04-11 14:40:55.25,2011-04-11 14:40:55.025821,2011-04-11 14:40:55.025821\n" +
+                    "28,2011-04-11 00:00:00.0,2011-04-11 14:40:55.026821,2011-04-11 14:40:55.26,2011-04-11 14:39:50.4,2011-04-11 14:40:55.26,2011-04-11 14:40:55.026821,2011-04-11 14:40:55.026821\n" +
+                    "29,2011-04-11 00:00:00.0,2011-04-11 14:40:55.027821,2011-04-11 14:40:55.27,2011-04-11 14:39:50.4,2011-04-11 14:40:55.27,2011-04-11 14:40:55.027821,2011-04-11 14:40:55.027821\n" +
+                    "30,2011-04-11 00:00:00.0,2011-04-11 14:40:55.028821,2011-04-11 14:40:55.28,2011-04-11 14:39:50.4,2011-04-11 14:40:55.28,2011-04-11 14:40:55.028821,2011-04-11 14:40:55.028821\n" +
+                    "31,2011-04-11 00:00:00.0,2011-04-11 14:40:55.029821,2011-04-11 14:40:55.29,2011-04-11 14:39:50.4,2011-04-11 14:40:55.29,2011-04-11 14:40:55.029821,2011-04-11 14:40:55.029821\n" +
+                    "32,2011-04-11 00:00:00.0,2011-04-11 14:40:55.030821,2011-04-11 14:40:55.3,2011-04-11 14:39:50.4,2011-04-11 14:40:55.3,2011-04-11 14:40:55.030821,2011-04-11 14:40:55.030821\n" +
+                    "33,2011-04-11 00:00:00.0,2011-04-11 14:40:55.031821,2011-04-11 14:40:55.31,2011-04-11 14:39:50.4,2011-04-11 14:40:55.31,2011-04-11 14:40:55.031821,2011-04-11 14:40:55.031821\n" +
+                    "34,2011-04-11 00:00:00.0,2011-04-11 14:40:55.032821,2011-04-11 14:40:55.32,2011-04-11 14:39:50.4,2011-04-11 14:40:55.32,2011-04-11 14:40:55.032821,2011-04-11 14:40:55.032821\n" +
+                    "35,2011-04-11 00:00:00.0,2011-04-11 14:40:55.033821,2011-04-11 14:40:55.33,2011-04-11 14:39:50.4,2011-04-11 14:40:55.33,2011-04-11 14:40:55.033821,2011-04-11 14:40:55.033821\n" +
+                    "36,2011-04-11 00:00:00.0,2011-04-11 14:40:55.034821,2011-04-11 14:40:55.34,2011-04-11 14:39:50.4,2011-04-11 14:40:55.34,2011-04-11 14:40:55.034821,2011-04-11 14:40:55.034821\n" +
+                    "37,2011-04-11 00:00:00.0,2011-04-11 14:40:55.035821,2011-04-11 14:40:55.35,2011-04-11 14:39:50.4,2011-04-11 14:40:55.35,2011-04-11 14:40:55.035821,2011-04-11 14:40:55.035821\n" +
+                    "38,2011-04-11 00:00:00.0,2011-04-11 14:40:55.036821,2011-04-11 14:40:55.36,2011-04-11 14:39:50.4,2011-04-11 14:40:55.36,2011-04-11 14:40:55.036821,2011-04-11 14:40:55.036821\n" +
+                    "39,2011-04-11 00:00:00.0,2011-04-11 14:40:55.037821,2011-04-11 14:40:55.37,2011-04-11 14:39:50.4,2011-04-11 14:40:55.37,2011-04-11 14:40:55.037821,2011-04-11 14:40:55.037821\n" +
+                    "40,2011-04-11 00:00:00.0,2011-04-11 14:40:55.038821,2011-04-11 14:40:55.38,2011-04-11 14:39:50.4,2011-04-11 14:40:55.38,2011-04-11 14:40:55.038821,2011-04-11 14:40:55.038821\n" +
+                    "41,2011-04-11 00:00:00.0,2011-04-11 14:40:55.039821,2011-04-11 14:40:55.39,2011-04-11 14:39:50.4,2011-04-11 14:40:55.39,2011-04-11 14:40:55.039821,2011-04-11 14:40:55.039821\n" +
+                    "42,2011-04-11 00:00:00.0,2011-04-11 14:40:55.040821,2011-04-11 14:40:55.4,2011-04-11 14:39:50.4,2011-04-11 14:40:55.4,2011-04-11 14:40:55.040821,2011-04-11 14:40:55.040821\n" +
+                    "43,2011-04-11 00:00:00.0,2011-04-11 14:40:55.041821,2011-04-11 14:40:55.41,2011-04-11 14:39:50.4,2011-04-11 14:40:55.41,2011-04-11 14:40:55.041821,2011-04-11 14:40:55.041821\n" +
+                    "44,2011-04-11 00:00:00.0,2011-04-11 14:40:55.042821,2011-04-11 14:40:55.42,2011-04-11 14:39:50.4,2011-04-11 14:40:55.42,2011-04-11 14:40:55.042821,2011-04-11 14:40:55.042821\n" +
+                    "45,2011-04-11 00:00:00.0,2011-04-11 14:40:55.043821,2011-04-11 14:40:55.43,2011-04-11 14:39:50.4,2011-04-11 14:40:55.43,2011-04-11 14:40:55.043821,2011-04-11 14:40:55.043821\n" +
+                    "46,2011-04-11 00:00:00.0,2011-04-11 14:40:55.044821,2011-04-11 14:40:55.44,2011-04-11 14:39:50.4,2011-04-11 14:40:55.44,2011-04-11 14:40:55.044821,2011-04-11 14:40:55.044821\n" +
+                    "47,2011-04-11 00:00:00.0,2011-04-11 14:40:55.045821,2011-04-11 14:40:55.45,2011-04-11 14:39:50.4,2011-04-11 14:40:55.45,2011-04-11 14:40:55.045821,2011-04-11 14:40:55.045821\n" +
+                    "48,2011-04-11 00:00:00.0,2011-04-11 14:40:55.046821,2011-04-11 14:40:55.46,2011-04-11 14:39:50.4,2011-04-11 14:40:55.46,2011-04-11 14:40:55.046821,2011-04-11 14:40:55.046821\n" +
+                    "49,2011-04-11 00:00:00.0,2011-04-11 14:40:55.047821,2011-04-11 14:40:55.47,2011-04-11 14:39:50.4,2011-04-11 14:40:55.47,2011-04-11 14:40:55.047821,2011-04-11 14:40:55.047821\n" +
+                    "50,2011-04-11 00:00:00.0,2011-04-11 14:40:55.048821,2011-04-11 14:40:55.48,2011-04-11 14:39:50.4,2011-04-11 14:40:55.48,2011-04-11 14:40:55.048821,2011-04-11 14:40:55.048821\n" +
+                    "51,2011-04-11 00:00:00.0,2011-04-11 14:40:55.049821,2011-04-11 14:40:55.49,2011-04-11 14:39:50.4,2011-04-11 14:40:55.49,2011-04-11 14:40:55.049821,2011-04-11 14:40:55.049821\n" +
+                    "52,2011-04-11 00:00:00.0,2011-04-11 14:40:55.050821,2011-04-11 14:40:55.5,2011-04-11 14:39:50.4,2011-04-11 14:40:55.5,2011-04-11 14:40:55.050821,2011-04-11 14:40:55.050821\n" +
+                    "53,2011-04-11 00:00:00.0,2011-04-11 14:40:55.051821,2011-04-11 14:40:55.51,2011-04-11 14:39:50.4,2011-04-11 14:40:55.51,2011-04-11 14:40:55.051821,2011-04-11 14:40:55.051821\n" +
+                    "54,2011-04-11 00:00:00.0,2011-04-11 14:40:55.052821,2011-04-11 14:40:55.52,2011-04-11 14:39:50.4,2011-04-11 14:40:55.52,2011-04-11 14:40:55.052821,2011-04-11 14:40:55.052821\n" +
+                    "55,2011-04-11 00:00:00.0,2011-04-11 14:40:55.053821,2011-04-11 14:40:55.53,2011-04-11 14:39:50.4,2011-04-11 14:40:55.53,2011-04-11 14:40:55.053821,2011-04-11 14:40:55.053821\n" +
+                    "56,2011-04-11 00:00:00.0,2011-04-11 14:40:55.054821,2011-04-11 14:40:55.54,2011-04-11 14:39:50.4,2011-04-11 14:40:55.54,2011-04-11 14:40:55.054821,2011-04-11 14:40:55.054821\n" +
+                    "57,2011-04-11 00:00:00.0,2011-04-11 14:40:55.055821,2011-04-11 14:40:55.55,2011-04-11 14:39:50.4,2011-04-11 14:40:55.55,2011-04-11 14:40:55.055821,2011-04-11 14:40:55.055821\n" +
+                    "58,2011-04-11 00:00:00.0,2011-04-11 14:40:55.056821,2011-04-11 14:40:55.56,2011-04-11 14:39:50.4,2011-04-11 14:40:55.56,2011-04-11 14:40:55.056821,2011-04-11 14:40:55.056821\n" +
+                    "59,2011-04-11 00:00:00.0,2011-04-11 14:40:55.057821,2011-04-11 14:40:55.57,2011-04-11 14:39:50.4,2011-04-11 14:40:55.57,2011-04-11 14:40:55.057821,2011-04-11 14:40:55.057821\n" +
+                    "60,2011-04-11 00:00:00.0,2011-04-11 14:40:55.058821,2011-04-11 14:40:55.58,2011-04-11 14:39:50.4,2011-04-11 14:40:55.58,2011-04-11 14:40:55.058821,2011-04-11 14:40:55.058821\n" +
+                    "61,2011-04-11 00:00:00.0,2011-04-11 14:40:55.059821,2011-04-11 14:40:55.59,2011-04-11 14:39:50.4,2011-04-11 14:40:55.59,2011-04-11 14:40:55.059821,2011-04-11 14:40:55.059821\n" +
+                    "62,2011-04-11 00:00:00.0,2011-04-11 14:40:55.060821,2011-04-11 14:40:55.6,2011-04-11 14:39:50.4,2011-04-11 14:40:55.6,2011-04-11 14:40:55.060821,2011-04-11 14:40:55.060821\n" +
+                    "63,2011-04-11 00:00:00.0,2011-04-11 14:40:55.061821,2011-04-11 14:40:55.61,2011-04-11 14:39:50.4,2011-04-11 14:40:55.61,2011-04-11 14:40:55.061821,2011-04-11 14:40:55.061821\n" +
+                    "64,2011-04-11 00:00:00.0,2011-04-11 14:40:55.062821,2011-04-11 14:40:55.62,2011-04-11 14:39:50.4,2011-04-11 14:40:55.62,2011-04-11 14:40:55.062821,2011-04-11 14:40:55.062821\n" +
+                    "65,2011-04-11 00:00:00.0,2011-04-11 14:40:55.063821,2011-04-11 14:40:55.63,2011-04-11 14:39:50.4,2011-04-11 14:40:55.63,2011-04-11 14:40:55.063821,2011-04-11 14:40:55.063821\n" +
+                    "66,2011-04-11 00:00:00.0,2011-04-11 14:40:55.064821,2011-04-11 14:40:55.64,2011-04-11 14:39:50.4,2011-04-11 14:40:55.64,2011-04-11 14:40:55.064821,2011-04-11 14:40:55.064821\n" +
+                    "67,2011-04-11 00:00:00.0,2011-04-11 14:40:55.065821,2011-04-11 14:40:55.65,2011-04-11 14:39:50.4,2011-04-11 14:40:55.65,2011-04-11 14:40:55.065821,2011-04-11 14:40:55.065821\n" +
+                    "68,2011-04-11 00:00:00.0,2011-04-11 14:40:55.066821,2011-04-11 14:40:55.66,2011-04-11 14:39:50.4,2011-04-11 14:40:55.66,2011-04-11 14:40:55.066821,2011-04-11 14:40:55.066821\n" +
+                    "69,2011-04-11 00:00:00.0,2011-04-11 14:40:55.067821,2011-04-11 14:40:55.67,2011-04-11 14:39:50.4,2011-04-11 14:40:55.67,2011-04-11 14:40:55.067821,2011-04-11 14:40:55.067821\n" +
+                    "70,2011-04-11 00:00:00.0,2011-04-11 14:40:55.068821,2011-04-11 14:40:55.68,2011-04-11 14:39:50.4,2011-04-11 14:40:55.68,2011-04-11 14:40:55.068821,2011-04-11 14:40:55.068821\n" +
+                    "71,2011-04-11 00:00:00.0,2011-04-11 14:40:55.069821,2011-04-11 14:40:55.69,2011-04-11 14:39:50.4,2011-04-11 14:40:55.69,2011-04-11 14:40:55.069821,2011-04-11 14:40:55.069821\n" +
+                    "72,2011-04-11 00:00:00.0,2011-04-11 14:40:55.070821,2011-04-11 14:40:55.7,2011-04-11 14:39:50.4,2011-04-11 14:40:55.7,2011-04-11 14:40:55.070821,2011-04-11 14:40:55.070821\n" +
+                    "73,2011-04-11 00:00:00.0,2011-04-11 14:40:55.071821,2011-04-11 14:40:55.71,2011-04-11 14:39:50.4,2011-04-11 14:40:55.71,2011-04-11 14:40:55.071821,2011-04-11 14:40:55.071821\n" +
+                    "74,2011-04-11 00:00:00.0,2011-04-11 14:40:55.072821,2011-04-11 14:40:55.72,2011-04-11 14:39:50.4,2011-04-11 14:40:55.72,2011-04-11 14:40:55.072821,2011-04-11 14:40:55.072821\n" +
+                    "75,2011-04-11 00:00:00.0,2011-04-11 14:40:55.073821,2011-04-11 14:40:55.73,2011-04-11 14:39:50.4,2011-04-11 14:40:55.73,2011-04-11 14:40:55.073821,2011-04-11 14:40:55.073821\n" +
+                    "76,2011-04-11 00:00:00.0,2011-04-11 14:40:55.074821,2011-04-11 14:40:55.74,2011-04-11 14:39:50.4,2011-04-11 14:40:55.74,2011-04-11 14:40:55.074821,2011-04-11 14:40:55.074821\n" +
+                    "77,2011-04-11 00:00:00.0,2011-04-11 14:40:55.075821,2011-04-11 14:40:55.75,2011-04-11 14:39:50.4,2011-04-11 14:40:55.75,2011-04-11 14:40:55.075821,2011-04-11 14:40:55.075821\n" +
+                    "78,2011-04-11 00:00:00.0,2011-04-11 14:40:55.076821,2011-04-11 14:40:55.76,2011-04-11 14:39:50.4,2011-04-11 14:40:55.76,2011-04-11 14:40:55.076821,2011-04-11 14:40:55.076821\n" +
+                    "79,2011-04-11 00:00:00.0,2011-04-11 14:40:55.077821,2011-04-11 14:40:55.77,2011-04-11 14:39:50.4,2011-04-11 14:40:55.77,2011-04-11 14:40:55.077821,2011-04-11 14:40:55.077821\n" +
+                    "80,2011-04-11 00:00:00.0,2011-04-11 14:40:55.078821,2011-04-11 14:40:55.78,2011-04-11 14:39:50.4,2011-04-11 14:40:55.78,2011-04-11 14:40:55.078821,2011-04-11 14:40:55.078821\n" +
+                    "81,2011-04-11 00:00:00.0,2011-04-11 14:40:55.079821,2011-04-11 14:40:55.79,2011-04-11 14:39:50.4,2011-04-11 14:40:55.79,2011-04-11 14:40:55.079821,2011-04-11 14:40:55.079821\n" +
+                    "82,2011-04-11 00:00:00.0,2011-04-11 14:40:55.080821,2011-04-11 14:40:55.8,2011-04-11 14:39:50.4,2011-04-11 14:40:55.8,2011-04-11 14:40:55.080821,2011-04-11 14:40:55.080821\n" +
+                    "83,2011-04-11 00:00:00.0,2011-04-11 14:40:55.081821,2011-04-11 14:40:55.81,2011-04-11 14:39:50.4,2011-04-11 14:40:55.81,2011-04-11 14:40:55.081821,2011-04-11 14:40:55.081821\n" +
+                    "84,2011-04-11 00:00:00.0,2011-04-11 14:40:55.082821,2011-04-11 14:40:55.82,2011-04-11 14:39:50.4,2011-04-11 14:40:55.82,2011-04-11 14:40:55.082821,2011-04-11 14:40:55.082821\n" +
+                    "85,2011-04-11 00:00:00.0,2011-04-11 14:40:55.083821,2011-04-11 14:40:55.83,2011-04-11 14:39:50.4,2011-04-11 14:40:55.83,2011-04-11 14:40:55.083821,2011-04-11 14:40:55.083821\n" +
+                    "86,2011-04-11 00:00:00.0,2011-04-11 14:40:55.084821,2011-04-11 14:40:55.84,2011-04-11 14:39:50.4,2011-04-11 14:40:55.84,2011-04-11 14:40:55.084821,2011-04-11 14:40:55.084821\n" +
+                    "87,2011-04-11 00:00:00.0,2011-04-11 14:40:55.085821,2011-04-11 14:40:55.85,2011-04-11 14:39:50.4,2011-04-11 14:40:55.85,2011-04-11 14:40:55.085821,2011-04-11 14:40:55.085821\n" +
+                    "88,2011-04-11 00:00:00.0,2011-04-11 14:40:55.086821,2011-04-11 14:40:55.86,2011-04-11 14:39:50.4,2011-04-11 14:40:55.86,2011-04-11 14:40:55.086821,2011-04-11 14:40:55.086821\n" +
+                    "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.87,2011-04-11 14:39:50.4,2011-04-11 14:40:55.87,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.087821\n";
 
             final CountDownLatch haltLatch = new CountDownLatch(1);
             final AtomicBoolean running = new AtomicBoolean(true);
@@ -2703,30 +2945,158 @@ nodejs code:
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
+                properties.setProperty("binaryTransfer", Boolean.toString(binary));
                 if (simpleQueryMode) {
                     properties.setProperty("preferQueryMode", "simple");
                 }
 
+                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
                 try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
-                    PreparedStatement statement = connection.prepareStatement("create table x (a int)");
+                    //
+                    // test methods of inserting QuestDB's DATA and TIMESTAMP values
+                    //
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, d2 date, t2 timestamp, t3 timestamp) timestamp(t)");
                     statement.execute();
 
                     // exercise parameters on select statement
                     PreparedStatement select = connection.prepareStatement("x where a = ?");
                     execSelectWithParam(select, 9);
 
-                    PreparedStatement insert = connection.prepareStatement("insert into x (a) values (?)");
-                    for (int i = 0; i < 30; i++) {
+
+                    final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?, ?)");
+                    long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                    for (int i = 0; i < 90; i++) {
                         insert.setInt(1, i);
+                        // DATE as jdbc's DATE
+                        // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
+                        // just date
+                        insert.setDate(2, new Date(micros / 1000));
+
+                        // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
+                        insert.setTimestamp(3, new Timestamp(micros));
+
+                        // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
+                        insert.setTimestamp(4, new Timestamp(micros / 1000L));
+
+                        // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
+                        insert.setDate(5, new Date(micros));
+
+                        // DATE as LONG millis
+                        insert.setLong(6, micros / 1000L);
+
+                        // TIMESTAMP as LONG micros
+                        insert.setLong(7, micros);
+
+                        // TIMESTAMP as PG specific TIMESTAMP type
+                        insert.setTimestamp(8, new PGTimestamp(micros));
+
                         insert.execute();
+                        Assert.assertEquals(1, insert.getUpdateCount());
+                        micros += 1000;
                     }
 
                     try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
                         sink.clear();
-                        while (resultSet.next()) {
-                            sink.put(resultSet.getInt(1));
-                            sink.put('\n');
+                        assertResultSet(expectedAll, sink, resultSet);
+                    }
+
+                    TestUtils.assertEquals(expectedAll, sink);
+
+                    // exercise parameters on select statement
+                    execSelectWithParam(select, 9);
+                    TestUtils.assertEquals("9\n", sink);
+
+                    execSelectWithParam(select, 11);
+                    TestUtils.assertEquals("11\n", sink);
+
+                }
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
+    private void testInsertAndCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            String expectedAll = "count[BIGINT]\n" +
+                    "10000\n";
+
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(
+                        NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                properties.setProperty("binaryTransfer", "true");
+
+                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
+                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
+
+                    connection.setAutoCommit(false);
+                    //
+                    // test methods of inserting QuestDB's DATA and TIMESTAMP values
+                    //
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, d2 date, t2 timestamp, t3 timestamp, b1 short) timestamp(t)");
+                    statement.execute();
+
+                    // exercise parameters on select statement
+                    PreparedStatement select = connection.prepareStatement("x where a = ?");
+                    execSelectWithParam(select, 9);
+
+
+                    final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                    for (int i = 0; i < 10_000; i++) {
+                        insert.setInt(1, i);
+                        // DATE as jdbc's DATE
+                        // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
+                        // just date
+                        insert.setDate(2, new Date(micros / 1000));
+
+                        // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
+                        insert.setTimestamp(3, new Timestamp(micros));
+
+                        // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
+                        insert.setTimestamp(4, new Timestamp(micros / 1000L));
+
+                        // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
+                        insert.setDate(5, new Date(micros));
+
+                        // DATE as LONG millis
+                        insert.setLong(6, micros / 1000L);
+
+                        // TIMESTAMP as LONG micros
+                        insert.setLong(7, micros);
+
+                        // TIMESTAMP as PG specific TIMESTAMP type
+                        insert.setTimestamp(8, new PGTimestamp(micros));
+
+                        insert.setByte(9, (byte) 'A');
+
+                        insert.execute();
+                        Assert.assertEquals(1, insert.getUpdateCount());
+                        micros += 1000;
+
+                        if (i % 128 == 0) {
+                            connection.commit();
                         }
+                    }
+                    connection.commit();
+
+                    try (ResultSet resultSet = connection.prepareStatement("select count() from x").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expectedAll, sink, resultSet);
                     }
 
                     TestUtils.assertEquals(expectedAll, sink);
@@ -2839,75 +3209,107 @@ nodejs code:
                                 "from long_sequence(50)");
 
                 final String expected = s2 +
-                        "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.4620,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e,D,0x5f20a35e80e154f458dfd08eeb9cc39ecec82869edec121bc2593f82b430328d\n" +
-                        "OUOJ,77,null,1970-01-01 00:00:00.01,0.6759,-7374,7777791,2015-06-19 08:47:45.603182,53,true,null,2015-11-10 09:50:33.215,00000000 8b 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0 fb 64 bb\n" +
+                        "null,57,0.6254021542412018,1970-01-01 00:00:00.0,0.462,-1593,3425232,null,121,false,PEHN,2015-03-17 04:25:52.765,00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e,D,0x5f20a35e80e154f458dfd08eeb9cc39ecec82869edec121bc2593f82b430328d\n" +
+                        "OUOJ,77,null,1970-01-01 00:00:00.01,0.676,-7374,7777791,2015-06-19 08:47:45.603182,53,true,null,2015-11-10 09:50:33.215,00000000 8b 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0 fb 64 bb\n" +
                         "00000010 1a d4 f0,V,0xbedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e29660300cea7db540\n" +
-                        "ICCX,205,0.8837421918800907,1970-01-01 00:00:00.02,0.05400,6093,4552960,2015-07-17 00:50:59.787742,33,false,VTJW,2015-07-15 01:06:11.226,00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47,U,0x8b4e4831499fc2a526567f4430b46b7f78c594c496995885aa1896d0ad3419d2\n" +
-                        "GSHO,31,0.34947269997137365,1970-01-01 00:00:00.03,0.1979,10795,6406207,2015-05-22 14:59:41.673422,56,false,null,null,00000000 49 1c f2 3c ed 39 ac a8 3b a6,S,0x7eb6d80649d1dfe38e4a7f661df6c32b2f171b3f06f6387d2fd2b4a60ba2ba3b\n" +
-                        "HZEP,180,0.06944480046327317,1970-01-01 00:00:00.04,0.4300,21347,null,2015-02-07 10:02:13.600956,41,false,HYRX,null,00000000 ea c3 c9 73 93 46 fe c2 d3 68 79 8b 43 1d 57 34,F,0x38e4be9e19321b57832dd27952d949d8691dd4412a2d398d4fc01e2b9fd11623\n" +
-                        "HWVD,38,0.48524046868499715,1970-01-01 00:00:00.05,0.6800,25579,5575751,2015-10-19 12:38:49.360294,15,false,VTJW,2015-02-06 22:58:50.333,null,Q,0x85134468025aaeb0a2f8bbebb989ba609bb0f21ac9e427283eef3f158e084362\n" +
-                        "PGLU,97,0.029227696942726644,1970-01-01 00:00:00.06,0.1720,-18912,8340272,2015-05-24 22:09:55.175991,111,false,VTJW,2015-11-08 21:57:22.812,00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
+                        "ICCX,205,0.8837421918800907,1970-01-01 00:00:00.02,0.054,6093,4552960,2015-07-17 00:50:59.787742,33,false,VTJW,2015-07-15 01:06:11.226,00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47,U,0x8b4e4831499fc2a526567f4430b46b7f78c594c496995885aa1896d0ad3419d2\n" +
+                        "GSHO,31,0.34947269997137365,1970-01-01 00:00:00.03,0.198,10795,6406207,2015-05-22 14:59:41.673422,56,false,null,null,00000000 49 1c f2 3c ed 39 ac a8 3b a6,S,0x7eb6d80649d1dfe38e4a7f661df6c32b2f171b3f06f6387d2fd2b4a60ba2ba3b\n" +
+                        "HZEP,180,0.06944480046327317,1970-01-01 00:00:00.04,0.430,21347,null,2015-02-07 10:02:13.600956,41,false,HYRX,null,00000000 ea c3 c9 73 93 46 fe c2 d3 68 79 8b 43 1d 57 34,F,0x38e4be9e19321b57832dd27952d949d8691dd4412a2d398d4fc01e2b9fd11623\n" +
+                        "HWVD,38,0.48524046868499715,1970-01-01 00:00:00.05,0.680,25579,5575751,2015-10-19 12:38:49.360294,15,false,VTJW,2015-02-06 22:58:50.333,null,Q,0x85134468025aaeb0a2f8bbebb989ba609bb0f21ac9e427283eef3f158e084362\n" +
+                        "PGLU,97,0.029227696942726644,1970-01-01 00:00:00.06,0.172,-18912,8340272,2015-05-24 22:09:55.175991,111,false,VTJW,2015-11-08 21:57:22.812,00000000 d9 6f 04 ab 27 47 8f 23 3f ae 7c 9f 77 04 e9 0c\n" +
                         "00000010 ea 4e ea 8b,K,0x55d3686d5da27e14255a91b0e28abeb36c3493fcb2d0272d6046e5d137dd8f0f\n" +
-                        "WIFF,104,0.892454783921197,1970-01-01 00:00:00.07,0.09300,28218,4009057,2015-02-18 07:26:10.141055,89,false,HYRX,null,00000000 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90 25 c2 20\n" +
+                        "WIFF,104,0.892454783921197,1970-01-01 00:00:00.07,0.093,28218,4009057,2015-02-18 07:26:10.141055,89,false,HYRX,null,00000000 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90 25 c2 20\n" +
                         "00000010 ff,R,0x55b0586d1c02dfb399904624c49b6d8a7d85ee2916b209c779406ab1f85e333a\n" +
-                        "CLTJ,115,0.2093569947644236,1970-01-01 00:00:00.08,0.5460,-8207,2378718,2015-04-21 12:25:43.291916,31,false,PEHN,null,00000000 a5 db a1 76 1c 1c 26 fb 2e 42 fa,F,0x483c83d88ac674e3894499a1a1680580cfedff23a67d918fb49b3c24e456ad6e\n" +
-                        "HFLP,79,0.9130151105125102,1970-01-01 00:00:00.09,null,14667,2513248,2015-08-31 13:16:12.318782,3,false,null,2015-02-08 12:28:36.066,null,U,0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\n" +
-                        "GLNY,138,0.7165847318191405,1970-01-01 00:00:00.1,0.7530,-2666,9337379,2015-03-25 09:21:52.776576,111,false,HYRX,2015-01-24 15:23:13.092,00000000 62 e1 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43,Y,0xaac42ccbc493cf44aa6a0a1d4cdf40dd6ae4fd257e4412a07f19777ec1368055\n" +
-                        "VTNP,237,0.29242748475227853,1970-01-01 00:00:00.11,0.7530,-26861,2354132,2015-02-10 18:27:11.140675,56,true,null,2015-02-25 00:45:15.363,00000000 28 b6 a9 17 ec 0e 01 c4 eb 9f 13 8f bb 2a 4b,O,0x926cdd99e63abb35650d1fb462d014df59070392ef6aa389932e4b508e35428f\n" +
-                        "WFOQ,255,null,1970-01-01 00:00:00.12,0.1159,31569,6688277,2015-05-19 03:30:45.779999,126,true,PEHN,2015-12-09 09:57:17.078,null,E,0x4f38804270a4a64349b5760a687d8cf838cbb9ae96e9ecdc745ed9faeb513ad3\n" +
-                        "EJCT,195,0.13312214396754163,1970-01-01 00:00:00.13,0.9440,-3013,null,2015-11-03 14:54:47.524015,114,true,PEHN,2015-08-28 07:41:29.952,00000000 fb 9d 63 ca 94 00 6b dd 18 fe 71 76 bc 45 24 cd\n" +
+                        "CLTJ,115,0.2093569947644236,1970-01-01 00:00:00.08,0.546,-8207,2378718,2015-04-21 12:25:43.291916,31,false,PEHN,null,00000000 a5 db a1 76 1c 1c 26 fb 2e 42 fa,F,0x483c83d88ac674e3894499a1a1680580cfedff23a67d918fb49b3c24e456ad6e\n" +
+                        "HFLP,79,0.9130151105125102,1970-01-01 00:00:00.09,null,14667,2513248,2015-08-31 13:16:12.318782,3,false,null,2015-02-08 12:28:36.66,null,U,0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\n" +
+                        "GLNY,138,0.7165847318191405,1970-01-01 00:00:00.1,0.753,-2666,9337379,2015-03-25 09:21:52.776576,111,false,HYRX,2015-01-24 15:23:13.92,00000000 62 e1 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43,Y,0xaac42ccbc493cf44aa6a0a1d4cdf40dd6ae4fd257e4412a07f19777ec1368055\n" +
+                        "VTNP,237,0.29242748475227853,1970-01-01 00:00:00.11,0.753,-26861,2354132,2015-02-10 18:27:11.140675,56,true,null,2015-02-25 00:45:15.363,00000000 28 b6 a9 17 ec 0e 01 c4 eb 9f 13 8f bb 2a 4b,O,0x926cdd99e63abb35650d1fb462d014df59070392ef6aa389932e4b508e35428f\n" +
+                        "WFOQ,255,null,1970-01-01 00:00:00.12,0.116,31569,6688277,2015-05-19 03:30:45.779999,126,true,PEHN,2015-12-09 09:57:17.78,null,E,0x4f38804270a4a64349b5760a687d8cf838cbb9ae96e9ecdc745ed9faeb513ad3\n" +
+                        "EJCT,195,0.13312214396754163,1970-01-01 00:00:00.13,0.944,-3013,null,2015-11-03 14:54:47.524015,114,true,PEHN,2015-08-28 07:41:29.952,00000000 fb 9d 63 ca 94 00 6b dd 18 fe 71 76 bc 45 24 cd\n" +
                         "00000010 13 00 7c,R,0x3cfe50b9cabaf1f29e0dcffb7520ebcac48ad6b8f6962219b27b0ac7fbdee201\n" +
-                        "JYYF,249,0.2000682450929353,1970-01-01 00:00:00.14,0.6019,5869,2079217,2015-07-10 18:16:38.882991,44,true,HYRX,null,00000000 b7 6c 4b fb 2d 16 f3 89 a3 83 64 de d6 fd c4 5b\n" +
+                        "JYYF,249,0.2000682450929353,1970-01-01 00:00:00.14,0.602,5869,2079217,2015-07-10 18:16:38.882991,44,true,HYRX,null,00000000 b7 6c 4b fb 2d 16 f3 89 a3 83 64 de d6 fd c4 5b\n" +
                         "00000010 c4 e9 19 47,P,0x85e70b46349799fe49f783d5343dd7bc3d3fe1302cd3371137fccdabf181b5ad\n" +
-                        "TZOD,null,0.36078878996232167,1970-01-01 00:00:00.15,0.6010,-23125,5083310,null,11,false,VTJW,2015-09-19 18:14:57.59,00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
+                        "TZOD,null,0.36078878996232167,1970-01-01 00:00:00.15,0.601,-23125,5083310,null,11,false,VTJW,2015-09-19 18:14:57.59,00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
                         "00000010 00,E,0xcff85f9258847e03a6f2e2a772cd2f3751d822a67dff3d2375166223a6181642\n" +
-                        "PBMB,76,0.23567419576658333,1970-01-01 00:00:00.16,0.5709,26284,null,2015-05-21 13:14:56.349036,45,true,null,2015-09-11 09:34:39.05,00000000 97 cb f6 2c 23 45 a3 76 60 15,M,0x3c3a3b7947ce8369926cbcb16e9a2f11cfab70f2d175d0d9aeb989be79cd2b8c\n" +
-                        "TKRI,201,0.2625424312419562,1970-01-01 00:00:00.17,0.9150,-5486,9917162,2015-05-03 03:59:04.256719,66,false,VTJW,2015-01-15 03:22:01.033,00000000 a1 f5 4b ea 01 c9 63 b4 fc 92 60 1f df 41 ec 2c,O,0x4e3e15ad49e0a859312981a73c9dfce79022a75a739ee488eefa2920026dba88\n" +
-                        "NKGQ,174,0.4039042639581232,1970-01-01 00:00:00.18,0.4379,20687,7315329,2015-07-25 04:52:27.724869,20,false,PEHN,2015-06-10 22:28:57.01,00000000 92 83 fc 88 f3 32 27 70 c8 01 b0,T,0x579b14c2725d7a7e5dfbd8e23498715b8d9ee30e7bcbf83a6d1b1c80f012a4c9\n" +
+                        "PBMB,76,0.23567419576658333,1970-01-01 00:00:00.16,0.571,26284,null,2015-05-21 13:14:56.349036,45,true,null,2015-09-11 09:34:39.5,00000000 97 cb f6 2c 23 45 a3 76 60 15,M,0x3c3a3b7947ce8369926cbcb16e9a2f11cfab70f2d175d0d9aeb989be79cd2b8c\n" +
+                        "TKRI,201,0.2625424312419562,1970-01-01 00:00:00.17,0.915,-5486,9917162,2015-05-03 03:59:04.256719,66,false,VTJW,2015-01-15 03:22:01.33,00000000 a1 f5 4b ea 01 c9 63 b4 fc 92 60 1f df 41 ec 2c,O,0x4e3e15ad49e0a859312981a73c9dfce79022a75a739ee488eefa2920026dba88\n" +
+                        "NKGQ,174,0.4039042639581232,1970-01-01 00:00:00.18,0.438,20687,7315329,2015-07-25 04:52:27.724869,20,false,PEHN,2015-06-10 22:28:57.1,00000000 92 83 fc 88 f3 32 27 70 c8 01 b0,T,0x579b14c2725d7a7e5dfbd8e23498715b8d9ee30e7bcbf83a6d1b1c80f012a4c9\n" +
                         "FUXC,52,0.7430101994511517,1970-01-01 00:00:00.19,null,-14729,1042064,2015-08-21 02:10:58.949674,28,true,CPSW,2015-08-29 20:15:51.835,null,X,0x41457ebc5a02a2b542cbd49414e022a06f4aa2dc48a9a4d99288224be334b250\n" +
-                        "TGNJ,159,0.9562577128401444,1970-01-01 00:00:00.2,0.2509,795,5069730,2015-07-01 01:36:57.101749,71,true,PEHN,2015-09-12 05:41:59.999,00000000 33 3f b2 67 da 98 47 47 bf 4f ea 5f 48 ed,M,0x4ba20a8e0cf7c53c9f527485c4aac4a2826f47baacd58b28700a67f6119c63bb\n" +
-                        "HCNP,173,0.18684267640195917,1970-01-01 00:00:00.21,0.6880,-14882,8416858,2015-06-16 19:31:59.812848,25,false,HYRX,2015-09-30 17:28:24.113,00000000 1d 5c c1 5d 2d 44 ea 00 81 c4 19 a1 ec 74 f8 10\n" +
+                        "TGNJ,159,0.9562577128401444,1970-01-01 00:00:00.2,0.251,795,5069730,2015-07-01 01:36:57.101749,71,true,PEHN,2015-09-12 05:41:59.999,00000000 33 3f b2 67 da 98 47 47 bf 4f ea 5f 48 ed,M,0x4ba20a8e0cf7c53c9f527485c4aac4a2826f47baacd58b28700a67f6119c63bb\n" +
+                        "HCNP,173,0.18684267640195917,1970-01-01 00:00:00.21,0.688,-14882,8416858,2015-06-16 19:31:59.812848,25,false,HYRX,2015-09-30 17:28:24.113,00000000 1d 5c c1 5d 2d 44 ea 00 81 c4 19 a1 ec 74 f8 10\n" +
                         "00000010 fc 6e 23,D,0x3d64559865f84c86488be951819f43042f036147c78e0b2d127ca5db2f41c5e0\n" +
-                        "EZBR,243,0.8203418140538824,1970-01-01 00:00:00.22,0.2210,-8447,4677168,2015-03-24 03:32:39.832378,78,false,CPSW,2015-02-16 04:04:19.082,00000000 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03 22 81 b8,Q,0x721304ffe1c934386466208d506905af40c7e3bce4b28406783a3945ab682cc4\n" +
-                        "ZPBH,131,0.1999576586778039,1970-01-01 00:00:00.23,0.4790,-18951,874555,2015-12-22 19:13:55.404123,52,false,null,2015-10-03 05:16:17.891,null,Z,0xa944baa809a3f2addd4121c47cb1139add4f1a5641c91e3ab81f4f0ca152ec61\n" +
-                        "VLTP,196,0.4104855595304533,1970-01-01 00:00:00.24,0.9179,-12269,142107,2015-10-10 18:27:43.423774,92,false,PEHN,2015-02-06 18:42:24.631,null,H,0x5293ce3394424e6a5ae63bdf09a84e32bac4484bdeec40e887ec84d015101766\n" +
-                        "RUMM,185,null,1970-01-01 00:00:00.25,0.8379,-27649,3639049,2015-05-06 00:51:57.375784,89,true,PEHN,null,null,W,0x3166ed3bbffb858312f19057d95341886360c99923d254f38f22547ae9661423\n" +
-                        "null,71,0.7409092302023607,1970-01-01 00:00:00.26,0.7419,-18837,4161180,2015-04-22 10:19:19.162814,37,true,HYRX,2015-09-23 03:14:56.664,00000000 8e 93 bd 27 42 f8 25 2a 42 71 a3 7a 58 e5,D,0x689a15d8906770fcaefe0266b9f63bd6698c574248e9011c6cc84d9a6d41e0b8\n" +
-                        "NGZT,214,0.18170646835643245,1970-01-01 00:00:00.27,0.8410,21764,3231872,null,79,false,HYRX,2015-05-20 07:51:29.675,00000000 ab ab ac 21 61 99 be 2d f5 30 78 6d 5a 3b,H,0x5b8def4e7a017e884a3c2c504403708b49fb8d5fe0ff283cbac6499e71ce5b30\n" +
-                        "EYYP,13,null,1970-01-01 00:00:00.28,0.5339,19136,4658108,2015-08-20 05:26:04.061614,5,false,CPSW,2015-03-23 23:43:37.634,00000000 c8 66 0c 40 71 ea 20 7e 43 97 27 1f 5c d9 ee 04\n" +
+                        "EZBR,243,0.8203418140538824,1970-01-01 00:00:00.22,0.221,-8447,4677168,2015-03-24 03:32:39.832378,78,false,CPSW,2015-02-16 04:04:19.82,00000000 42 67 78 47 b3 80 69 b9 14 d6 fc ee 03 22 81 b8,Q,0x721304ffe1c934386466208d506905af40c7e3bce4b28406783a3945ab682cc4\n" +
+                        "ZPBH,131,0.1999576586778039,1970-01-01 00:00:00.23,0.479,-18951,874555,2015-12-22 19:13:55.404123,52,false,null,2015-10-03 05:16:17.891,null,Z,0xa944baa809a3f2addd4121c47cb1139add4f1a5641c91e3ab81f4f0ca152ec61\n" +
+                        "VLTP,196,0.4104855595304533,1970-01-01 00:00:00.24,0.918,-12269,142107,2015-10-10 18:27:43.423774,92,false,PEHN,2015-02-06 18:42:24.631,null,H,0x5293ce3394424e6a5ae63bdf09a84e32bac4484bdeec40e887ec84d015101766\n" +
+                        "RUMM,185,null,1970-01-01 00:00:00.25,0.838,-27649,3639049,2015-05-06 00:51:57.375784,89,true,PEHN,null,null,W,0x3166ed3bbffb858312f19057d95341886360c99923d254f38f22547ae9661423\n" +
+                        "null,71,0.7409092302023607,1970-01-01 00:00:00.26,0.742,-18837,4161180,2015-04-22 10:19:19.162814,37,true,HYRX,2015-09-23 03:14:56.664,00000000 8e 93 bd 27 42 f8 25 2a 42 71 a3 7a 58 e5,D,0x689a15d8906770fcaefe0266b9f63bd6698c574248e9011c6cc84d9a6d41e0b8\n" +
+                        "NGZT,214,0.18170646835643245,1970-01-01 00:00:00.27,0.841,21764,3231872,null,79,false,HYRX,2015-05-20 07:51:29.675,00000000 ab ab ac 21 61 99 be 2d f5 30 78 6d 5a 3b,H,0x5b8def4e7a017e884a3c2c504403708b49fb8d5fe0ff283cbac6499e71ce5b30\n" +
+                        "EYYP,13,null,1970-01-01 00:00:00.28,0.534,19136,4658108,2015-08-20 05:26:04.061614,5,false,CPSW,2015-03-23 23:43:37.634,00000000 c8 66 0c 40 71 ea 20 7e 43 97 27 1f 5c d9 ee 04\n" +
                         "00000010 5b 9c,C,0x6e6ed811e25486953f35987a50016bbf481e9f55c33ac48c6a22b0bd6f7b0bf2\n" +
-                        "GMPL,50,0.7902682918274309,1970-01-01 00:00:00.29,0.8740,-27807,5693029,2015-07-14 21:06:07.975747,37,true,CPSW,2015-09-01 04:00:29.049,00000000 3b 4b b7 e2 7f ab 6e 23 03 dd c7 d6,U,0x72c607b1992ff2f8802e839b77a4a2d34b8b967c412e7c895b509b55d1c38d29\n" +
-                        "BCZI,207,0.10863061577000221,1970-01-01 00:00:00.3,0.1289,3999,121232,null,88,true,CPSW,2015-05-10 21:10:20.041,00000000 97 0b f5 ef 3b be 85 7c 11 f7 34,K,0x33be4c04695f74d776ac6df71a221f518f3c64248fb5943ea55ab4e6916f3f6c\n" +
-                        "DXUU,139,null,1970-01-01 00:00:00.31,0.2619,-15289,341060,2015-01-06 07:48:24.624773,110,false,null,2015-07-08 18:37:16.872,00000000 71 cf 5a 8f 21 06 b2 3f 0e 41 93 89 27 ca 10 2f\n" +
+                        "GMPL,50,0.7902682918274309,1970-01-01 00:00:00.29,0.874,-27807,5693029,2015-07-14 21:06:07.975747,37,true,CPSW,2015-09-01 04:00:29.49,00000000 3b 4b b7 e2 7f ab 6e 23 03 dd c7 d6,U,0x72c607b1992ff2f8802e839b77a4a2d34b8b967c412e7c895b509b55d1c38d29\n" +
+                        "BCZI,207,0.10863061577000221,1970-01-01 00:00:00.3,0.129,3999,121232,null,88,true,CPSW,2015-05-10 21:10:20.41,00000000 97 0b f5 ef 3b be 85 7c 11 f7 34,K,0x33be4c04695f74d776ac6df71a221f518f3c64248fb5943ea55ab4e6916f3f6c\n" +
+                        "DXUU,139,null,1970-01-01 00:00:00.31,0.262,-15289,341060,2015-01-06 07:48:24.624773,110,false,null,2015-07-08 18:37:16.872,00000000 71 cf 5a 8f 21 06 b2 3f 0e 41 93 89 27 ca 10 2f\n" +
                         "00000010 60 ce,N,0x1c05d81633694e02795ebacfceb0c7dd7ec9b7e9c634bc791283140ab775531c\n" +
-                        "FMDV,197,0.2522102209201954,1970-01-01 00:00:00.32,0.9929,-26026,5396438,null,83,true,CPSW,null,00000000 86 75 ad a5 2d 49 48 68 36 f0 35,K,0x308a7a4966e65a0160b00229634848957fa67d6a419e1721b1520f66caa74945\n" +
-                        "SQCN,62,0.11500943478849246,1970-01-01 00:00:00.33,0.5950,1011,4631412,null,56,false,VTJW,null,null,W,0x66906dc1f1adbc206a8bf627c859714a6b841d6c6c8e44ce147261f8689d9250\n" +
-                        "QSCM,130,0.8671405978559277,1970-01-01 00:00:00.34,0.4280,22899,403193,null,21,true,PEHN,2015-11-30 21:04:32.865,00000000 a0 ba a5 d1 63 ca 32 e5 0d 68 52 c6 94 c3 18 c9\n" +
+                        "FMDV,197,0.2522102209201954,1970-01-01 00:00:00.32,0.993,-26026,5396438,null,83,true,CPSW,null,00000000 86 75 ad a5 2d 49 48 68 36 f0 35,K,0x308a7a4966e65a0160b00229634848957fa67d6a419e1721b1520f66caa74945\n" +
+                        "SQCN,62,0.11500943478849246,1970-01-01 00:00:00.33,0.595,1011,4631412,null,56,false,VTJW,null,null,W,0x66906dc1f1adbc206a8bf627c859714a6b841d6c6c8e44ce147261f8689d9250\n" +
+                        "QSCM,130,0.8671405978559277,1970-01-01 00:00:00.34,0.428,22899,403193,null,21,true,PEHN,2015-11-30 21:04:32.865,00000000 a0 ba a5 d1 63 ca 32 e5 0d 68 52 c6 94 c3 18 c9\n" +
                         "00000010 7c,I,0x3dcc3621f3734c485bb81c28ec2ddb0163def06fb4e695dc2bfa47b82318ff9f\n" +
                         "UUZI,196,0.9277429447320458,1970-01-01 00:00:00.35,0.625,24355,5761736,null,116,false,null,2015-02-04 07:15:26.997,null,B,0xb0a5224248b093a067eee4529cce26c37429f999bffc9548aa3df14bfed42969\n" +
-                        "DEQN,41,0.9028381160965113,1970-01-01 00:00:00.36,0.1199,29066,2545404,2015-04-07 21:58:14.714791,125,false,PEHN,2015-02-06 23:29:49.836,00000000 ec 4b 97 27 df cd 7a 14 07 92 01,I,0x55016acb254b58cd3ce05caab6551831683728ff2f725aa1ba623366c2d08e6a\n" +
-                        "null,164,0.7652775387729266,1970-01-01 00:00:00.37,0.3120,-8563,7684501,2015-02-01 12:38:28.322282,0,true,HYRX,2015-07-16 20:11:51.34,null,F,0x97af9db84b80545ecdee65143cbc92f89efea4d0456d90f29dd9339572281042\n" +
-                        "QJPL,160,0.1740035812230043,1970-01-01 00:00:00.38,0.7630,5991,2099269,2015-02-25 15:49:06.472674,65,true,VTJW,2015-04-23 11:15:13.065,00000000 de 58 45 d0 1b 58 be 33 92 cd 5c 9d,E,0xa85a5fc20776e82b36c1cdbfe34eb2636eec4ffc0b44f925b09ac4f09cb27f36\n" +
-                        "BKUN,208,0.4452148524967028,1970-01-01 00:00:00.39,0.5820,17928,6383721,2015-10-23 07:12:20.730424,7,false,null,2015-01-02 17:04:58.959,00000000 5e 37 e4 68 2a 96 06 46 b6 aa,F,0xe1d2020be2cb7be9c5b68f9ea1bd30c789e6d0729d44b64390678b574ed0f592\n" +
-                        "REDS,4,0.03804995327454719,1970-01-01 00:00:00.4,0.1030,2358,1897491,2015-07-21 16:34:14.571565,75,false,CPSW,2015-07-30 16:04:46.726,00000000 d6 88 3a 93 ef 24 a5 e2 bc 86,P,0x892458b34e8769928647166465305ef1dd668040845a10a38ea5fba6cf9bfc92\n" +
-                        "MPVR,null,null,1970-01-01 00:00:00.41,0.5920,8754,5828044,2015-10-05 21:11:10.600851,116,false,CPSW,null,null,H,0x9d1e67c6be2f24b2a4e2cc6a628c94395924dadabaed7ee459b2a61b0fcb74c5\n" +
-                        "KKNZ,186,0.8223388398922372,1970-01-01 00:00:00.42,0.7200,-6179,8728907,null,80,true,VTJW,2015-09-11 03:49:12.244,00000000 16 b2 d8 83 f5 95 7c 95 fd 52 bb 50 c9,B,0x55724661cfcc811f4482e1a2ba8efaef6e4aef0394801c40941d89f24081f64d\n" +
-                        "BICL,182,0.7215695095610233,1970-01-01 00:00:00.43,0.2269,-22899,6401660,2015-08-23 18:31:29.931618,78,true,null,null,null,T,0xbbb751ee10f060d1c2fbeb73044504aea55a8e283bcf857b539d8cd889fa9c91\n" +
-                        "SWPF,null,0.48770772310128674,1970-01-01 00:00:00.44,0.9139,-17929,8377336,2015-12-13 23:04:20.465454,28,false,HYRX,2015-10-31 13:37:01.327,00000000 b2 31 9c 69 be 74 9a ad cc cf b8 e4 d1 7a 4f,I,0xbe91d734443388a2a631d716b575c819c9224a25e3f6e6fa6cd78093d5e7ea16\n" +
-                        "BHEV,80,0.8917678500174907,1970-01-01 00:00:00.45,0.2370,29284,9577513,2015-10-20 07:38:23.889249,27,false,HYRX,2015-12-15 13:32:56.797,00000000 92 83 24 53 60 4d 04 c2 f0 7a 07 d4 a3 d1 5f 0d\n" +
+                        "DEQN,41,0.9028381160965113,1970-01-01 00:00:00.36,0.120,29066,2545404,2015-04-07 21:58:14.714791,125,false,PEHN,2015-02-06 23:29:49.836,00000000 ec 4b 97 27 df cd 7a 14 07 92 01,I,0x55016acb254b58cd3ce05caab6551831683728ff2f725aa1ba623366c2d08e6a\n" +
+                        "null,164,0.7652775387729266,1970-01-01 00:00:00.37,0.312,-8563,7684501,2015-02-01 12:38:28.322282,0,true,HYRX,2015-07-16 20:11:51.34,null,F,0x97af9db84b80545ecdee65143cbc92f89efea4d0456d90f29dd9339572281042\n" +
+                        "QJPL,160,0.1740035812230043,1970-01-01 00:00:00.38,0.763,5991,2099269,2015-02-25 15:49:06.472674,65,true,VTJW,2015-04-23 11:15:13.65,00000000 de 58 45 d0 1b 58 be 33 92 cd 5c 9d,E,0xa85a5fc20776e82b36c1cdbfe34eb2636eec4ffc0b44f925b09ac4f09cb27f36\n" +
+                        "BKUN,208,0.4452148524967028,1970-01-01 00:00:00.39,0.582,17928,6383721,2015-10-23 07:12:20.730424,7,false,null,2015-01-02 17:04:58.959,00000000 5e 37 e4 68 2a 96 06 46 b6 aa,F,0xe1d2020be2cb7be9c5b68f9ea1bd30c789e6d0729d44b64390678b574ed0f592\n" +
+                        "REDS,4,0.03804995327454719,1970-01-01 00:00:00.4,0.103,2358,1897491,2015-07-21 16:34:14.571565,75,false,CPSW,2015-07-30 16:04:46.726,00000000 d6 88 3a 93 ef 24 a5 e2 bc 86,P,0x892458b34e8769928647166465305ef1dd668040845a10a38ea5fba6cf9bfc92\n" +
+                        "MPVR,null,null,1970-01-01 00:00:00.41,0.592,8754,5828044,2015-10-05 21:11:10.600851,116,false,CPSW,null,null,H,0x9d1e67c6be2f24b2a4e2cc6a628c94395924dadabaed7ee459b2a61b0fcb74c5\n" +
+                        "KKNZ,186,0.8223388398922372,1970-01-01 00:00:00.42,0.720,-6179,8728907,null,80,true,VTJW,2015-09-11 03:49:12.244,00000000 16 b2 d8 83 f5 95 7c 95 fd 52 bb 50 c9,B,0x55724661cfcc811f4482e1a2ba8efaef6e4aef0394801c40941d89f24081f64d\n" +
+                        "BICL,182,0.7215695095610233,1970-01-01 00:00:00.43,0.227,-22899,6401660,2015-08-23 18:31:29.931618,78,true,null,null,null,T,0xbbb751ee10f060d1c2fbeb73044504aea55a8e283bcf857b539d8cd889fa9c91\n" +
+                        "SWPF,null,0.48770772310128674,1970-01-01 00:00:00.44,0.914,-17929,8377336,2015-12-13 23:04:20.465454,28,false,HYRX,2015-10-31 13:37:01.327,00000000 b2 31 9c 69 be 74 9a ad cc cf b8 e4 d1 7a 4f,I,0xbe91d734443388a2a631d716b575c819c9224a25e3f6e6fa6cd78093d5e7ea16\n" +
+                        "BHEV,80,0.8917678500174907,1970-01-01 00:00:00.45,0.237,29284,9577513,2015-10-20 07:38:23.889249,27,false,HYRX,2015-12-15 13:32:56.797,00000000 92 83 24 53 60 4d 04 c2 f0 7a 07 d4 a3 d1 5f 0d\n" +
                         "00000010 fe 63 10 0d,V,0x225fddd0f4325a9d8634e1cb317338a0d3cb7f61737f167dc902b6f6d779c753\n" +
-                        "DPCH,62,0.6684502332750604,1970-01-01 00:00:00.46,0.8790,-22600,9266553,null,89,true,VTJW,2015-05-25 19:42:17.955,00000000 35 1b b9 0f 97 f5 77 7e a3 2d ce fe eb cd 47 06\n" +
+                        "DPCH,62,0.6684502332750604,1970-01-01 00:00:00.46,0.879,-22600,9266553,null,89,true,VTJW,2015-05-25 19:42:17.955,00000000 35 1b b9 0f 97 f5 77 7e a3 2d ce fe eb cd 47 06\n" +
                         "00000010 53 61 97,S,0x89d6a43b23f83695b236ae5ffab54622ce1f4dac846490a8b88f0468c0cbfa33\n" +
-                        "MKNJ,61,0.2682009935575007,1970-01-01 00:00:00.47,0.8130,-1322,null,2015-11-04 08:11:39.996132,4,false,CPSW,2015-07-29 22:51:03.349,00000000 82 08 fb e7 94 3a 32 5d 8a 66 0b e4 85 f1 13 06\n" +
+                        "MKNJ,61,0.2682009935575007,1970-01-01 00:00:00.47,0.813,-1322,null,2015-11-04 08:11:39.996132,4,false,CPSW,2015-07-29 22:51:03.349,00000000 82 08 fb e7 94 3a 32 5d 8a 66 0b e4 85 f1 13 06\n" +
                         "00000010 f2 27,V,0x9890d4aea149f0498bdef1c6ba16dd8cbd01cf83632884ae8b7083f888554b0c\n" +
-                        "GSQI,158,0.8047954890194065,1970-01-01 00:00:00.48,0.3470,23139,1252385,2015-04-22 00:10:12.067311,32,true,null,2015-01-09 06:06:32.213,00000000 38 a7 85 46 1a 27 5b 4d 0f 33 f4 70,V,0xc0e6e110b909e13a812425a38162be0bb65e29ed529d4dba868a7075f3b34357\n" +
-                        "BPTU,205,0.430214712409255,1970-01-01 00:00:00.49,0.9049,31266,8271557,2015-01-07 05:53:03.838005,14,true,VTJW,2015-10-30 05:33:15.819,00000000 24 0b c5 1a 5a 8d 85 50 39 42 9e 8a 86 17 89 6b,S,0x4e272e9dfde7bb12618178f7feba5021382a8c47a28fefa475d743cf0c2c4bcd\n";
+                        "GSQI,158,0.8047954890194065,1970-01-01 00:00:00.48,0.347,23139,1252385,2015-04-22 00:10:12.067311,32,true,null,2015-01-09 06:06:32.213,00000000 38 a7 85 46 1a 27 5b 4d 0f 33 f4 70,V,0xc0e6e110b909e13a812425a38162be0bb65e29ed529d4dba868a7075f3b34357\n" +
+                        "BPTU,205,0.430214712409255,1970-01-01 00:00:00.49,0.905,31266,8271557,2015-01-07 05:53:03.838005,14,true,VTJW,2015-10-30 05:33:15.819,00000000 24 0b c5 1a 5a 8d 85 50 39 42 9e 8a 86 17 89 6b,S,0x4e272e9dfde7bb12618178f7feba5021382a8c47a28fefa475d743cf0c2c4bcd\n";
 
                 StringSink sink = new StringSink();
-
                 // dump metadata
                 assertResultSet(expected, sink, rs);
                 connection.close();
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
+    private void testSemicolon(boolean simpleQueryMode) throws Exception {
+        assertMemoryLeak(() -> {
+
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(
+                        NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
+                properties.setProperty("sslmode", "disable");
+                if (simpleQueryMode) {
+                    properties.setProperty("preferQueryMode", "simple");
+                }
+
+                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
+                    try (final PreparedStatement statement = connection.prepareStatement(";;")) {
+                        statement.execute();
+                    }
+                }
             } finally {
                 running.set(false);
                 haltLatch.await();

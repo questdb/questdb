@@ -26,8 +26,8 @@ package io.questdb.log;
 
 import io.questdb.mp.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 import java.io.*;
 import java.lang.reflect.Constructor;

@@ -2141,7 +2141,7 @@ class SqlOptimiser {
 
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
 
-        if (modelIsFlex(union)) {
+        if (!topLevel && modelIsFlex(union)) {
             emitColumnLiteralsTopDown(model.getColumns(), union);
         }
 
@@ -2702,20 +2702,7 @@ class SqlOptimiser {
             }
 
             if (qc.getAst().type == ExpressionNode.LITERAL) {
-                if (!SqlUtil.isNotBindVariable(qc.getAst().token)) {
-                    // bind variable
-                    addFunction(
-                            qc,
-                            baseModel,
-                            translatingModel,
-                            innerVirtualModel,
-                            analyticModel,
-                            groupByModel,
-                            outerVirtualModel,
-                            distinctModel
-                    );
-                    useInnerModel = true;
-                } else if (Chars.endsWith(qc.getAst().token, '*')) {
+                if (Chars.endsWith(qc.getAst().token, '*')) {
                     // in general sense we need to create new column in case
                     // there is change of alias, for example we may have something as simple as
                     // select a.f, b.f from ....
@@ -2743,6 +2730,18 @@ class SqlOptimiser {
                             distinctModel
                     );
                 }
+            } else if (qc.getAst().type == ExpressionNode.BIND_VARIABLE) {
+                addFunction(
+                        qc,
+                        baseModel,
+                        translatingModel,
+                        innerVirtualModel,
+                        analyticModel,
+                        groupByModel,
+                        outerVirtualModel,
+                        distinctModel
+                );
+                useInnerModel = true;
             } else {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
@@ -3048,14 +3047,12 @@ class SqlOptimiser {
         public void visit(ExpressionNode node) {
             if (node.type == ExpressionNode.LITERAL) {
                 final int len = node.token.length();
-                if (SqlUtil.isNotBindVariable(node.token)) {
-                    final int dot = Chars.indexOf(node.token, 0, len, '.');
-                    int index = nameTypeMap.keyIndex(node.token, dot + 1, len);
-                    // these columns are pre-validated
-                    assert index < 0;
-                    if (nameTypeMap.valueAt(index).getAst().type != ExpressionNode.LITERAL) {
-                        throw NonLiteralException.INSTANCE;
-                    }
+                final int dot = Chars.indexOf(node.token, 0, len, '.');
+                int index = nameTypeMap.keyIndex(node.token, dot + 1, len);
+                // these columns are pre-validated
+                assert index < 0;
+                if (nameTypeMap.valueAt(index).getAst().type != ExpressionNode.LITERAL) {
+                    throw NonLiteralException.INSTANCE;
                 }
             }
         }
@@ -3136,14 +3133,11 @@ class SqlOptimiser {
         public void visit(ExpressionNode node) throws SqlException {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
-                    // ignore bind variables
-                    if (SqlUtil.isNotBindVariable(node.token)) {
-                        int dot = Chars.indexOf(node.token, '.');
-                        CharSequence name = dot == -1 ? node.token : node.token.subSequence(dot + 1, node.token.length());
-                        indexes.add(validateColumnAndGetModelIndex(model, node.token, dot, node.position));
-                        if (names != null) {
-                            names.add(name);
-                        }
+                    int dot = Chars.indexOf(node.token, '.');
+                    CharSequence name = dot == -1 ? node.token : node.token.subSequence(dot + 1, node.token.length());
+                    indexes.add(validateColumnAndGetModelIndex(model, node.token, dot, node.position));
+                    if (names != null) {
+                        names.add(name);
                     }
                     break;
                 case ExpressionNode.CONSTANT:

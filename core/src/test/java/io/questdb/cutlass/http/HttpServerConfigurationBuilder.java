@@ -35,8 +35,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.time.MillisecondClock;
-import io.questdb.std.time.MillisecondClockImpl;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class HttpServerConfigurationBuilder {
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;

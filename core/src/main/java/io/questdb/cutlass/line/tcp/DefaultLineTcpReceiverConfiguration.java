@@ -33,10 +33,10 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.MicrosecondClockImpl;
-import io.questdb.std.time.MillisecondClock;
-import io.questdb.std.time.MillisecondClockImpl;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();

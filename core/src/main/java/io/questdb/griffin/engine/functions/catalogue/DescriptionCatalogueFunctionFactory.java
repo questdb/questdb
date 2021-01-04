@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -110,7 +111,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
             this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
-            this.intValues[1] = PgOIDs.PG_CLASS_OID; // classoid
+            this.intValues[1] = PGOids.PG_CLASS_OID; // classoid
             this.intValues[2] = 0; // objsubid
             this.tempMem = tempMem;
         }

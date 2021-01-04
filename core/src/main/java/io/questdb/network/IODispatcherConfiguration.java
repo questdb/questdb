@@ -24,7 +24,7 @@
 
 package io.questdb.network;
 
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface IODispatcherConfiguration {
     int BIAS_READ = 1;

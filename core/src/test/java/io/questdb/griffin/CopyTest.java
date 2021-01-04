@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -39,7 +39,7 @@ import java.io.IOException;
 
 public class CopyTest extends AbstractCairoTest {
 
-    protected static final BindVariableService bindVariableService = new BindVariableService();
+    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     protected static SqlExecutionContext sqlExecutionContext;
 
     private static final LongList rows = new LongList();

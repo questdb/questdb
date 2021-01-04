@@ -90,7 +90,8 @@ class ExpressionParser {
     }
 
     private boolean isCount() {
-        return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && Chars.equals("count", opStack.peek(1).token);
+
+        return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
 
     private int onNode(ExpressionParserListener listener, ExpressionNode node, int argStackDepth) throws SqlException {

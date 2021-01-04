@@ -27,13 +27,18 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.std.Mutable;
 
-class CharBindVariable extends CharFunction implements ScalarFunction {
+class CharBindVariable extends CharFunction implements ScalarFunction, Mutable {
     char value;
 
-    public CharBindVariable(char value) {
+    public CharBindVariable() {
         super(0);
-        this.value = value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = 0;
     }
 
     @Override

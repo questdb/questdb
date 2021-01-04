@@ -151,7 +151,7 @@ public class EqStrFunctionFactory extends AbstractBooleanFunctionFactory impleme
                 return isNegated != (b == null);
             }
 
-            return isNegated != (b != null && Chars.equals(a, b));
+            return isNegated != Chars.equalsNc(a, b);
         }
     }
 }

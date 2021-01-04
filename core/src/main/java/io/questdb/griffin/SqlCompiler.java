@@ -38,7 +38,7 @@ import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -1020,7 +1020,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private void alterTableDropPartition(TableWriter writer) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'list' or 'where'");
+        final int pos = lexer.lastTokenPosition();
+        final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
             alterTableDropPartitionByList(writer);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
@@ -1031,7 +1032,7 @@ public class SqlCompiler implements Closeable {
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && function.getType() == ColumnType.BOOLEAN) {
-                    writer.removePartition(function);
+                    writer.removePartition(function, pos);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
@@ -1505,22 +1506,30 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
-    private boolean functionIsTimestamp(
+    private void validateAndConsume(
             InsertModel model,
             ObjList<Function> valueFunctions,
             RecordMetadata metadata,
             int writerTimestampIndex,
             int bottomUpColumnIndex,
             int metadataColumnIndex,
-            Function function
+            Function function,
+            BindVariableService bindVariableService
     ) throws SqlException {
-        if (isAssignableFrom(metadata.getColumnType(metadataColumnIndex), function.getType())) {
+
+        final int columnType = metadata.getColumnType(metadataColumnIndex);
+
+        if (function.isUndefined()) {
+            function.assignType(columnType, bindVariableService);
+        }
+
+        if (isAssignableFrom(columnType, function.getType())) {
             if (metadataColumnIndex == writerTimestampIndex) {
-                return true;
+                return;
             }
             valueFunctions.add(function);
             listColumnFilter.add(metadataColumnIndex + 1);
-            return false;
+            return;
         }
 
         throw SqlException.inconvertibleTypes(
@@ -1555,14 +1564,27 @@ public class SqlCompiler implements Closeable {
                 valueFunctions = new ObjList<>(columnSetSize);
                 for (int i = 0; i < columnSetSize; i++) {
                     int index = metadata.getColumnIndexQuiet(columnSet.get(i));
-                    if (index < 0) {
-                        // todo: write test that used invalid column in insert statement
-                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
-                    }
+                    if (index > -1) {
+                        final ExpressionNode node = model.getColumnValues().getQuick(i);
 
-                    final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), GenericRecordMetadata.EMPTY, executionContext);
-                    if (functionIsTimestamp(model, valueFunctions, metadata, writerTimestampIndex, i, index, function)) {
-                        timestampFunction = function;
+                        final Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
+                        validateAndConsume(
+                                model,
+                                valueFunctions,
+                                metadata,
+                                writerTimestampIndex,
+                                i,
+                                index,
+                                function,
+                                executionContext.getBindVariableService()
+                        );
+
+                        if (writerTimestampIndex == index) {
+                            timestampFunction = function;
+                        }
+
+                    } else {
+                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
                     }
                 }
             } else {
@@ -1573,17 +1595,23 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(model.getEndOfValuesPosition(), "not enough values [expected=").put(columnCount).put(", actual=").put(values.size()).put(']');
                 }
                 valueFunctions = new ObjList<>(columnCount);
+
                 for (int i = 0; i < columnCount; i++) {
-                    Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                    if (functionIsTimestamp(
+                    final ExpressionNode node = values.getQuick(i);
+
+                    Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                    validateAndConsume(
                             model,
                             valueFunctions,
                             metadata,
                             writerTimestampIndex,
                             i,
                             i,
-                            function
-                    )) {
+                            function,
+                            executionContext.getBindVariableService()
+                    );
+
+                    if (writerTimestampIndex == i) {
                         timestampFunction = function;
                     }
                 }
@@ -1772,7 +1800,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void setupBackupRenamePath() {
-        TimestampFormat format = configuration.getBackupDirTimestampFormat();
+        DateFormat format = configuration.getBackupDirTimestampFormat();
         long epochMicros = configuration.getMicrosecondClock().getTicks();
         int n = 0;
         // There is a race here, two threads could try and create the same renamePath, only one will succeed the other will throw
@@ -1781,7 +1809,7 @@ public class SqlCompiler implements Closeable {
         int plen = renamePath.length();
         do {
             renamePath.trimTo(plen);
-            format.format(epochMicros, configuration.getDefaultTimestampLocale(), null, renamePath);
+            format.format(epochMicros, configuration.getDefaultDateLocale(), null, renamePath);
             if (n > 0) {
                 renamePath.put('.').put(n);
             }

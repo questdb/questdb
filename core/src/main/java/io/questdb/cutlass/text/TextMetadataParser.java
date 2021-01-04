@@ -34,13 +34,11 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.DateLocaleFactory;
 
 import java.io.Closeable;
 
@@ -57,7 +55,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int P_UTF8 = 5;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
     private final DateLocaleFactory dateLocaleFactory;
-    private final TimestampLocaleFactory timestampLocaleFactory;
     private final ObjectPool<FloatingCharSequence> csPool;
     private final DateFormatFactory dateFormatFactory;
     private final TimestampFormatFactory timestampFormatFactory;
@@ -65,7 +62,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private final ObjList<TypeAdapter> columnTypes;
     private final TypeManager typeManager;
     private final DateLocale dateLocale;
-    private final TimestampLocale timestampLocale;
     private int state = S_NEED_ARRAY;
     private CharSequence name;
     private int type = -1;
@@ -85,11 +81,9 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolCapacity());
         this.dateLocaleFactory = typeManager.getInputFormatConfiguration().getDateLocaleFactory();
         this.dateFormatFactory = typeManager.getInputFormatConfiguration().getDateFormatFactory();
-        this.timestampLocaleFactory = typeManager.getInputFormatConfiguration().getTimestampLocaleFactory();
         this.timestampFormatFactory = typeManager.getInputFormatConfiguration().getTimestampFormatFactory();
         this.typeManager = typeManager;
         this.dateLocale = textConfiguration.getDefaultDateLocale();
-        this.timestampLocale = textConfiguration.getDefaultTimestampLocale();
     }
 
     @Override
@@ -241,10 +235,10 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
                 break;
             case ColumnType.TIMESTAMP:
-                TimestampLocale timestampLocale =
+                DateLocale timestampLocale =
                         locale == null ?
-                                this.timestampLocale
-                                : timestampLocaleFactory.getLocale(locale);
+                                this.dateLocale
+                                : dateLocaleFactory.getLocale(locale);
                 if (timestampLocale == null) {
                     throw JsonException.$(localePosition, "Invalid timestamp locale");
                 }

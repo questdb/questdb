@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.time.DateFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 
 public class CastStrToDateFunctionFactory implements FunctionFactory {
     @Override
@@ -64,7 +64,7 @@ public class CastStrToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             final CharSequence value = arg.getStr(rec);
             try {
-                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseDateTime(value);
+                return value == null ? Numbers.LONG_NaN : DateFormatUtils.parseUTCDate(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }

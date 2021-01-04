@@ -3330,98 +3330,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByFillNoneEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) order by k,b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testSampleByFillNullEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) order by k,b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testSampleByFillValueEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) order by k,b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testSampleByFillPrevEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) order by k,b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true
-        );
-    }
-
-    @Test
-    public void testSampleByFillLinearEmptyCursor() throws Exception {
-        assertQuery("b\tsum\tk\n",
-                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(3,3,2) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testOrderByLong256AndChar() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "0x58dfd08eeb9cc39ecec82869edec121bc2593f82b430328d84a09f29df637e38\tB\t1970-01-12T13:46:40.000000Z\n" +
@@ -4144,6 +4052,98 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByFillLinearEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillNoneEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillNullEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillPrevEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
+    public void testSampleByFillValueEmptyCursor() throws Exception {
+        assertQuery("b\tsum\tk\n",
+                "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) order by k,b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(3,3,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true
+        );
+    }
+
+    @Test
     public void testSelectColumns() throws Exception {
         assertQuery("a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t0.7611\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
@@ -4374,6 +4374,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectUndefinedBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = compiler.compile("select $1+x, $2 from long_sequence(10)", sqlExecutionContext).getRecordCursorFactory()) {
+                sink.clear();
+                factory.getMetadata().toJson(sink);
+                TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"column\",\"type\":\"LONG\"},{\"index\":1,\"name\":\"$2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}", sink);
+            }
+        });
+    }
+
+    @Test
     public void testSumDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
@@ -4507,6 +4519,80 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         try (TableReader r = new TableReader(configuration, "x")) {
             Assert.assertEquals(5.001433965140632E7, r.sumDouble(0), 0.00001);
         }
+    }
+
+    @Test
+    public void testTimestampCrossReference() throws Exception {
+            compiler.compile("create table x (val double, t timestamp)", sqlExecutionContext);
+            compiler.compile("create table y (timestamp timestamp, d double)", sqlExecutionContext);
+            compiler.compile("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)", sqlExecutionContext);
+
+            // to shut up memory leak check
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertQuery(
+                    "time\tvisMiles\n" +
+                            "2018-01-31T23:00:00.000000Z\t0.26625499503275796\n" +
+                            "2018-01-31T23:00:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:00:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:01:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:01:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:01:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:02:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:02:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:02:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:03:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:03:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:03:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:04:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:04:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:04:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:05:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:05:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:05:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:06:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:06:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:06:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:07:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:07:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:07:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:08:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:08:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:08:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:09:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:09:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:09:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:10:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:10:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:10:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:11:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:11:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:11:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:12:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:12:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:12:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:13:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:13:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:13:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:14:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:14:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:14:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:15:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:15:20.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:15:40.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:16:00.000000Z\t0.2647050470565634\n" +
+                            "2018-01-31T23:16:20.000000Z\t0.2647050470565634\n",
+                    "SELECT\n" +
+                            "    t as \"time\",\n" +
+                            "    avg(d) as visMiles\n" +
+                            "FROM ((x timestamp(t)) WHERE t BETWEEN '2018-01-31T23:00:00Z' AND '2018-02-28T22:59:59Z')\n" +
+                            "ASOF JOIN (y timestamp(timestamp))\n" +
+                            "SAMPLE BY 20s",
+                    "insert into x select rnd_double(), timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 10000) from long_sequence(100000)",
+                    "time",
+                    false
+            );
     }
 
     @Test

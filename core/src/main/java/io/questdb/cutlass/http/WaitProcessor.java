@@ -26,7 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.mp.*;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.PriorityQueue;

@@ -27,7 +27,7 @@ package io.questdb.griffin.model;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -144,73 +144,73 @@ public class IntrinsicModelTest {
 
     @Test
     public void testIntersectContain2() throws Exception {
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T09:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T13:30:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T09:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T13:30:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T10:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z}]");
     }
 
     @Test
     public void testIntersectMergeOverlap() throws Exception {
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T11:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T14:00:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T11:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z}]");
     }
 
     @Test
     public void testIntersectMergeOverlap2() throws Exception {
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T11:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T14:00:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T11:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z}]");
     }
 
     @Test
     public void testIntersectNoOverlap() throws Exception {
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T16:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T14:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T16:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T13:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T13:30:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T13:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T13:30:00.000Z"));
 
         assertIntersect("[]");
     }
 
     @Test
     public void testIntersectSame() throws Exception {
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
 
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T10:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z}]");
     }
 
     @Test
     public void testIntersectTwoOverlapOne2() throws Exception {
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T10:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T12:00:00.000Z"));
 
 
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
-        a.add(TimestampFormatUtils.parseDateTime("2016-03-10T16:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T14:00:00.000Z"));
+        a.add(TimestampFormatUtils.parseTimestamp("2016-03-10T16:00:00.000Z"));
 
 
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
-        b.add(TimestampFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T11:00:00.000Z"));
+        b.add(TimestampFormatUtils.parseTimestamp("2016-03-10T15:00:00.000Z"));
 
         assertIntersect("[{lo=2016-03-10T11:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z},{lo=2016-03-10T14:00:00.000000Z, hi=2016-03-10T15:00:00.000000Z}]");
     }

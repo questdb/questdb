@@ -27,17 +27,23 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 
-class IntBindVariable extends IntFunction implements ScalarFunction {
+class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     int value;
 
-    IntBindVariable(int value) {
+    IntBindVariable() {
         super(0);
-        this.value = value;
     }
 
     @Override
     public int getInt(Record rec) {
         return value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = Numbers.INT_NaN;
     }
 }
