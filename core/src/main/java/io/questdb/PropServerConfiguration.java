@@ -295,12 +295,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
+    private final BuildInformation buildInformation;
 
     public PropServerConfiguration(
             String root,
             Properties properties,
             @Nullable Map<String, String> env,
-            Log log
+            Log log,
+            final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
@@ -611,6 +613,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
         }
+
+        this.buildInformation = buildInformation;
     }
 
     @Override
@@ -1656,6 +1660,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTableBlockWriterQueueSize() {
             return tableBlockWriterQueueSize;
+        }
+
+        @Override
+        public BuildInformation getBuildInformation() {
+            return buildInformation;
         }
     }
 

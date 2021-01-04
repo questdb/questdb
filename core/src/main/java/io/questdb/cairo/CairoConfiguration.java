@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
@@ -199,6 +200,8 @@ public interface CairoConfiguration {
     long getAppendPageSize();
 
     int getTableBlockWriterQueueSize();
+
+    BuildInformation getBuildInformation();
 
     default boolean isOutOfOrderEnabled() {
         return false;
