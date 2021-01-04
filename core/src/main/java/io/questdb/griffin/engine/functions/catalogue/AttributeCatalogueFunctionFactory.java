@@ -209,7 +209,6 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             public CharSequence name = null;
             public short[] shortValues = new short[9];
             public int[] intValues = new int[9];
-            public short columnNumber = 0;
             public int tableId = 0;
             public int type = -1;
 

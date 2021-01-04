@@ -441,6 +441,26 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCairoException() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, true)
+            ) {
+
+                connection.prepareStatement("create table xyz(a int)").execute();
+                try (TableWriter ignored1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
+                    connection.prepareStatement("drop table xyz").execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
+                    Assert.assertEquals("00000", e.getSQLState());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCharIntLongDoubleBooleanParametersWithoutExplicitParameterTypeHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -574,6 +594,49 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRustBindVariableHex() throws Exception {
+        //hex for close message 43 00000009 53 535f31 00
+        String script = ">0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">510000000a424547494e00\n" +
+                "<430000000a424547494e005a0000000554\n" +
+                ">500000002b733000696e7365727420696e746f2078797a2076616c756573202824312c24322c2433290000004400000008537330005300000004\n" +
+                "<3100000004740000001200030000001700000017000000176e000000045a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                "420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">420000002a0073300000010001000300000004000000010000000400000002000000040000000300010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000554\n" +
+                ">510000000b434f4d4d495400\n" +
+                "<430000000b434f4d4d4954005a0000000549\n" +
+                ">4300000008537330005300000004\n" +
+                "<33000000045a0000000549\n" +
+                ">5800000004\n"
+                ;
+        assertHexScript(NetworkFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig());
+    }
+
+    @Test
     public void testCloseMessageWithBadUtf8InStatementNameHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -690,26 +753,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCairoException() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, true)
-            ) {
-
-                connection.prepareStatement("create table xyz(a int)").execute();
-                try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
-                    connection.prepareStatement("drop table xyz").execute();
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
-                    Assert.assertEquals("00000", e.getSQLState());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testDDL() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -741,6 +784,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testExtendedSyntaxErrorReporting() throws Exception {
+        testSyntaxErrorReporting(false);
     }
 
     @Test
@@ -816,11 +864,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testExtendedSyntaxrrorReporting() throws Exception {
-        testSyntaxErrorReporting(false);
-    }
-
-    @Test
     public void testInsertAllTypesBinary() throws Exception {
         testInsertAllTypes(true);
     }
@@ -835,7 +878,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
         testInsert0(false, true);
     }
 
-    // todo: write test that would validate ParameterTypes message, e.g. assign incompatible parameter types
     @Test
     public void testInsertExtendedBinaryAndCommit() throws Exception {
         assertMemoryLeak(() -> {
@@ -851,7 +893,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 //
                 // test methods of inserting QuestDB's DATA and TIMESTAMP values
                 //
-                final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, t3 timestamp, b1 short) timestamp(t)");
+                final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, t3 timestamp, b1 short, t4 timestamp) timestamp(t)");
                 statement.execute();
 
                 // exercise parameters on select statement
@@ -859,7 +901,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 execSelectWithParam(select, 9);
 
 
-                final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?)");
+                final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?, ?)");
                 long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
                 for (int i = 0; i < 10_000; i++) {
                     insert.setInt(1, i);
@@ -881,6 +923,9 @@ public class PGJobContextTest extends AbstractGriffinTest {
                     insert.setTimestamp(6, new PGTimestamp(micros));
 
                     insert.setByte(7, (byte) 'A');
+
+                    // TIMESTAMP as long
+                    insert.setLong(8, micros);
 
                     insert.execute();
                     Assert.assertEquals(1, insert.getUpdateCount());
@@ -2287,7 +2332,6 @@ nodejs code:
                 // for now date parser does not parse just time, it could i guess if required.
                 statement.setTime(1, new Time(100L));
 
-                // todo: we need to pass unspecified parameter type to where clause, where it will be cast to something we support
                 try (ResultSet rs = statement.executeQuery()) {
                     StringSink sink = new StringSink();
                     // dump metadata
@@ -2304,42 +2348,6 @@ nodejs code:
                 }
             }
         });
-    }
-
-    // todo: check that we pass parameter types from backend, in that exception should be thrown by client
-    //   when incorrect parameter type is assigned, good example is setting timestamp as long
-
-    // todo: test timestamp from rust
-
-    private PGWireServer createPGServer(int workerCount) {
-
-        final int[] affinity = new int[workerCount];
-        Arrays.fill(affinity, -1);
-
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinity;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-        };
-
-        return PGWireServer.create(
-                conf,
-                null,
-                LOG,
-                engine,
-                compiler.getFunctionFactoryCache()
-        );
     }
 
     @Test
@@ -2573,6 +2581,49 @@ nodejs code:
         TestUtils.assertEquals(expected, sink);
     }
 
+    private PGWireServer createPGServer(int workerCount) {
+
+        final int[] affinity = new int[workerCount];
+        Arrays.fill(affinity, -1);
+
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinity;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
+
+        return PGWireServer.create(
+                conf,
+                null,
+                LOG,
+                engine,
+                compiler.getFunctionFactoryCache()
+        );
+    }
+
+    private void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
+        sink.clear();
+        select.setInt(1, value);
+        try (ResultSet resultSet = select.executeQuery()) {
+            sink.clear();
+            while (resultSet.next()) {
+                sink.put(resultSet.getInt(1));
+                sink.put('\n');
+            }
+        }
+    }
+
     private Connection getConnection(boolean simple, boolean binary) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
@@ -2587,16 +2638,87 @@ nodejs code:
         return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
     }
 
-    private void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
-        sink.clear();
-        select.setInt(1, value);
-        try (ResultSet resultSet = select.executeQuery()) {
-            sink.clear();
-            while (resultSet.next()) {
-                sink.put(resultSet.getInt(1));
-                sink.put('\n');
+    @NotNull
+    private NetworkFacade getFragmentedSendFacade() {
+        return new NetworkFacadeImpl() {
+            @Override
+            public int send(long fd, long buffer, int bufferLen) {
+                int total = 0;
+                for (int i = 0; i < bufferLen; i++) {
+                    int n = super.send(fd, buffer + i, 1);
+                    if (n < 0) {
+                        return n;
+                    }
+                    total += n;
+                }
+                return total;
             }
-        }
+        };
+    }
+
+    @NotNull
+    private DefaultPGWireConfiguration getHexPgWireConfig() {
+        return new DefaultPGWireConfiguration() {
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
+            }
+        };
+    }
+
+    private void startBasicServer(
+            NetworkFacade nf,
+            PGWireConfiguration configuration,
+            CountDownLatch haltLatch,
+            AtomicBoolean running
+    ) throws BrokenBarrierException, InterruptedException {
+        final CyclicBarrier barrier = new CyclicBarrier(2);
+        new Thread(() -> {
+            long fd = Net.socketTcp(true);
+            try {
+                Assert.assertEquals(0, nf.setReusePort(fd));
+                nf.configureNoLinger(fd);
+
+                assertTrue(nf.bindTcp(fd, 0, 9120));
+                nf.listen(fd, 128);
+
+                LOG.info().$("listening [fd=").$(fd).$(']').$();
+
+                try (PGJobContext PGJobContext = new PGJobContext(configuration, engine, engine.getMessageBus(), null)) {
+                    SharedRandom.RANDOM.set(new Rnd());
+                    try {
+                        barrier.await();
+                    } catch (InterruptedException | BrokenBarrierException e) {
+                        e.printStackTrace();
+                    }
+                    final long clientFd = Net.accept(fd);
+                    nf.configureNonBlocking(clientFd);
+                    try (PGConnectionContext context = new PGConnectionContext(engine, configuration, null, 1)) {
+                        context.of(clientFd, null);
+                        LOG.info().$("connected [clientFd=").$(clientFd).$(']').$();
+                        while (running.get()) {
+                            try {
+                                PGJobContext.handleClientOperation(context);
+                            } catch (PeerDisconnectedException | BadProtocolException e) {
+                                break;
+                            } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException ignored) {
+                            }
+                        }
+                        nf.close(clientFd);
+                    }
+                }
+            } finally {
+                nf.close(fd);
+                haltLatch.countDown();
+                LOG.info().$("done").$();
+            }
+        }).start();
+        barrier.await();
     }
 
     private void testAllTypesSelect(boolean simple) throws Exception {
@@ -2695,89 +2817,6 @@ nodejs code:
                 }
             }
         });
-    }
-
-    @NotNull
-    private NetworkFacade getFragmentedSendFacade() {
-        return new NetworkFacadeImpl() {
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                int total = 0;
-                for (int i = 0; i < bufferLen; i++) {
-                    int n = super.send(fd, buffer + i, 1);
-                    if (n < 0) {
-                        return n;
-                    }
-                    total += n;
-                }
-                return total;
-            }
-        };
-    }
-
-    @NotNull
-    private DefaultPGWireConfiguration getHexPgWireConfig() {
-        return new DefaultPGWireConfiguration() {
-            @Override
-            public String getDefaultPassword() {
-                return "oh";
-            }
-
-            @Override
-            public String getDefaultUsername() {
-                return "xyz";
-            }
-        };
-    }
-
-    private void startBasicServer(
-            NetworkFacade nf,
-            PGWireConfiguration configuration,
-            CountDownLatch haltLatch,
-            AtomicBoolean running
-    ) throws BrokenBarrierException, InterruptedException {
-        final CyclicBarrier barrier = new CyclicBarrier(2);
-        new Thread(() -> {
-            long fd = Net.socketTcp(true);
-            try {
-                Assert.assertEquals(0, nf.setReusePort(fd));
-                nf.configureNoLinger(fd);
-
-                assertTrue(nf.bindTcp(fd, 0, 9120));
-                nf.listen(fd, 128);
-
-                LOG.info().$("listening [fd=").$(fd).$(']').$();
-
-                try (PGJobContext PGJobContext = new PGJobContext(configuration, engine, engine.getMessageBus(), null)) {
-                    SharedRandom.RANDOM.set(new Rnd());
-                    try {
-                        barrier.await();
-                    } catch (InterruptedException | BrokenBarrierException e) {
-                        e.printStackTrace();
-                    }
-                    final long clientFd = Net.accept(fd);
-                    nf.configureNonBlocking(clientFd);
-                    try (PGConnectionContext context = new PGConnectionContext(engine, configuration, null, 1)) {
-                        context.of(clientFd, null);
-                        LOG.info().$("connected [clientFd=").$(clientFd).$(']').$();
-                        while (running.get()) {
-                            try {
-                                PGJobContext.handleClientOperation(context);
-                            } catch (PeerDisconnectedException | BadProtocolException e) {
-                                break;
-                            } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException ignored) {
-                            }
-                        }
-                        nf.close(clientFd);
-                    }
-                }
-            } finally {
-                nf.close(fd);
-                haltLatch.countDown();
-                LOG.info().$("done").$();
-            }
-        }).start();
-        barrier.await();
     }
 
     private void testInsert0(boolean simpleQueryMode, boolean binary) throws Exception {
@@ -3100,15 +3139,13 @@ nodejs code:
                             }
 
                             sink.clear();
+                            record.getLong256(10, sink);
                             if (rnd.nextInt() % 4 > 0) {
-
-//                                insert.setString(11, "05a9796963abad00001e5f6bbdb38");
+                                TestUtils.assertEquals("0x5a9796963abad00001e5f6bbdb38", sink);
                             } else {
 
-                                record.getLong256(10, sink);
-//                                insert.setNull(11, Types.VARCHAR);
+                                Assert.assertEquals(0, sink.length());
                             }
-
                             count++;
                         }
 

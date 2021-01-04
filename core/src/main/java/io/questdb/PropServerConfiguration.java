@@ -2131,11 +2131,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean getDumpNetworkTraffic() {
-            return false;
-        }
-
-        @Override
         public int getFactoryCacheColumnCount() {
             return pgFactoryCacheColumnCount;
         }

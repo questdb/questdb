@@ -1,7 +1,6 @@
 use postgres::{Client, NoTls};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Client::connect("postgresql://admin:quest@localhost:5432/qdb", NoTls)?;
-    //let stmt = client.prepare("insert into xyz values (?,?,?)").unwrap();
     let bar = 1;
     let baz = 2;
     let roe = 3;
