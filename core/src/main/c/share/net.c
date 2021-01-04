@@ -145,7 +145,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
         return n;
     }
 
-    if (n == 0 || errno == EWOULDBLOCK) {
+    if (n == 0){
+        return com_questdb_network_Net_EOTHERDISCONNECT;
+    }
+
+    if (errno == EWOULDBLOCK) {
         return com_questdb_network_Net_ERETRY;
     }
 
