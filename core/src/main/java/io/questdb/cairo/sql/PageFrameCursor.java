@@ -24,11 +24,10 @@
 
 package io.questdb.cairo.sql;
 
-import java.io.Closeable;
-
+import io.questdb.cairo.SymbolMapReader;
 import org.jetbrains.annotations.Nullable;
 
-import io.questdb.cairo.SymbolMapReader;
+import java.io.Closeable;
 
 public interface PageFrameCursor extends Closeable {
     @Override

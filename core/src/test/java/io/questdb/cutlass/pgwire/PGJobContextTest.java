@@ -24,6 +24,10 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -50,6 +54,7 @@ import org.postgresql.util.PSQLException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.*;
+import java.util.Arrays;
 import java.util.GregorianCalendar;
 import java.util.Properties;
 import java.util.TimeZone;
@@ -67,82 +72,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
     @Test
     public void largeBatchInsertMethod() throws Exception {
-
         assertMemoryLeak(() -> {
-
-            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1, -1, -1};
+            try (
+                    final PGWireServer ignored = createPGServer(4);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table test_large_batch(id long,val int)");
                 }
-
-                @Override
-                public int getWorkerCount() {
-                    return 4;
-                }
-            };
-
-            try (final PGWireServer ignored = PGWireServer.create(
-                    conf,
-                    null,
-                    LOG,
-                    engine,
-                    compiler.getFunctionFactoryCache()
-            )) {
-                try (Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:8812/", "admin", "quest")) {
-                    try (Statement statement = connection.createStatement()) {
-                        statement.executeUpdate("create table test_large_batch(id long,val int)");
-                    }
-                    connection.setAutoCommit(false);
-                    try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
-                        for (int i = 0; i < 10_000; i++) {
-                            batchInsert.setLong(1, 0L);
-                            batchInsert.setInt(2, 1);
-                            batchInsert.addBatch();
-                            batchInsert.setLong(1, 1L);
-                            batchInsert.setInt(2, 2);
-                            batchInsert.addBatch();
-                            batchInsert.setLong(1, 2L);
-                            batchInsert.setInt(2, 3);
-                            batchInsert.addBatch();
-                            batchInsert.clearParameters();
-                            batchInsert.executeLargeBatch();
-                        }
-                        connection.commit();
-                    }
-
-                    StringSink sink = new StringSink();
-                    String expected = "count[BIGINT]\n" +
-                            "30000\n";
-                    Statement statement = connection.createStatement();
-                    ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
-                    assertResultSet(expected, sink, rs);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void regularBatchInsertMethod() throws Exception {
-
-        assertMemoryLeak(() -> {
-
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-
-                try (Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/", "admin", "quest")) {
-                    try (Statement statement = connection.createStatement()) {
-                        statement.executeUpdate("create table test_batch(id long,val int)");
-                    }
-                    try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_batch(id,val) values(?,?)")) {
+                connection.setAutoCommit(false);
+                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
+                    for (int i = 0; i < 10_000; i++) {
                         batchInsert.setLong(1, 0L);
                         batchInsert.setInt(2, 1);
                         batchInsert.addBatch();
@@ -153,21 +93,54 @@ public class PGJobContextTest extends AbstractGriffinTest {
                         batchInsert.setInt(2, 3);
                         batchInsert.addBatch();
                         batchInsert.clearParameters();
-                        batchInsert.executeBatch();
+                        batchInsert.executeLargeBatch();
                     }
-
-                    StringSink sink = new StringSink();
-                    String expected = "id[BIGINT],val[INTEGER]\n" +
-                            "0,1\n" +
-                            "1,2\n" +
-                            "2,3\n";
-                    Statement statement = connection.createStatement();
-                    ResultSet rs = statement.executeQuery("select * from test_batch");
-                    assertResultSet(expected, sink, rs);
+                    connection.commit();
                 }
-            } finally {
-                running.set(false);
-                haltLatch.await();
+
+                StringSink sink = new StringSink();
+                String expected = "count[BIGINT]\n" +
+                        "30000\n";
+                Statement statement = connection.createStatement();
+                ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
+                assertResultSet(expected, sink, rs);
+            }
+        });
+    }
+
+    @Test
+    public void regularBatchInsertMethod() throws Exception {
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table test_batch(id long,val int)");
+                }
+                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_batch(id,val) values(?,?)")) {
+                    batchInsert.setLong(1, 0L);
+                    batchInsert.setInt(2, 1);
+                    batchInsert.addBatch();
+                    batchInsert.setLong(1, 1L);
+                    batchInsert.setInt(2, 2);
+                    batchInsert.addBatch();
+                    batchInsert.setLong(1, 2L);
+                    batchInsert.setInt(2, 3);
+                    batchInsert.addBatch();
+                    batchInsert.clearParameters();
+                    batchInsert.executeBatch();
+                }
+
+                StringSink sink = new StringSink();
+                String expected = "id[BIGINT],val[INTEGER]\n" +
+                        "0,1\n" +
+                        "1,2\n" +
+                        "2,3\n";
+                Statement statement = connection.createStatement();
+                ResultSet rs = statement.executeQuery("select * from test_batch");
+                assertResultSet(expected, sink, rs);
             }
         });
     }
@@ -276,21 +249,10 @@ public class PGJobContextTest extends AbstractGriffinTest {
     public void testBatchInsertWithTransaction() throws Exception {
         assertMemoryLeak(() -> {
 
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, true)
+            ) {
                 try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("create table test (id long,val int)");
                     statement.executeUpdate("create table test2(id long,val int)");
@@ -403,11 +365,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ResultSet rs4 = statement4.executeQuery("select * from anothertab");
                 assertResultSet(expected, sink, rs4);
 
-                //
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -733,30 +690,41 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCairoException() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, true)
+            ) {
+
+                connection.prepareStatement("create table xyz(a int)").execute();
+                try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
+                    connection.prepareStatement("drop table xyz").execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
+                    Assert.assertEquals("00000", e.getSQLState());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDDL() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties);
-                PreparedStatement statement = connection.prepareStatement("create table x (a int)");
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true);
+                    final PreparedStatement statement = connection.prepareStatement("create table x (a int)")
+            ) {
                 statement.execute();
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
+                try (
+                        PreparedStatement select = connection.prepareStatement("x");
+                        ResultSet rs = select.executeQuery()
+                ) {
+                    sink.clear();
+                    assertResultSet("a[INTEGER]\n", sink, rs);
+                }
             }
         });
     }
@@ -764,31 +732,13 @@ public class PGJobContextTest extends AbstractGriffinTest {
     @Test
     public void testEmptySql() throws Exception {
         assertMemoryLeak(() -> {
-
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                sink.clear();
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
                 try (Statement statement = connection.createStatement()) {
                     statement.execute("");
                 }
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -866,11 +816,24 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExtendedSyntaxrrorReporting() throws Exception {
+        testSyntaxErrorReporting(false);
+    }
+
+    @Test
+    public void testInsertAllTypesBinary() throws Exception {
+        testInsertAllTypes(true);
+    }
+
+    @Test
+    public void testInsertAllTypesText() throws Exception {
+        testInsertAllTypes(false);
+    }
+
+    @Test
     public void testInsertExtendedBinary() throws Exception {
         testInsert0(false, true);
     }
-
-    // todo: write test to accept all types, not just dates including nulls
 
     // todo: write test that would validate ParameterTypes message, e.g. assign incompatible parameter types
     @Test
@@ -879,89 +842,70 @@ public class PGJobContextTest extends AbstractGriffinTest {
             String expectedAll = "count[BIGINT]\n" +
                     "10000\n";
 
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
+            try (
+                    final PGWireServer ignored = createPGServer(3);
+                    final Connection connection = getConnection(false, true)
+            ) {
 
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "true");
+                connection.setAutoCommit(false);
+                //
+                // test methods of inserting QuestDB's DATA and TIMESTAMP values
+                //
+                final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, t3 timestamp, b1 short) timestamp(t)");
+                statement.execute();
 
-                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
-
-                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
-
-                    connection.setAutoCommit(false);
-                    //
-                    // test methods of inserting QuestDB's DATA and TIMESTAMP values
-                    //
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, t3 timestamp, b1 short) timestamp(t)");
-                    statement.execute();
-
-                    // exercise parameters on select statement
-                    PreparedStatement select = connection.prepareStatement("x where a = ?");
-                    execSelectWithParam(select, 9);
+                // exercise parameters on select statement
+                PreparedStatement select = connection.prepareStatement("x where a = ?");
+                execSelectWithParam(select, 9);
 
 
-                    final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?)");
-                    long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
-                    for (int i = 0; i < 10_000; i++) {
-                        insert.setInt(1, i);
-                        // DATE as jdbc's DATE
-                        // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
-                        // just date
-                        insert.setDate(2, new Date(micros / 1000));
+                final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?)");
+                long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                for (int i = 0; i < 10_000; i++) {
+                    insert.setInt(1, i);
+                    // DATE as jdbc's DATE
+                    // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
+                    // just date
+                    insert.setDate(2, new Date(micros / 1000));
 
-                        // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
-                        insert.setTimestamp(3, new Timestamp(micros));
+                    // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
+                    insert.setTimestamp(3, new Timestamp(micros));
 
-                        // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
-                        insert.setTimestamp(4, new Timestamp(micros / 1000L));
+                    // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
+                    insert.setTimestamp(4, new Timestamp(micros / 1000L));
 
-                        // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
-                        insert.setDate(5, new Date(micros));
+                    // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
+                    insert.setDate(5, new Date(micros));
 
-                        // TIMESTAMP as PG specific TIMESTAMP type
-                        insert.setTimestamp(6, new PGTimestamp(micros));
+                    // TIMESTAMP as PG specific TIMESTAMP type
+                    insert.setTimestamp(6, new PGTimestamp(micros));
 
-                        insert.setByte(7, (byte) 'A');
+                    insert.setByte(7, (byte) 'A');
 
-                        insert.execute();
-                        Assert.assertEquals(1, insert.getUpdateCount());
-                        micros += 1000;
+                    insert.execute();
+                    Assert.assertEquals(1, insert.getUpdateCount());
+                    micros += 1000;
 
-                        if (i % 128 == 0) {
-                            connection.commit();
-                        }
+                    if (i % 128 == 0) {
+                        connection.commit();
                     }
-                    connection.commit();
-
-                    try (ResultSet resultSet = connection.prepareStatement("select count() from x").executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expectedAll, sink, resultSet);
-                    }
-
-                    TestUtils.assertEquals(expectedAll, sink);
-
-                    // exercise parameters on select statement
-                    execSelectWithParam(select, 9);
-                    TestUtils.assertEquals("9\n", sink);
-
-                    execSelectWithParam(select, 11);
-                    TestUtils.assertEquals("11\n", sink);
-
                 }
-            } finally {
-                running.set(false);
-                haltLatch.await();
+                connection.commit();
+
+                try (ResultSet resultSet = connection.prepareStatement("select count() from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedAll, sink, resultSet);
+                }
+
+                TestUtils.assertEquals(expectedAll, sink);
+
+                // exercise parameters on select statement
+                execSelectWithParam(select, 9);
+                TestUtils.assertEquals("9\n", sink);
+
+                execSelectWithParam(select, 11);
+                TestUtils.assertEquals("11\n", sink);
+
             }
         });
     }
@@ -1456,31 +1400,10 @@ nodejs code:
     @Test
     public void testMicroTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1, -1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 4;
-                }
-            };
-
-            try (final PGWireServer ignored = PGWireServer.create(
-                    conf,
-                    null,
-                    LOG,
-                    engine,
-                    compiler.getFunctionFactoryCache()
-            )) {
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, true)
+            ) {
                 connection.prepareCall("create table x(t timestamp)").execute();
 
                 PreparedStatement statement = connection.prepareStatement("insert into x values (?)");
@@ -1516,7 +1439,6 @@ nodejs code:
                 PreparedStatement sel = connection.prepareStatement("x");
                 ResultSet res = sel.executeQuery();
                 assertResultSet(expected, sink, res);
-                connection.close();
             }
         });
     }
@@ -1524,22 +1446,10 @@ nodejs code:
     @Test
     public void testMultiplePreparedStatements() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "false");
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false)
+            ) {
                 PreparedStatement ps1 = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
                 PreparedStatement ps2 = connection.prepareStatement("select 4,5,6 from long_sequence(1)");
                 PreparedStatement ps3 = connection.prepareStatement("select 7,8,9 from long_sequence(2)");
@@ -1566,10 +1476,6 @@ nodejs code:
                     s.executeQuery();
                     statement1.executeQuery("select 1 from long_sequence(2)");
                 }
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -1729,22 +1635,10 @@ nodejs code:
     @Test
     public void testPreparedStatement() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "false");
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false)
+            ) {
                 PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
                 Statement statement1 = connection.createStatement();
 
@@ -1760,10 +1654,6 @@ nodejs code:
                     assertResultSet(expected, sink, rs);
                     rs.close();
                 }
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -2059,23 +1949,11 @@ nodejs code:
     @Test
     public void testPreparedStatementTextParams() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false)
+            ) {
 
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "false");
-                TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
                 PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
                 statement.setLong(2, 123L);
@@ -2125,10 +2003,6 @@ nodejs code:
                     assertResultSet(expected, sink, rs);
                     rs.close();
                 }
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -2137,23 +2011,11 @@ nodejs code:
     public void testSchemasCall() throws Exception {
         assertMemoryLeak(() -> {
 
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
+            sink.clear();
 
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                sink.clear();
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (final PGWireServer ignored = createPGServer(2);
+                 final Connection connection = getConnection(false, true)
+            ) {
                 try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("create table test (id long,val int)");
                     statement.executeUpdate("create table test2(id long,val int)");
@@ -2218,10 +2080,6 @@ nodejs code:
                     );
                 }
                 */
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -2265,39 +2123,6 @@ nodejs code:
     }
 
     @Test
-    public void testSimpleErrorReporting() throws Exception {
-        assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("preferQueryMode", "simple");
-
-                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties)) {
-                    connection.prepareCall("drop table xyz;").execute();
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "table 'xyz' does not exist");
-                    TestUtils.assertEquals("00000", e.getSQLState());
-                }
-            } finally {
-                running.set(false);
-                haltLatch.await();
-            }
-        });
-    }
-
-    @Test
     public void testSimpleHex() throws Exception {
         // this is a HEX encoded bytes of the same script as 'testSimple' sends using postgres jdbc driver
         String script = ">0000000804d2162f\n" +
@@ -2318,21 +2143,10 @@ nodejs code:
     @Test
     public void testSimpleSimpleQuery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("preferQueryMode", "simple");
-
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(true, false)
+            ) {
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery(
                         "select " +
@@ -2417,49 +2231,30 @@ nodejs code:
 
                 // dump metadata
                 assertResultSet(expected, sink, rs);
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
 
     @Test
-    public void testSqlSyntaxError() throws SQLException, InterruptedException, BrokenBarrierException {
+    public void testSimpleSyntaxErrorReporting() throws Exception {
+        testSyntaxErrorReporting(true);
+    }
 
-        final CountDownLatch haltLatch = new CountDownLatch(1);
-        final AtomicBoolean running = new AtomicBoolean(true);
-        try {
-            startBasicServer(
-                    NetworkFacadeImpl.INSTANCE,
-                    new DefaultPGWireConfiguration(),
-                    haltLatch,
-                    running
-            );
-
-            Properties properties = new Properties();
-            properties.setProperty("user", "admin");
-            properties.setProperty("password", "quest");
-            properties.setProperty("sslmode", "disable");
-
-            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
-            PreparedStatement statement = connection.prepareStatement("create table x");
-            try {
-                statement.execute();
+    @Test
+    public void testSyntaxErrorSimple() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(4);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                // column does not exits
+                connection.prepareStatement("select x2 from long_sequence(5)").execute();
                 Assert.fail();
             } catch (SQLException e) {
-                assertTrue(e instanceof PSQLException);
-                PSQLException pe = (PSQLException) e;
-                Assert.assertEquals(15, pe.getServerErrorMessage().getPosition());
-                Assert.assertEquals("'(' or 'as' expected", pe.getServerErrorMessage().getMessage());
+                TestUtils.assertContains(e.getMessage(), "Invalid column: x2");
+                TestUtils.assertEquals("00000", e.getSQLState());
             }
-            statement.close();
-            connection.close();
-        } finally {
-            running.set(false);
-            haltLatch.await();
-        }
+        });
     }
 
     /*
@@ -2467,32 +2262,14 @@ nodejs code:
      */
     @Test
     public void testThatTableOidIsSetToZero() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "false");
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
-                PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
-
-                ResultSet rs = statement.executeQuery();
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
+                    final ResultSet rs = statement.executeQuery()
+            ) {
                 assertTrue(((PGResultSetMetaData) rs.getMetaData()).getBaseColumnName(1).isEmpty()); // getBaseColumnName returns "" if tableOid is zero
-                rs.close();
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -2500,53 +2277,69 @@ nodejs code:
     @Test
     public void testUnsupportedParameterType() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)")
+            ) {
+                // TIME is passed over protocol as UNSPECIFIED type
+                // it will rely on date parser to work out what it is
+                // for now date parser does not parse just time, it could i guess if required.
+                statement.setTime(1, new Time(100L));
 
-                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "false");
-
-                try (final Connection ignored = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties)) {
-                    try (PreparedStatement statement = ignored.prepareStatement("select x, ? from long_sequence(5)")) {
-                        // TIME is passed over protocol as UNSPECIFIED type
-                        // it will rely on date parser to work out what it is
-                        // for now date parser does not parse just time, it could i guess if required.
-                        statement.setTime(1, new Time(100L));
-
-                        // todo: we need to pass unspecified parameter type to where clause, where it will be cast to something we support
-                        try (ResultSet rs = statement.executeQuery()) {
-                            StringSink sink = new StringSink();
-                            // dump metadata
-                            assertResultSet(
-                                    "x[BIGINT],$1[VARCHAR]\n" +
-                                            "1,00:00:00.1+00\n" +
-                                            "2,00:00:00.1+00\n" +
-                                            "3,00:00:00.1+00\n" +
-                                            "4,00:00:00.1+00\n" +
-                                            "5,00:00:00.1+00\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
+                // todo: we need to pass unspecified parameter type to where clause, where it will be cast to something we support
+                try (ResultSet rs = statement.executeQuery()) {
+                    StringSink sink = new StringSink();
+                    // dump metadata
+                    assertResultSet(
+                            "x[BIGINT],$1[VARCHAR]\n" +
+                                    "1,00:00:00.1+00\n" +
+                                    "2,00:00:00.1+00\n" +
+                                    "3,00:00:00.1+00\n" +
+                                    "4,00:00:00.1+00\n" +
+                                    "5,00:00:00.1+00\n",
+                            sink,
+                            rs
+                    );
                 }
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
+    }
+
+    // todo: check that we pass parameter types from backend, in that exception should be thrown by client
+    //   when incorrect parameter type is assigned, good example is setting timestamp as long
+
+    // todo: test timestamp from rust
+
+    private PGWireServer createPGServer(int workerCount) {
+
+        final int[] affinity = new int[workerCount];
+        Arrays.fill(affinity, -1);
+
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinity;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
+
+        return PGWireServer.create(
+                conf,
+                null,
+                LOG,
+                engine,
+                compiler.getFunctionFactoryCache()
+        );
     }
 
     @Test
@@ -2612,7 +2405,6 @@ nodejs code:
                         haltLatch,
                         running
                 );
-
                 NetUtils.playScript(clientNf, script, "127.0.0.1", 9120);
             } finally {
                 running.set(false);
@@ -2781,6 +2573,20 @@ nodejs code:
         TestUtils.assertEquals(expected, sink);
     }
 
+    private Connection getConnection(boolean simple, boolean binary) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        if (simple) {
+            properties.setProperty("preferQueryMode", "simple");
+        }
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+    }
+
     private void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
         sink.clear();
         select.setInt(1, value);
@@ -2791,6 +2597,104 @@ nodejs code:
                 sink.put('\n');
             }
         }
+    }
+
+    private void testAllTypesSelect(boolean simple) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(simple, true)
+            ) {
+                CallableStatement stmt = connection.prepareCall(
+                        "create table x as (select" +
+                                " cast(x as int) kk, " +
+                                " rnd_int() a," +
+                                " rnd_boolean() b," + // str
+                                " rnd_str(1,1,2) c," + // str
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) i," + // str
+                                " rnd_long() j," +
+                                " timestamp_sequence(889001, 8890012) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n," +
+                                " rnd_char() cc," + // str
+                                " rnd_long256() l2" + // str
+                                " from long_sequence(15))" // str
+                );
+
+                stmt.execute();
+
+                try (PreparedStatement statement = connection.prepareStatement("x")) {
+                    for (int i = 0; i < 1_000; i++) {
+                        sink.clear();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            // dump metadata
+                            assertResultSet(
+                                    "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[NUMERIC]\n" +
+                                            "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n" +
+                                            "2,-461611463,false,J,0.9687423276940171,0.676,279,2015-11-21 14:32:13.134,HYRX,-6794405451419334859,1970-01-01 00:00:09.779013,6,null,ETJRSZSRYR,F,0x9ff97d73fc0c62d069440048957ae05360802a2ca499f211b771e27f939096b9\n" +
+                                            "3,-1515787781,false,null,0.8001121139739173,0.188,759,2015-06-17 02:40:55.328,CPSW,-4091897709796604687,1970-01-01 00:00:18.669025,6,00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3,DYYCTGQOLYXWCKYL,S,0x26567f4430b46b7f78c594c496995885aa1896d0ad3419d2910aa7b6d58506dc\n" +
+                                            "4,1235206821,true,null,0.9540069089049732,0.255,310,null,VTJW,6623443272143014835,1970-01-01 00:00:27.559037,17,00000000 cc 76 48 a3 bb 64 d2 ad 49 1c f2 3c ed 39 ac,VSJOJIPHZEPIHVLT,O,0x825c96def9f2fcc2b942438168662cb7aa21f9d816335363d27e6df7d9d5b758\n" +
+                                            "5,454820511,false,L,0.9918093114862231,0.324,727,2015-02-10 08:56:03.707,null,5703149806881083206,1970-01-01 00:00:36.449049,36,00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57,WVDKFLOPJOXPK,R,0xa07934b2a15de8e0550988dbaca497348692bc8c04e4bb71d24b84c08ea7606a\n" +
+                                            "6,1728220848,false,O,0.24642266252221556,0.267,174,2015-02-20 01:11:53.748,null,2151565237758036093,1970-01-01 00:00:45.339061,31,null,HZSQLDGLOGIFO,U,0xf0431c7d0a5f126f8531876c963316d961f392242addf45287dd0b29ca2c4c84\n" +
+                                            "7,-120660220,false,B,0.07594017197103131,0.064,542,2015-01-16 16:01:53.328,VTJW,5048272224871876586,1970-01-01 00:00:54.229073,23,00000000 f5 0f 2d b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35\n" +
+                                            "00000010 e4 3a dc 5c,ULIGYVFZ,F,0xa15aae5b999db11899193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5\n" +
+                                            "8,-1548274994,true,X,0.9292491654871197,null,523,2015-01-05 19:01:46.416,HYRX,9044897286885345735,1970-01-01 00:01:03.119085,16,00000000 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1 e3 ee 58 35\n" +
+                                            "00000010 61,MXSLUQDYOPHNIMYF,F,0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\n" +
+                                            "9,1430716856,false,P,0.7707249647497968,null,162,2015-02-05 10:14:02.889,null,7046578844650327247,1970-01-01 00:01:12.009097,47,null,LEGPUHHIUGGLNYR,Z,0x5565337913b499af36be4fe79117ebd53756b77218c738a7737b1dacd6be5971\n" +
+                                            "10,-772867311,false,Q,0.7653255982993546,null,681,2015-05-07 02:45:07.603,null,4794469881975683047,1970-01-01 00:01:20.899109,31,00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
+                                            "00000010 a0 dd,VTNPIW,Z,0x6bfac0b6e487d3532d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe\n" +
+                                            "11,494704403,true,C,0.4834201611292943,0.794,28,2015-06-16 21:00:55.459,HYRX,6785355388782691241,1970-01-01 00:01:29.789121,39,null,RVNGSTEQOD,R,0xc82c35a389f834dababcd0482f05618f926cdd99e63abb35650d1fb462d014df\n" +
+                                            "12,-173290754,true,K,0.7198854503668188,null,114,2015-06-15 20:39:39.538,VTJW,9064962137287142402,1970-01-01 00:01:38.679133,20,00000000 3b 94 5f ec d3 dc f8 43 b2 e3,TIZKYFLUHZQSNPX,M,0x5073897a288aa6cf74c509677990f1c962588b84eddb7b4a64a4822086748dc4\n" +
+                                            "13,-2041781509,true,E,0.44638626240707313,0.035,605,null,VTJW,415951511685691973,1970-01-01 00:01:47.569145,28,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35,null,V,0xab059a2342cb232f543554ee7efea2c341b1a691af3ce51f91a63337ac2e9683\n" +
+                                            "14,813111021,true,null,0.1389067130304884,0.373,259,null,CPSW,4422067104162111415,1970-01-01 00:01:56.459157,19,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9,PNXHQUTZODWKOC,P,0x09debd6254b1776d50902704a317faeea7fc3b8563ada5ab985499c7f07368a3\n" +
+                                            "15,980916820,false,C,0.8353079103853974,0.011,670,2015-10-06 01:12:57.175,null,7536661420632276058,1970-01-01 00:02:05.349169,37,null,FDBZWNIJEE,H,0xa6d100033dcaf68cb265942d3a1f96a1cff85f9258847e03a6f2e2a772cd2f37\n",
+                                    sink,
+                                    rs
+                            );
+                        }
+                    }
+                }
+
+                // run some random SQLs
+                final String header = "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[NUMERIC]\n";
+
+                final String[] results = {
+                        "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n",
+                        "2,-461611463,false,J,0.9687423276940171,0.676,279,2015-11-21 14:32:13.134,HYRX,-6794405451419334859,1970-01-01 00:00:09.779013,6,null,ETJRSZSRYR,F,0x9ff97d73fc0c62d069440048957ae05360802a2ca499f211b771e27f939096b9\n",
+                        "3,-1515787781,false,null,0.8001121139739173,0.188,759,2015-06-17 02:40:55.328,CPSW,-4091897709796604687,1970-01-01 00:00:18.669025,6,00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3,DYYCTGQOLYXWCKYL,S,0x26567f4430b46b7f78c594c496995885aa1896d0ad3419d2910aa7b6d58506dc\n",
+                        "4,1235206821,true,null,0.9540069089049732,0.255,310,null,VTJW,6623443272143014835,1970-01-01 00:00:27.559037,17,00000000 cc 76 48 a3 bb 64 d2 ad 49 1c f2 3c ed 39 ac,VSJOJIPHZEPIHVLT,O,0x825c96def9f2fcc2b942438168662cb7aa21f9d816335363d27e6df7d9d5b758\n",
+                        "5,454820511,false,L,0.9918093114862231,0.324,727,2015-02-10 08:56:03.707,null,5703149806881083206,1970-01-01 00:00:36.449049,36,00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57,WVDKFLOPJOXPK,R,0xa07934b2a15de8e0550988dbaca497348692bc8c04e4bb71d24b84c08ea7606a\n",
+                        "6,1728220848,false,O,0.24642266252221556,0.267,174,2015-02-20 01:11:53.748,null,2151565237758036093,1970-01-01 00:00:45.339061,31,null,HZSQLDGLOGIFO,U,0xf0431c7d0a5f126f8531876c963316d961f392242addf45287dd0b29ca2c4c84\n",
+                        "7,-120660220,false,B,0.07594017197103131,0.064,542,2015-01-16 16:01:53.328,VTJW,5048272224871876586,1970-01-01 00:00:54.229073,23,00000000 f5 0f 2d b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35\n" +
+                                "00000010 e4 3a dc 5c,ULIGYVFZ,F,0xa15aae5b999db11899193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5\n",
+                        "8,-1548274994,true,X,0.9292491654871197,null,523,2015-01-05 19:01:46.416,HYRX,9044897286885345735,1970-01-01 00:01:03.119085,16,00000000 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1 e3 ee 58 35\n" +
+                                "00000010 61,MXSLUQDYOPHNIMYF,F,0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\n",
+                        "9,1430716856,false,P,0.7707249647497968,null,162,2015-02-05 10:14:02.889,null,7046578844650327247,1970-01-01 00:01:12.009097,47,null,LEGPUHHIUGGLNYR,Z,0x5565337913b499af36be4fe79117ebd53756b77218c738a7737b1dacd6be5971\n",
+                        "10,-772867311,false,Q,0.7653255982993546,null,681,2015-05-07 02:45:07.603,null,4794469881975683047,1970-01-01 00:01:20.899109,31,00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
+                                "00000010 a0 dd,VTNPIW,Z,0x6bfac0b6e487d3532d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe\n",
+                        "11,494704403,true,C,0.4834201611292943,0.794,28,2015-06-16 21:00:55.459,HYRX,6785355388782691241,1970-01-01 00:01:29.789121,39,null,RVNGSTEQOD,R,0xc82c35a389f834dababcd0482f05618f926cdd99e63abb35650d1fb462d014df\n",
+                        "12,-173290754,true,K,0.7198854503668188,null,114,2015-06-15 20:39:39.538,VTJW,9064962137287142402,1970-01-01 00:01:38.679133,20,00000000 3b 94 5f ec d3 dc f8 43 b2 e3,TIZKYFLUHZQSNPX,M,0x5073897a288aa6cf74c509677990f1c962588b84eddb7b4a64a4822086748dc4\n",
+                        "13,-2041781509,true,E,0.44638626240707313,0.035,605,null,VTJW,415951511685691973,1970-01-01 00:01:47.569145,28,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35,null,V,0xab059a2342cb232f543554ee7efea2c341b1a691af3ce51f91a63337ac2e9683\n",
+                        "14,813111021,true,null,0.1389067130304884,0.373,259,null,CPSW,4422067104162111415,1970-01-01 00:01:56.459157,19,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9,PNXHQUTZODWKOC,P,0x09debd6254b1776d50902704a317faeea7fc3b8563ada5ab985499c7f07368a3\n",
+                        "15,980916820,false,C,0.8353079103853974,0.011,670,2015-10-06 01:12:57.175,null,7536661420632276058,1970-01-01 00:02:05.349169,37,null,FDBZWNIJEE,H,0xa6d100033dcaf68cb265942d3a1f96a1cff85f9258847e03a6f2e2a772cd2f37\n"
+                };
+
+                for (int i = 0; i < 20_000; i++) {
+                    sink.clear();
+                    int index = (i % 1000) + 1;
+                    try (PreparedStatement statement = connection.prepareStatement("x where kk = " + index)) {
+                        try (ResultSet rs = statement.executeQuery()) {
+                            assertResultSet(header + (index - 1 < results.length ? results[index - 1] : ""), sink, rs);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @NotNull
@@ -2874,124 +2778,6 @@ nodejs code:
             }
         }).start();
         barrier.await();
-    }
-
-    private void testAllTypesSelect(boolean simple) throws Exception {
-        assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "true");
-                if (simple) {
-                    properties.setProperty("preferQueryMode", "simple");
-                }
-
-                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties)) {
-                    CallableStatement stmt = connection.prepareCall(
-                            "create table x as (select" +
-                                    " cast(x as int) kk, " +
-                                    " rnd_int() a," +
-                                    " rnd_boolean() b," + // str
-                                    " rnd_str(1,1,2) c," + // str
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) i," + // str
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(889001, 8890012) k," +
-                                    " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n," +
-                                    " rnd_char() cc," + // str
-                                    " rnd_long256() l2" + // str
-                                    " from long_sequence(15))" // str
-                    );
-
-                    stmt.execute();
-
-                    try (PreparedStatement statement = connection.prepareStatement("x")) {
-                        for (int i = 0; i < 1_000; i++) {
-                            sink.clear();
-                            try (ResultSet rs = statement.executeQuery()) {
-                                // dump metadata
-                                assertResultSet(
-                                        "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[NUMERIC]\n" +
-                                                "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n" +
-                                                "2,-461611463,false,J,0.9687423276940171,0.676,279,2015-11-21 14:32:13.134,HYRX,-6794405451419334859,1970-01-01 00:00:09.779013,6,null,ETJRSZSRYR,F,0x9ff97d73fc0c62d069440048957ae05360802a2ca499f211b771e27f939096b9\n" +
-                                                "3,-1515787781,false,null,0.8001121139739173,0.188,759,2015-06-17 02:40:55.328,CPSW,-4091897709796604687,1970-01-01 00:00:18.669025,6,00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3,DYYCTGQOLYXWCKYL,S,0x26567f4430b46b7f78c594c496995885aa1896d0ad3419d2910aa7b6d58506dc\n" +
-                                                "4,1235206821,true,null,0.9540069089049732,0.255,310,null,VTJW,6623443272143014835,1970-01-01 00:00:27.559037,17,00000000 cc 76 48 a3 bb 64 d2 ad 49 1c f2 3c ed 39 ac,VSJOJIPHZEPIHVLT,O,0x825c96def9f2fcc2b942438168662cb7aa21f9d816335363d27e6df7d9d5b758\n" +
-                                                "5,454820511,false,L,0.9918093114862231,0.324,727,2015-02-10 08:56:03.707,null,5703149806881083206,1970-01-01 00:00:36.449049,36,00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57,WVDKFLOPJOXPK,R,0xa07934b2a15de8e0550988dbaca497348692bc8c04e4bb71d24b84c08ea7606a\n" +
-                                                "6,1728220848,false,O,0.24642266252221556,0.267,174,2015-02-20 01:11:53.748,null,2151565237758036093,1970-01-01 00:00:45.339061,31,null,HZSQLDGLOGIFO,U,0xf0431c7d0a5f126f8531876c963316d961f392242addf45287dd0b29ca2c4c84\n" +
-                                                "7,-120660220,false,B,0.07594017197103131,0.064,542,2015-01-16 16:01:53.328,VTJW,5048272224871876586,1970-01-01 00:00:54.229073,23,00000000 f5 0f 2d b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35\n" +
-                                                "00000010 e4 3a dc 5c,ULIGYVFZ,F,0xa15aae5b999db11899193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5\n" +
-                                                "8,-1548274994,true,X,0.9292491654871197,null,523,2015-01-05 19:01:46.416,HYRX,9044897286885345735,1970-01-01 00:01:03.119085,16,00000000 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1 e3 ee 58 35\n" +
-                                                "00000010 61,MXSLUQDYOPHNIMYF,F,0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\n" +
-                                                "9,1430716856,false,P,0.7707249647497968,null,162,2015-02-05 10:14:02.889,null,7046578844650327247,1970-01-01 00:01:12.009097,47,null,LEGPUHHIUGGLNYR,Z,0x5565337913b499af36be4fe79117ebd53756b77218c738a7737b1dacd6be5971\n" +
-                                                "10,-772867311,false,Q,0.7653255982993546,null,681,2015-05-07 02:45:07.603,null,4794469881975683047,1970-01-01 00:01:20.899109,31,00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
-                                                "00000010 a0 dd,VTNPIW,Z,0x6bfac0b6e487d3532d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe\n" +
-                                                "11,494704403,true,C,0.4834201611292943,0.794,28,2015-06-16 21:00:55.459,HYRX,6785355388782691241,1970-01-01 00:01:29.789121,39,null,RVNGSTEQOD,R,0xc82c35a389f834dababcd0482f05618f926cdd99e63abb35650d1fb462d014df\n" +
-                                                "12,-173290754,true,K,0.7198854503668188,null,114,2015-06-15 20:39:39.538,VTJW,9064962137287142402,1970-01-01 00:01:38.679133,20,00000000 3b 94 5f ec d3 dc f8 43 b2 e3,TIZKYFLUHZQSNPX,M,0x5073897a288aa6cf74c509677990f1c962588b84eddb7b4a64a4822086748dc4\n" +
-                                                "13,-2041781509,true,E,0.44638626240707313,0.035,605,null,VTJW,415951511685691973,1970-01-01 00:01:47.569145,28,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35,null,V,0xab059a2342cb232f543554ee7efea2c341b1a691af3ce51f91a63337ac2e9683\n" +
-                                                "14,813111021,true,null,0.1389067130304884,0.373,259,null,CPSW,4422067104162111415,1970-01-01 00:01:56.459157,19,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9,PNXHQUTZODWKOC,P,0x09debd6254b1776d50902704a317faeea7fc3b8563ada5ab985499c7f07368a3\n" +
-                                                "15,980916820,false,C,0.8353079103853974,0.011,670,2015-10-06 01:12:57.175,null,7536661420632276058,1970-01-01 00:02:05.349169,37,null,FDBZWNIJEE,H,0xa6d100033dcaf68cb265942d3a1f96a1cff85f9258847e03a6f2e2a772cd2f37\n",
-                                        sink,
-                                        rs
-                                );
-                            }
-                        }
-                    }
-
-                    // run some random SQLs
-                    final String header = "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[NUMERIC]\n";
-
-                    final String[] results = {
-                            "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49,FOWLPD,X,0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\n",
-                            "2,-461611463,false,J,0.9687423276940171,0.676,279,2015-11-21 14:32:13.134,HYRX,-6794405451419334859,1970-01-01 00:00:09.779013,6,null,ETJRSZSRYR,F,0x9ff97d73fc0c62d069440048957ae05360802a2ca499f211b771e27f939096b9\n",
-                            "3,-1515787781,false,null,0.8001121139739173,0.188,759,2015-06-17 02:40:55.328,CPSW,-4091897709796604687,1970-01-01 00:00:18.669025,6,00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3,DYYCTGQOLYXWCKYL,S,0x26567f4430b46b7f78c594c496995885aa1896d0ad3419d2910aa7b6d58506dc\n",
-                            "4,1235206821,true,null,0.9540069089049732,0.255,310,null,VTJW,6623443272143014835,1970-01-01 00:00:27.559037,17,00000000 cc 76 48 a3 bb 64 d2 ad 49 1c f2 3c ed 39 ac,VSJOJIPHZEPIHVLT,O,0x825c96def9f2fcc2b942438168662cb7aa21f9d816335363d27e6df7d9d5b758\n",
-                            "5,454820511,false,L,0.9918093114862231,0.324,727,2015-02-10 08:56:03.707,null,5703149806881083206,1970-01-01 00:00:36.449049,36,00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57,WVDKFLOPJOXPK,R,0xa07934b2a15de8e0550988dbaca497348692bc8c04e4bb71d24b84c08ea7606a\n",
-                            "6,1728220848,false,O,0.24642266252221556,0.267,174,2015-02-20 01:11:53.748,null,2151565237758036093,1970-01-01 00:00:45.339061,31,null,HZSQLDGLOGIFO,U,0xf0431c7d0a5f126f8531876c963316d961f392242addf45287dd0b29ca2c4c84\n",
-                            "7,-120660220,false,B,0.07594017197103131,0.064,542,2015-01-16 16:01:53.328,VTJW,5048272224871876586,1970-01-01 00:00:54.229073,23,00000000 f5 0f 2d b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35\n" +
-                                    "00000010 e4 3a dc 5c,ULIGYVFZ,F,0xa15aae5b999db11899193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5\n",
-                            "8,-1548274994,true,X,0.9292491654871197,null,523,2015-01-05 19:01:46.416,HYRX,9044897286885345735,1970-01-01 00:01:03.119085,16,00000000 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1 e3 ee 58 35\n" +
-                                    "00000010 61,MXSLUQDYOPHNIMYF,F,0x20cfa22cd22bf054483c83d88ac674e3894499a1a1680580cfedff23a67d918f\n",
-                            "9,1430716856,false,P,0.7707249647497968,null,162,2015-02-05 10:14:02.889,null,7046578844650327247,1970-01-01 00:01:12.009097,47,null,LEGPUHHIUGGLNYR,Z,0x5565337913b499af36be4fe79117ebd53756b77218c738a7737b1dacd6be5971\n",
-                            "10,-772867311,false,Q,0.7653255982993546,null,681,2015-05-07 02:45:07.603,null,4794469881975683047,1970-01-01 00:01:20.899109,31,00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
-                                    "00000010 a0 dd,VTNPIW,Z,0x6bfac0b6e487d3532d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe\n",
-                            "11,494704403,true,C,0.4834201611292943,0.794,28,2015-06-16 21:00:55.459,HYRX,6785355388782691241,1970-01-01 00:01:29.789121,39,null,RVNGSTEQOD,R,0xc82c35a389f834dababcd0482f05618f926cdd99e63abb35650d1fb462d014df\n",
-                            "12,-173290754,true,K,0.7198854503668188,null,114,2015-06-15 20:39:39.538,VTJW,9064962137287142402,1970-01-01 00:01:38.679133,20,00000000 3b 94 5f ec d3 dc f8 43 b2 e3,TIZKYFLUHZQSNPX,M,0x5073897a288aa6cf74c509677990f1c962588b84eddb7b4a64a4822086748dc4\n",
-                            "13,-2041781509,true,E,0.44638626240707313,0.035,605,null,VTJW,415951511685691973,1970-01-01 00:01:47.569145,28,00000000 00 7c fb 01 19 ca f2 bf 84 5a 6f 38 35,null,V,0xab059a2342cb232f543554ee7efea2c341b1a691af3ce51f91a63337ac2e9683\n",
-                            "14,813111021,true,null,0.1389067130304884,0.373,259,null,CPSW,4422067104162111415,1970-01-01 00:01:56.459157,19,00000000 2d 16 f3 89 a3 83 64 de d6 fd c4 5b c4 e9,PNXHQUTZODWKOC,P,0x09debd6254b1776d50902704a317faeea7fc3b8563ada5ab985499c7f07368a3\n",
-                            "15,980916820,false,C,0.8353079103853974,0.011,670,2015-10-06 01:12:57.175,null,7536661420632276058,1970-01-01 00:02:05.349169,37,null,FDBZWNIJEE,H,0xa6d100033dcaf68cb265942d3a1f96a1cff85f9258847e03a6f2e2a772cd2f37\n"
-                    };
-
-                    for (int i = 0; i < 20_000; i++) {
-                        sink.clear();
-                        int index = (i % 1000) + 1;
-                        try (PreparedStatement statement = connection.prepareStatement("x where kk = " + index)) {
-                            try (ResultSet rs = statement.executeQuery()) {
-                                assertResultSet(header + (index - 1 < results.length ? results[index - 1] : ""), sink, rs);
-                            }
-                        }
-                    }
-                }
-            } finally {
-                running.set(false);
-                haltLatch.await();
-            }
-        });
     }
 
     private void testInsert0(boolean simpleQueryMode, boolean binary) throws Exception {
@@ -3089,90 +2875,246 @@ nodejs code:
                     "88,2011-04-11 00:00:00.0,2011-04-11 14:40:55.086821,2011-04-11 14:40:55.86,2011-04-11 14:39:50.4,2011-04-11 14:40:55.086821\n" +
                     "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.87,2011-04-11 14:39:50.4,2011-04-11 14:40:55.087821\n";
 
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
+            try (
+                    final PGWireServer ignored = createPGServer(4);
+                    final Connection connection = getConnection(simpleQueryMode, binary)
+            ) {
+                //
+                // test methods of inserting QuestDB's DATA and TIMESTAMP values
+                //
+                final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, t2 timestamp) timestamp(t)");
+                statement.execute();
 
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", Boolean.toString(binary));
-                if (simpleQueryMode) {
-                    properties.setProperty("preferQueryMode", "simple");
+                // exercise parameters on select statement
+                PreparedStatement select = connection.prepareStatement("x where a = ?");
+                execSelectWithParam(select, 9);
+
+
+                try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?)")) {
+                    long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                    for (int i = 0; i < 90; i++) {
+                        insert.setInt(1, i);
+                        // DATE as jdbc's DATE
+                        // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
+                        // just date
+                        insert.setDate(2, new Date(micros / 1000));
+
+                        // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
+                        insert.setTimestamp(3, new Timestamp(micros));
+
+                        // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
+                        insert.setTimestamp(4, new Timestamp(micros / 1000L));
+
+                        // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
+                        insert.setDate(5, new Date(micros));
+
+                        // TIMESTAMP as PG specific TIMESTAMP type
+                        insert.setTimestamp(6, new PGTimestamp(micros));
+
+                        insert.execute();
+                        Assert.assertEquals(1, insert.getUpdateCount());
+                        micros += 1000;
+                    }
                 }
 
-                TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedAll, sink, resultSet);
+                }
 
-                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
-                    //
-                    // test methods of inserting QuestDB's DATA and TIMESTAMP values
-                    //
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, t2 timestamp) timestamp(t)");
-                    statement.execute();
+                TestUtils.assertEquals(expectedAll, sink);
 
-                    // exercise parameters on select statement
-                    PreparedStatement select = connection.prepareStatement("x where a = ?");
-                    execSelectWithParam(select, 9);
+                // exercise parameters on select statement
+                execSelectWithParam(select, 9);
+                TestUtils.assertEquals("9\n", sink);
 
+                execSelectWithParam(select, 11);
+                TestUtils.assertEquals("11\n", sink);
 
-                    try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?)")) {
-                        long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
-                        for (int i = 0; i < 90; i++) {
-                            insert.setInt(1, i);
-                            // DATE as jdbc's DATE
-                            // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
-                            // just date
-                            insert.setDate(2, new Date(micros / 1000));
+            }
+        });
+    }
 
-                            // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
-                            insert.setTimestamp(3, new Timestamp(micros));
+    private void testInsertAllTypes(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz (" +
+                            "a byte," +
+                            "b char," +
+                            "c short," +
+                            "d int," +
+                            "e long," +
+                            "f float," +
+                            "g double," +
+                            "h string," +
+                            "i symbol," +
+                            "j boolean," +
+                            "k long256" +
+                            ")",
+                    sqlExecutionContext
+            );
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, binary);
+                    final PreparedStatement insert = connection.prepareStatement(
+                            "insert into xyz values (?,?,?,?,?,?,?,?,?,?,?)"
+                    )
+            ) {
+                final Rnd rnd = new Rnd();
+                connection.setAutoCommit(false);
+                for (int i = 0; i < 10_000; i++) {
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setByte(1, rnd.nextByte());
+                    } else {
+                        insert.setNull(1, Types.SMALLINT);
+                    }
 
-                            // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
-                            insert.setTimestamp(4, new Timestamp(micros / 1000L));
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setByte(2, (byte) rnd.nextChar());
+                    } else {
+                        insert.setNull(2, Types.SMALLINT);
+                    }
 
-                            // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
-                            insert.setDate(5, new Date(micros));
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setShort(3, rnd.nextShort());
+                    } else {
+                        insert.setNull(3, Types.SMALLINT);
+                    }
 
-//                            // DATE as LONG millis
-//                            insert.setLong(6, micros / 1000L);
-//
-//                            // TIMESTAMP as LONG micros
-//                            insert.setLong(7, micros);
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setInt(4, rnd.nextInt());
+                    } else {
+                        insert.setNull(4, Types.INTEGER);
+                    }
 
-                            // TIMESTAMP as PG specific TIMESTAMP type
-                            insert.setTimestamp(6, new PGTimestamp(micros));
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setLong(5, rnd.nextLong());
+                    } else {
+                        insert.setNull(5, Types.BIGINT);
+                    }
 
-                            insert.execute();
-                            Assert.assertEquals(1, insert.getUpdateCount());
-                            micros += 1000;
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setFloat(6, rnd.nextFloat());
+                    } else {
+                        insert.setNull(6, Types.REAL);
+                    }
+
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setDouble(7, rnd.nextDouble());
+                    } else {
+                        insert.setNull(7, Types.FLOAT);
+                    }
+
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setString(8, "hello21");
+                    } else {
+                        insert.setNull(8, Types.VARCHAR);
+                    }
+
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setString(9, "bus");
+                    } else {
+                        insert.setNull(9, Types.VARCHAR);
+                    }
+
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setBoolean(10, true);
+                    } else {
+                        insert.setNull(10, Types.BOOLEAN);
+                    }
+
+                    if (rnd.nextInt() % 4 > 0) {
+                        insert.setString(11, "05a9796963abad00001e5f6bbdb38");
+                    } else {
+                        insert.setNull(11, Types.VARCHAR);
+                    }
+                    insert.execute();
+                    Assert.assertEquals(1, insert.getUpdateCount());
+                }
+                connection.commit();
+
+                rnd.reset();
+                try (RecordCursorFactory factory = compiler.compile("xyz", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final Record record = cursor.getRecord();
+                        int count = 0;
+                        while (cursor.hasNext()) {
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                Assert.assertEquals(rnd.nextByte(), record.getByte(0));
+                            } else {
+                                Assert.assertEquals(0, record.getByte(0));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                Assert.assertEquals(rnd.nextChar(), record.getChar(1));
+                            } else {
+                                Assert.assertEquals(0, record.getChar(1));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                Assert.assertEquals(rnd.nextShort(), record.getShort(2));
+                            } else {
+                                Assert.assertEquals(0, record.getShort(2));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                Assert.assertEquals(rnd.nextInt(), record.getInt(3));
+                            } else {
+                                Assert.assertEquals(Numbers.INT_NaN, record.getInt(3));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                Assert.assertEquals(rnd.nextLong(), record.getLong(4));
+                            } else {
+                                Assert.assertEquals(Numbers.LONG_NaN, record.getLong(4));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                Assert.assertEquals(rnd.nextFloat(), record.getFloat(5), 0.0001f);
+                            } else {
+                                Assert.assertTrue(record.getFloat(5) != record.getFloat(5));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                Assert.assertEquals(rnd.nextDouble(), record.getDouble(6), 0.000001);
+                            } else {
+                                Assert.assertTrue(record.getDouble(6) != record.getDouble(6));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                TestUtils.assertEquals("hello21", record.getStr(7));
+                            } else {
+                                Assert.assertNull(record.getStr(7));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                TestUtils.assertEquals("bus", record.getSym(8));
+                            } else {
+                                Assert.assertNull(record.getSym(8));
+                            }
+
+                            if (rnd.nextInt() % 4 > 0) {
+                                Assert.assertTrue(record.getBool(9));
+                            } else {
+                                Assert.assertFalse(record.getBool(9));
+                            }
+
+                            sink.clear();
+                            if (rnd.nextInt() % 4 > 0) {
+
+//                                insert.setString(11, "05a9796963abad00001e5f6bbdb38");
+                            } else {
+
+                                record.getLong256(10, sink);
+//                                insert.setNull(11, Types.VARCHAR);
+                            }
+
+                            count++;
                         }
+
+                        Assert.assertEquals(10_000, count);
                     }
-
-                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expectedAll, sink, resultSet);
-                    }
-
-                    TestUtils.assertEquals(expectedAll, sink);
-
-                    // exercise parameters on select statement
-                    execSelectWithParam(select, 9);
-                    TestUtils.assertEquals("9\n", sink);
-
-                    execSelectWithParam(select, 11);
-                    TestUtils.assertEquals("11\n", sink);
-
                 }
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -3184,51 +3126,31 @@ nodejs code:
         // 3. drop table
         // 4. attempt to insert a record (should fail)
         assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(simple, true)
+            ) {
+                PreparedStatement statement = connection.prepareStatement("create table x (a int)");
+                statement.execute();
 
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
+                // exercise parameters on select statement
+                PreparedStatement select = connection.prepareStatement("x where a = ?");
+                execSelectWithParam(select, 9);
 
-                if (simple) {
-                    properties.setProperty("preferQueryMode", "simple");
-                }
+                PreparedStatement insert = connection.prepareStatement("insert into x (a) values (?)");
+                insert.setInt(1, 1);
+                insert.execute();
 
-                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
-                    PreparedStatement statement = connection.prepareStatement("create table x (a int)");
-                    statement.execute();
+                PreparedStatement drop = connection.prepareStatement("drop table x");
+                drop.execute();
 
-                    // exercise parameters on select statement
-                    PreparedStatement select = connection.prepareStatement("x where a = ?");
-                    execSelectWithParam(select, 9);
-
-                    PreparedStatement insert = connection.prepareStatement("insert into x (a) values (?)");
-                    insert.setInt(1, 1);
+                try {
+                    insert.setInt(1, 10);
                     insert.execute();
-
-                    PreparedStatement drop = connection.prepareStatement("drop table x");
-                    drop.execute();
-
-                    try {
-                        insert.setInt(1, 10);
-                        insert.execute();
-                        Assert.fail();
-                    } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), expectedError);
-                    }
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), expectedError);
                 }
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -3347,33 +3269,27 @@ nodejs code:
 
     private void testSemicolon(boolean simpleQueryMode) throws Exception {
         assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(simpleQueryMode, true);
+                    final PreparedStatement statement = connection.prepareStatement(";;")
+            ) {
+                statement.execute();
+            }
+        });
+    }
 
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                if (simpleQueryMode) {
-                    properties.setProperty("preferQueryMode", "simple");
-                }
-
-                try (final Connection connection = DriverManager.getConnection("jdbc:postgresql://localhost:9120/qdb", properties)) {
-                    try (final PreparedStatement statement = connection.prepareStatement(";;")) {
-                        statement.execute();
-                    }
-                }
-            } finally {
-                running.set(false);
-                haltLatch.await();
+    private void testSyntaxErrorReporting(boolean simple) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(simple, true)
+            ) {
+                connection.prepareCall("drop table xyz;").execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "table 'xyz' does not exist");
+                TestUtils.assertEquals("00000", e.getSQLState());
             }
         });
     }

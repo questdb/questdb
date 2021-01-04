@@ -26,21 +26,34 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 
-public class Long256Impl implements Long256Sink, Long256, Sinkable {
+public class Long256Impl implements Long256Sink, Long256, Sinkable, Long256Acceptor {
 
     public static final Long256Impl NULL_LONG256 = new Long256Impl();
-
-    static {
-        NULL_LONG256.setLong0(Numbers.LONG_NaN);
-        NULL_LONG256.setLong1(Numbers.LONG_NaN);
-        NULL_LONG256.setLong2(Numbers.LONG_NaN);
-        NULL_LONG256.setLong3(Numbers.LONG_NaN);
-    }
-
     private long l0;
     private long l1;
     private long l2;
     private long l3;
+
+    public static void putNull(long appendPointer) {
+        Unsafe.getUnsafe().putLong(appendPointer, NULL_LONG256.getLong0());
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, NULL_LONG256.getLong1());
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, NULL_LONG256.getLong2());
+        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, NULL_LONG256.getLong3());
+    }
+
+    public void copyFrom(Long256 value) {
+        this.l0 = value.getLong0();
+        this.l1 = value.getLong1();
+        this.l2 = value.getLong2();
+        this.l3 = value.getLong3();
+    }
+
+    @SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
+    @Override
+    public boolean equals(Object obj) {
+        final Long256Impl that = (Long256Impl) obj;
+        return l0 == that.l0 && l1 == that.l1 && l2 == that.l2 && l3 == that.l3;
+    }
 
     @Override
     public long getLong0() {
@@ -82,18 +95,12 @@ public class Long256Impl implements Long256Sink, Long256, Sinkable {
         this.l3 = value;
     }
 
-    @SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
     @Override
-    public boolean equals(Object obj) {
-        final Long256Impl that = (Long256Impl) obj;
-        return l0 == that.l0 && l1 == that.l1 && l2 == that.l2 && l3 == that.l3;
-    }
-
-    public void copyFrom(Long256 value) {
-        this.l0 = value.getLong0();
-        this.l1 = value.getLong1();
-        this.l2 = value.getLong2();
-        this.l3 = value.getLong3();
+    public void onDecoded(long l0, long l1, long l2, long l3) {
+        this.l0 = l0;
+        this.l1 = l1;
+        this.l2 = l2;
+        this.l3 = l3;
     }
 
     public void setAll(long l0, long l1, long l2, long l3) {
@@ -106,5 +113,12 @@ public class Long256Impl implements Long256Sink, Long256, Sinkable {
     @Override
     public void toSink(CharSink sink) {
         Numbers.appendLong256(l0, l1, l2, l3, sink);
+    }
+
+    static {
+        NULL_LONG256.setLong0(Numbers.LONG_NaN);
+        NULL_LONG256.setLong1(Numbers.LONG_NaN);
+        NULL_LONG256.setLong2(Numbers.LONG_NaN);
+        NULL_LONG256.setLong3(Numbers.LONG_NaN);
     }
 }

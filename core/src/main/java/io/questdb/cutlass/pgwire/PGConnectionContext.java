@@ -65,9 +65,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INIT_CANCEL_REQUEST = 80877102;
-    private static final int TAIL_NONE = 0;
-    private static final int TAIL_SUCCESS = 1;
-    private static final int TAIL_ERROR = 2;
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
     private static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
@@ -119,7 +116,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final IntList syncActions = new IntList(4);
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
-    private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean requireInitialMessage = false;
     private long recvBufferWriteOffset = 0;
@@ -179,6 +175,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.locale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
+        this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -239,7 +236,6 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     @Override
     public void clear() {
-        sendCurrentCursorTail = TAIL_NONE;
         sendBufferPtr = sendBuffer;
         requireInitialMessage = true;
         bufferRemainingOffset = 0;
@@ -368,8 +364,19 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
             clearRecvBuffer();
         } catch (SqlException e) {
-            sendExecuteTail(TAIL_ERROR);
-            clearRecvBuffer();
+            reportError(e.getPosition(), e.getFlyweightMessage());
+        } catch (CairoException e) {
+            reportError(-1, e.getFlyweightMessage());
+        }
+    }
+
+    private void doAuthentication(long msgLo, long msgLimit) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
+        if (cairoSecurityContext != null) {
+            sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, null);
+            authenticationRequired = false;
+            prepareLoginOk();
+            sendAndReset();
         }
     }
 
@@ -1002,7 +1009,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         // this is a PARSE message asking us to setup named SQL
         // we need to keep SQL text in case our SQL cache expires
         // as well as PG types of the bind variables, which we will need to configure setters
-        LOG.debug().$("'P' statement [name=").$(statementName).$(']').$();
         wrapper = namedStatementMap.get(statementName);
         // todo: check if this can ever be null, perhaps only by exception or protocol violation
         assert wrapper == null;
@@ -1014,21 +1020,31 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
     }
 
-    private void doAuthentication(long msgLo, long msgLimit) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
-        CairoSecurityContext cairoSecurityContext;
+    private void executeInsert() {
         try {
-            cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
-        } catch (SqlException e) {
-            prepareError(e);
-            sendAndReset();
-            return;
-        }
-
-        if (cairoSecurityContext != null) {
-            sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, null);
-            authenticationRequired = false;
-            prepareLoginOk();
-            sendAndReset();
+            switch (transactionState) {
+                case IN_TRANSACTION:
+                    final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext);
+                    rowCount = m.execute();
+                    pendingInsertMethods.add(m);
+                    break;
+                case ERROR_TRANSACTION:
+                    // when transaction is in error state, skip execution
+                    break;
+                default:
+                    // in any other case we will commit in place
+                    try (final InsertMethod m2 = typesAndInsert.getInsert().createMethod(sqlExecutionContext)) {
+                        rowCount = m2.execute();
+                        m2.commit();
+                    }
+                    break;
+            }
+            prepareCommandComplete(true);
+        } catch (CairoException e) {
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
+            throw e;
         }
     }
 
@@ -1093,55 +1109,21 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void executeInsert() {
-        try {
-            switch (transactionState) {
-                case IN_TRANSACTION:
-                    final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext);
-                    rowCount = m.execute();
-                    pendingInsertMethods.add(m);
-                    break;
-                case ERROR_TRANSACTION:
-                    // when transaction is in error state, skip execution
-                    break;
-                default:
-                    // in any other case we will commit in place
-                    try (final InsertMethod m2 = typesAndInsert.getInsert().createMethod(sqlExecutionContext)) {
-                        rowCount = m2.execute();
-                        m2.commit();
-                    }
-                    break;
-            }
-            sendCurrentCursorTail = TAIL_SUCCESS;
-            prepareExecuteTail(true);
-        } catch (CairoException e) {
-            LOG.error().$(e.getFlyweightMessage()).$();
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
-            // todo: this is a mess
-            responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-            final long addr = responseAsciiSink.skip();
-            responseAsciiSink.put('M');
-            responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
-            responseAsciiSink.put('S');
-            responseAsciiSink.encodeUtf8Z("ERROR");
-            responseAsciiSink.put((char) 0);
-            responseAsciiSink.putLen(addr);
-            sendCurrentCursorTail = TAIL_ERROR;
-            prepareExecuteTail(false);
+    private void prepareError(int position, CharSequence message) {
+        responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = responseAsciiSink.skip();
+        responseAsciiSink.put('C');
+        responseAsciiSink.encodeUtf8Z("00000");
+        responseAsciiSink.put('M');
+        responseAsciiSink.encodeUtf8Z(message);
+        responseAsciiSink.put('S');
+        responseAsciiSink.encodeUtf8Z("ERROR");
+        if (position > -1) {
+            responseAsciiSink.put('P').put(position + 1).put((char) 0);
         }
-    }
-
-    private void executeSelect() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        assert queryText != null;
-        queryTag = TAG_SELECT;
-        // todo: test what happens when fetch cursor fails
-        currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
-        prepareRowDescription();
-        sendCursor();
-        prepareReadyForQuery();
-        sendAndReset();
+        responseAsciiSink.put((char) 0);
+        responseAsciiSink.putLen(addr);
+        LOG.error().$("error [pos=").$(position).$(", msg=`").$(message).$("`]").$();
     }
 
     private CharSequence getStatement0(long lo, long hi) throws BadProtocolException {
@@ -1313,36 +1295,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void prepareError(SqlException e) {
-        responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = responseAsciiSink.skip();
-        responseAsciiSink.put('C');
-        responseAsciiSink.encodeUtf8Z("00000");
-        responseAsciiSink.put('M');
-        responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
-        responseAsciiSink.put('S');
-        responseAsciiSink.encodeUtf8Z("ERROR");
-        if (e.getPosition() > -1) {
-            responseAsciiSink.put('P').put(e.getPosition() + 1).put((char) 0);
-        }
-        responseAsciiSink.put((char) 0);
-        responseAsciiSink.putLen(addr);
-    }
-
-    private void prepareExecuteTail(boolean addRowCount) {
-        switch (sendCurrentCursorTail) {
-            case TAIL_SUCCESS:
-                prepareCommandComplete(addRowCount);
-                LOG.debug().$("executed query").$();
-                break;
-            case PGConnectionContext.TAIL_ERROR:
-                SqlException e = SqlException.last();
-                prepareError(e);
-                LOG.error().$("SQL exception [pos=").$(e.getPosition()).$(", msg=`").$(e.getFlyweightMessage()).$("`]").$();
-                break;
-            default:
-                break;
-        }
+    private void processExec() throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        LOG.debug().$("execute").$();
+        processSyncActions();
+        processExecute();
+        wrapper = null;
     }
 
     private void prepareForNewQuery() {
@@ -1579,14 +1536,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         syncActions.add(SYNC_DESCRIBE);
     }
 
-    private void processExec() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        LOG.debug().$("execute").$();
-        processSyncActions();
-        processExecute();
-        wrapper = null;
-    }
-
-    private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
             currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
@@ -1617,9 +1567,69 @@ public class PGConnectionContext implements IOContext, Mutable {
                     transactionState = NO_TRANSACTION;
                 }
             }
-            sendCurrentCursorTail = TAIL_SUCCESS;
-            prepareExecuteTail(false);
+            prepareCommandComplete(false);
         }
+    }
+
+    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler)
+            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        // 'Parse'
+        //message length
+        long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
+
+        // When we encounter statement name in the "parse" message
+        // we need to ensure the wrapper is properly setup to deal with
+        // "describe", "bind" message sequence that will follow next.
+        // In that all parameter types that we need to infer will have to be added to the
+        // "bindVariableTypes" list.
+        // Perhaps this is a good idea to make named statement writer a part of the context
+        final CharSequence statementName = getStatementName(lo, hi);
+
+        //query text
+        lo = hi + 1;
+        hi = getStringLength(lo, msgLimit, "bad query text length");
+
+        parseQueryText(lo, hi, compiler);
+
+        //parameter type count
+        lo = hi + 1;
+        this.parsePhaseBindVariableCount = getShort(lo, msgLimit, "could not read parameter type count");
+
+        if (statementName != null) {
+            LOG.info().$("prepare [name=").$(statementName).$(']').$();
+            configurePreparedStatement(statementName);
+        } else {
+            this.activeBindVariableTypes = bindVariableTypes;
+            this.activeSelectColumnTypes = selectColumnTypes;
+        }
+
+        //process parameter types
+        if (this.parsePhaseBindVariableCount > 0) {
+            if (lo + Short.BYTES + this.parsePhaseBindVariableCount * 4L > msgLimit) {
+                LOG.error()
+                        .$("could not read parameters [parameterCount=").$(this.parsePhaseBindVariableCount)
+                        .$(", offset=").$(lo - address)
+                        .$(", remaining=").$(msgLimit - lo)
+                        .$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+
+            LOG.debug().$("params [count=").$(this.parsePhaseBindVariableCount).$(']').$();
+            setupBindVariables(lo + Short.BYTES, activeBindVariableTypes, this.parsePhaseBindVariableCount);
+        } else if (this.parsePhaseBindVariableCount < 0) {
+            LOG.error()
+                    .$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount)
+                    .$(", offset=").$(lo - address)
+                    .$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+
+        if (typesAndSelect != null) {
+            buildSelectColumnTypes();
+        }
+
+        syncActions.add(SYNC_PARSE);
+//        prepareParseComplete();
     }
 
     private void processInitialMessage(long address, int len) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
@@ -1700,66 +1710,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        // 'Parse'
-        //message length
-        long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
-
-        // When we encounter statement name in the "parse" message
-        // we need to ensure the wrapper is properly setup to deal with
-        // "describe", "bind" message sequence that will follow next.
-        // In that all parameter types that we need to infer will have to be added to the
-        // "bindVariableTypes" list.
-        // Perhaps this is a good idea to make named statement writer a part of the context
-        final CharSequence statementName = getStatementName(lo, hi);
-
-        //query text
-        lo = hi + 1;
-        hi = getStringLength(lo, msgLimit, "bad query text length");
-
-        parseQueryText(lo, hi, compiler);
-
-        //parameter type count
-        lo = hi + 1;
-        this.parsePhaseBindVariableCount = getShort(lo, msgLimit, "could not read parameter type count");
-
-        if (statementName != null) {
-            configurePreparedStatement(statementName);
-        } else {
-            this.activeBindVariableTypes = bindVariableTypes;
-            this.activeSelectColumnTypes = selectColumnTypes;
-        }
-
-        //process parameter types
-        if (this.parsePhaseBindVariableCount > 0) {
-            if (lo + Short.BYTES + this.parsePhaseBindVariableCount * 4L > msgLimit) {
-                LOG.error()
-                        .$("could not read parameters [parameterCount=").$(this.parsePhaseBindVariableCount)
-                        .$(", offset=").$(lo - address)
-                        .$(", remaining=").$(msgLimit - lo)
-                        .$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
-
-            LOG.debug().$("params [count=").$(this.parsePhaseBindVariableCount).$(']').$();
-            setupBindVariables(lo + Short.BYTES, activeBindVariableTypes, this.parsePhaseBindVariableCount);
-        } else if (this.parsePhaseBindVariableCount < 0) {
-            LOG.error()
-                    .$("invalid parameter count [parameterCount=").$(this.parsePhaseBindVariableCount)
-                    .$(", offset=").$(lo - address)
-                    .$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-
-        if (typesAndSelect != null) {
-            buildSelectColumnTypes();
-        }
-
-        syncActions.add(SYNC_PARSE);
-//        prepareParseComplete();
-    }
-
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         // simple query, typically a script, which we don't yet support
@@ -1769,18 +1719,26 @@ public class PGConnectionContext implements IOContext, Mutable {
         if (typesAndSelect != null) {
             activeSelectColumnTypes = selectColumnTypes;
             buildSelectColumnTypes();
-            executeSelect();
-            return;
-        }
-
-        if (typesAndInsert != null) {
+            assert queryText != null;
+            queryTag = TAG_SELECT;
+            // todo: test what happens when fetch cursor fails
+            currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
+            prepareRowDescription();
+            sendCursor();
+        } else if (typesAndInsert != null) {
             executeInsert();
-            prepareReadyForQuery();
-            sendAndReset();
-            return;
+        } else {
+            prepareCommandComplete(false);
         }
+        prepareReadyForQuery();
+        sendAndReset();
+    }
 
-        sendExecuteTail(TAIL_SUCCESS);
+    private void reportError(int position, CharSequence flyweightMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        prepareError(position, flyweightMessage);
+        prepareReadyForQuery();
+        sendAndReset();
+        clearRecvBuffer();
     }
 
     private void processSyncActions() {
@@ -1861,13 +1819,14 @@ public class PGConnectionContext implements IOContext, Mutable {
             }
             responseAsciiSink.putLen(addr);
         } else {
-            prepareError(SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist"));
+            final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
+            prepareError(e.getPosition(), e.getFlyweightMessage());
             prepareReadyForQuery();
         }
         sendAndReset();
     }
 
-    private void sendCursor() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void sendCursor() throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         // the assumption for now is that any  will fit into response buffer. This of course precludes us from
         // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
@@ -1895,10 +1854,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     }
                 } catch (SqlException e) {
                     responseAsciiSink.resetToBookmark();
-                    LOG.error().$(e.getFlyweightMessage()).$();
-                    sendCurrentCursorTail = TAIL_ERROR;
-                    prepareExecuteTail(true);
-                    return;
+                    throw e;
                 }
             }
         } finally {
@@ -1907,16 +1863,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             // free the factory when context finishes abnormally
             this.typesAndSelect = null;
         }
-
-        sendCurrentCursorTail = TAIL_SUCCESS;
-        prepareExecuteTail(true);
-    }
-
-    private void sendExecuteTail(int tail) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        sendCurrentCursorTail = tail;
-        prepareExecuteTail(false);
-        prepareReadyForQuery();
-        sendAndReset();
+        prepareCommandComplete(true);
     }
 
     private void setupVariableSettersFromWrapper(

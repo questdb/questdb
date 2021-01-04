@@ -22,24 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.map;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.Mutable;
-
-import java.io.Closeable;
-
-public interface Map extends Mutable, Closeable {
-    @Override
-    void close();
-
-    RecordCursor getCursor();
-
-    MapRecord getRecord();
-
-    long size();
-
-    MapValue valueAt(long address);
-
-    MapKey withKey();
+@FunctionalInterface
+public interface Long256Acceptor {
+    void onDecoded(long l0, long l1, long l2, long l3);
 }

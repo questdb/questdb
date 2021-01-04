@@ -1,0 +1,10 @@
+[package]
+name = "impr"
+version = "0.1.0"
+authors = ["Vlad <hello@questdb.io>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+postgres = "0.19"
