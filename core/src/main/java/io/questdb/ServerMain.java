@@ -38,13 +38,32 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Vect;
+import java.io.Closeable;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
+import java.net.URL;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.Map;
+import java.util.Properties;
+import java.util.ServiceLoader;
 import io.questdb.std.datetime.millitime.Dates;
 import sun.misc.Signal;
 
-import java.io.*;
-import java.net.*;
-import java.util.*;
 import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
@@ -53,10 +72,18 @@ import java.util.zip.ZipInputStream;
 
 public class ServerMain {
     private static final String VERSION_TXT = "version.txt";
+
     protected PropServerConfiguration configuration;
 
     public ServerMain(String[] args) throws Exception {
-        System.err.printf("QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n", getVersion(), Dates.getYear(System.currentTimeMillis()));
+        //properties fetched from sources other than server.conf
+        final BuildInformation buildInformation = fetchBuildInformation();
+
+        System.err.printf(
+                "QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n",
+                buildInformation.getQuestDbVersion(),
+                Dates.getYear(System.currentTimeMillis())
+        );
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;
@@ -84,7 +111,8 @@ public class ServerMain {
         try (InputStream is = new FileInputStream(configurationFile)) {
             properties.load(is);
         }
-        readServerConfiguration(rootDirectory, properties, log);
+
+        readServerConfiguration(rootDirectory, properties, log, buildInformation);
 
         // create database directory
         try (io.questdb.std.str.Path path = new io.questdb.std.str.Path()) {
@@ -274,6 +302,7 @@ public class ServerMain {
         return optHash;
     }
 
+
     private static long getPublicVersion(String publicDir) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
         if (f.exists()) {
@@ -392,21 +421,6 @@ public class ServerMain {
         return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
     }
 
-    private static String getVersion() throws IOException {
-        Enumeration<URL> resources = ServerMain.class.getClassLoader()
-                .getResources("META-INF/MANIFEST.MF");
-        while (resources.hasMoreElements()) {
-            try (InputStream is = resources.nextElement().openStream()) {
-                Manifest manifest = new Manifest(is);
-                Attributes attributes = manifest.getMainAttributes();
-                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
-                    return manifest.getMainAttributes().getValue("Implementation-Version");
-                }
-            }
-        }
-        return "[DEVELOPMENT]";
-    }
-
     protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
         workerPool.halt();
         Misc.freeObjList(instancesToClean);
@@ -440,8 +454,11 @@ public class ServerMain {
         // For extension
     }
 
-    protected void readServerConfiguration(final String rootDirectory, final Properties properties, Log log) throws ServerConfigurationException, JsonException {
-        configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log);
+    protected void readServerConfiguration(final String rootDirectory,
+                                           final Properties properties,
+                                           Log log,
+                                           final BuildInformation buildInformation) throws ServerConfigurationException, JsonException {
+        configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
     }
 
     protected void startQuestDb(
@@ -450,5 +467,46 @@ public class ServerMain {
             final Log log
     ) {
         workerPool.start(log);
+    }
+
+    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
+        return version != null ? version : "[DEVELOPMENT]";
+    }
+
+    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
+        return version != null ? version : "Unknown Version";
+    }
+
+    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
+        return version != null ? version : "Unknown Version";
+    }
+
+    private static BuildInformation fetchBuildInformation() throws IOException {
+        final Attributes manifestAttributes = getManifestAttributes();
+
+        return new BuildInformationHolder(
+                getQuestDbVersion(manifestAttributes),
+                getJdkVersion(manifestAttributes),
+                getCommitHash(manifestAttributes)
+        );
+    }
+
+    private static Attributes getManifestAttributes() throws IOException {
+        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
+                                                           .getResources("META-INF/MANIFEST.MF");
+        while (resources.hasMoreElements()) {
+            try (InputStream is = resources.nextElement().openStream()) {
+                final Manifest manifest = new Manifest(is);
+                final Attributes attributes = manifest.getMainAttributes();
+                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
+                    return manifest.getMainAttributes();
+                }
+            }
+        }
+
+        return new Attributes();
     }
 }
