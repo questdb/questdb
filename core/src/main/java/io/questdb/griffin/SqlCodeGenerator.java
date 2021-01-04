@@ -47,7 +47,7 @@ import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -1721,6 +1721,7 @@ public class SqlCodeGenerator implements Mutable {
         if (!timestampSet && executionContext.isTimestampRequired()) {
             selectMetadata.add(BaseRecordMetadata.copyOf(metadata, timestampIndex));
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
+            columnCrossIndex.add(timestampIndex);
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
@@ -2523,7 +2524,12 @@ public class SqlCodeGenerator implements Mutable {
         return GenericRecordMetadata.removeTimestamp(masterMetadata);
     }
 
-    private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
+    private RecordCursorFactory generateUnionAllFactory(
+            QueryModel model,
+            RecordCursorFactory masterFactory,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory slaveFactory
+    ) throws SqlException {
         validateJoinColumnTypes(model, masterFactory, slaveFactory);
         final RecordCursorFactory unionAllFactory = new UnionAllRecordCursorFactory(
                 calculateSetMetadata(masterFactory.getMetadata()),

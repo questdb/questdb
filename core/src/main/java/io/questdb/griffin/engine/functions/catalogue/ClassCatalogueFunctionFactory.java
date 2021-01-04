@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -36,15 +37,15 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
-import static io.questdb.griffin.engine.functions.catalogue.PgOIDs.PG_CATALOG_OID;
-import static io.questdb.griffin.engine.functions.catalogue.PgOIDs.PG_PUBLIC_OID;
+import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
+import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
 
 public class ClassCatalogueFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(ClassCatalogueFunctionFactory.class);
     private static final RecordMetadata METADATA;
     private static final String[] relNames = {"pg_class"};
     private static final int[] relNamespaces = {PG_CATALOG_OID};
-    private static final int[] oids = {PgOIDs.PG_CLASS_OID};
+    private static final int[] oids = {PGOids.PG_CLASS_OID};
     private static final char[] relkinds = {'r'};
     private static final int[] relOwners = {0};
 

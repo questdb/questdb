@@ -29,11 +29,13 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.*;
-import io.questdb.std.microtime.*;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.MillisecondClock;
-import io.questdb.std.time.MillisecondClockImpl;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
@@ -171,7 +173,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public TimestampFormat getBackupDirTimestampFormat() {
+    public DateFormat getBackupDirTimestampFormat() {
         return null;
     }
 
@@ -405,11 +407,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public DateLocale getDefaultDateLocale() {
         return DateFormatUtils.enLocale;
-    }
-
-    @Override
-    public TimestampLocale getDefaultTimestampLocale() {
-        return TimestampFormatUtils.enLocale;
     }
 
     @Override

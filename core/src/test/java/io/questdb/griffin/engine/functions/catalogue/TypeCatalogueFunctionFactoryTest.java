@@ -43,7 +43,8 @@ public class TypeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                         "20\tINT8\t0\t0\t2200\tfalse\t0\tb\n" +
                         "16\tBOOL\t0\t0\t2200\tfalse\t0\tb\n" +
                         "17\tBINARY\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\n",
+                        "1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "1082\tDATE\t0\t0\t2200\tfalse\t0\tb\n",
                 "pg_type;",
                 "create table x(a int)",
                 null,
@@ -67,7 +68,8 @@ public class TypeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                         "20\tINT8\t0\t0\t2200\tfalse\t0\tb\n" +
                         "16\tBOOL\t0\t0\t2200\tfalse\t0\tb\n" +
                         "17\tBINARY\t0\t0\t2200\tfalse\t0\tb\n" +
-                        "1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\n",
+                        "1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\n" +
+                        "1082\tDATE\t0\t0\t2200\tfalse\t0\tb\n",
                 "pg_catalog.pg_type;",
                 "create table x(a int)",
                 null,

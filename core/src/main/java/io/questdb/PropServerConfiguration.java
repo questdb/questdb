@@ -44,10 +44,17 @@ import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -143,10 +150,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
-    private final DateLocale dateLocale;
-    private final TimestampLocale timestampLocale;
+    private final DateLocale locale;
     private final String backupRoot;
-    private final TimestampFormat backupDirTimestampFormat;
+    private final DateFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
     private final int backupMkdirMode;
     private final int floatToStrCastScale;
@@ -246,8 +252,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgMaxBlobSizeOnQuery;
     private int pgRecvBufferSize;
     private int pgSendBufferSize;
-    private DateLocale pgDefaultDateLocale;
-    private TimestampLocale pgDefaultTimestampLocale;
+    private DateLocale pgDefaultLocale;
     private int[] pgWorkerAffinity;
     private int pgWorkerCount;
     private boolean pgHaltOnError;
@@ -442,14 +447,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.pgRecvBufferSize = getIntSize(properties, env, "pg.recv.buffer.size", 1024 * 1024);
             this.pgSendBufferSize = getIntSize(properties, env, "pg.send.buffer.size", 1024 * 1024);
             final String dateLocale = getString(properties, env, "pg.date.locale", "en");
-            this.pgDefaultDateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
-            if (this.pgDefaultDateLocale == null) {
+            this.pgDefaultLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
+            if (this.pgDefaultLocale == null) {
                 throw new ServerConfigurationException("pg.date.locale", dateLocale);
-            }
-            final String timestampLocale = getString(properties, env, "pg.timestamp.locale", "en");
-            this.pgDefaultTimestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
-            if (this.pgDefaultTimestampLocale == null) {
-                throw new ServerConfigurationException("pg.timestamp.locale", dateLocale);
             }
             this.pgWorkerCount = getInt(properties, env, "pg.worker.count", 0);
             this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
@@ -526,24 +526,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlBindVariablePoolSize = getInt(properties, env, "cairo.sql.bind.variable.pool.size", 8);
         final String sqlCopyFormatsFile = getString(properties, env, "cairo.sql.copy.formats.file", "/text_loader.json");
         final String dateLocale = getString(properties, env, "cairo.date.locale", "en");
-        this.dateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
-        if (this.dateLocale == null) {
+        this.locale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
+        if (this.locale == null) {
             throw new ServerConfigurationException("cairo.date.locale", dateLocale);
-        }
-
-        final String timestampLocale = getString(properties, env, "cairo.timestamp.locale", "en");
-        this.timestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
-        if (this.timestampLocale == null) {
-            throw new ServerConfigurationException("cairo.timestamp.locale", timestampLocale);
         }
 
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                TimestampLocaleFactory.INSTANCE,
-                this.dateLocale,
-                this.timestampLocale);
+                this.locale
+        );
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
             inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
@@ -784,9 +777,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value;
     }
 
-    private TimestampFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env, String key, final String defaultPattern) {
+    private DateFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env, String key, final String defaultPattern) {
         final String pattern = overrideWithEnv(properties, env, key);
-        DateFormatCompiler compiler = new DateFormatCompiler();
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         if (null != pattern) {
             return compiler.compile(pattern);
         }
@@ -1106,12 +1099,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public DateLocale getDefaultDateLocale() {
-            return dateLocale;
-        }
-
-        @Override
-        public TimestampLocale getDefaultTimestampLocale() {
-            return timestampLocale;
+            return locale;
         }
     }
 
@@ -1401,7 +1389,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public TimestampFormat getBackupDirTimestampFormat() {
+        public DateFormat getBackupDirTimestampFormat() {
             return backupDirTimestampFormat;
         }
 
@@ -1632,12 +1620,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public DateLocale getDefaultDateLocale() {
-            return dateLocale;
-        }
-
-        @Override
-        public TimestampLocale getDefaultTimestampLocale() {
-            return timestampLocale;
+            return locale;
         }
 
         @Override
@@ -2199,12 +2182,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public DateLocale getDefaultDateLocale() {
-            return pgDefaultDateLocale;
-        }
-
-        @Override
-        public TimestampLocale getDefaultTimestampLocale() {
-            return pgDefaultTimestampLocale;
+            return pgDefaultLocale;
         }
 
         @Override

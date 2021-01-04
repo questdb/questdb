@@ -28,7 +28,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,20 +39,20 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
         compiler.compile("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY", sqlExecutionContext);
 
         try (TableWriter w = new TableWriter(configuration, "events")) {
-            long ts = TimestampFormatUtils.parseDateTime("2020-06-30T00:00:00.000000Z");
+            long ts = TimestampFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
                 TableWriter.Row r = w.newRow(ts);
                 r.putLong(0, i);
                 r.append();
             }
-            ts = TimestampFormatUtils.parseDateTime("2020-07-01T00:00:00.000000Z");
+            ts = TimestampFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
                 TableWriter.Row r = w.newRow(ts);
                 r.putLong(0, 100 + i);
                 r.append();
             }
 
-            ts = TimestampFormatUtils.parseDateTime("2020-07-02T00:00:00.000000Z");
+            ts = TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
                 TableWriter.Row r = w.newRow(ts);
                 r.putLong(0, 200 + i);
@@ -69,7 +69,7 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
             }
 
             try (TableWriter w = new TableWriter(configuration, "events")) {
-                long ts = TimestampFormatUtils.parseDateTime("2020-07-02T00:00:00.000000Z");
+                long ts = TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = w.newRow(ts);
                     row.putLong(0, 250 + i);
@@ -77,7 +77,7 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
                 }
                 w.commit();
 
-                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseDateTime("2020-06-30T00:00:00.000000Z")));
+                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z")));
 
                 r.reload();
 
@@ -87,7 +87,7 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
 
                 }
 
-                ts = TimestampFormatUtils.parseDateTime("2020-07-03T00:00:00.000000Z");
+                ts = TimestampFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = w.newRow(ts);
                     row.putLong(0, 300 + i);
@@ -95,7 +95,7 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
                 }
                 w.commit();
 
-                ts = TimestampFormatUtils.parseDateTime("2020-07-04T00:00:00.000000Z");
+                ts = TimestampFormatUtils.parseTimestamp("2020-07-04T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = w.newRow(ts);
                     row.putLong(0, 400 + i);
@@ -103,7 +103,7 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
                 }
                 w.commit();
 
-                ts = TimestampFormatUtils.parseDateTime("2020-07-05T00:00:00.000000Z");
+                ts = TimestampFormatUtils.parseTimestamp("2020-07-05T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = w.newRow(ts);
                     row.putLong(0, 500 + i);
@@ -111,9 +111,9 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
                 }
                 w.commit();
 
-                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseDateTime("2020-07-01T00:00:00.000000Z")));
-                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseDateTime("2020-07-02T00:00:00.000000Z")));
-                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseDateTime("2020-07-03T00:00:00.000000Z")));
+                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z")));
+                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z")));
+                Assert.assertTrue(w.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z")));
 
                 Assert.assertTrue(r.reload());
 

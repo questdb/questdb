@@ -2141,7 +2141,7 @@ class SqlOptimiser {
 
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
 
-        if (modelIsFlex(union)) {
+        if (!topLevel && modelIsFlex(union)) {
             emitColumnLiteralsTopDown(model.getColumns(), union);
         }
 

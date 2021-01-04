@@ -29,10 +29,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -59,9 +59,9 @@ public final class TableUtils {
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
-    static final TimestampFormat fmtDay;
-    static final TimestampFormat fmtMonth;
-    static final TimestampFormat fmtYear;
+    static final DateFormat fmtDay;
+    static final DateFormat fmtMonth;
+    static final DateFormat fmtYear;
     static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
@@ -214,7 +214,7 @@ public final class TableUtils {
     }
 
     public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
-        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8;
+        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8L;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
@@ -632,7 +632,7 @@ public final class TableUtils {
     }
 
     static {
-        DateFormatCompiler compiler = new DateFormatCompiler();
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");
         fmtMonth = compiler.compile("yyyy-MM");
         fmtYear = compiler.compile("yyyy");

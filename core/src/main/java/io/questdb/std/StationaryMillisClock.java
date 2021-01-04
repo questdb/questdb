@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class StationaryMillisClock implements MillisecondClock {
     public static final StationaryMillisClock INSTANCE = new StationaryMillisClock();

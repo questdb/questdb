@@ -45,9 +45,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.time.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;

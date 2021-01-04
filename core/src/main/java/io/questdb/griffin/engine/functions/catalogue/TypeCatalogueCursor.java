@@ -30,6 +30,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.pgwire.PGOids;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_OIDS;
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_NAME;
@@ -42,7 +43,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     private int row = -1;
 
     public TypeCatalogueCursor() {
-        this.intValues[4] = PgOIDs.PG_PUBLIC_OID;
+        this.intValues[4] = PGOids.PG_PUBLIC_OID;
     }
 
     @Override

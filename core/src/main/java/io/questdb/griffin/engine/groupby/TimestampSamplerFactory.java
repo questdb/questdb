@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 public final class TimestampSamplerFactory {
 

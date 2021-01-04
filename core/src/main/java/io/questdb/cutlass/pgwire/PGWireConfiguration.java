@@ -27,8 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.time.DateLocale;
+import io.questdb.std.datetime.DateLocale;
 
 public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
     int getCharacterStoreCapacity();
@@ -66,6 +65,4 @@ public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
     String getServerVersion();
 
     DateLocale getDefaultDateLocale();
-
-    TimestampLocale getDefaultTimestampLocale();
 }

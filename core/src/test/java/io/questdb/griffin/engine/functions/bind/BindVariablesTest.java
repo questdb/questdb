@@ -38,8 +38,8 @@ import io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.time.DateFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -242,7 +242,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testDate() throws SqlException, NumericException {
-        bindVariableService.setDate("xyz", DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setDate("xyz", DateFormatUtils.parseUTCDate("2015-04-10T10:00:00.000Z"));
         Function func = expr("to_str(:xyz, 'yyyy-MM')")
                 .withFunction(new ToStrDateFunctionFactory())
                 .$();
@@ -250,7 +250,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        bindVariableService.setDate("xyz", DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setDate("xyz", DateFormatUtils.parseUTCDate("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 
@@ -270,7 +270,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     @Test
     public void testDateIndexed() throws SqlException, NumericException {
         bindVariableService.setDate(1, 0);
-        bindVariableService.setDate(0, DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setDate(0, DateFormatUtils.parseUTCDate("2015-04-10T10:00:00.000Z"));
         Function func = expr("to_str($1, 'yyyy-MM')")
                 .withFunction(new ToStrDateFunctionFactory())
                 .$();
@@ -278,7 +278,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        bindVariableService.setDate(0, DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setDate(0, DateFormatUtils.parseUTCDate("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 
@@ -752,7 +752,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestamp() throws SqlException, NumericException {
-        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseTimestamp("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_str(:xyz, 'yyyy-MM')")
                 .withFunction(new ToStrTimestampFunctionFactory())
@@ -761,14 +761,14 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseTimestamp("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 
     @Test
     public void testTimestampIndexed() throws SqlException, NumericException {
         bindVariableService.setTimestamp(1, 25);
-        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_str($1, 'yyyy-MM')")
                 .withFunction(new ToStrTimestampFunctionFactory())
@@ -777,7 +777,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 

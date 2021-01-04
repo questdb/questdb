@@ -29,10 +29,10 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.time.DateFormat;
-import io.questdb.std.time.DateLocale;
 
 public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     private final DirectCharSink utf8Sink;

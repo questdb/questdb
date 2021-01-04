@@ -35,12 +35,12 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocale;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 
 public class ToTimestampVCFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private static final ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
 
     @Override
     public String getSignature() {
@@ -54,16 +54,16 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         if (pattern == null) {
             throw SqlException.$(args.getQuick(1).getPosition(), "pattern is required");
         }
-        return new Func(position, arg, tlCompiler.get().compile(pattern), configuration.getDefaultTimestampLocale());
+        return new Func(position, arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
     }
 
     private static final class Func extends TimestampFunction implements UnaryFunction {
 
         private final Function arg;
-        private final TimestampFormat timestampFormat;
-        private final TimestampLocale locale;
+        private final DateFormat timestampFormat;
+        private final DateLocale locale;
 
-        public Func(int position, Function arg, TimestampFormat timestampFormat, TimestampLocale locale) {
+        public Func(int position, Function arg, DateFormat timestampFormat, DateLocale locale) {
             super(position);
             this.arg = arg;
             this.timestampFormat = timestampFormat;

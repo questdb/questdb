@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1704,21 +1704,21 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                 TableWriter.Row r;
 
-                r = w.newRow(TimestampFormatUtils.parseTimestamp("2013-02-10T00:10:00.000000Z"));
+                r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:10:00.000000Z"));
                 r.putInt(2, 30);
                 r.append();
 
-                r = w.newRow(TimestampFormatUtils.parseTimestamp("2013-02-10T00:05:00.000000Z"));
+                r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:05:00.000000Z"));
                 r.putInt(2, 10);
                 r.append();
 
-                r = w.newRow(TimestampFormatUtils.parseTimestamp("2013-02-10T00:06:00.000000Z"));
+                r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:06:00.000000Z"));
                 r.putInt(2, 20);
                 r.append();
 
                 w.commit();
 
-                r = w.newRow(TimestampFormatUtils.parseTimestamp("2013-02-10T00:11:00.000000Z"));
+                r = w.newRow(TimestampFormatUtils.parseUTCTimestamp("2013-02-10T00:11:00.000000Z"));
                 r.putInt(2, 40);
                 r.append();
 

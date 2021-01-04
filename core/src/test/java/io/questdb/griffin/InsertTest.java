@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -49,7 +49,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByDay() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-                    private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
                     public long getTimestamp() {
@@ -64,7 +64,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByDayUndefined() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-                    private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
                     public long getTimestamp() {
@@ -79,7 +79,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByDayUndefinedNoColumnSet() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-                    private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
                     public long getTimestamp() {
@@ -94,7 +94,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByMonth() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-                    private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
                     public long getTimestamp() {
@@ -109,7 +109,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByMonthUndefined() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-                    private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
                     public long getTimestamp() {
@@ -124,7 +124,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByMonthUndefinedNoColumnSet() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-                    private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
                     public long getTimestamp() {
@@ -154,7 +154,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByYear() throws Exception {
         testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
-                    private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
                     public long getTimestamp() {
@@ -169,7 +169,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByYearUndefined() throws Exception {
         testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
-                    private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
                     @Override
                     public long getTimestamp() {

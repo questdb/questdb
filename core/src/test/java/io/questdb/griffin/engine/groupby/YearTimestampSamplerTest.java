@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -38,7 +38,7 @@ public class YearTimestampSamplerTest {
         StringSink sink = new StringSink();
         YearTimestampSampler sampler = new YearTimestampSampler(4);
 
-        long timestamp = TimestampFormatUtils.parseTimestamp("2018-11-16T15:00:00.000000Z");
+        long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
 
         for (int i = 0; i < 20; i++) {
             long ts = sampler.nextTimestamp(timestamp);

@@ -124,7 +124,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testBadDate() {
         try {
-            modelOf("timestamp = '2015-02-23T10:00:55.0000z;30m'");
+            modelOf("timestamp = '2015-02-23T10:00:55.0001110z;30m'");
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(12, e.getPosition());

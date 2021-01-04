@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.network.PeerDisconnectedException;
@@ -34,26 +33,32 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
+import io.questdb.std.WeakAutoClosableObjectPool;
 
 import java.io.Closeable;
 
 public class PGJobContext implements Closeable {
 
     private final SqlCompiler compiler;
-    private final AssociativeCache<RecordCursorFactory> factoryCache;
+    private final AssociativeCache<TypesAndSelect> selectAndTypesCache;
+    private final WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool;
 
     public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, MessageBus messageBus, FunctionFactoryCache functionFactoryCache) {
         this.compiler = new SqlCompiler(engine, messageBus, functionFactoryCache);
-        this.factoryCache = new AssociativeCache<>(
+        this.selectAndTypesCache = new AssociativeCache<>(
                 configuration.getFactoryCacheColumnCount(),
                 configuration.getFactoryCacheRowCount()
+        );
+        this.selectAndTypesPool = new WeakAutoClosableObjectPool<>(
+                TypesAndSelect::new,
+                configuration.getFactoryCacheColumnCount() * configuration.getFactoryCacheRowCount()
         );
     }
 
     @Override
     public void close() {
         Misc.free(compiler);
-        Misc.free(factoryCache);
+        Misc.free(selectAndTypesCache);
     }
 
     public void handleClientOperation(PGConnectionContext context)
@@ -61,6 +66,6 @@ public class PGJobContext implements Closeable {
             PeerIsSlowToReadException,
             PeerDisconnectedException,
             BadProtocolException {
-        context.handleClientOperation(compiler, factoryCache);
+        context.handleClientOperation(compiler, selectAndTypesCache, selectAndTypesPool);
     }
 }
