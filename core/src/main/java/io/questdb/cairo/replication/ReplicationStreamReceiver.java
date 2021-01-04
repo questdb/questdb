@@ -105,6 +105,7 @@ public class ReplicationStreamReceiver implements Closeable {
                     if (!handleEndOfBlockHeader()) {
                         disconnect();
                     }
+                    resetReading();
                     return true;
                 }
 

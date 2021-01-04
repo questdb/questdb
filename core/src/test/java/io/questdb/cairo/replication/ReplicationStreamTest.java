@@ -82,8 +82,8 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     public void testSimple1() throws Exception {
         runTest("testSimple1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                            "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
-                            ") TIMESTAMP (ts);",
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
+                    ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
@@ -95,8 +95,8 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     public void testPartitioned1() throws Exception {
         runTest("testPartitioned1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                            "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(100)" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY;",
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(100)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY;",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 0, Long.MAX_VALUE);
@@ -108,8 +108,8 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     public void testNoTimestamp() throws Exception {
         runTest("testNoTimestamp", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                            "SELECT rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
-                            ");",
+                    "SELECT rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ");",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             replicateTable("source", "dest", expected, "(l LONG)", 0, Long.MAX_VALUE);
@@ -121,8 +121,8 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     public void testString1() throws Exception {
         runTest("testString1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                            "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(5,10,2) s FROM long_sequence(300)" +
-                            ") TIMESTAMP (ts);",
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(5,10,2) s FROM long_sequence(300)" +
+                    ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             replicateTable("source", "dest", expected, "(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
@@ -134,8 +134,8 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     public void testSymbol1() throws Exception {
         runTest("testSymbol1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                            "SELECT timestamp_sequence(0, 1000000000) ts, rnd_symbol(60,2,16,2) sym FROM long_sequence(100)" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY;",
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_symbol(60,2,16,2) sym FROM long_sequence(100)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY;",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             replicateTable("source", "dest", expected, "(ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", 0, Long.MAX_VALUE);
