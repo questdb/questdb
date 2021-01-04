@@ -22,52 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.regex;
-
+package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.ObjList;
 
-public class LikeCharFunctionFactory implements FunctionFactory {
+public class ClassResolveFunctionFactory implements FunctionFactory {
+    // for now we only implement 'pg_namespace'::regclass
+    public static final IntConstant INSTANCE = new IntConstant(0, 2615);
+
     @Override
     public String getSignature() {
-        return "like(Sa)";
+        return "::(ss)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new MatchFunction(
-                position,
-                args.getQuick(0),
-                args.getQuick(1).getChar(null)
-        );
-    }
-
-    private static class MatchFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
-        private final char expected;
-
-        public MatchFunction(int position, Function value, char expected) {
-            super(position);
-            this.value = value;
-            this.expected = expected;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && cs.length() == 1 && cs.charAt(0) == expected;
-        }
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return INSTANCE;
     }
 }

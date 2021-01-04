@@ -40,6 +40,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -173,6 +174,32 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
                 try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
+                    assertCursor("x\t$1\n" +
+                                    "1\t10\n" +
+                                    "2\t10\n",
+                            factory,
+                            true,
+                            true,
+                            true
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testBindVariableAsFunctionArg() throws Exception {
+        assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
+                bindVariableService.clear();
+                try (RecordCursorFactory factory = compiler.compile("xy where v like $1", sqlExecutionContext).getRecordCursorFactory()) {
+
                     assertCursor("x\t$1\n" +
                                     "1\t10\n" +
                                     "2\t10\n",

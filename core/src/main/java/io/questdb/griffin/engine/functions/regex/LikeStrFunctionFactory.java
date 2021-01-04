@@ -42,33 +42,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class LikeStrFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "like(Ss)";
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function value = args.getQuick(0);
-
-        CharSequence likeString = args.getQuick(1).getStr(null);
-
-        if (likeString == null) {
-            throw SqlException.$(args.getQuick(1).getPosition(), "NULL input not supported for like");
-        }
-
-        String regex = escapeSpecialChars(likeString);
-
-
-        Matcher matcher = Pattern.compile(regex,
-                Pattern.DOTALL).matcher("");
-
-
-        return new MatchFunction(position, value, matcher);
-
-
-    }
-
     public static String escapeSpecialChars(CharSequence s) {
         int len = s.length();
 
@@ -89,6 +62,25 @@ public class LikeStrFunctionFactory implements FunctionFactory {
         return Chars.toString(sink);
     }
 
+    @Override
+    public String getSignature() {
+        return "like(Ss)";
+    }
+
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        Function value = args.getQuick(0);
+
+        CharSequence likeString = args.getQuick(1).getStr(null);
+
+        if (likeString == null) {
+            throw SqlException.$(args.getQuick(1).getPosition(), "NULL input not supported for like");
+        }
+
+        String regex = escapeSpecialChars(likeString);
+        Matcher matcher = Pattern.compile(regex, Pattern.DOTALL).matcher("");
+        return new MatchFunction(position, value, matcher);
+    }
 
     private static class MatchFunction extends BooleanFunction implements UnaryFunction {
         private final Function value;
@@ -101,14 +93,14 @@ public class LikeStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && matcher.reset(cs).matches();
+        public Function getArg() {
+            return value;
         }
 
         @Override
-        public Function getArg() {
-            return value;
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && matcher.reset(cs).matches();
         }
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -1876,6 +1877,10 @@ public class SqlCompiler implements Closeable {
 
             if (isStandardConformingStringsKeyword(tok)) {
                 return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
+            }
+
+            if (isSearchPath(tok)) {
+                return compiledQuery.of(new ShowSearchPathCursorFactory());
             }
         }
 
