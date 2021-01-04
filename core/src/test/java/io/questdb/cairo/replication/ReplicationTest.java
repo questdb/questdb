@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
@@ -46,7 +47,28 @@ public class ReplicationTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUp() throws IOException {
         AbstractCairoTest.setUp();
-        NF = MockConnection.NETWORK_FACADE_INSTANCE;
+        NF = new NetworkFacadeImpl() {
+            @Override
+            public int recv(long fd, long buffer, int bufferLen) {
+                int rc = super.recv(fd, buffer, bufferLen);
+                // LOG.info().$("recv [fd=").$(fd).$(", bufferLen=").$(bufferLen).$(", rc=").$(rc).$();
+                return rc;
+            }
+
+            @Override
+            public int send(long fd, long buffer, int bufferLen) {
+                int rc = super.send(fd, buffer, bufferLen);
+                // LOG.info().$("send [fd=").$(fd).$(", bufferLen=").$(bufferLen).$(", rc=").$(rc).$();
+                return rc;
+            }
+
+            @Override
+            public int close(long fd) {
+                int rc = super.close(fd);
+                // LOG.info().$("close [fd=").$(fd).$(", rc=").$(rc).$();
+                return rc;
+            }
+        };
     }
 
     @BeforeClass
@@ -209,8 +231,8 @@ public class ReplicationTest extends AbstractGriffinTest {
 
         workerPool.halt();
 
-        // String actual = select("SELECT * FROM " + tableName, true);
-        // Assert.assertEquals(expected, actual);
+        String actual = select("SELECT * FROM " + tableName, true);
+        Assert.assertEquals(expected, actual);
     }
 
 }

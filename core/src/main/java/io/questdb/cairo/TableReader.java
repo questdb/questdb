@@ -941,7 +941,7 @@ public class TableReader implements Closeable {
         return path.$();
     }
 
-    private boolean readTxn() {
+    public boolean readTxn() {
         // fast path
         return this.txn != txMem.getLong(TableUtils.TX_OFFSET_TXN) && readTxnSlow();
     }

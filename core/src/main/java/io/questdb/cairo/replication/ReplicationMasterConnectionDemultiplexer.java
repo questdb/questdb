@@ -56,6 +56,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
         long seq;
         do {
             while ((seq = connectionCallbackQueue.getConsumerSeq().next()) >= 0) {
+                busy = true;
                 MasterConnectionCallbackEvent event = connectionCallbackQueue.getEvent(seq);
                 try {
                     long peerId = event.peerId;
@@ -147,9 +148,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             init(slaveId, fd, workerJob.getWorkerId());
             receiveBufSz = TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE;
             receiveAddress = Unsafe.malloc(receiveBufSz);
-            receiveOffset = 0;
-            receiveLen = TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE;
-            receiveFrameType = TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN;
+            resetReading();
             return this;
         }
 
@@ -230,7 +229,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
             while (true) {
                 if (receiveFrameType == TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN) {
                     int len = receiveLen - receiveOffset;
-                    int nRead = nf.recv(fd, receiveAddress + receiveOffset, len);
+                    final int nRead = nf.recv(fd, receiveAddress + receiveOffset, len);
                     if (nRead > 0) {
                         readSomething = true;
                         receiveOffset += nRead;
@@ -261,7 +260,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                         if (!tryHandleSlaveCommitReady(masterTableId)) {
                             return true;
                         }
-                        receiveFrameType = TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN;
+                        resetReading();
                         break;
 
                     case TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN:
@@ -290,6 +289,12 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                 }
             } while (seq == -2);
             return false;
+        }
+
+        private void resetReading() {
+            receiveOffset = 0;
+            receiveLen = TableReplicationStreamHeaderSupport.MAX_HEADER_SIZE;
+            receiveFrameType = TableReplicationStreamHeaderSupport.FRAME_TYPE_UNKNOWN;
         }
 
         @Override
@@ -326,7 +331,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
     }
 
     static class MasterConnectionCallbackEvent extends ConnectionCallbackEvent {
-        final static byte SLAVE_READEY_TOCOMMIT_EVENT_TYPE = 2;
+        final static byte SLAVE_READEY_TOCOMMIT_EVENT_TYPE = 8;
         private int tableId;
 
         void assignSlaveComitReady(long slaveId, int masterTableId) {

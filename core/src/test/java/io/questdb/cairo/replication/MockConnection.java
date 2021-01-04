@@ -4,6 +4,7 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
+import io.questdb.log.Log;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.LongObjHashMap;
@@ -45,6 +46,25 @@ class MockConnection implements Closeable {
             }
             return conn.send(fd, address, len);
         }
+
+        @Override
+        public int close(long fd) {
+            MockConnection conn = MOCK_CONNECTION_BY_FD.get((int) fd);
+            if (null == conn) {
+                return super.close(fd);
+            }
+            conn.close();
+            return 0;
+        };
+
+        @Override
+        public void close(long fd, Log log) {
+            MockConnection conn = MOCK_CONNECTION_BY_FD.get((int) fd);
+            if (null == conn) {
+                super.close(fd, log);
+            }
+            conn.close();
+        };
     };
 
     MockConnection() {
@@ -65,7 +85,7 @@ class MockConnection implements Closeable {
 
     int recv(long fd, long buf, int len) {
         if (closed) {
-            return -1;
+            return -2;
         }
 
         if (fd == connectorFd) {
@@ -102,7 +122,7 @@ class MockConnection implements Closeable {
 
     int send(long fd, long buf, int len) {
         if (closed) {
-            return -1;
+            return -2;
         }
 
         if (fd == acceptorFd) {

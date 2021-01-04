@@ -210,7 +210,6 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         };
 
         IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
-
         try (
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableReplicationRecordCursorFactory factory = new TableReplicationRecordCursorFactory(engine, sourceTableName, maxRowsPerFrame);

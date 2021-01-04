@@ -71,19 +71,15 @@ public class MasterReplicationService {
         int newConnectionQueueLen = 4;
         int sendFrameQueueLen = 64;
         ReplicationMasterCallbacks callbacks = new ReplicationMasterCallbacks() {
-
             @Override
             public void onSlaveReadyToCommit(long peerId, int tableId) {
-                // TODO Auto-generated method stub
-                throw new RuntimeException();
+                job.onSlaveReadyToCommit(peerId, tableId);
             }
 
             @Override
             public void onPeerDisconnected(long peerId, long fd) {
-                // TODO Auto-generated method stub
-                throw new RuntimeException();
+                job.onStreamingPeerDisconnected(peerId, fd);
             }
-
         };
         masterConnectionDemux = new ReplicationMasterConnectionDemultiplexer(nf, workerPool, connectionCallbackQueueLen,
                 newConnectionQueueLen, sendFrameQueueLen, callbacks);
@@ -134,6 +130,9 @@ public class MasterReplicationService {
                 acceptConnections();
                 handleInitialsingConnections();
                 handleStreamingTasks();
+                if (masterConnectionDemux.handleTasks()) {
+                    busy = true;
+                }
             }
             return busy;
         }
@@ -191,6 +190,17 @@ public class MasterReplicationService {
                 StreamingTask task = streamingTasks.get(n);
                 task.handleTask();
             }
+        }
+
+        private void onSlaveReadyToCommit(long peerId, int tableId) {
+            // TODO check consistency level
+            StreamingTask task = streamingTaskByPeerId.get(peerId);
+            task.handleSlaveReadyToCommit();
+        }
+
+        private void onStreamingPeerDisconnected(long peerId, long fd) {
+            // TODO Auto-generated method stub
+            throw new RuntimeException();
         }
 
         public void close() {
@@ -347,15 +357,15 @@ public class MasterReplicationService {
             private TableReader reader;
             private boolean streaming;
             private boolean waitingForReadyToCommit;
+            private boolean slaveReadyToCommit;
             private ReplicationStreamGeneratorFrame frame;
 
             private StreamingTask of(int tableId, long nRow, long uuid1, long uuid2, long uuid3) {
                 peerId = NEXT_PEER_ID.incrementAndGet();
                 this.tableId = tableId;
                 this.nRow = nRow;
-                streaming = false;
-                waitingForReadyToCommit = false;
                 frame = null;
+                resetStreaming();
                 int n = 0;
                 while (n < initialisingConnections.size()) {
                     InitialMasterConnection connection = initialisingConnections.get(n);
@@ -388,13 +398,21 @@ public class MasterReplicationService {
             private void handleTask() {
                 if (nConnectionsToEnqueue == 0) {
                     if (!streaming) {
+                        if (null != frame) {
+                            if (!masterConnectionDemux.tryQueueSendFrame(peerId, frame)) {
+                                // Queue are full, consumers are slow
+                                return;
+                            }
+                            frame = null;
+                        }
+
+                        reader.readTxn();
                         if (reader.size() > nRow) {
                             TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nRow);
+                            nRow += cursor.size();
                             // TODO nConcurrentFrames needs to be set appropriately so that the queues can be filled
                             streamGenerator.of(tableId, connections.size(), cursor, reader.getMetadata(), initialSymbolCounts);
                             streaming = true;
-                        } else {
-                            return;
                         }
                     }
                     busy = true;
@@ -411,22 +429,26 @@ public class MasterReplicationService {
                                     }
                                     frame = streamResult.getFrame();
                                 } else {
-                                    frame = null;
                                     waitingForReadyToCommit = true;
                                     break;
                                 }
-
-                                if (!masterConnectionDemux.tryQueueSendFrame(peerId, frame)) {
-                                    // Queue are full, consumers are slow
-                                    return;
-                                }
-                                frame = null;
                             }
+                            if (!masterConnectionDemux.tryQueueSendFrame(peerId, frame)) {
+                                // Queue are full, consumers are slow
+                                return;
+                            }
+                            frame = null;
                         }
                     }
-
                     assert waitingForReadyToCommit;
 
+                    if (slaveReadyToCommit) {
+                        ReplicationStreamGeneratorResult streamResult = streamGenerator.generateCommitBlockFrame();
+                        if (!streamResult.isRetry()) {
+                            frame = streamResult.getFrame();
+                            resetStreaming();
+                        }
+                    }
                 } else {
                     busy = true;
                     while (nConnectionsToEnqueue > 0) {
@@ -438,6 +460,16 @@ public class MasterReplicationService {
                         nConnectionsToEnqueue--;
                     }
                 }
+            }
+
+            private void resetStreaming() {
+                streaming = false;
+                waitingForReadyToCommit = false;
+                slaveReadyToCommit = false;
+            }
+
+            private void handleSlaveReadyToCommit() {
+                slaveReadyToCommit = true;
             }
 
             private void clear() {
