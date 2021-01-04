@@ -301,6 +301,12 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
     return FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *e, jclass cl, jlong handle, jlong size) {
+    /* On Windows truncate does the allocation */
+    return Java_io_questdb_std_Files_truncate(e, cl, handle, size);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
         (JNIEnv *e, jclass cl, jlong address, jlong len) {
     if (UnmapViewOfFile((LPCVOID) address) == 0) {

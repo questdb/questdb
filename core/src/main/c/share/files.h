@@ -119,6 +119,14 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    allocate
+ * Signature: (JJ)Z
+ */
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *, jclass, jlong, jlong);        
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    write
  * Signature: (JJJJ)J
  */

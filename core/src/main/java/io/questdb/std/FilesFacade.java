@@ -98,5 +98,7 @@ public interface FilesFacade {
 
     boolean truncate(long fd, long size);
 
+    boolean allocate(long fd, long size);
+
     long write(long fd, long address, long len, long offset);
 }
