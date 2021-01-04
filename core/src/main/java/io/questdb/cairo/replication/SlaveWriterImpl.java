@@ -19,7 +19,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 public class SlaveWriterImpl implements SlaveWriter, Closeable {
