@@ -165,4 +165,43 @@ public class FilesTest {
             }
         }
     }
+
+    @Test
+    public void testAllocate() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(5, Files.length(path));
+
+            long fd = Files.openRW(path);
+            try {
+                Files.allocate(fd, 10);
+                Assert.assertEquals(10, Files.length(path));
+                Files.allocate(fd, 120);
+                Assert.assertEquals(120, Files.length(path));
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    @Test
+    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            long fd = Files.openRW(path);
+            Assert.assertEquals(5, Files.length(path));
+
+            try {
+                long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
+                boolean success = Files.allocate(fd, tb10);
+                Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
 }

@@ -62,7 +62,7 @@ public class ReadWriteMemory extends VirtualMemory {
         final long pageSize = getMapPageSize();
 
         if (ff.length(fd) < offset + pageSize) {
-            ff.truncate(fd, offset + pageSize);
+            ff.allocate(fd, offset + pageSize);
         }
 
         final long address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
