@@ -24,10 +24,13 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.Unsafe;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 
@@ -226,6 +229,94 @@ public final class TestUtils {
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
+        }
+    }
+
+    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual) {
+        assertEquals(metadataExpected, metadataActual);
+        Record r = cursorExpected.getRecord();
+        Record l = cursorActual.getRecord();
+        long rowNum = 0;
+        while (cursorExpected.hasNext()) {
+            Assert.assertTrue("Expected cursor does not have record at " + rowNum++, cursorActual.hasNext());
+            for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
+                String columnName = metadataExpected.getColumnName(i);
+                try {
+                    switch (metadataExpected.getColumnType(i)) {
+                        case ColumnType.DATE:
+                            Assert.assertEquals(r.getDate(i), l.getDate(i));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            Assert.assertEquals(r.getTimestamp(i), l.getTimestamp(i));
+                            break;
+                        case ColumnType.DOUBLE:
+                            Assert.assertEquals(r.getDouble(i), l.getDouble(i), Numbers.MAX_SCALE);
+                            break;
+                        case ColumnType.FLOAT:
+                            Assert.assertEquals(r.getFloat(i), l.getFloat(i), 4);
+                            break;
+                        case ColumnType.INT:
+                            Assert.assertEquals(r.getInt(i), l.getInt(i));
+                            break;
+                        case ColumnType.STRING:
+                            Assert.assertEquals(r.getStr(i), l.getStr(i));
+                            break;
+                        case ColumnType.SYMBOL:
+                            Assert.assertEquals(r.getSym(i), l.getSym(i));
+                            break;
+                        case ColumnType.SHORT:
+                            Assert.assertEquals(r.getShort(i), l.getShort(i));
+                            break;
+                        case ColumnType.CHAR:
+                            Assert.assertEquals(r.getChar(i), l.getChar(i));
+                            break;
+                        case ColumnType.LONG:
+                            Assert.assertEquals(r.getLong(i), l.getLong(i));
+                            break;
+                        case ColumnType.BYTE:
+                            Assert.assertEquals(r.getByte(i), l.getByte(i));
+                            break;
+                        case ColumnType.BOOLEAN:
+                            Assert.assertEquals(r.getBool(i), l.getBool(i));
+                            break;
+                        case ColumnType.BINARY:
+                            Assert.assertTrue(columnName, areEqual(r.getBin(i), l.getBin(i)));
+                            break;
+                        case ColumnType.LONG256:
+                            Assert.assertTrue(columnName, areEqual(r.getLong256A(i), l.getLong256A(i)));
+                            break;
+                        default:
+                            // Unknown record type.
+                            assert false;
+                            break;
+                    }
+                } catch (AssertionError e) {
+                    throw new AssertionError(String.format("Row %d column %s %s", i, columnName, e.getMessage()));
+                }
+            }
+        }
+    }
+
+    private static boolean areEqual(Long256 a, Long256 b) {
+        return a.getLong0() == b.getLong0()
+                && a.getLong1() == b.getLong1()
+                && a.getLong2() == b.getLong2()
+                && a.getLong3() == b.getLong3();
+    }
+
+    public static boolean areEqual(BinarySequence a, BinarySequence b) {
+        if (a.length() != b.length()) return false;
+        for (int i = 0; i < a.length(); i++) {
+            if (a.byteAt(i) != b.byteAt(i)) return false;
+        }
+        return true;
+    }
+
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual) {
+        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
+            Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
         }
     }
 
