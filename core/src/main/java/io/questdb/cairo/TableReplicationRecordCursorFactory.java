@@ -9,7 +9,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 
 public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final TablePageFrameCursor cursor;
+    private final TableReplicationPageFrameCursor cursor;
     private final CairoEngine engine;
     private final CharSequence tableName;
     private final long maxRowsPerFrame;
@@ -25,7 +25,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     public TableReplicationRecordCursorFactory(CairoEngine engine, CharSequence tableName, long maxRowsPerFrame) {
         super(createMetadata(engine, tableName));
         this.maxRowsPerFrame = maxRowsPerFrame;
-        this.cursor = new TablePageFrameCursor();
+        this.cursor = new TableReplicationPageFrameCursor();
         this.engine = engine;
         this.tableName = tableName;
 
@@ -41,11 +41,11 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public TablePageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
+    public TableReplicationPageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
         return cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), maxRowsPerFrame, -1, columnIndexes, columnSizes);
     }
 
-    public TablePageFrameCursor getPageFrameCursorFrom(SqlExecutionContext executionContext, int timestampColumnIndex, long nFirstRow) {
+    public TableReplicationPageFrameCursor getPageFrameCursorFrom(SqlExecutionContext executionContext, int timestampColumnIndex, long nFirstRow) {
         TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);
         int partitionIndex = 0;
         int partitionCount = reader.getPartitionCount();
@@ -60,7 +60,7 @@ public class TableReplicationRecordCursorFactory extends AbstractRecordCursorFac
         return cursor.of(reader, maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes, partitionIndex, nFirstRow);
     }
 
-    public TablePageFrameCursor getPageFrameCursor(int timestampColumnIndex, int partitionIndex, long partitionRowCount) {
+    public TableReplicationPageFrameCursor getPageFrameCursor(int timestampColumnIndex, int partitionIndex, long partitionRowCount) {
         return cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName), maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes, partitionIndex,
                 partitionRowCount);
     }

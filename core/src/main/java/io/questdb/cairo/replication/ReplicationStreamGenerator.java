@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.TableReplicationPageFrameCursor.ReplicationPageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.IntList;
@@ -22,7 +22,7 @@ public class ReplicationStreamGenerator implements Closeable {
     private PageFrameCursor cursor;
     private RecordMetadata metaData;
     private int columnCount;
-    private PageFrame sourceFrame;
+    private ReplicationPageFrame sourceFrame;
     private int atColumnIndex;
     private int nFrames;
     private boolean symbolDataFrame;
@@ -66,7 +66,7 @@ public class ReplicationStreamGenerator implements Closeable {
                 generateDataFrame(frame);
             } else {
                 if (!finishedBlock) {
-                    sourceFrame = cursor.next();
+                    sourceFrame = (ReplicationPageFrame) cursor.next();
                     if (null != sourceFrame) {
                         atColumnIndex = 0;
                         generateDataFrame(frame);
@@ -128,8 +128,7 @@ public class ReplicationStreamGenerator implements Closeable {
         long frameSize = frame.frameHeaderLength + frame.frameDataLength;
         Unsafe.getUnsafe().putLong(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_FIRST_TIMESTAMP, sourceFrame.getFirstTimestamp());
         Unsafe.getUnsafe().putInt(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_COLUMN_INDEX, atColumnIndex);
-        // TODO:
-        Unsafe.getUnsafe().putLong(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_DATA_OFFSET, 0);
+        Unsafe.getUnsafe().putLong(frame.frameHeaderAddress + TableReplicationStreamHeaderSupport.OFFSET_DF_DATA_OFFSET, sourceFrame.getPageOffset(atColumnIndex));
         updateGenericHeader(frame, TableReplicationStreamHeaderSupport.FRAME_TYPE_DATA_FRAME, frameSize);
         atColumnIndex++;
         if (atColumnIndex == columnCount) {

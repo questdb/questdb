@@ -8,9 +8,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
-public class TablePageFrameCursor implements PageFrameCursor {
+public class TableReplicationPageFrameCursor implements PageFrameCursor {
     private final LongList columnFrameAddresses = new LongList();
     private final LongList columnFrameLengths = new LongList();
+    private final LongList columnFrameOffsets = new LongList();
     private final LongList columnTops = new LongList();
     private final ReplicationPageFrame frame = new ReplicationPageFrame();
 
@@ -30,7 +31,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
     private int columnBase;
     private boolean checkNFrameRowsForColumnTops;
 
-    public TablePageFrameCursor() {
+    public TableReplicationPageFrameCursor() {
         super();
     }
 
@@ -49,7 +50,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         return reader.getSymbolMapReader(columnIndexes.getQuick(i));
     }
 
-    TablePageFrameCursor of(
+    TableReplicationPageFrameCursor of(
             TableReader reader, long maxRowsPerFrame, int timestampColumnIndex, IntList columnIndexes, IntList columnSizes, int partitionIndex, long partitionRowCount
     ) {
         of(reader, maxRowsPerFrame, timestampColumnIndex, columnIndexes, columnSizes);
@@ -59,7 +60,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         return this;
     }
 
-    public TablePageFrameCursor of(TableReader reader, long maxRowsPerFrame, int timestampColumnIndex, IntList columnIndexes, IntList columnSizes) {
+    public TableReplicationPageFrameCursor of(TableReader reader, long maxRowsPerFrame, int timestampColumnIndex, IntList columnIndexes, IntList columnSizes) {
         this.reader = reader;
         this.maxRowsPerFrame = maxRowsPerFrame;
         this.columnIndexes = columnIndexes;
@@ -68,6 +69,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         this.timestampColumnIndex = timestampColumnIndex;
         columnFrameAddresses.ensureCapacity(columnCount);
         columnFrameLengths.ensureCapacity(columnCount);
+        columnFrameOffsets.ensureCapacity(columnCount);
         columnTops.ensureCapacity(columnCount);
         toTop();
         return this;
@@ -125,6 +127,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                     final long colMaxRow = nPartitionRows - columnTop;
 
                     long columnPageAddress = col.getPageAddress(0);
+                    long columnPageOffset;
                     long columnPageLength;
 
                     int columnType = reader.getMetadata().getColumnType(columnIndex);
@@ -134,9 +137,11 @@ public class TablePageFrameCursor implements PageFrameCursor {
                             columnPageLength = calculateStringPagePosition(col, strLenCol, colFrameLastRow, colMaxRow);
 
                             if (colFrameFirstRow > 0) {
-                                long columnPageBegin = calculateStringPagePosition(col, strLenCol, colFrameFirstRow, colMaxRow);
-                                columnPageAddress += columnPageBegin;
-                                columnPageLength -= columnPageBegin;
+                                columnPageOffset = calculateStringPagePosition(col, strLenCol, colFrameFirstRow, colMaxRow);
+                                columnPageAddress += columnPageOffset;
+                                columnPageLength -= columnPageOffset;
+                            } else {
+                                columnPageOffset = 0;
                             }
 
                             break;
@@ -147,9 +152,11 @@ public class TablePageFrameCursor implements PageFrameCursor {
                             columnPageLength = calculateBinaryPagePosition(col, binLenCol, colFrameLastRow, colMaxRow);
 
                             if (colFrameFirstRow > 0) {
-                                long columnPageBegin = calculateBinaryPagePosition(col, binLenCol, colFrameFirstRow, colMaxRow);
-                                columnPageAddress += columnPageBegin;
-                                columnPageLength -= columnPageBegin;
+                                columnPageOffset = calculateBinaryPagePosition(col, binLenCol, colFrameFirstRow, colMaxRow);
+                                columnPageAddress += columnPageOffset;
+                                columnPageLength -= columnPageOffset;
+                            } else {
+                                columnPageOffset = 0;
                             }
 
                             break;
@@ -159,15 +166,18 @@ public class TablePageFrameCursor implements PageFrameCursor {
                             int columnSizeBinaryPower = columnSizes.getQuick(i);
                             columnPageLength = colFrameLastRow << columnSizeBinaryPower;
                             if (colFrameFirstRow > 0) {
-                                long columnPageBegin = colFrameFirstRow << columnSizeBinaryPower;
-                                columnPageAddress += columnPageBegin;
-                                columnPageLength -= columnPageBegin;
+                                columnPageOffset = colFrameFirstRow << columnSizeBinaryPower;
+                                columnPageAddress += columnPageOffset;
+                                columnPageLength -= columnPageOffset;
+                            } else {
+                                columnPageOffset = 0;
                             }
                         }
                     }
 
                     columnFrameAddresses.setQuick(i, columnPageAddress);
                     columnFrameLengths.setQuick(i, columnPageLength);
+                    columnFrameOffsets.setQuick(i, columnPageOffset);
 
                     if (timestampColumnIndex == columnIndex) {
                         firstTimestamp = Unsafe.getUnsafe().getLong(columnPageAddress);
@@ -176,6 +186,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                     columnFrameAddresses.setQuick(i, 0);
                     // Frame length is the number of rows missing from the top of the partition (i.e. the columnTop)
                     columnFrameLengths.setQuick(i, nFrameRows);
+                    columnFrameOffsets.setQuick(i, Long.MIN_VALUE);
                 }
             }
 
@@ -266,6 +277,10 @@ public class TablePageFrameCursor implements PageFrameCursor {
         @Override
         public long getPageSize(int i) {
             return columnFrameLengths.getQuick(i);
+        }
+
+        public long getPageOffset(int i) {
+            return columnFrameOffsets.getQuick(i);
         }
     }
 }

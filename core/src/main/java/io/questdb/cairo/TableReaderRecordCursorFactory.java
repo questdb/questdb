@@ -40,7 +40,7 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
     private final long tableVersion;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    private TablePageFrameCursor pageFrameCursor = null;
+    private TableReplicationPageFrameCursor pageFrameCursor = null;
     private final boolean framingSupported;
 
     public TableReaderRecordCursorFactory(
@@ -85,7 +85,7 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
             return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), Long.MAX_VALUE, -1,
                     columnIndexes, columnSizes);
         } else if (framingSupported) {
-            pageFrameCursor = new TablePageFrameCursor();
+            pageFrameCursor = new TableReplicationPageFrameCursor();
             return pageFrameCursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName), Long.MAX_VALUE, -1,
                     columnIndexes, columnSizes);
         } else {

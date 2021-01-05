@@ -568,7 +568,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             final int columnCount = factory.getMetadata().getColumnCount();
             int nFrames = 0;
             int timestampColumnIndex = factory.getMetadata().getTimestampIndex();
-            try (TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, timestampColumnIndex, nFirstRow)) {
+            try (TableReplicationPageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, timestampColumnIndex, nFirstRow)) {
                 PageFrame frame;
                 TableBlockWriter blockWriter = null;
                 if (commitAllAtOnce) {

@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OnePageMemory;
-import io.questdb.cairo.TablePageFrameCursor;
+import io.questdb.cairo.TableReplicationPageFrameCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
 import io.questdb.cairo.TableUtils;
@@ -408,7 +408,7 @@ public class MasterReplicationService {
 
                         reader.readTxn();
                         if (reader.size() > nRow) {
-                            TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nRow);
+                            TableReplicationPageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nRow);
                             nRow += cursor.size();
                             // TODO nConcurrentFrames needs to be set appropriately so that the queues can be filled
                             streamGenerator.of(tableId, connections.size(), cursor, reader.getMetadata(), initialSymbolCounts);

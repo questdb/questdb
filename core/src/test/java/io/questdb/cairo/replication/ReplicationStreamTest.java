@@ -8,7 +8,7 @@ import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TablePageFrameCursor;
+import io.questdb.cairo.TableReplicationPageFrameCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
 import io.questdb.cairo.TableWriter;
@@ -213,7 +213,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         try (
                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, sourceTableName);
                 TableReplicationRecordCursorFactory factory = new TableReplicationRecordCursorFactory(engine, sourceTableName, maxRowsPerFrame);
-                TablePageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nFirstRow);
+                TableReplicationPageFrameCursor cursor = factory.getPageFrameCursorFrom(sqlExecutionContext, reader.getMetadata().getTimestampIndex(), nFirstRow);
                 ReplicationStreamGenerator streamGenerator = new ReplicationStreamGenerator();
                 ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(NF)) {
 
