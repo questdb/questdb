@@ -192,7 +192,7 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
 
                 assert sendAddress != 0;
                 assert sendLength > 0;
-                assert sendOffset < sendLength;
+                assert sendOffset >= 0;
                 int nWritten = nf.send(fd, sendAddress + sendOffset, sendLength);
                 if (nWritten > 0) {
                     if (nWritten == sendLength) {

@@ -121,7 +121,7 @@ public class ReplicationStreamReceiver implements Closeable {
         }
 
         int nRead = nf.recv(fd, frameMappingAddress + frameMappingOffset, frameDataNBytesRemaining);
-        if (nRead == -1) {
+        if (nRead < 0) {
             LOG.info().$("peer disconnected when reading frame data [fd=").$(fd).$(']').$();
             disconnect();
             return true;
@@ -133,6 +133,8 @@ public class ReplicationStreamReceiver implements Closeable {
             }
             slaveWriter = null;
             resetReading();
+        } else {
+            frameMappingOffset += nRead;
         }
         return nRead > 0;
     }

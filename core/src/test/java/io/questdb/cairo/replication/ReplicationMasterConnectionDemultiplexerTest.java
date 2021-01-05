@@ -52,7 +52,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
     public void testSimple1() throws Exception {
         runTest("testSimple1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(300)" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
