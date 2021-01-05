@@ -9,8 +9,8 @@ import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReplicationPageFrameCursor;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReplicationPageFrameCursor;
 import io.questdb.cairo.TableReplicationRecordCursorFactory;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.replication.ReplicationMasterConnectionDemultiplexer.ReplicationMasterCallbacks;
@@ -49,14 +49,59 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
     }
 
     @Test
-    public void testSimple1() throws Exception {
+    public void testSinglePacketFramesSingleFramePerColumn() throws Exception {
+        int nRows = 20; // Number of rows is insufficient to create packets larger than MockConnection packet size
         runTest("testSimple1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(300)" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testMultiplePacketFramesSingleFrameColumns() throws Exception {
+        int nRows = 5000; // Number of rows is sufficient to create packets larger than MockConnection packet size
+        runTest("testSimple1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testSinglePacketFramesMultipleFramesPerColumn() throws Exception {
+        int nRows = 50;
+        long maxRowsPerFrame = 20; // Number of rows is insufficient to create packets larger than MockConnection packet size
+        runTest("testSimple1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, maxRowsPerFrame);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testMultiplePacketFramesMultipleFramesPerColumn() throws Exception {
+        int nRows = 15000;
+        long maxRowsPerFrame = 5000;
+        runTest("testSimple1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, maxRowsPerFrame);
             engine.releaseInactive();
         });
     }
@@ -167,6 +212,8 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
                     }
                 } else {
                     // streamGenerator.nConcurrentFrames has been reached
+                    streamReceiver.handleIO();
+                    masterConnDemux.handleTasks();
                     Thread.yield();
                 }
             }
