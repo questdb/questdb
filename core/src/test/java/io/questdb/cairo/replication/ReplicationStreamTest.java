@@ -1,6 +1,10 @@
 package io.questdb.cairo.replication;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Random;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -82,8 +86,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            replicateTable("source", "dest", "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
             engine.releaseInactive();
         });
     }
@@ -95,8 +98,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(100)" +
                     ") TIMESTAMP(ts) PARTITION BY DAY;",
                     sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 0, Long.MAX_VALUE);
+            replicateTable("source", "dest", "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 0, Long.MAX_VALUE);
             engine.releaseInactive();
         });
     }
@@ -108,8 +110,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                     "SELECT rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                     ");",
                     sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", expected, "(l LONG)", 0, Long.MAX_VALUE);
+            replicateTable("source", "dest", "(l LONG)", 0, Long.MAX_VALUE);
             engine.releaseInactive();
         });
     }
@@ -121,8 +122,7 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(5,10,2) s FROM long_sequence(300)" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", expected, "(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            replicateTable("source", "dest", "(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
             engine.releaseInactive();
         });
     }
@@ -134,8 +134,19 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_symbol(60,2,16,2) sym FROM long_sequence(100)" +
                     ") TIMESTAMP(ts) PARTITION BY DAY;",
                     sqlExecutionContext);
-            String expected = select("SELECT * FROM source");
-            replicateTable("source", "dest", expected, "(ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", 0, Long.MAX_VALUE);
+            replicateTable("source", "dest", "(ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", 0, Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testBig() throws Exception {
+        runTest("testSimple1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                            "SELECT timestamp_sequence(0, 100000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(10000000)" +
+                            ") TIMESTAMP (ts) PARTITION BY DAY;",
+                    sqlExecutionContext);
+            replicateTable("source", "dest", "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY;", 0, Long.MAX_VALUE);
             engine.releaseInactive();
         });
     }
@@ -146,25 +157,27 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         LOG.info().$("Finished test ").$(name).$();
     }
 
-    private String select(CharSequence selectSql) throws SqlException {
-        sink.clear();
-        CompiledQuery query = compiler.compile(selectSql, sqlExecutionContext);
-        try (
-                RecordCursorFactory factory = query.getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            printer.print(cursor, factory.getMetadata(), true);
-        }
-        return sink.toString();
-    }
-
-    private void replicateTable(String sourceTableName, String destTableName, String expected, String tableCreateFields, long nFirstRow, long maxRowsPerFrame) throws SqlException {
+    private void replicateTable(String sourceTableName, String destTableName, String tableCreateFields, long nFirstRow, long maxRowsPerFrame) throws SqlException {
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$();
         compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, destTableName)) {
             sendReplicationStream(sourceTableName, nFirstRow, maxRowsPerFrame, writer);
         }
-        String actual = select("SELECT * FROM " + destTableName);
-        Assert.assertEquals(expected, actual);
+        assertTableEquals(sourceTableName, destTableName);
+    }
+
+    private void assertTableEquals(String sourceTableName, String destTableName) throws SqlException {
+        CompiledQuery querySrc = compiler.compile("select * from " + sourceTableName, sqlExecutionContext);
+        try (
+                RecordCursorFactory factorySrc = querySrc.getRecordCursorFactory();
+                RecordCursor cursorSrc = factorySrc.getCursor(sqlExecutionContext);
+        ) {
+            CompiledQuery queryDst = compiler.compile("select * from " + destTableName, sqlExecutionContext);
+            try (RecordCursorFactory factoryDst = queryDst.getRecordCursorFactory();
+                 RecordCursor cursorDst = factoryDst.getCursor(sqlExecutionContext)) {
+                TestUtils.assertEquals(cursorSrc, factorySrc.getMetadata(), cursorDst, factoryDst.getMetadata());
+            }
+        }
     }
 
     private int streamTargetReadBufferSize = 1000;
@@ -208,6 +221,9 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 return nWrote;
             }
         };
+        long seed = System.currentTimeMillis();
+        Random rnd = new Random(seed);
+        LOG.info().$("Random seed [seed=").$(seed).$(']').$();
 
         IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
         try (
@@ -228,7 +244,8 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
 
             // Setup stream frame generator
             int masterTableId = reader.getMetadata().getId();
-            streamGenerator.of(masterTableId, 1, cursor, reader.getMetadata(), initialSymbolCounts);
+            int nConcurrentFrames = 10;
+            streamGenerator.of(masterTableId, nConcurrentFrames, cursor, reader.getMetadata(), initialSymbolCounts);
 
             // Setup stream frame receiver
             SlaveWriter slaveWriter = new SlaveWriterImpl(configuration).of(writer);
@@ -238,17 +255,19 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
             });
 
             ReplicationStreamGeneratorResult streamResult;
+            List<ReplicationStreamGeneratorResult> frames = new ArrayList<>(nConcurrentFrames);
+
             while ((streamResult = streamGenerator.nextDataFrame()) != null) {
                 if (!streamResult.isRetry()) {
-                    try {
-                        sendFrame(streamReceiver, streamResult.getFrame());
-                    } finally {
-                        streamResult.getFrame().complete();
+                    frames.add(streamResult);
+                    if (frames.size() == nConcurrentFrames) {
+                        shuffleAndSend(frames, streamReceiver, rnd);
                     }
                 } else {
                     Thread.yield();
                 }
             }
+            shuffleAndSend(frames, streamReceiver, rnd);
 
             // Wait for ready to commit from slave
             Assert.assertEquals(0, streamTargetWriteBufferOffset);
@@ -271,6 +290,19 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
 
         Unsafe.free(streamTargetReadBufferAddress, streamTargetReadBufferSize);
         Unsafe.free(streamTargetWriteBufferAddress, streamTargetWriteBufferSize);
+    }
+
+    private void shuffleAndSend(List<ReplicationStreamGeneratorResult> frames, ReplicationStreamReceiver streamReceiver, Random rnd) {
+        Collections.shuffle(frames, rnd);
+        for (int i = 0; i < frames.size(); i++) {
+            ReplicationStreamGeneratorResult streamResult = frames.get(i);
+            try {
+                sendFrame(streamReceiver, streamResult.getFrame());
+            } finally {
+                streamResult.getFrame().complete();
+            }
+        }
+        frames.clear();
     }
 
     private void sendFrame(ReplicationStreamReceiver streamWriter, ReplicationStreamGeneratorFrame streamFrameMeta) {
