@@ -106,6 +106,27 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
         });
     }
 
+    @Test
+    public void testAppend() throws Exception {
+        int nRows = 20;
+        runTest("testSimple1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+
+            compiler.compile("INSERT INTO source(ts, l) " +
+                    "SELECT timestamp_sequence(20000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + "));",
+                    sqlExecutionContext);
+            expected = select("SELECT * FROM source");
+            replicateTable("source", "dest", expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", nRows, Long.MAX_VALUE);
+
+            engine.releaseInactive();
+        });
+    }
+
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
         TestUtils.assertMemoryLeak(runnable);
@@ -167,7 +188,9 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
         boolean added = masterConnDemux.tryAddConnection(peerId, conn1.acceptorFd);
         Assert.assertTrue(added);
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$();
-        compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
+        if (nFirstRow == 0) {
+            compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
+        }
 
         ReplicationStreamReceiver streamReceiver = new ReplicationStreamReceiver(NF);
         IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();

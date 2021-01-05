@@ -47,6 +47,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     private TableBlockWriter blockWriter;
     private final AtomicInteger nRemainingFrames = new AtomicInteger();
     private volatile PartitionDetails cachedPartition;
+    private long firstTimeStamp;
 
     public SlaveWriterImpl(CairoConfiguration configuration) {
         root = configuration.getRoot();
@@ -94,7 +95,13 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 }
             }
         }
+
+        resetCommit();
         return this;
+    }
+
+    private void resetCommit() {
+        firstTimeStamp = Long.MAX_VALUE;
     }
 
     @Override
@@ -108,6 +115,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 }
             }
             blockWriter.commit();
+            resetCommit();
         } finally {
             unlockWriter();
         }
@@ -158,6 +166,9 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
 
     @Override
     public long getDataMap(long timestamp, int columnIndex, long offset, long size) {
+        if (timestamp < firstTimeStamp) {
+            firstTimeStamp = timestamp;
+        }
         PartitionDetails partition = cachedPartition;
         if (null == partition || timestamp > partition.timestampHi || timestamp < partition.timestampLo) {
             partition = getPartitionDetails(timestamp);
@@ -196,8 +207,12 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             int nPartitions = usedPartitions.size();
             int nPartition = 0;
             while (nPartition < nPartitions) {
-                PartitionDetails partition = usedPartitions.getQuick(nPartition++);
-                blockWriter.startPageFrame(partition.timestampLo);
+                PartitionDetails partition = usedPartitions.getQuick(nPartition);
+                if (nPartition == 0) {
+                    blockWriter.startPageFrame(firstTimeStamp);
+                } else {
+                    blockWriter.startPageFrame(partition.timestampLo);
+                }
                 boolean isLastPartition = nPartition == nPartitions;
                 if (isLastPartition) {
                     partition.preCommit(true);
@@ -208,6 +223,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                     partition.clear();
                     partitionCache.add(partition);
                 }
+                nPartition++;
             }
             usedPartitions.clear();
             partitionByTimestamp.clear();
