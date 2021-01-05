@@ -38,10 +38,14 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testJoinReorderNoStackOverflow() throws Exception {
+        // LEFT JOIN is outer, therefore it does not reduce one of other tables to 0 rows, hence we
+        // expect row duplication
         assertQuery(
                 "nspname\toid\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\tobjoid\tclassoid\tobjsubid\tdescription\n" +
-                        "pg_catalog\t11\tbeta\t2200\tr\t0\t1\t\t1\t1259\t0\ttable\n" +
-                        "public\t2200\tbeta\t2200\tr\t0\t1\t\t1\t1259\t0\ttable\n",
+                        "pg_catalog\t11\tpg_class\t11\tr\t0\t1259\t\tNaN\tNaN\t0\t\n" +
+                        "public\t2200\tpg_class\t11\tr\t0\t1259\t\tNaN\tNaN\t0\t\n" +
+                        "pg_catalog\t11\tbeta\t2200\tr\t0\t1\t\tNaN\tNaN\t0\t\n" +
+                        "public\t2200\tbeta\t2200\tr\t0\t1\t\tNaN\tNaN\t0\t\n",
                 "    pg_catalog.pg_namespace n, \n" +
                         "    pg_catalog.pg_class c  \n" +
                         "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n",
@@ -56,7 +60,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testKafkaJdbcTableQuery() throws Exception {
         assertQuery(
                 "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n" +
-                        "\tpublic\talpha\tTABLE\ttable\t\t\t\t\t\n",
+                        "\tpublic\talpha\tTABLE\t\t\t\t\t\t\n",
                 "SELECT \n" +
                         "     NULL AS TABLE_CAT, \n" +
                         "     n.nspname AS TABLE_SCHEM, \n" +
@@ -172,6 +176,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testPSQLTableList() throws Exception {
         assertQuery(
                 "Schema\tName\tType\tOwner\n" +
+                        "\tpg_class\ttable\tpublic\n" +
                         "public\tx\ttable\tpublic\n",
                 "SELECT n.nspname as \"Schema\",\n" +
                         "  c.relname as \"Name\",\n" +

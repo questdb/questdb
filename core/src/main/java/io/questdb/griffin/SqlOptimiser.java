@@ -572,10 +572,11 @@ class SqlOptimiser {
                     // must evaluate as constant
                     postFilterRemoved.add(k);
                     parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), filterNodes.getQuick(k)));
-                } else if (rs == 1
-                        && nullCounts.getQuick(k) == 0
-                        // single table reference and this table is not joined via OUTER or ASOF
-                        && joinBarriers.excludes(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType())) {
+                } else if (rs == 1 && (
+                        nullCounts.getQuick(k) == 0
+                                // single table reference and this table is not joined via OUTER or ASOF
+                                || joinBarriers.excludes(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType()
+                        ))) {
                     // get single table reference out of the way right away
                     // we don't have to wait until "our" table comes along
                     addWhereNode(parent, refs.getQuick(0), filterNodes.getQuick(k));
@@ -1790,36 +1791,6 @@ class SqlOptimiser {
         }
     }
 
-    // the intent is to either validate top-level columns in select columns or replace them with function calls
-    // if columns do not exist
-    private void rewriteColumnsToFunctions(QueryModel model) {
-        final QueryModel nested = model.getNestedModel();
-        if (nested != null) {
-            rewriteColumnsToFunctions(nested);
-            final ObjList<QueryColumn> columns = model.getColumns();
-            final int n = columns.size();
-            if (n > 0) {
-                for (int i = 0; i < n; i++) {
-                    final QueryColumn qc = columns.getQuick(i);
-                    final ExpressionNode node = qc.getAst();
-                    if (node.type == LITERAL) {
-                        if (nested.getAliasToColumnMap().contains(node.token)) {
-                            continue;
-                        }
-
-                        if (functionParser.isValidNoArgFunction(node)) {
-                            node.type = FUNCTION;
-                        }
-                    } else {
-                        model.addField(qc);
-                    }
-                }
-            } else {
-                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
-            }
-        }
-    }
-
     private ExpressionNode optimiseBooleanNot(final ExpressionNode node, boolean reverse) {
         if (node.token != null) {
             switch (notOps.get(node.token)) {
@@ -2390,6 +2361,36 @@ class SqlOptimiser {
         // and union models too
         if (model.getUnionModel() != null) {
             resolveJoinColumns(model.getUnionModel());
+        }
+    }
+
+    // the intent is to either validate top-level columns in select columns or replace them with function calls
+    // if columns do not exist
+    private void rewriteColumnsToFunctions(QueryModel model) {
+        final QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            rewriteColumnsToFunctions(nested);
+            final ObjList<QueryColumn> columns = model.getColumns();
+            final int n = columns.size();
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    final QueryColumn qc = columns.getQuick(i);
+                    final ExpressionNode node = qc.getAst();
+                    if (node.type == LITERAL) {
+                        if (nested.getAliasToColumnMap().contains(node.token)) {
+                            continue;
+                        }
+
+                        if (functionParser.isValidNoArgFunction(node)) {
+                            node.type = FUNCTION;
+                        }
+                    } else {
+                        model.addField(qc);
+                    }
+                }
+            } else {
+                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+            }
         }
     }
 

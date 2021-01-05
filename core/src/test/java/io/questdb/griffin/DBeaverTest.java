@@ -43,15 +43,13 @@ public class DBeaverTest extends AbstractGriffinTest {
 
     @Test
     public void testNamespaceListSql() throws SqlException {
-        String sql = "SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n\n" +
-                "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass\n" +
-                " ORDER BY nspname";
-
         assertQuery(
                 "oid\tnspname\toid1\tdescription\n" +
-                        "11\tpg_catalog\t11\tdescription\n" +
-                        "2200\tpublic\t2200\tdescription\n",
-                sql,
+                        "11\tpg_catalog\t11\t\n" +
+                        "2200\tpublic\t2200\t\n",
+                "SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n\n" +
+                        "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass\n" +
+                        " ORDER BY nspname",
                 null,
                 true,
                 sqlExecutionContext,
@@ -62,11 +60,10 @@ public class DBeaverTest extends AbstractGriffinTest {
 
     @Test
     public void testShowSearchPath() throws SqlException {
-        String sql = "SHOW search_path";
         assertQuery(
                 "search_path\n" +
                         "\"$user\", public\n",
-                sql,
+                "SHOW search_path",
                 null,
                 false,
                 sqlExecutionContext,

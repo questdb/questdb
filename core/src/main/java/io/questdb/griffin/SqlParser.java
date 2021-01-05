@@ -964,9 +964,9 @@ public final class SqlParser {
             // was it "left" ?
             if (isLeftKeyword(tok)) {
                 tok = tok(lexer, "join");
+                joinType = QueryModel.JOIN_OUTER;
                 if (isOuterKeyword(tok)) {
                     // LEFT OUTER
-                    joinType = QueryModel.JOIN_OUTER;
                     tok = tok(lexer, "join");
                 }
             } else {
