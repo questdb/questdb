@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;

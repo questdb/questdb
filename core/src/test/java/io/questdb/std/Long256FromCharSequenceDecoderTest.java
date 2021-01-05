@@ -121,25 +121,24 @@ public class Long256FromCharSequenceDecoderTest {
         assertDecoded("10000000000000000000000000000000000000000000000000000000000000000", 0, 0, 0, 0, 0, 0x1000000000000000L);
     }
 
-    private void assertDecoded(String hexString, int prefixSize, int suffixSize, long l0, long l1, long l2, long l3) throws NumericException {
-        decoder.decode(hexString, prefixSize, hexString.length() - suffixSize);
-        Assert.assertEquals(l0, this.l0);
-        Assert.assertEquals(l1, this.l1);
-        Assert.assertEquals(l2, this.l2);
-        Assert.assertEquals(l3, this.l3);
-    }
-
     @Before
     public void before() {
         decoder = new Long256FromCharSequenceDecoder() {
-
             @Override
-            protected void onDecoded(long l0, long l1, long l2, long l3) {
+            public void onDecoded(long l0, long l1, long l2, long l3) {
                 Long256FromCharSequenceDecoderTest.this.l0 = l0;
                 Long256FromCharSequenceDecoderTest.this.l1 = l1;
                 Long256FromCharSequenceDecoderTest.this.l2 = l2;
                 Long256FromCharSequenceDecoderTest.this.l3 = l3;
             }
         };
+    }
+
+    private void assertDecoded(String hexString, int prefixSize, int suffixSize, long l0, long l1, long l2, long l3) throws NumericException {
+        Long256FromCharSequenceDecoder.decode(hexString, prefixSize, hexString.length() - suffixSize, decoder);
+        Assert.assertEquals(l0, this.l0);
+        Assert.assertEquals(l1, this.l1);
+        Assert.assertEquals(l2, this.l2);
+        Assert.assertEquals(l3, this.l3);
     }
 }

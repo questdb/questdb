@@ -52,6 +52,12 @@ public class NumbersTest {
         Numbers.parseLong("10000LL");
     }
 
+    @Test
+    public void testShortBswap() {
+        short v = Numbers.bswap((short) -7976);
+        Assert.assertEquals(-7976, Numbers.bswap(v));
+    }
+
     @Before
     public void setUp() {
         rnd = new Rnd();

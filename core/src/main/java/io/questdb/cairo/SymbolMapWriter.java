@@ -24,21 +24,16 @@
 
 package io.questdb.cairo;
 
-import java.io.Closeable;
-
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Hash;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
+
+import java.io.Closeable;
 
 public class SymbolMapWriter implements Closeable {
     public static final int HEADER_SIZE = 64;

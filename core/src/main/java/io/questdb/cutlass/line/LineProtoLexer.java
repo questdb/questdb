@@ -24,7 +24,10 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;

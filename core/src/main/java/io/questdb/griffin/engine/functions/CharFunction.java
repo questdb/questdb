@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;

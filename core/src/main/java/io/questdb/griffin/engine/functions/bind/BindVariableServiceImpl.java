@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.Nullable;
@@ -796,6 +795,12 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.STRING:
                 ((StrBindVariable) function).setValue(value);
                 break;
+            case ColumnType.BYTE:
+                ((ByteBindVariable) function).value = (byte) value;
+                break;
+            case ColumnType.CHAR:
+                ((CharBindVariable) function).value = (char) value;
+                break;
             default:
                 reportError(function, ColumnType.SHORT, index, name);
                 break;
@@ -852,7 +857,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                     ((ShortBindVariable) function).value = Numbers.parseShort(value);
                     break;
                 case ColumnType.CHAR:
-                    ((CharBindVariable) function).value = Chars.nonEmpty(value) ? value.charAt(0) : 0;
+                    ((CharBindVariable) function).value = (char) (Chars.nonEmpty(value) ? Numbers.parseShort(value) : 0);
                     break;
                 case ColumnType.INT:
                     ((IntBindVariable) function).value = value != null ? Numbers.parseInt(value) : Numbers.INT_NaN;
@@ -874,6 +879,13 @@ public class BindVariableServiceImpl implements BindVariableService {
                     break;
                 case ColumnType.STRING:
                     ((StrBindVariable) function).setValue(value);
+                    break;
+                case ColumnType.LONG256:
+                    if (value != null) {
+                        Long256FromCharSequenceDecoder.decode(value, 0, value.length(), ((Long256BindVariable) function).value);
+                    } else {
+                        ((Long256BindVariable) function).value.copyFrom(Long256Impl.NULL_LONG256);
+                    }
                     break;
                 default:
                     reportError(function, ColumnType.STRING, index, name);

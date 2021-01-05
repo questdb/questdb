@@ -32,8 +32,6 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
 public class VirtualMemory implements BigMem {
     static final int STRING_LENGTH_BYTES = 4;
     private static final Log LOG = LogFactory.getLog(VirtualMemory.class);
@@ -1010,10 +1008,7 @@ public class VirtualMemory implements BigMem {
     }
 
     private void putLong256Null() {
-        Unsafe.getUnsafe().putLong(appendPointer, Long256Impl.NULL_LONG256.getLong0());
-        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, Long256Impl.NULL_LONG256.getLong1());
-        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, Long256Impl.NULL_LONG256.getLong2());
-        Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, Long256Impl.NULL_LONG256.getLong3());
+        Long256Impl.putNull(appendPointer);
     }
 
     void putLongBytes(long value) {
@@ -1221,21 +1216,21 @@ public class VirtualMemory implements BigMem {
             }
         }
 
-        private void putLong256(CharSequence hexString, int start, int end) {
-            try {
-                inPageLong256Decoder.decode(hexString, start, end);
-            } catch (NumericException e) {
-                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
-            }
-            appendPointer += Long256.BYTES;
-        }
-
         @Override
-        protected void onDecoded(long l0, long l1, long l2, long l3) {
+        public void onDecoded(long l0, long l1, long l2, long l3) {
             Unsafe.getUnsafe().putLong(appendPointer, l0);
             Unsafe.getUnsafe().putLong(appendPointer + 8, l1);
             Unsafe.getUnsafe().putLong(appendPointer + 16, l2);
             Unsafe.getUnsafe().putLong(appendPointer + 24, l3);
+        }
+
+        private void putLong256(CharSequence hexString, int start, int end) {
+            try {
+                decode(hexString, start, end, inPageLong256Decoder);
+            } catch (NumericException e) {
+                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
+            }
+            appendPointer += Long256.BYTES;
         }
     }
 
@@ -1252,20 +1247,20 @@ public class VirtualMemory implements BigMem {
             }
         }
 
-        private void putLong256(CharSequence hexString, int start, int end) {
-            try {
-                decode(hexString, start, end);
-            } catch (NumericException e) {
-                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
-            }
-        }
-
         @Override
-        protected void onDecoded(long l0, long l1, long l2, long l3) {
+        public void onDecoded(long l0, long l1, long l2, long l3) {
             putLong(l0);
             putLong(l1);
             putLong(l2);
             putLong(l3);
+        }
+
+        private void putLong256(CharSequence hexString, int start, int end) {
+            try {
+                decode(hexString, start, end, this);
+            } catch (NumericException e) {
+                throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
+            }
         }
     }
 }
