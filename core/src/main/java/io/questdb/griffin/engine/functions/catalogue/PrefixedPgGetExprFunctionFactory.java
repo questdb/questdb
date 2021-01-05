@@ -22,25 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.ObjList;
 
-public class BooleanConstant extends BooleanFunction implements ConstantFunction {
-
-    public static final BooleanConstant TRUE = new BooleanConstant(0, true);
-    public static final BooleanConstant FALSE = new BooleanConstant(0, false);
-
-    private final boolean value;
-
-    public BooleanConstant(int position, boolean value) {
-        super(position);
-        this.value = value;
+public class PrefixedPgGetExprFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "pg_catalog.pg_get_expr(SI)";
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return value;
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return StrConstant.NULL;
     }
 }

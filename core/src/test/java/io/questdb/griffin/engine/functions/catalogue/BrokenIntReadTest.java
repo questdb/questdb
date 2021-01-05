@@ -154,7 +154,9 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 "2\t1259\t2\tcolumn\n" +
                 "2\t1259\t3\tcolumn\n" +
                 "2\t1259\t4\tcolumn\n" +
-                "2\t1259\t5\tcolumn\n";
+                "2\t1259\t5\tcolumn\n" +
+                "11\t2615\t0\tdescription\n" +
+                "2200\t2615\t0\tdescription\n";
 
         testFailOnReadDescriptionFunc(1, expected);
     }
@@ -174,7 +176,9 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 "2\t1259\t2\tcolumn\n" +
                 "2\t1259\t3\tcolumn\n" +
                 "2\t1259\t4\tcolumn\n" +
-                "2\t1259\t5\tcolumn\n";
+                "2\t1259\t5\tcolumn\n" +
+                "11\t2615\t0\tdescription\n" +
+                "2200\t2615\t0\tdescription\n";
 
         testFailOnReadDescriptionFunc(2, expected);
     }
@@ -193,7 +197,9 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 "2\t1259\t2\tcolumn\n" +
                 "2\t1259\t3\tcolumn\n" +
                 "2\t1259\t4\tcolumn\n" +
-                "2\t1259\t5\tcolumn\n";
+                "2\t1259\t5\tcolumn\n" +
+                "11\t2615\t0\tdescription\n" +
+                "2200\t2615\t0\tdescription\n";
 
         testFailOnReadDescriptionFunc(3, expected);
     }
@@ -213,7 +219,9 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 "2\t1259\t2\tcolumn\n" +
                 "2\t1259\t3\tcolumn\n" +
                 "2\t1259\t4\tcolumn\n" +
-                "2\t1259\t5\tcolumn\n";
+                "2\t1259\t5\tcolumn\n" +
+                "11\t2615\t0\tdescription\n" +
+                "2200\t2615\t0\tdescription\n";
 
         testFailOnReadDescriptionFunc(4, expected);
     }
@@ -232,7 +240,9 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 "2\t1259\t2\tcolumn\n" +
                 "2\t1259\t3\tcolumn\n" +
                 "2\t1259\t4\tcolumn\n" +
-                "2\t1259\t5\tcolumn\n";
+                "2\t1259\t5\tcolumn\n" +
+                "11\t2615\t0\tdescription\n" +
+                "2200\t2615\t0\tdescription\n";
 
         testFailOnReadDescriptionFunc(5, expected);
     }
@@ -251,7 +261,9 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 "2\t1259\t2\tcolumn\n" +
                 "2\t1259\t3\tcolumn\n" +
                 "2\t1259\t4\tcolumn\n" +
-                "2\t1259\t5\tcolumn\n";
+                "2\t1259\t5\tcolumn\n" +
+                "11\t2615\t0\tdescription\n" +
+                "2200\t2615\t0\tdescription\n";
 
         testFailOnReadDescriptionFunc(6, expected);
     }

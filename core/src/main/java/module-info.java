@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.regex.AbstractLikeStrFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -150,8 +151,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
 //                    #like
-            io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeCharFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory,
 //                    # '!~',
             io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory,
@@ -485,6 +487,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetExprFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

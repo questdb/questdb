@@ -70,6 +70,7 @@ public class PGOids {
     public static final int PG_CATALOG_OID = 11;
     public static final int PG_CLASS_OID = 1259;
     public static final int PG_PUBLIC_OID = 2200;
+    public static final int PG_NAMESPACE_OID = 2615;
 
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
     public static final int BINARY_TYPE_BYTE = (1 << 31) | ColumnType.BYTE;

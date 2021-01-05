@@ -105,6 +105,7 @@ io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory
 
 #  like
 io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory
 io.questdb.griffin.engine.functions.regex.LikeCharFunctionFactory
 
 # 'to_char'
@@ -462,6 +463,9 @@ io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetExprFunctionFactory
 
 # concat()
 io.questdb.griffin.engine.functions.str.ConcatFunctionFactory

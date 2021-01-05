@@ -633,7 +633,7 @@ class SqlOptimiser {
         if (old == null) {
             return filter;
         } else {
-            ExpressionNode n = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, 0);
+            ExpressionNode n = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, filter.position);
             n.paramCount = 2;
             n.lhs = old;
             n.rhs = filter;

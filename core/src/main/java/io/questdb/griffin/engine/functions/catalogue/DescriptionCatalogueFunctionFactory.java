@@ -95,6 +95,8 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
         private final Path path;
         private final FilesFacade ff;
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
+        private final NamespaceRecord namespaceRecord = new NamespaceRecord();
+        private final DelegatingRecord activeRecord = new DelegatingRecordImpl();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
         private final int[] intValues = new int[4];
@@ -114,6 +116,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
             this.intValues[1] = PGOids.PG_CLASS_OID; // classoid
             this.intValues[2] = 0; // objsubid
             this.tempMem = tempMem;
+            this.activeRecord.of(diskReadingRecord);
         }
 
         @Override
@@ -126,22 +129,39 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public Record getRecord() {
-            return diskReadingRecord;
+            return activeRecord;
         }
 
         @Override
         public boolean hasNext() {
+            if (namespaceRecord.namespaceIndex == -1 && nextFile()) {
+                return true;
+            }
+
+            activeRecord.of(namespaceRecord);
+            return nextNamespace();
+        }
+
+        private boolean nextNamespace() {
+            if (namespaceRecord.namespaceIndex < Constants.NAMESPACE_OIDS.length - 1) {
+                namespaceRecord.namespaceIndex++;
+                return true;
+            }
+            return false;
+        }
+
+        private boolean nextFile() {
             if (findFileStruct == 0) {
                 findFileStruct = ff.findFirst(path.trimTo(plimit).$());
                 if (findFileStruct > 0) {
-                    return next0();
+                    return nextFile0();
                 }
 
                 findFileStruct = 0;
                 return false;
             }
 
-            return next0();
+            return nextFile0();
         }
 
         @Override
@@ -150,6 +170,8 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
                 ff.findClose(findFileStruct);
                 findFileStruct = 0;
             }
+            activeRecord.of(diskReadingRecord);
+            namespaceRecord.namespaceIndex = -1;
         }
 
         @Override
@@ -157,7 +179,7 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
             return -1;
         }
 
-        private boolean next0() {
+        private boolean nextFile0() {
             do {
                 if (readNextFileFromDisk) {
                     foundMetadataFile = false;
@@ -223,7 +245,6 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
         }
 
         private class DiskReadingRecord implements Record {
-
             public short columnNumber = 0;
             public String description;
 
@@ -240,6 +261,40 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
             @Override
             public CharSequence getStr(int col) {
                 return description;
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return getStr(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return getStr(col).length();
+            }
+        }
+
+        private static class NamespaceRecord implements Record {
+
+            private int namespaceIndex = -1;
+
+            @Override
+            public int getInt(int col) {
+                if (col == 0) {
+                    return Constants.NAMESPACE_OIDS[namespaceIndex];
+                } else {
+                    return PGOids.PG_NAMESPACE_OID;
+                }
+            }
+
+            @Override
+            public short getShort(int col) {
+                return 0;
+            }
+
+            @Override
+            public CharSequence getStr(int col) {
+                return "description";
             }
 
             @Override

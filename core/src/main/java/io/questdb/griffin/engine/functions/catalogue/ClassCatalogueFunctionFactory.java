@@ -36,6 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
@@ -113,7 +114,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
     private static class ClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final Path path;
         private final FilesFacade ff;
-        private final DelegatingRecord record = new DelegatingRecord();
+        private final DelegatingRecordImpl record = new DelegatingRecordImpl();
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
         private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
         private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
@@ -128,7 +129,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
             this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
-            this.record.setDelegate(staticReadingRecord);
+            this.record.of(staticReadingRecord);
             this.intValues[1] = PG_PUBLIC_OID; // relnamespace
             this.intValues[3] = 0; // relowner
             this.intValues[4] = 0; // OID
@@ -154,7 +155,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
                 return true;
             }
 
-            record.setDelegate(diskReadingRecord);
+            record.of(diskReadingRecord);
             if (findFileStruct == 0) {
                 findFileStruct = ff.findFirst(path.trimTo(plimit).$());
                 if (findFileStruct > 0) {
@@ -178,7 +179,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
                 findFileStruct = 0;
             }
             fixedRelPos = -1;
-            record.setDelegate(staticReadingRecord);
+            record.of(staticReadingRecord);
         }
 
         @Override
@@ -217,43 +218,6 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private final static class DelegatingRecord implements Record {
-            private Record delegate;
-
-            @Override
-            public char getChar(int col) {
-                return delegate.getChar(col);
-            }
-
-            @Override
-            public int getInt(int col) {
-                return delegate.getInt(col);
-            }
-
-            @Override
-            public CharSequence getStr(int col) {
-                return delegate.getStr(col);
-            }
-
-            @Override
-            public CharSequence getStrB(int col) {
-                return delegate.getStr(col);
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                return delegate.getStrLen(col);
-            }
-
-            public Record getDelegate() {
-                return delegate;
-            }
-
-            public void setDelegate(Record delegate) {
-                this.delegate = delegate;
-            }
-        }
-
         private class StaticReadingRecord implements Record {
             @Override
             public char getChar(int col) {
@@ -267,17 +231,23 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStr(int col) {
-                return relNames[fixedRelPos];
+                if (col == 0) {
+                    return relNames[fixedRelPos];
+                }
+                return null;
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return relNames[fixedRelPos];
+                return getStr(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                return getStr(col).length();
+                if (col == 0) {
+                    return relNames[fixedRelPos].length();
+                }
+                return -1;
             }
         }
 
@@ -297,6 +267,14 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStr(int col) {
+                 if (col == 0) {
+                     return getName(utf8SinkA);
+                 }
+                 return null;
+            }
+
+            @Nullable
+            private CharSequence getName(StringSink utf8SinkA) {
                 utf8SinkA.clear();
                 if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkA)) {
                     return utf8SinkA;
@@ -307,17 +285,18 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                utf8SinkB.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), utf8SinkB)) {
-                    return utf8SinkB;
-                } else {
-                    return null;
+                if (col == 0) {
+                    return getName(utf8SinkB);
                 }
+                return null;
             }
 
             @Override
             public int getStrLen(int col) {
-                return getStr(col).length();
+                if (col == 0) {
+                    return getStr(col).length();
+                }
+                return -1;
             }
         }
     }
@@ -329,6 +308,7 @@ public class ClassCatalogueFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("relkind", ColumnType.CHAR, null));
         metadata.add(new TableColumnMetadata("relowner", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("relpartbound", ColumnType.STRING, null));
         METADATA = metadata;
     }
 }

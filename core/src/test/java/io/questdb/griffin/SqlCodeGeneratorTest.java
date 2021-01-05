@@ -40,7 +40,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -188,8 +187,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    public void testBindVariableAsFunctionArg() throws Exception {
+    public void testBindVariableWithLike() throws Exception {
+        testBindVariableWithLike0("like");
+    }
+
+    @Test
+    public void testBindVariableWithILike() throws Exception {
+        testBindVariableWithLike0("ilike");
+    }
+
+    private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
             try (
@@ -198,15 +205,51 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
                 bindVariableService.clear();
-                try (RecordCursorFactory factory = compiler.compile("xy where v like $1", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursorFactory factory = compiler.compile("xy where v " +keyword+ " $1", sqlExecutionContext).getRecordCursorFactory()) {
 
-                    assertCursor("x\t$1\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
+                    bindVariableService.setStr(0, "MBE%");
+                    assertCursor("v\n" +
+                                    "MBEZGHW\n",
                             factory,
                             true,
                             true,
-                            true
+                            false
+                    );
+
+                    bindVariableService.setStr(0, "Z%");
+                    assertCursor("v\n" +
+                                    "ZSQLDGLOG\n" +
+                                    "ZLUOG\n" +
+                                    "ZLCBDMIG\n" +
+                                    "ZJYYFLSVI\n" +
+                                    "ZWEVQTQO\n" +
+                                    "ZSFXUNYQ\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+                    assertCursor("v\n" +
+                                    "ZSQLDGLOG\n" +
+                                    "ZLUOG\n" +
+                                    "ZLCBDMIG\n" +
+                                    "ZJYYFLSVI\n" +
+                                    "ZWEVQTQO\n" +
+                                    "ZSFXUNYQ\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+
+                    bindVariableService.setStr(0, null);
+                    assertCursor("v\n",
+                            factory,
+                            true,
+                            true,
+                            false
                     );
                 }
             }

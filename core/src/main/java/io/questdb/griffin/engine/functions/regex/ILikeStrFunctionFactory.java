@@ -22,25 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.regex;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-
-public class BooleanConstant extends BooleanFunction implements ConstantFunction {
-
-    public static final BooleanConstant TRUE = new BooleanConstant(0, true);
-    public static final BooleanConstant FALSE = new BooleanConstant(0, false);
-
-    private final boolean value;
-
-    public BooleanConstant(int position, boolean value) {
-        super(position);
-        this.value = value;
-    }
-
+public class ILikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
     @Override
-    public boolean getBool(Record rec) {
-        return value;
+    public String getSignature() {
+        return "ilike(SS)";
     }
 }

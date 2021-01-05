@@ -30,11 +30,14 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 
+import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
+import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
+
 public class ClassResolveFunctionFactory implements FunctionFactory {
-    // for now we only implement 'pg_namespace'::regclass
-    public static final IntConstant INSTANCE = new IntConstant(0, 2615);
+    private static final CharSequenceObjHashMap<IntConstant> map = new CharSequenceObjHashMap<>();
 
     @Override
     public String getSignature() {
@@ -43,6 +46,16 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return INSTANCE;
+        final Function nameFunction = args.getQuick(0);
+        final IntConstant func = map.get(nameFunction.getStr(null));
+        if (func != null) {
+            return func;
+        }
+        throw SqlException.$(nameFunction.getPosition(), "unsupported class");
+    }
+
+    static {
+        map.put("pg_namespace", new IntConstant(0, PG_NAMESPACE_OID));
+        map.put("pg_class", new IntConstant(0, PG_CLASS_OID));
     }
 }

@@ -34,7 +34,9 @@ public class DescriptionCatalogueFunctionFactoryTest extends AbstractGriffinTest
         assertQuery(
                 "objoid\tclassoid\tobjsubid\tdescription\n" +
                         "1\t1259\t0\ttable\n" +
-                        "1\t1259\t1\tcolumn\n",
+                        "1\t1259\t1\tcolumn\n" +
+                        "11\t2615\t0\tdescription\n" +
+                        "2200\t2615\t0\tdescription\n",
                 "pg_catalog.pg_description;",
                 "create table x(a int)",
                 null,
@@ -48,7 +50,9 @@ public class DescriptionCatalogueFunctionFactoryTest extends AbstractGriffinTest
         assertQuery(
                 "objoid\tclassoid\tobjsubid\tdescription\n" +
                         "1\t1259\t0\ttable\n" +
-                        "1\t1259\t1\tcolumn\n",
+                        "1\t1259\t1\tcolumn\n" +
+                        "11\t2615\t0\tdescription\n" +
+                        "2200\t2615\t0\tdescription\n",
                 "pg_description;",
                 "create table x(a int)",
                 null,
