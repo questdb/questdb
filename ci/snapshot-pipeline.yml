@@ -15,9 +15,11 @@ stages:
     jobs:
       - job: BuildOnLinux
         displayName: "Build on Linux"
-        container: adoptopenjdk/openjdk11:centos
-        pool:
-          vmImage: "ubuntu-latest"
+    container:
+      image: adoptopenjdk/openjdk11:centos
+      options: "--name ci-container -v /usr/bin/docker:/tmp/docker:ro"
+    pool:
+        mImage: "ubuntu-latest"
         steps:
           - checkout: self
             fetchDepth: 1
@@ -25,7 +27,7 @@ stages:
             submodules: false
           - bash: |
 
-              git version
+              /tmp/docker exec -t -u 0 ci-container sh -c "yum -y install git"
 
               cd /tmp
               curl -q -O http://apache.mirror.anlx.net/maven/maven-3/"$MVN_VERSION"/binaries/"$MVN"-bin.tar.gz
