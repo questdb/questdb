@@ -51,7 +51,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
     @Test
     public void testSinglePacketFramesSingleFramePerColumn() throws Exception {
         int nRows = 20; // Number of rows is insufficient to create packets larger than MockConnection packet size
-        runTest("testSimple1", () -> {
+        runTest("testSinglePacketFramesSingleFramePerColumn", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
                     ") TIMESTAMP (ts);",
@@ -65,7 +65,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
     @Test
     public void testMultiplePacketFramesSingleFrameColumns() throws Exception {
         int nRows = 5000; // Number of rows is sufficient to create packets larger than MockConnection packet size
-        runTest("testSimple1", () -> {
+        runTest("testMultiplePacketFramesSingleFrameColumns", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
                     ") TIMESTAMP (ts);",
@@ -80,7 +80,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
     public void testSinglePacketFramesMultipleFramesPerColumn() throws Exception {
         int nRows = 50;
         long maxRowsPerFrame = 20; // Number of rows is insufficient to create packets larger than MockConnection packet size
-        runTest("testSimple1", () -> {
+        runTest("testSinglePacketFramesMultipleFramesPerColumn", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
                     ") TIMESTAMP (ts);",
@@ -95,7 +95,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
     public void testMultiplePacketFramesMultipleFramesPerColumn() throws Exception {
         int nRows = 15000;
         long maxRowsPerFrame = 5000;
-        runTest("testSimple1", () -> {
+        runTest("testMultiplePacketFramesMultipleFramesPerColumn", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
                     ") TIMESTAMP (ts);",
@@ -109,7 +109,7 @@ public class ReplicationMasterConnectionDemultiplexerTest extends AbstractGriffi
     @Test
     public void testAppend() throws Exception {
         int nRows = 20;
-        runTest("testSimple1", () -> {
+        runTest("testAppend", () -> {
             compiler.compile("CREATE TABLE source AS (" +
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(" + nRows + ")" +
                     ") TIMESTAMP (ts);",
