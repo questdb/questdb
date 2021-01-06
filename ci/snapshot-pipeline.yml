@@ -24,6 +24,9 @@ stages:
             lfs: false
             submodules: false
           - bash: |
+
+              git version
+
               cd /tmp
               curl -q -O http://apache.mirror.anlx.net/maven/maven-3/"$MVN_VERSION"/binaries/"$MVN"-bin.tar.gz
               tar xf "$MVN"-bin.tar.gz
