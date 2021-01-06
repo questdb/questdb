@@ -23,14 +23,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
-import io.questdb.std.IntObjHashMap;
-import io.questdb.std.LongList;
-import io.questdb.std.LongObjHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
 
@@ -56,7 +49,7 @@ public class MasterReplicationService {
             CharSequence ipv4Address = masterReplicationConf.masterIps.get(n);
             int port = masterReplicationConf.masterPorts.get(n);
             if (!nf.bindTcp(listenFd, ipv4Address, port)) {
-                LOG.error().$("replication master failed to bind to ").$(ipv4Address).$(':').$(port).$();
+                LOG.error().$("replication master failed to bind to ").$(ipv4Address).$(':').$(port).$(" with error ").$(nf.errno()).$();
                 nf.close(listenFd);
                 continue;
             }
