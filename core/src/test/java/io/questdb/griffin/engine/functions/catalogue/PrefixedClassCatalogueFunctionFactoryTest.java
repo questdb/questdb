@@ -34,7 +34,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
+public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testJoinReorderNoStackOverflow() throws Exception {

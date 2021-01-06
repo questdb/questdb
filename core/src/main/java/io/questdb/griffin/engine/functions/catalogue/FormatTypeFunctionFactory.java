@@ -24,25 +24,22 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.ObjList;
 
-public class GetExprCatalogueFunctionFactoryTest extends AbstractFunctionFactoryTest {
-
-    @Test
-    public void testGetExprCatalogueNoop1() throws SqlException {
-        call("AAA", 0).andAssert("");
-    }
-
-    @Test
-    public void testGetExprCatalogueNoop2() throws SqlException {
-        call("", 0).andAssert("");
+public class FormatTypeFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "format_type(II)";
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new GetExprCatalogueFunctionFactory();
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return StrConstant.NULL;
     }
 }

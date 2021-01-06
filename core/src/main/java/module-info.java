@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.regex.AbstractLikeStrFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -468,7 +467,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.AttributeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.GetExprCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedClassCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IndexCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedTypeCatalogueFunctionFactory,
@@ -488,7 +487,10 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetExprFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.NullIfIFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

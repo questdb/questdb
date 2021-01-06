@@ -528,6 +528,23 @@ class ExpressionParser {
                         }
                     case 'N':
                     case 'n':
+                        if (SqlKeywords.isNotKeyword(tok)) {
+                            ExpressionNode nn = opStack.peek();
+                            if (nn != null && nn.type == ExpressionNode.LITERAL) {
+                                opStack.pop();
+
+                                node = expressionNodePool.next().of(
+                                        ExpressionNode.OPERATION,
+                                        GenericLexer.immutableOf(tok),
+                                        11,
+                                        position
+                                );
+                                node.paramCount = 1;
+                                opStack.push(node);
+                                opStack.push(nn);
+                                break;
+                            }
+                        }
                     case 't':
                     case 'T':
                     case 'f':

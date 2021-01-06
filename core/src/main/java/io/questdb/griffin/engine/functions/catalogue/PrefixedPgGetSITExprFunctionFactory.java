@@ -32,10 +32,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.ObjList;
 
-public class PrefixedPgGetExprFunctionFactory implements FunctionFactory {
+public class PrefixedPgGetSITExprFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_get_expr(SI)";
+        return "pg_catalog.pg_get_expr(SIT)";
     }
 
     @Override

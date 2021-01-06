@@ -99,6 +99,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotIn() throws Exception {
+        x("x'a''b'innot", "x not in ('a','b')");
+    }
+
+    @Test
+    public void testNotInReverseContext() throws Exception {
+        x("ax'a''b'innotand", "a and not x in ('a','b')");
+    }
+
+    @Test
     public void testBug1() throws SqlException {
         x("2022.yyyy", "'2022'.'yyyy'");
     }
