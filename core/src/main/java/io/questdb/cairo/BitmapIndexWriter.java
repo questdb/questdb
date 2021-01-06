@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -59,6 +60,7 @@ public class BitmapIndexWriter implements Closeable {
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
 
+        keyMem.jumpTo(0);
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();
@@ -199,12 +201,20 @@ public class BitmapIndexWriter implements Closeable {
         }
     }
 
-    final public void of(CairoConfiguration configuration, long keyFd, long valueFd) {
+    final public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init) {
         close();
-        long pageSize = configuration.getFilesFacade().getMapPageSize();
+        final FilesFacade ff = configuration.getFilesFacade();
+        long pageSize = ff.getMapPageSize();
 
         try {
-            this.keyMem.of(configuration.getFilesFacade(), keyFd, pageSize);
+            if (init) {
+                // todo: copy from source
+                ff.truncate(keyFd, 0);
+                this.keyMem.of(ff, keyFd, pageSize);
+                initKeyMemory(this.keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+            } else {
+                this.keyMem.of(ff, keyFd, pageSize);
+            }
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
@@ -231,7 +241,13 @@ public class BitmapIndexWriter implements Closeable {
                 throw CairoException.instance(0).put("Sequence mismatch [fd=").put(keyFd).put(']');
             }
 
-            this.valueMem.of(configuration.getFilesFacade(), valueFd, pageSize);
+            if (init) {
+                ff.truncate(valueFd, 0);
+                this.valueMem.of(ff, valueFd, pageSize);
+                this.valueMem.jumpTo(0);
+            } else {
+                this.valueMem.of(ff, valueFd, pageSize);
+            }
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
             if (this.valueMem.getAppendOffset() < this.valueMemSize) {

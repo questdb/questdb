@@ -37,10 +37,10 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
+import java.net.URISyntaxException;
 import java.net.URL;
 
 public class OutOfOrderTest extends AbstractGriffinTest {
@@ -123,42 +123,18 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all append)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    // uncomment these to look at result comparison from two queries
-                    // we are using file comparison here because of ordering issue on the identical timestamps
-                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all append)",
+                            "y order by ts",
+                            "insert into x select * from append",
+                            "x"
+                    );
                 }
         );
     }
 
     @Test
-    @Ignore
-    // todo: fix ooo indexer
     public void testPartitionedDataAppendOODataIndexed() throws Exception {
         assertMemoryLeak(() -> {
                     // create table with roughly 2AM data
@@ -212,35 +188,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all append)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    // uncomment these to look at result comparison from two queries
-                    // we are using file comparison here because of ordering issue on the identical timestamps
-                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x where sym = 'googl'", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all append)",
+                            "y where sym = 'googl' order by ts",
+                            "insert into x select * from append",
+                            "x where sym = 'googl'"
+                    );
                 }
         );
     }
@@ -270,7 +224,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(510)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -299,38 +253,14 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all append)",
+                            "y order by ts",
+                            "insert into x select * from append",
+                            "x"
+                    );
 
-                    // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all append)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    // uncomment these to look at result comparison from two queries
-                    // we are using file comparison here because of ordering issue on the identical timestamps
-                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
-//                    URL url = OutOfOrderTest.class.getResource("/oo/testPartitionedDataMergeData.txt");
-//                    Assert.assertNotNull(url);
-//                    TestUtils.assertEquals(new File(url.toURI()), sink);
+                    assertIndexConsistency();
                 }
         );
     }
@@ -360,7 +290,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(510)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -391,40 +321,39 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all append)", sqlExecutionContext);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all append)",
+                            "y order by ts",
+                            "insert into x select * from append",
+                            "x"
+                    );
 
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    // uncomment these to look at result comparison from two queries
-                    // we are using file comparison here because of ordering issue on the identical timestamps
-                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
-//                    URL url = OutOfOrderTest.class.getResource("/oo/testPartitionedDataMergeData.txt");
-//                    Assert.assertNotNull(url);
-//                    TestUtils.assertEquals(new File(url.toURI()), sink);
+                    assertIndexConsistency();
                 }
         );
+    }
+
+    private void assertIndexConsistency() throws SqlException {
+        // index test
+        // expected outcome
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+        String expected = Chars.toString(sink);
+
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile("x where sym = 'googl'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+        TestUtils.assertEquals(expected, sink);
     }
 
     @Test
@@ -481,38 +410,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all middle)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    // uncomment these to look at result comparison from two queries
-                    // we are using file comparison here because of ordering issue on the identical timestamps
-//                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from middle", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-//                    TestUtils.assertEquals(expected, sink);
-                    URL url = OutOfOrderTest.class.getResource("/oo/testPartitionedDataMergeData.txt");
-                    Assert.assertNotNull(url);
-                    TestUtils.assertEquals(new File(url.toURI()), sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all middle)",
+                            "insert into x select * from middle",
+                            "/oo/testPartitionedDataMergeData.txt"
+                    );
                 }
         );
     }
@@ -571,38 +474,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-
-                    // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all middle)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    // uncomment these to look at result comparison from two queries
-                    // we are using file comparison here because of ordering issue on the identical timestamps
-//                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from middle", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-//                    TestUtils.assertEquals(expected, sink);
-                    URL url = OutOfOrderTest.class.getResource("/oo/testPartitionedDataMergeEnd.txt");
-                    Assert.assertNotNull(url);
-                    TestUtils.assertEquals(new File(url.toURI()), sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all middle)",
+                            "insert into x select * from middle",
+                            "/oo/testPartitionedDataMergeEnd.txt"
+                    );
                 }
         );
     }
@@ -663,39 +539,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all middle)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    // uncomment these to look at result comparison from two queries
-                    // we are using file comparison here because of ordering issue on the identical timestamps
-//                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from middle", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-//                    TestUtils.assertEquals(expected, sink);
-                    URL url = OutOfOrderTest.class.getResource("/oo/testPartitionedDataOOData.txt");
-                    Assert.assertNotNull(url);
-                    TestUtils.assertEquals(new File(url.toURI()), sink);
-
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all middle)",
+                            "insert into x select * from middle",
+                            "/oo/testPartitionedDataOOData.txt"
+                    );
                 }
         );
     }
@@ -783,41 +632,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (select * from x union all select * from 1am union all select * from top2)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-//                    String expected = Chars.toString(sink);
-
-                    // The query above generates expected result, but there is a problem using it
-                    // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
-                    // and the reference query. So they cannot be directly compared. The parts with duplicate timestamps will
-                    // look different. If this test ever breaks, uncomment the reference query and compare results visually.
-
-                    // insert 1AM data into X
-                    compiler.compile("insert into x select * from (1am union all top2)", sqlExecutionContext);
-
-                    // It is necessary to release cached "x" reader because as of yet
-                    // reader cannot reload any partition other than "current".
-                    // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    URL url = OutOfOrderTest.class.getResource("/oo/testPartitionedDataOODataPbOOData.txt");
-                    Assert.assertNotNull(url);
-                    TestUtils.assertEquals(new File(url.toURI()), sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (select * from x union all select * from 1am union all select * from top2)",
+                            "insert into x select * from (1am union all top2)",
+                            "/oo/testPartitionedDataOODataPbOOData.txt"
+                    );
                 }
         );
     }
@@ -1255,35 +1074,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (x union all middle)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    // uncomment these to look at result comparison from two queries
-                    // we are using file comparison here because of ordering issue on the identical timestamps
-                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from middle", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all middle)",
+                            "y order by ts",
+                            "insert into x select * from middle",
+                            "x"
+                    );
                 }
         );
     }
@@ -1370,31 +1167,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (select * from x union all select * from 1am union all select * from prev)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from (1am union all prev)", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (select * from x union all select * from 1am union all select * from prev)",
+                            "y order by ts",
+                            "insert into x select * from (1am union all prev)",
+                            "x"
+                    );
                 }
         );
     }
@@ -1799,31 +1577,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (select * from x union all select * from top)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from top", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (select * from x union all select * from top)",
+                            "y order by ts",
+                            "insert into x select * from top",
+                            "x"
+                    );
                 }
         );
     }
@@ -1910,32 +1669,87 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-                    compiler.compile("create table y as (select * from x union all select * from top union all select * from bottom)", sqlExecutionContext);
-
-                    // expected outcome
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    String expected = Chars.toString(sink);
-
-                    compiler.compile("insert into x select * from (top union all bottom)", sqlExecutionContext);
-
-                    // release reader
-                    engine.releaseAllReaders();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (select * from x union all select * from top union all select * from bottom)",
+                            "y order by ts",
+                            "insert into x select * from (top union all bottom)",
+                            "x"
+                    );
                 }
         );
+    }
+
+    private void assertOutOfOrderDataConsistency(
+            final String referenceTableDDL,
+            final String referenceSQL,
+            final String resourceName
+    ) throws SqlException, URISyntaxException {
+        // create third table, which will contain both X and 1AM
+        compiler.compile(referenceTableDDL, sqlExecutionContext);
+
+        // expected outcome
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+        // uncomment these to look at result comparison from two queries
+        // we are using file comparison here because of ordering issue on the identical timestamps
+//                    String expected = Chars.toString(sink);
+
+        compiler.compile(referenceSQL, sqlExecutionContext);
+
+        // release reader
+        engine.releaseAllReaders();
+
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+//                    TestUtils.assertEquals(expected, sink);
+        URL url = OutOfOrderTest.class.getResource(resourceName);
+        Assert.assertNotNull(url);
+        TestUtils.assertEquals(new File(url.toURI()), sink);
+    }
+
+    private void assertOutOfOrderDataConsistency(
+            final String referenceTableDDL,
+            final String referenceSQL,
+            final String outOfOrderInsertSQL,
+            final String assertSQL
+    ) throws SqlException {
+        // create third table, which will contain both X and 1AM
+        compiler.compile(referenceTableDDL, sqlExecutionContext);
+
+        // expected outcome
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile(referenceSQL, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+        // uncomment these to look at result comparison from two queries
+        // we are using file comparison here because of ordering issue on the identical timestamps
+        String expected = Chars.toString(sink);
+
+        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+
+        // release reader
+        engine.releaseAllReaders();
+
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile(assertSQL, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+        TestUtils.assertEquals(expected, sink);
     }
 }

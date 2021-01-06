@@ -135,6 +135,7 @@ public class TableWriter implements Closeable {
     private RowFunction rowFunction = openPartitionFunction;
     private long prevMaxTimestamp;
     private long txPrevTransientRowCount;
+    private boolean avoidIndexOnCommit = false;
     private long maxTimestamp;
     private long minTimestamp;
     private long prevMinTimestamp;
@@ -3075,6 +3076,7 @@ public class TableWriter implements Closeable {
             openPartition(maxTimestamp);
         }
         setAppendPosition(this.transientRowCount, true);
+        avoidIndexOnCommit = true;
         rowFunction = switchPartitionFunction;
         row.activeColumns = columns;
         row.activeNullSetters = nullSetters;
@@ -3590,17 +3592,20 @@ public class TableWriter implements Closeable {
                 // todo: this is hugely inefficient, but we will figure out to cache index writers later
                 for (int i = 0; i < columnCount; i++) {
                     if (metadata.isColumnIndexed(i)) {
+                        long row = MergeStruct.getIndexStartOffset(mergeStruct, i) / Integer.BYTES;
+
                         w.of(
                                 configuration,
                                 MergeStruct.getIndexKeyFd(mergeStruct, i),
-                                MergeStruct.getIndexValueFd(mergeStruct, i)
+                                MergeStruct.getIndexValueFd(mergeStruct, i),
+                                row == 0
                         );
 
                         long addr = MergeStruct.getDestFixedAddress(mergeStruct, i);
-                        long size = MergeStruct.getDestFixedAddressSize(mergeStruct, i);
+                        final long count = MergeStruct.getDestFixedAddressSize(mergeStruct, i) / Integer.BYTES;
 
-                        for (long o = MergeStruct.getIndexStartOffset(mergeStruct, i); o < size; o += Integer.BYTES) {
-                            w.add(Unsafe.getUnsafe().getInt(addr + o), o);
+                        for (; row < count; row++) {
+                            w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(addr + row * Integer.BYTES)), row);
                         }
                     }
                 }
@@ -4504,7 +4509,8 @@ public class TableWriter implements Closeable {
     }
 
     private void updateIndexes() {
-        if (indexCount == 0) {
+        if (indexCount == 0 || avoidIndexOnCommit) {
+            avoidIndexOnCommit = false;
             return;
         }
         updateIndexesSlow();

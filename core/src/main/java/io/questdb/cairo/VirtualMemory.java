@@ -75,7 +75,7 @@ public class VirtualMemory implements BigMem {
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2 * i, c);
+            Unsafe.getUnsafe().putChar(address + 2L * i, c);
         }
     }
 
@@ -1051,11 +1051,11 @@ public class VirtualMemory implements BigMem {
     private long putStr0(CharSequence value, int pos, int len) {
         final long offset = getAppendOffset();
         putInt(len);
-        if (pageHi - appendPointer < len << 1) {
+        if (pageHi - appendPointer < (long) len << 1) {
             putStrSplit(value, pos, len);
         } else {
             copyStrChars(value, pos, len, appendPointer);
-            appendPointer += len * 2;
+            appendPointer += len * 2L;
         }
         return offset;
     }
@@ -1071,7 +1071,7 @@ public class VirtualMemory implements BigMem {
             }
 
             copyStrChars(value, start, half, absolutePointer + offset);
-            offset += half * 2;
+            offset += half * 2L;
             if (offset < roOffsetHi) {
                 char c = value.charAt(start + half);
                 putByte(offset, (byte) c);

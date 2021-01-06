@@ -296,7 +296,7 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
     }
 
     public void putStr(long offset, CharSequence value, int pos, int len) {
-        checkLimits(offset, len * 2 + STRING_LENGTH_BYTES);
+        checkLimits(offset, len * 2L + STRING_LENGTH_BYTES);
         putInt(offset, len);
         copyStrChars(value, pos, len, baseAddress + offset + STRING_LENGTH_BYTES);
     }
@@ -440,7 +440,7 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2 * i, c);
+            Unsafe.getUnsafe().putChar(address + 2L * i, c);
         }
     }
 
@@ -505,11 +505,11 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
     }
 
     private long putStr0(CharSequence value, int pos, int len) {
-        checkLimits(len * 2 + STRING_LENGTH_BYTES);
+        checkLimits(len * 2L + STRING_LENGTH_BYTES);
         final long offset = getAppendOffset();
         Unsafe.getUnsafe().putInt(appendAddress, len);
         copyStrChars(value, pos, len, appendAddress + Integer.BYTES);
-        appendAddress += len * 2 + Integer.BYTES;
+        appendAddress += len * 2L + Integer.BYTES;
         return offset;
     }
 
