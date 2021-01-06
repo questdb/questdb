@@ -15,9 +15,9 @@ stages:
     jobs:
       - job: BuildOnLinux
         displayName: "Build on Linux"
-    container:
-      image: adoptopenjdk/openjdk11:centos
-      options: "--name ci-container -v /usr/bin/docker:/tmp/docker:ro"
+  container:
+    image: adoptopenjdk/openjdk11:centos
+    options: "--name ci-container -v /usr/bin/docker:/tmp/docker:ro"
     pool:
         mImage: "ubuntu-latest"
         steps:
