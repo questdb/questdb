@@ -34,14 +34,18 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
+public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testJoinReorderNoStackOverflow() throws Exception {
+        // LEFT JOIN is outer, therefore it does not reduce one of other tables to 0 rows, hence we
+        // expect row duplication
         assertQuery(
-                "nspname\toid\trelname\trelnamespace\trelkind\trelowner\toid1\tobjoid\tclassoid\tobjsubid\tdescription\n" +
-                        "pg_catalog\t11\tbeta\t2200\tr\t0\t1\t1\t1259\t0\ttable\n" +
-                        "public\t2200\tbeta\t2200\tr\t0\t1\t1\t1259\t0\ttable\n",
+                "nspname\toid\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\tobjoid\tclassoid\tobjsubid\tdescription\n" +
+                        "pg_catalog\t11\tpg_class\t11\tr\t0\t1259\t\tNaN\tNaN\t0\t\n" +
+                        "public\t2200\tpg_class\t11\tr\t0\t1259\t\tNaN\tNaN\t0\t\n" +
+                        "pg_catalog\t11\tbeta\t2200\tr\t0\t1\t\tNaN\tNaN\t0\t\n" +
+                        "public\t2200\tbeta\t2200\tr\t0\t1\t\tNaN\tNaN\t0\t\n",
                 "    pg_catalog.pg_namespace n, \n" +
                         "    pg_catalog.pg_class c  \n" +
                         "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n",
@@ -56,7 +60,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testKafkaJdbcTableQuery() throws Exception {
         assertQuery(
                 "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tTABLE_TYPE\tREMARKS\tTYPE_CAT\tTYPE_SCHEM\tTYPE_NAME\tSELF_REFERENCING_COL_NAME\tREF_GENERATION\n" +
-                        "\tpublic\talpha\tTABLE\ttable\t\t\t\t\t\n",
+                        "\tpublic\talpha\tTABLE\t\t\t\t\t\t\n",
                 "SELECT \n" +
                         "     NULL AS TABLE_CAT, \n" +
                         "     n.nspname AS TABLE_SCHEM, \n" +
@@ -136,8 +140,8 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("select * from pg_catalog.pg_class", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "pg_class\t11\tr\t0\t1259\n", sink);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                            "pg_class\t11\tr\t0\t1259\t\n", sink);
 
                     compiler.compile("create table xyz (a int)", sqlExecutionContext);
                     engine.releaseAllReaders();
@@ -172,6 +176,7 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testPSQLTableList() throws Exception {
         assertQuery(
                 "Schema\tName\tType\tOwner\n" +
+                        "\tpg_class\ttable\tpublic\n" +
                         "public\tx\ttable\tpublic\n",
                 "SELECT n.nspname as \"Schema\",\n" +
                         "  c.relname as \"Name\",\n" +
@@ -245,8 +250,8 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
                     printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "pg_class\t11\tr\t0\t1259\n", sink);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                            "pg_class\t11\tr\t0\t1259\t\n", sink);
 
                     compiler.compile("create table xyz (a int)", sqlExecutionContext);
 
@@ -255,9 +260,9 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
 
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "pg_class\t11\tr\t0\t1259\n" +
-                            "xyz\t2200\tr\t0\t1\n", sink);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                            "pg_class\t11\tr\t0\t1259\t\n" +
+                            "xyz\t2200\tr\t0\t1\t\n", sink);
 
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot());
@@ -273,10 +278,10 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
 
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                                    "pg_class\t11\tr\t0\t1259\n" +
-                                    "xyz\t2200\tr\t0\t1\n" +
-                                    "автомобилей\t2200\tr\t0\t2\n"
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                                    "pg_class\t11\tr\t0\t1259\t\n" +
+                                    "xyz\t2200\tr\t0\t1\t\n" +
+                                    "автомобилей\t2200\tr\t0\t2\t\n"
                             , sink);
 
                     compiler.compile("drop table автомобилей;", sqlExecutionContext);
@@ -287,9 +292,9 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true);
 
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\n" +
-                            "pg_class\t11\tr\t0\t1259\n" +
-                            "xyz\t2200\tr\t0\t1\n", sink);
+                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                            "pg_class\t11\tr\t0\t1259\t\n" +
+                            "xyz\t2200\tr\t0\t1\t\n", sink);
 
                 } finally {
                     cursor.close();
@@ -313,9 +318,9 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPgClassOneTable() throws Exception {
         assertQuery(
-                "relname\trelnamespace\trelkind\trelowner\toid\n" +
-                        "pg_class\t11\tr\t0\t1259\n" +
-                        "x\t2200\tr\t0\t1\n",
+                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                        "pg_class\t11\tr\t0\t1259\t\n" +
+                        "x\t2200\tr\t0\t1\t\n",
                 "pg_catalog.pg_class",
                 "create table x(a int)",
                 null,
@@ -327,17 +332,17 @@ public class ClassCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPgClassTwoTables() throws Exception {
         assertQuery(
-                "relname\trelnamespace\trelkind\trelowner\toid\n" +
-                        "pg_class\t11\tr\t0\t1259\n" +
-                        "x\t2200\tr\t0\t1\n",
+                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                        "pg_class\t11\tr\t0\t1259\t\n" +
+                        "x\t2200\tr\t0\t1\t\n",
                 "pg_catalog.pg_class order by 1",
                 "create table x(a int)",
                 null,
                 "create table y(a int)",
-                "relname\trelnamespace\trelkind\trelowner\toid\n" +
-                        "pg_class\t11\tr\t0\t1259\n" +
-                        "x\t2200\tr\t0\t1\n" +
-                        "y\t2200\tr\t0\t2\n",
+                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                        "pg_class\t11\tr\t0\t1259\t\n" +
+                        "x\t2200\tr\t0\t1\t\n" +
+                        "y\t2200\tr\t0\t2\t\n",
                 true,
                 false,
                 false

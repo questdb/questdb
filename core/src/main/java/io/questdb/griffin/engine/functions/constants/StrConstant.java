@@ -30,6 +30,8 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
 
 public class StrConstant extends StrFunction implements ConstantFunction {
+    public static final StrConstant NULL = new StrConstant(0, null);
+
     private final String value;
     private final int length;
 

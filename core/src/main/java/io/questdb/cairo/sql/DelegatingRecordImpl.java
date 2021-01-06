@@ -22,14 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.union;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-class UnionRecord implements Record {
+public class DelegatingRecordImpl implements DelegatingRecord {
     private Record base;
 
     public void of(Record base) {

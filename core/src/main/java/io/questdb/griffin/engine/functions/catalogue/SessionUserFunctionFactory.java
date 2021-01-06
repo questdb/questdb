@@ -27,18 +27,21 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.ObjList;
 
-public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
+public class SessionUserFunctionFactory implements FunctionFactory {
+    private static final StrConstant USER = new StrConstant(0, "admin");
+
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_get_userbyid(I)";
+        return "session_user()";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return Constants.PUBLIC_CONSTANT;
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return USER;
     }
 }

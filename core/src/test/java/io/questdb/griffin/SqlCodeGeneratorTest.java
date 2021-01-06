@@ -187,6 +187,76 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBindVariableWithLike() throws Exception {
+        testBindVariableWithLike0("like");
+    }
+
+    @Test
+    public void testBindVariableWithILike() throws Exception {
+        testBindVariableWithLike0("ilike");
+    }
+
+    private void testBindVariableWithLike0(String keyword) throws Exception {
+        assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
+                bindVariableService.clear();
+                try (RecordCursorFactory factory = compiler.compile("xy where v " +keyword+ " $1", sqlExecutionContext).getRecordCursorFactory()) {
+
+                    bindVariableService.setStr(0, "MBE%");
+                    assertCursor("v\n" +
+                                    "MBEZGHW\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+                    bindVariableService.setStr(0, "Z%");
+                    assertCursor("v\n" +
+                                    "ZSQLDGLOG\n" +
+                                    "ZLUOG\n" +
+                                    "ZLCBDMIG\n" +
+                                    "ZJYYFLSVI\n" +
+                                    "ZWEVQTQO\n" +
+                                    "ZSFXUNYQ\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+                    assertCursor("v\n" +
+                                    "ZSQLDGLOG\n" +
+                                    "ZLUOG\n" +
+                                    "ZLCBDMIG\n" +
+                                    "ZJYYFLSVI\n" +
+                                    "ZWEVQTQO\n" +
+                                    "ZSFXUNYQ\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+
+                    bindVariableService.setStr(0, null);
+                    assertCursor("v\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableInSelect2() throws Exception {
         assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);

@@ -286,23 +286,16 @@ public class BindVariableServiceImplTest {
     @Test
     public void testLongIndexedOverride() throws SqlException {
         bindVariableService.setInt(0, 10);
-        try {
             bindVariableService.setLong(0, 5);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains("bind variable at 0 is defined as INT and cannot accept LONG", e.getFlyweightMessage());
-        }
+        Assert.assertEquals(5, bindVariableService.getFunction(0).getInt(null));
     }
 
     @Test
     public void testLongOverride() throws SqlException {
         bindVariableService.setInt("a", 10);
-        try {
-            bindVariableService.setLong("a", 5);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains("bind variable 'a' is defined as INT and cannot accept LONG", e.getFlyweightMessage());
-        }
+        bindVariableService.setLong("a", 5);
+        // allow INT to long truncate
+        Assert.assertEquals(5, bindVariableService.getFunction(":a").getInt(null));
     }
 
     @Test

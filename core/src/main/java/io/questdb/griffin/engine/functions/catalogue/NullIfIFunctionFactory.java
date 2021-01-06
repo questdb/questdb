@@ -26,19 +26,45 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
+public class NullIfIFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_get_userbyid(I)";
+        return "nullif(Ii)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return Constants.PUBLIC_CONSTANT;
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new NullIfIFunction(position, args.getQuick(0), args.getQuick(1).getInt(null));
+    }
+
+    private static class NullIfIFunction extends IntFunction implements UnaryFunction {
+        private final Function value;
+        private final int replacement;
+
+        public NullIfIFunction(int position, Function value, int replacement) {
+            super(position);
+            this.value = value;
+            this.replacement = replacement;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final int val = value.getInt(rec);
+            return val != Numbers.INT_NaN ? val : replacement;
+        }
     }
 }

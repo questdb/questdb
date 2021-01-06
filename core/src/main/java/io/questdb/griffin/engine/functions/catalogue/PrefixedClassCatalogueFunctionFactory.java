@@ -24,21 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.ObjList;
-
-public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
+public class PrefixedClassCatalogueFunctionFactory extends AbstractClassCatalogueFunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_get_userbyid(I)";
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return Constants.PUBLIC_CONSTANT;
+        return "pg_catalog.pg_class()";
     }
 }

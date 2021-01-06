@@ -133,7 +133,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testAsOfJoin() throws SqlException {
-        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp] from quotes q timestamp (timestamp) post-join-where tag = null) t",
+        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) asof join select [timestamp] from quotes q timestamp (timestamp) where tag = null) t",
                 "trades t ASOF JOIN quotes q WHERE tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
@@ -212,7 +212,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         //
         // which means "where" clause for "e" table has to be explicitly as post-join-where
         assertQuery(
-                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c asof join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees) order by lastName) e on e.employeeId = c.customerId post-join-where e.lastName = 'x' and e.blah = 'y' join select [customerId] from orders o on o.customerId = c.customerId) c",
+                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c asof join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees where lastName = 'x') where blah = 'y' order by lastName) e on e.employeeId = c.customerId join select [customerId] from orders o on o.customerId = c.customerId) c",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'",
@@ -374,7 +374,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testColumnTopToBottom() throws SqlException {
         assertQuery(
-                "select-choose x.i i, x.sym sym, x.amt amt, price, x.timestamp timestamp, y.timestamp timestamp1 from (select [i, sym, amt, timestamp] from x timestamp (timestamp) splice join select [price, timestamp, sym2, trader] from y timestamp (timestamp) on y.sym2 = x.sym post-join-where trader = 'ABC')",
+                "select-choose x.i i, x.sym sym, x.amt amt, price, x.timestamp timestamp, y.timestamp timestamp1 from (select [i, sym, amt, timestamp] from x timestamp (timestamp) splice join (select [price, timestamp, sym2, trader] from y timestamp (timestamp) where trader = 'ABC') y on y.sym2 = x.sym)",
                 "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym where trader = 'ABC'",
                 modelOf("x")
                         .col("i", ColumnType.INT)
@@ -2501,7 +2501,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testJoinClauseAlignmentBug() throws SqlException {
         assertQuery(
-                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema',true,case(TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema',switch(relkind,'r','SYSTEM TABLE','v','SYSTEM VIEW','i','SYSTEM INDEX',NULL),TABLE_SCHEM = 'pg_toast',switch(relkind,'r','SYSTEM TOAST TABLE','i','SYSTEM TOAST INDEX',NULL),switch(relkind,'r','TEMPORARY TABLE','p','TEMPORARY TABLE','i','TEMPORARY INDEX','S','TEMPORARY SEQUENCE','v','TEMPORARY VIEW',NULL)),false,switch(relkind,'r','TABLE','p','PARTITIONED TABLE','i','INDEX','S','SEQUENCE','v','VIEW','c','TYPE','f','FOREIGN TABLE','m','MATERIALIZED VIEW',NULL),NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' join (select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d where objsubid = 0) d on d.objoid = c.oid join (select [oid, relname, relnamespace] from pg_catalog.pg_class() dc where relname = 'pg_class') dc on dc.oid = d.classoid join (select [oid, nspname] from pg_catalog.pg_namespace() dn where nspname = 'pg_catalog') dn on dn.oid = dc.relnamespace) n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
+                "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema',true,case(TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema',switch(relkind,'r','SYSTEM TABLE','v','SYSTEM VIEW','i','SYSTEM INDEX',NULL),TABLE_SCHEM = 'pg_toast',switch(relkind,'r','SYSTEM TOAST TABLE','i','SYSTEM TOAST INDEX',NULL),switch(relkind,'r','TEMPORARY TABLE','p','TEMPORARY TABLE','i','TEMPORARY INDEX','S','TEMPORARY SEQUENCE','v','TEMPORARY VIEW',NULL)),false,switch(relkind,'r','TABLE','p','PARTITIONED TABLE','i','INDEX','S','SEQUENCE','v','VIEW','c','TYPE','f','FOREIGN TABLE','m','MATERIALIZED VIEW',NULL),NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' outer join (select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d where objsubid = 0) d on d.objoid = c.oid outer join (select [oid, relname, relnamespace] from pg_catalog.pg_class() dc where relname = 'pg_class') dc on dc.oid = d.classoid outer join (select [oid, nspname] from pg_catalog.pg_namespace() dn where nspname = 'pg_catalog') dn on dn.oid = dc.relnamespace) n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
                 "SELECT \n" +
                         "     NULL AS TABLE_CAT, \n" +
                         "     n.nspname AS TABLE_SCHEM, \n" +
@@ -3982,6 +3982,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLeftOuterJoin() throws Exception {
+        assertQuery(
+                "select-choose a.x x from (select [x] from a a outer join select [x] from b on b.x = a.x) a",
+                "select a.x from a a left outer join b on b.x = a.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testOuterJoinColumnAlias() throws SqlException {
         assertQuery("select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c outer join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = NaN) c) c) limit 10",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
@@ -4033,7 +4043,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
-                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name",
+                "select-virtual Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c outer join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name",
                 "SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
                         "       CASE c.relkind\n" +
@@ -4403,7 +4413,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectAfterOrderBy() throws SqlException {
-        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
+        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c outer join (select [nspname, oid] from pg_catalog.pg_namespace() n where nspname != 'pg_catalog' and nspname != 'information_schema' and nspname !~ '^pg_toast') n on n.oid = c.relnamespace where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
                 "select distinct Schema from \n" +
                         "(SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
@@ -4955,10 +4965,19 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSpliceJoin() throws SqlException {
-        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [timestamp] from quotes q timestamp (timestamp) post-join-where tag = null) t",
+        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [timestamp] from quotes q timestamp (timestamp) where tag = null) t",
                 "trades t splice join quotes q where tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
+        );
+    }
+
+    @Test
+    public void testSpliceJoinNullFilter() throws SqlException {
+        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.x x, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [x, timestamp] from quotes q timestamp (timestamp) post-join-where x = null) t",
+                "trades t splice join quotes q where x = null",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
+                modelOf("quotes").col("x", ColumnType.SYMBOL).timestamp()
         );
     }
 
@@ -5003,7 +5022,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         //
         // which means "where" clause for "e" table has to be explicitly as post-join-where
         assertQuery(
-                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c splice join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees) order by lastName) e on e.employeeId = c.customerId post-join-where e.lastName = 'x' and e.blah = 'y' join select [customerId] from orders o on o.customerId = c.customerId) c",
+                "select-choose c.customerId customerId, e.blah blah, e.lastName lastName, e.employeeId employeeId, e.timestamp timestamp, o.customerId customerId1 from (select [customerId] from customers c splice join select [blah, lastName, employeeId, timestamp] from (select-virtual ['1' blah, lastName, employeeId, timestamp] '1' blah, lastName, employeeId, timestamp from (select [lastName, employeeId, timestamp] from employees where lastName = 'x') where blah = 'y' order by lastName) e on e.employeeId = c.customerId join select [customerId] from orders o on o.customerId = c.customerId) c",
                 "customers c" +
                         " splice join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'",

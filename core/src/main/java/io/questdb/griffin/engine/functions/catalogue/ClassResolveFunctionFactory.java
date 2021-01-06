@@ -27,18 +27,35 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 
-public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
+import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
+import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
+
+public class ClassResolveFunctionFactory implements FunctionFactory {
+    private static final CharSequenceObjHashMap<IntConstant> map = new CharSequenceObjHashMap<>();
+
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_get_userbyid(I)";
+        return "::(ss)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return Constants.PUBLIC_CONSTANT;
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final Function nameFunction = args.getQuick(0);
+        final IntConstant func = map.get(nameFunction.getStr(null));
+        if (func != null) {
+            return func;
+        }
+        throw SqlException.$(nameFunction.getPosition(), "unsupported class");
+    }
+
+    static {
+        map.put("pg_namespace", new IntConstant(0, PG_NAMESPACE_OID));
+        map.put("pg_class", new IntConstant(0, PG_CLASS_OID));
     }
 }

@@ -24,25 +24,38 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
 
-public class GetExprCatalogueFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class ShowSearchPathCursorFactory implements RecordCursorFactory {
+    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
+    private static final StringValueRecord RECORD = new StringValueRecord("\"$user\", public");
 
-    @Test
-    public void testGetExprCatalogueNoop1() throws SqlException {
-        call("AAA", 0).andAssert("");
+    static {
+        METADATA.add(new TableColumnMetadata("search_path", ColumnType.STRING, null));
     }
 
-    @Test
-    public void testGetExprCatalogueNoop2() throws SqlException {
-        call("", 0).andAssert("");
+    private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        cursor.toTop();
+        return cursor;
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new GetExprCatalogueFunctionFactory();
+    public RecordMetadata getMetadata() {
+        return METADATA;
     }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
 }

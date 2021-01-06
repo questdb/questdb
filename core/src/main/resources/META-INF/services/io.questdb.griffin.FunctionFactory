@@ -22,7 +22,6 @@
 #
 ################################################################################
 
-
 ################################################################################
 #     ___                  _   ____  ____
 #    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -130,6 +129,7 @@ io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory
 
 #  like
 io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory
 io.questdb.griffin.engine.functions.regex.LikeCharFunctionFactory
 
 # 'to_char'
@@ -472,7 +472,7 @@ io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.AttributeCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.GetExprCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedClassCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.IndexCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedTypeCatalogueFunctionFactory
@@ -485,6 +485,14 @@ io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.NullIfIFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory
 
 # concat()
 io.questdb.griffin.engine.functions.str.ConcatFunctionFactory

@@ -24,36 +24,22 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import org.junit.Test;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.ObjList;
 
-public class DescriptionCatalogueFunctionFactoryTest extends AbstractGriffinTest {
-
-    @Test
-    public void testPgDescriptionFunc() throws Exception {
-        assertQuery(
-                "objoid\tclassoid\tobjsubid\tdescription\n" +
-                        "1\t1259\t0\ttable\n" +
-                        "1\t1259\t1\tcolumn\n",
-                "pg_catalog.pg_description;",
-                "create table x(a int)",
-                null,
-                false,
-                false
-        );
+public class FormatTypeFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "format_type(II)";
     }
 
-    @Test
-    public void testNoPrefixPgDescriptionFunc() throws Exception {
-        assertQuery(
-                "objoid\tclassoid\tobjsubid\tdescription\n" +
-                        "1\t1259\t0\ttable\n" +
-                        "1\t1259\t1\tcolumn\n",
-                "pg_description;",
-                "create table x(a int)",
-                null,
-                false,
-                false
-        );
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return StrConstant.NULL;
     }
 }

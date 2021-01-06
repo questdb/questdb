@@ -691,6 +691,9 @@ public class BindVariableServiceImpl implements BindVariableService {
     private static void setLong0(Function function, long value, int index, @Nullable CharSequence name, int srcType) throws SqlException {
         final int functionType = function.getType();
         switch (functionType) {
+            case ColumnType.INT:
+                ((IntBindVariable) function).value = (int) value;
+                break;
             case ColumnType.LONG:
                 ((LongBindVariable) function).value = value;
                 break;

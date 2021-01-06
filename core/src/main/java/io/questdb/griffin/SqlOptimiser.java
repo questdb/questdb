@@ -38,6 +38,9 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+
 class SqlOptimiser {
 
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
@@ -320,7 +323,7 @@ class SqlOptimiser {
     }
 
     private void addTopDownColumn(@Transient ExpressionNode node, QueryModel model) {
-        if (node != null && node.type == ExpressionNode.LITERAL) {
+        if (node != null && node.type == LITERAL) {
             final ObjList<QueryModel> joinModels = model.getJoinModels();
             final int joinCount = joinModels.size();
             final CharSequence columnName = node.token;
@@ -569,10 +572,11 @@ class SqlOptimiser {
                     // must evaluate as constant
                     postFilterRemoved.add(k);
                     parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), filterNodes.getQuick(k)));
-                } else if (rs == 1
-                        && nullCounts.getQuick(k) == 0
-                        // single table reference and this table is not joined via OUTER or ASOF
-                        && joinBarriers.excludes(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType())) {
+                } else if (rs == 1 && (
+                        nullCounts.getQuick(k) == 0
+                                // single table reference and this table is not joined via OUTER or ASOF
+                                || joinBarriers.excludes(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType()
+                        ))) {
                     // get single table reference out of the way right away
                     // we don't have to wait until "our" table comes along
                     addWhereNode(parent, refs.getQuick(0), filterNodes.getQuick(k));
@@ -630,7 +634,7 @@ class SqlOptimiser {
         if (old == null) {
             return filter;
         } else {
-            ExpressionNode n = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, 0);
+            ExpressionNode n = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, filter.position);
             n.paramCount = 2;
             n.lhs = old;
             n.rhs = filter;
@@ -643,14 +647,14 @@ class SqlOptimiser {
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model);
-            model.addField(queryColumnPool.next().of(columnName, expressionNodePool.next().of(ExpressionNode.LITERAL, columnName, 0, 0)));
+            model.addField(queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0)));
         }
 
         // validate explicitly defined timestamp, if it exists
         ExpressionNode timestamp = model.getTimestamp();
         if (timestamp == null) {
             if (m.getTimestampIndex() != -1) {
-                model.setTimestamp(expressionNodePool.next().of(ExpressionNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
+                model.setTimestamp(expressionNodePool.next().of(LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
             }
         } else {
             int index = m.getColumnIndexQuiet(timestamp.token);
@@ -1266,7 +1270,7 @@ class SqlOptimiser {
                 enumerateTableColumns(nested, executionContext);
                 // copy columns of nested model onto parent one
                 // we must treat sub-query just like we do a table
-                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+//                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
             }
         }
         for (int i = 1, n = jm.size(); i < n; i++) {
@@ -1292,7 +1296,7 @@ class SqlOptimiser {
             // executed in line with standard SQL behaviour.
 
             if (where != null) {
-                if (where.type == ExpressionNode.LITERAL) {
+                if (where.type == LITERAL) {
                     m.setWhereClause(columnPrefixEraser.rewrite(where));
                 } else {
                     traversalAlgo.traverse(where, columnPrefixEraser);
@@ -1322,7 +1326,7 @@ class SqlOptimiser {
         LowerCaseCharSequenceObjHashMap<QueryColumn> map = model.getAliasToColumnMap();
         for (int i = 0; i < len; i++) {
             QueryColumn queryColumn = map.get(orderBy.getQuick(i).token);
-            if (queryColumn.getAst().type == ExpressionNode.LITERAL) {
+            if (queryColumn.getAst().type == LITERAL) {
                 orderByAdvice.add(queryColumn.getAst());
             } else {
                 orderByAdvice.clear();
@@ -1342,7 +1346,7 @@ class SqlOptimiser {
         while (!this.sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 switch (node.type) {
-                    case ExpressionNode.LITERAL:
+                    case LITERAL:
                         node = null;
                         continue;
                     case ExpressionNode.FUNCTION:
@@ -1757,6 +1761,7 @@ class SqlOptimiser {
         try {
             optimiseExpressionModels(model, sqlExecutionContext);
             enumerateTableColumns(model, sqlExecutionContext);
+            rewriteColumnsToFunctions(model);
             resolveJoinColumns(model);
             optimiseBooleanNot(model);
             rewrittenModel = rewriteOrderBy(
@@ -1794,7 +1799,7 @@ class SqlOptimiser {
                         return optimiseBooleanNot(node.rhs, false);
                     } else {
                         switch (node.rhs.type) {
-                            case ExpressionNode.LITERAL:
+                            case LITERAL:
                             case ExpressionNode.CONSTANT:
                                 break;
                             default:
@@ -2304,7 +2309,7 @@ class SqlOptimiser {
             QueryModel validatingModel,
             boolean analyticCall
     ) throws SqlException {
-        if (node != null && node.type == ExpressionNode.LITERAL) {
+        if (node != null && node.type == LITERAL) {
             return doReplaceLiteral(node, translatingModel, innerModel, validatingModel, analyticCall);
         }
         return node;
@@ -2356,6 +2361,36 @@ class SqlOptimiser {
         // and union models too
         if (model.getUnionModel() != null) {
             resolveJoinColumns(model.getUnionModel());
+        }
+    }
+
+    // the intent is to either validate top-level columns in select columns or replace them with function calls
+    // if columns do not exist
+    private void rewriteColumnsToFunctions(QueryModel model) {
+        final QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            rewriteColumnsToFunctions(nested);
+            final ObjList<QueryColumn> columns = model.getColumns();
+            final int n = columns.size();
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    final QueryColumn qc = columns.getQuick(i);
+                    final ExpressionNode node = qc.getAst();
+                    if (node.type == LITERAL) {
+                        if (nested.getAliasToColumnMap().contains(node.token)) {
+                            continue;
+                        }
+
+                        if (functionParser.isValidNoArgFunction(node)) {
+                            node.type = FUNCTION;
+                        }
+                    } else {
+                        model.addField(qc);
+                    }
+                }
+            } else {
+                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+            }
         }
     }
 
@@ -2565,7 +2600,7 @@ class SqlOptimiser {
                     orderByNodes.setQuick(
                             i,
                             expressionNodePool.next().of(
-                                    ExpressionNode.LITERAL,
+                                    LITERAL,
                                     columns.get(position - 1).getName(),
                                     -1,
                                     orderBy.position
@@ -2701,7 +2736,7 @@ class SqlOptimiser {
                 throw SqlException.$(qc.getAst().position, "Analytic function expected");
             }
 
-            if (qc.getAst().type == ExpressionNode.LITERAL) {
+            if (qc.getAst().type == LITERAL) {
                 if (Chars.endsWith(qc.getAst().token, '*')) {
                     // in general sense we need to create new column in case
                     // there is change of alias, for example we may have something as simple as
@@ -3045,13 +3080,13 @@ class SqlOptimiser {
 
         @Override
         public void visit(ExpressionNode node) {
-            if (node.type == ExpressionNode.LITERAL) {
+            if (node.type == LITERAL) {
                 final int len = node.token.length();
                 final int dot = Chars.indexOf(node.token, 0, len, '.');
                 int index = nameTypeMap.keyIndex(node.token, dot + 1, len);
                 // these columns are pre-validated
                 assert index < 0;
-                if (nameTypeMap.valueAt(index).getAst().type != ExpressionNode.LITERAL) {
+                if (nameTypeMap.valueAt(index).getAst().type != LITERAL) {
                     throw NonLiteralException.INSTANCE;
                 }
             }
@@ -3068,7 +3103,7 @@ class SqlOptimiser {
 
         @Override
         public void visit(ExpressionNode node) {
-            if (node.type == ExpressionNode.LITERAL) {
+            if (node.type == LITERAL) {
                 int dot = Chars.indexOf(node.token, '.');
                 int index = dot == -1 ? aliasToColumnMap.keyIndex(node.token) : aliasToColumnMap.keyIndex(node.token, dot + 1, node.token.length());
                 // we have table column hit when alias is not found
@@ -3113,7 +3148,7 @@ class SqlOptimiser {
         }
 
         private ExpressionNode rewrite(ExpressionNode node) {
-            if (node != null && node.type == ExpressionNode.LITERAL) {
+            if (node != null && node.type == LITERAL) {
                 final int dot = Chars.indexOf(node.token, '.');
                 if (dot != -1) {
                     return nextLiteral(node.token.subSequence(dot + 1, node.token.length()));
@@ -3132,7 +3167,7 @@ class SqlOptimiser {
         @Override
         public void visit(ExpressionNode node) throws SqlException {
             switch (node.type) {
-                case ExpressionNode.LITERAL:
+                case LITERAL:
                     int dot = Chars.indexOf(node.token, '.');
                     CharSequence name = dot == -1 ? node.token : node.token.subSequence(dot + 1, node.token.length());
                     indexes.add(validateColumnAndGetModelIndex(model, node.token, dot, node.position));
