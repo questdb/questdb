@@ -667,9 +667,11 @@ public class PGConnectionContext implements IOContext, Mutable {
                     appendIntCol(record, i);
                     break;
                 case ColumnType.STRING:
+                case BINARY_TYPE_STRING:
                     appendStrColumn(record, i);
                     break;
                 case ColumnType.SYMBOL:
+                case BINARY_TYPE_SYMBOL:
                     appendSymbolColumn(record, i);
                     break;
                 case BINARY_TYPE_LONG:
@@ -712,6 +714,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     appendDateColumn(record, i);
                     break;
                 case ColumnType.BOOLEAN:
+                case BINARY_TYPE_BOOLEAN:
                     appendBooleanColumn(record, i);
                     break;
                 case ColumnType.BYTE:
@@ -722,9 +725,11 @@ public class PGConnectionContext implements IOContext, Mutable {
                     appendBinColumn(record, i);
                     break;
                 case ColumnType.CHAR:
+                case BINARY_TYPE_CHAR:
                     appendCharColumn(record, i);
                     break;
                 case ColumnType.LONG256:
+                case BINARY_TYPE_LONG256:
                     appendLong256Column(record, i);
                     break;
                 default:

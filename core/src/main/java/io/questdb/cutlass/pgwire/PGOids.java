@@ -82,6 +82,12 @@ public class PGOids {
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_BINARY = (1 << 31) | ColumnType.BINARY;
 
+    public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
+    public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
+    public static final int BINARY_TYPE_BOOLEAN = (1 << 31) | ColumnType.BOOLEAN;
+    public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
+    public static final int BINARY_TYPE_CHAR = (1 << 31) | ColumnType.CHAR;
+
     static int toColumnBinaryType(short code, int type) {
         return (((int) code) << 31) | type;
     }
