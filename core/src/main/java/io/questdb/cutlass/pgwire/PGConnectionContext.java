@@ -1468,17 +1468,28 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // but check if there is message is consistent
 
                 final long spaceNeeded = lo + (columnFormatCodeCount + 1) * Short.BYTES;
-                if (spaceNeeded <= msgLimit && columnFormatCodeCount == columnCount) {
-                    // good to go
-                    for (int i = 0; i < columnCount; i++) {
-                        lo += Short.BYTES;
-                        activeSelectColumnTypes.setQuick(i, toColumnBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
+                if (spaceNeeded <= msgLimit) {
+                    if (columnFormatCodeCount == columnCount) {
+                        // good to go
+                        for (int i = 0; i < columnCount; i++) {
+                            lo += Short.BYTES;
+                            activeSelectColumnTypes.setQuick(i, toColumnBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
+                        }
+                    } else if(columnFormatCodeCount == 1) {
+                        final short code = getShortUnsafe(lo);
+                        for (int i = 0; i < columnCount; i++) {
+                            activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));
+                        }
+                    } else {
+                        LOG.error()
+                                .$("could not process column format codes [fmtCount=").$(columnFormatCodeCount)
+                                .$(", columnCount=").$(columnCount)
+                                .$(']').$();
+                        throw BadProtocolException.INSTANCE;
                     }
                 } else {
                     LOG.error()
-                            .$("could not process column format codes [fmtCount=").$(columnFormatCodeCount)
-                            .$(", columnCount=").$(columnCount)
-                            .$(", bufSpaceNeeded=").$(spaceNeeded)
+                            .$("could not process column format codes [bufSpaceNeeded=").$(spaceNeeded)
                             .$(", bufSpaceAvail=").$(msgLimit)
                             .$(']').$();
                     throw BadProtocolException.INSTANCE;
