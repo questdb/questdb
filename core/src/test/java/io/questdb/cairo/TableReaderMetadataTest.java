@@ -250,6 +250,22 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         }, 9);
     }
 
+    @Test
+    public void testRenameColumn() throws Exception {
+        final String expected = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n"+
+                "str1:STRING\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n";
+        assertThat(expected, (w) -> w.renameColumn("str", "str1"), 11);
+    }
+
     private void assertThat(String expected, ColumnManipulator manipulator, int columnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
