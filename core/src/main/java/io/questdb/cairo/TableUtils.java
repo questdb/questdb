@@ -28,7 +28,13 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -185,6 +191,59 @@ public final class TableUtils {
             mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
             TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN);
         }
+    }
+
+    public static void cloneTableStructure(
+            FilesFacade ff,
+            AppendMemory mem1,
+            AppendMemory mem2,
+            Path path,
+            @Transient CharSequence root,
+            CharSequence tableName,
+            long structureAddress,
+            long structureLength,
+            int mkDirMode,
+            int tableId
+    ) {
+        path.of(root).concat(tableName);
+        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create [dir=").put(path).put(']');
+        }
+        final int rootLen = path.length();
+
+        int symbolMapCount = 0;
+        path.trimTo(rootLen).concat(META_FILE_NAME).$();
+        try (AppendMemory metaMem = mem1) {
+            metaMem.of(ff, path, ff.getPageSize());
+            metaMem.setSize(structureLength);
+            Unsafe.getUnsafe().copyMemory(structureAddress, metaMem.addressOf(0), structureLength);
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+            metaMem.jumpTo(TableUtils.META_OFFSET_TABLE_ID);
+            metaMem.putInt(tableId);
+
+            long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
+            int columnNameIndex = -1;
+            long columnNamesOffset = TableUtils.META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                byte columnType = metaMem.getByte(offset);
+                if (columnType == ColumnType.SYMBOL) {
+                    CharSequence columnName;
+                    do {
+                        assert columnNamesOffset < structureLength - VirtualMemory.STRING_LENGTH_BYTES;
+                        columnNameIndex++;
+                        columnName = metaMem.getStr(columnNamesOffset);
+                        columnNamesOffset += VirtualMemory.STRING_LENGTH_BYTES + columnName.length() * Character.BYTES;
+                    } while (columnNameIndex < columnIndex);
+                    SymbolMapWriter.createSymbolMapFiles(ff, mem2, path.trimTo(rootLen), columnName, 0, true);
+                    symbolMapCount++;
+                }
+                offset += META_COLUMN_DATA_SIZE;
+            }
+            metaMem.jumpTo(structureLength);
+        }
+
+        mem1.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+        TableUtils.resetTxn(mem1, symbolMapCount, 0L, INITIAL_TXN);
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {

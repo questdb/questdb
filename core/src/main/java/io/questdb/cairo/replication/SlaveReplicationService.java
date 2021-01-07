@@ -1,12 +1,18 @@
 package io.questdb.cairo.replication;
 
 import java.io.Closeable;
-import java.lang.invoke.WrongMethodTypeException;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
+import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -17,6 +23,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
@@ -122,6 +129,8 @@ public class SlaveReplicationService {
 
     private class ReplicationSlaveControllerJob extends SynchronizedJob {
         private Path path = new Path();
+        private final AppendMemory mem1 = new AppendMemory();
+        private final AppendMemory mem2 = new AppendMemory();
         private final DirectCharSequence charSeq = new DirectCharSequence();
         private final CharSequenceHashSet replicatedTableNames = new CharSequenceHashSet();
         private final ObjList<SlaveReplicationHandler> initialisingHandlers = new ObjList<SlaveReplicationHandler>();
@@ -240,6 +249,8 @@ public class SlaveReplicationService {
                 Misc.freeObjList(streamingHandlers);
                 Misc.freeObjList(distressedHandlers);
                 slaveConnectionMux.close();
+                mem1.close();
+                mem2.close();
                 path.close();
                 path = null;
             }
@@ -367,21 +378,21 @@ public class SlaveReplicationService {
 
                     LOG.info().$("all connections ready [tableName=").$(replicationConf.tableName).$(", masterTableId=").$(masterTableId).$(", rowCount=").$(masterRowCount)
                             .$(", tableStructureVersion=").$(masterTableStructureVersion).$(']').$();
+                    long localRowCount;
                     if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, getTableName()) == TableUtils.TABLE_EXISTS) {
                         writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, getTableName());
                         long localTableStructureVersion = writer.getStructureVersion();
                         if (localTableStructureVersion == masterTableStructureVersion) {
-                            long localRowCount = writer.size();
-                            connections.get(0).setupRequestReplicationStream(masterTableId, masterTableStructureVersion, localRowCount);
-                            return;
+                            localRowCount = writer.size();
                         } else {
                             // TODO No table on slave
                             throw new RuntimeException("Tables dont match");
                         }
                     } else {
-                        // TODO No table on slave
-                        throw new RuntimeException("Not implemented");
+                        localRowCount = 0;
                     }
+
+                    connections.get(0).setupRequestReplicationStream(masterTableId, masterTableStructureVersion, localRowCount);
                 }
             }
 
@@ -544,7 +555,7 @@ public class SlaveReplicationService {
 
                 private void handleTableInfo() {
                     if (this.masterTableId != 0) {
-                        LOG.info().$("received duplicate table info frame [fd=").$(fd).$(", tableName=").$(getTableName()).$(masterTableId).$(']').$();
+                        LOG.info().$("received duplicate table info frame [fd=").$(fd).$(", tableName=").$(getTableName()).$(", masterTableId=").$(masterTableId).$(']').$();
                         handleFailure();
                         return;
                     }
@@ -560,12 +571,12 @@ public class SlaveReplicationService {
                             LOG.info().$("received table info [fd=").$(fd).$(", tableName=").$(getTableName()).$(", masterTableId=").$(masterTableId).$(", rowCount=").$(rowCount)
                                     .$(", tableStructureVersion=").$(tableStructureVersion).$(']').$();
                         } else {
-                            LOG.info().$("received table missing [fd=").$(fd).$(", tableName=").$(getTableName()).$(masterTableId).$(']').$();
+                            LOG.info().$("received table missing [fd=").$(fd).$(", tableName=").$(getTableName()).$(", masterTableId=").$(masterTableId).$(']').$();
                             handleFailure();
                             return;
                         }
                     } else {
-                        LOG.info().$("received frame for incorrect table [fd=").$(fd).$(", tableName=").$(getTableName()).$(masterTableId).$(']').$();
+                        LOG.info().$("received frame for incorrect table [fd=").$(fd).$(", tableName=").$(getTableName()).$(", masterTableId=").$(masterTableId).$(']').$();
                         handleFailure();
                         return;
                     }
@@ -574,8 +585,37 @@ public class SlaveReplicationService {
                 }
 
                 private void handleStartOfReplicationStream() {
-                    // TODO: Validate response
+                    int frameMasterTableId = Unsafe.getUnsafe().getInt(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID);
+                    if (this.masterTableId != frameMasterTableId) {
+                        LOG.info().$("unexpected masterTableId ").$(frameMasterTableId).$(" [fd=").$(fd).$(", tableName=").$(getTableName()).$(masterTableId).$(']').$();
+                        handleFailure();
+                        return;
+                    }
+
+                    if (null == writer) {
+                        if (!createTable()) {
+                            return;
+                        }
+                    }
+
                     SlaveReplicationHandler.this.handleStartOfReplicationStream(masterTableId);
+                }
+
+                private boolean createTable() {
+                    // Create the table
+                    long metaDataOffset = TableReplicationStreamHeaderSupport.SORS_HEADER_SIZE;
+                    long metaDataLength = bufferLen - metaDataOffset;
+                    try {
+                        TableUtils.cloneTableStructure(ff, mem1, mem2, path, configuration.getRoot(), getTableName(), bufferAddress + metaDataOffset, metaDataLength,
+                                configuration.getMkDirMode(), (int) engine.getNextTableId());
+                        writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, getTableName());
+                        return true;
+                    }catch (CairoException ex) {
+                        LOG.info().$("could not create table [tableName=").$(getTableName()).$(", masterTableId=").$(masterTableId).$(", errno=").$(ex.getErrno()).$(", exception=")
+                                .$(ex.getFlyweightMessage()).$(']').$();
+                        handleFailure();
+                        return false;
+                    }
                 }
             }
         }

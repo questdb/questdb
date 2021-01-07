@@ -283,7 +283,6 @@ public class MasterReplicationService {
                 uuid3 = Unsafe.getUnsafe().getLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_RTI_UUID_3);
 
                 int frameLen = TableReplicationStreamHeaderSupport.TI_HEADER_SIZE + tableName.length() * 2;
-                resetWriting(TableReplicationStreamHeaderSupport.FRAME_TYPE_TABLE_INFO, frameLen);
                 Unsafe.getUnsafe().copyMemory(tableNameLo, bufferAddress + TableReplicationStreamHeaderSupport.TI_HEADER_SIZE, tableNameHi - tableNameLo);
                 Unsafe.getUnsafe().putInt(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_MASTER_TABLE_ID, masterTableId);
                 Unsafe.getUnsafe().putLong(bufferAddress + TableReplicationStreamHeaderSupport.OFFSET_TI_TABLE_ROW_COUNT, rowCount);

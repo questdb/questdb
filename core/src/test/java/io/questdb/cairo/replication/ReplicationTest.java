@@ -7,15 +7,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-import io.questdb.std.Files;
-import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.replication.MasterReplicationService.MasterReplicationConfiguration;
 import io.questdb.cairo.replication.SlaveReplicationService.SlaveReplicationConfiguration;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -34,13 +36,18 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
 
 public class ReplicationTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(ReplicationTest.class);
+    private static final String ZERO_COUNT = "count\n0\n";
+    private final Path path = new Path(4096);
     private static NetworkFacade NF;
     private static CharSequence slaveRoot;
 
@@ -116,18 +123,29 @@ public class ReplicationTest extends AbstractGriffinTest {
                     "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
                     ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            replicateTable("source","(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            replicateTable("source", "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+        });
+    }
+
+    @Test
+    public void testSimple2() throws Exception {
+        runTest("testSimple2", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
+                    ") TIMESTAMP (ts);",
+                    sqlExecutionContext);
+            replicateTable("source", null, 0, Long.MAX_VALUE);
         });
     }
 
     @Test
     public void testSimpleStringColumn() throws Exception {
-        runTest("testSimple1", () -> {
+        runTest("testSimpleStringColumn", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                            "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(3,10,2) s FROM long_sequence(20000)" +
-                            ") TIMESTAMP (ts);",
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_str(3,10,2) s FROM long_sequence(20000)" +
+                    ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            replicateTable("source","(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
+            replicateTable("source", "(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
         });
     }
 
@@ -210,8 +228,8 @@ public class ReplicationTest extends AbstractGriffinTest {
         IntList masterPorts = getListenPorts(masterIps);
         MasterReplicationConfiguration masterReplicationConf = new MasterReplicationConfiguration(masterIps, masterPorts, 4);
         SlaveReplicationService slaveReplicationService = new SlaveReplicationService(slaveConfiguration, NF, slaveEngine, workerPool);
-        MasterReplicationService masterReplicationService = new MasterReplicationService(NF, slaveConfiguration.getFilesFacade(),
-                slaveConfiguration.getRoot(), engine, masterReplicationConf,
+        MasterReplicationService masterReplicationService = new MasterReplicationService(NF, configuration.getFilesFacade(),
+                configuration.getRoot(), engine, masterReplicationConf,
                 workerPool);
         workerPool.start(LOG);
 
@@ -226,10 +244,10 @@ public class ReplicationTest extends AbstractGriffinTest {
         Assert.assertTrue(slaveReplicationService.tryAdd(replicationConf));
 
         // Wait for slave to commit
-        long epochMsTimeout = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10);
+        long epochMsTimeout = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(2);
         while (true) {
-            String countText = select("SELECT count() FROM " + tableName, true);
-            if ("count\n0\n".equals(countText)) {
+            String countText = getSlaveTableRowCount(tableName);
+            if (ZERO_COUNT.equals(countText)) {
                 if (System.currentTimeMillis() > epochMsTimeout) {
                     LOG.error().$("timed out").$();
                     break;
@@ -249,15 +267,28 @@ public class ReplicationTest extends AbstractGriffinTest {
         assertTableEquals(tableName, tableName);
     }
 
+    private String getSlaveTableRowCount(String tableName) {
+        path.of(slaveRoot).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
+        if (!FilesFacadeImpl.INSTANCE.exists(path) || FilesFacadeImpl.INSTANCE.length(path) < 16) {
+            return ZERO_COUNT;
+        }
+        String countText;
+        try {
+            countText = select("SELECT count() FROM " + tableName, true);
+        } catch (SqlException ex) {
+            countText = ZERO_COUNT;
+        }
+        return countText;
+    }
+
     private void assertTableEquals(String sourceTableName, String destTableName) throws SqlException {
         CompiledQuery querySrc = compiler.compile("select * from " + sourceTableName, sqlExecutionContext);
         try (
                 RecordCursorFactory factorySrc = querySrc.getRecordCursorFactory();
-                RecordCursor cursorSrc = factorySrc.getCursor(sqlExecutionContext);
-        ) {
+                RecordCursor cursorSrc = factorySrc.getCursor(sqlExecutionContext);) {
             CompiledQuery queryDst = slaveCompiler.compile("select * from " + destTableName, slaveSqlExecutionContext);
             try (RecordCursorFactory factoryDst = queryDst.getRecordCursorFactory();
-                 RecordCursor cursorDst = factoryDst.getCursor(sqlExecutionContext)) {
+                    RecordCursor cursorDst = factoryDst.getCursor(sqlExecutionContext)) {
                 TestUtils.assertEquals(cursorSrc, factorySrc.getMetadata(), cursorDst, factoryDst.getMetadata());
             }
         }

@@ -113,6 +113,7 @@ public class ReplicationStreamReceiver implements Closeable {
                     if (!handleCommitBlock()) {
                         disconnect();
                     }
+                    resetReading();
                     return true;
                 }
 
