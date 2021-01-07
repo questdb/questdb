@@ -37,7 +37,7 @@ public class CairoTestUtils {
                 model.getCairoCfg().getRoot(),
                 model,
                 model.getCairoCfg().getMkDirMode(),
-                0
+                1
         );
     }
 
@@ -51,7 +51,7 @@ public class CairoTestUtils {
                 model,
                 model.getCairoCfg().getMkDirMode(),
                 version,
-                0
+                1
         );
     }
 
@@ -70,7 +70,7 @@ public class CairoTestUtils {
 
     public static void createAllTable(CairoConfiguration configuration, int partitionBy) {
         try (TableModel model = getAllTypesModel(configuration, partitionBy)) {
-            create(model);
+            createTableWithVersionAndId(model, ColumnType.VERSION, 1);
         }
     }
 
