@@ -736,45 +736,13 @@ public final class SqlParser {
         if (Chars.equals(tok, '(')) {
             model.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses()));
             model.setNestedModelIsSubQuery(true);
-
-            tok = optTok(lexer);
-
-            // check if tok is not "where" - should be alias
-
-            if (tok != null && tableAliasStop.excludes(tok)) {
-                model.setAlias(literal(lexer, tok));
-                tok = optTok(lexer);
-            }
-
-            // expect [timestamp(column)]
-
-            ExpressionNode timestamp = parseTimestamp(lexer, tok);
-            if (timestamp != null) {
-                model.setTimestamp(timestamp);
-                tok = optTok(lexer);
-            }
+            tok = setModelAliasAndTimestamp(lexer, model);
         } else {
-
             lexer.unparse();
             parseSelectFrom(lexer, model, masterModel);
-
-            tok = optTok(lexer);
-
-            if (tok != null && tableAliasStop.excludes(tok)) {
-                model.setAlias(literal(lexer, tok));
-                tok = optTok(lexer);
-            }
-
-            // expect [timestamp(column)]
-
-            ExpressionNode timestamp = parseTimestamp(lexer, tok);
-            if (timestamp != null) {
-                model.setTimestamp(timestamp);
-                tok = optTok(lexer);
-            }
+            tok = setModelAliasAndTimestamp(lexer, model);
 
             // expect [latest by]
-
             if (tok != null && isLatestKeyword(tok)) {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
@@ -897,6 +865,19 @@ public final class SqlParser {
         }
     }
 
+    private CharSequence setModelAliasAndTimestamp(GenericLexer lexer, QueryModel model) throws SqlException {
+        CharSequence tok;
+        tok = setModelAliasAndGetOptTok(lexer, model);
+
+        // expect [timestamp(column)]
+        ExpressionNode timestamp = parseTimestamp(lexer, tok);
+        if (timestamp != null) {
+            model.setTimestamp(timestamp);
+            tok = optTok(lexer);
+        }
+        return tok;
+    }
+
     private ExecutionModel parseInsert(GenericLexer lexer) throws SqlException {
         expectTok(lexer, "into");
 
@@ -989,16 +970,7 @@ public final class SqlParser {
             parseSelectFrom(lexer, joinModel, parent);
         }
 
-        tok = optTok(lexer);
-
-        if (tok != null && tableAliasStop.excludes(tok)) {
-            lexer.unparse();
-            joinModel.setAlias(literal(lexer, optTok(lexer)));
-        } else {
-            lexer.unparse();
-        }
-
-        tok = optTok(lexer);
+        tok = setModelAliasAndGetOptTok(lexer, joinModel);
 
         if (joinType == QueryModel.JOIN_CROSS && tok != null && isOnKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "Cross joins cannot have join clauses");
@@ -1053,6 +1025,18 @@ public final class SqlParser {
         }
 
         return joinModel;
+    }
+
+    private CharSequence setModelAliasAndGetOptTok(GenericLexer lexer, QueryModel joinModel) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok != null && tableAliasStop.excludes(tok)) {
+            if (SqlKeywords.isAsKeyword(tok)) {
+                tok = tok(lexer, "alias");
+            }
+            joinModel.setAlias(literal(lexer, tok));
+            tok = optTok(lexer);
+        }
+        return tok;
     }
 
     private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {

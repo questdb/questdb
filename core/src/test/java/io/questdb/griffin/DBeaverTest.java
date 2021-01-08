@@ -28,6 +28,75 @@ import org.junit.Test;
 
 public class DBeaverTest extends AbstractGriffinTest {
     @Test
+    public void testDotNetGetTypes() throws SqlException {
+        assertQuery(
+                "nspname\toid\ttypnamespace\ttypname\ttyptype\ttyprelid\ttypnotnull\trelkind\telemtypoid\telemtypname\telemrelkind\telemtyptype\tord\n" +
+                        "public\t1043\t2200\tVARCHAR\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1114\t2200\tTIMESTAMP\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t701\t2200\tFLOAT8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t700\t2200\tFLOAT4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t23\t2200\tINT4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t21\t2200\tINT2\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t18\t2200\tCHAR\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t20\t2200\tINT8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t16\t2200\tBOOL\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t17\t2200\tBINARY\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1700\t2200\tNUMERIC\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1082\t2200\tDATE\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n",
+                "SELECT ns.nspname, typ_and_elem_type.*,\n" +
+                        "   CASE\n" +
+                        "       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types\n" +
+                        "       WHEN typtype = 'r' THEN 1                        -- Ranges after\n" +
+                        "       WHEN typtype = 'c' THEN 2                        -- Composites after\n" +
+                        "       WHEN typtype = 'd' AND elemtyptype <> 'a' THEN 3 -- Domains over non-arrays after\n" +
+                        "       WHEN typtype = 'a' THEN 4                        -- Arrays before\n" +
+                        "       WHEN typtype = 'd' AND elemtyptype = 'a' THEN 5  -- Domains over arrays last\n" +
+                        "    END AS ord\n" +
+                        "FROM (\n" +
+                        "    -- Arrays have typtype=b - this subquery identifies them by their typreceive and converts their typtype to a\n" +
+                        "    -- We first do this for the type (innerest-most subquery), and then for its element type\n" +
+                        "    -- This also returns the array element, range subtype and domain base type as elemtypoid\n" +
+                        "    SELECT\n" +
+                        "        typ.oid, typ.typnamespace, typ.typname, typ.typtype, typ.typrelid, typ.typnotnull, typ.relkind,\n" +
+                        "        elemtyp.oid AS elemtypoid, elemtyp.typname AS elemtypname, elemcls.relkind AS elemrelkind,\n" +
+                        "        CASE WHEN elemproc.proname='array_recv' THEN 'a' ELSE elemtyp.typtype END AS elemtyptype\n" +
+                        "    FROM (\n" +
+                        "        SELECT typ.oid, typnamespace, typname, typrelid, typnotnull, relkind, typelem AS elemoid,\n" +
+                        "            CASE WHEN proc.proname='array_recv' THEN 'a' ELSE typ.typtype END AS typtype,\n" +
+                        "            CASE\n" +
+                        "                WHEN proc.proname='array_recv' THEN typ.typelem\n" +
+                        "                WHEN typ.typtype='r' THEN rngsubtype\n" +
+                        "                WHEN typ.typtype='d' THEN typ.typbasetype\n" +
+                        "            END AS elemtypoid\n" +
+                        "        FROM pg_type AS typ\n" +
+                        "        LEFT JOIN pg_class AS cls ON (cls.oid = typ.typrelid)\n" +
+                        "        LEFT JOIN pg_proc AS proc ON proc.oid = typ.typreceive\n" +
+                        "        LEFT JOIN pg_range ON (pg_range.rngtypid = typ.oid)\n" +
+                        "    ) AS typ\n" +
+                        "    LEFT JOIN pg_type AS elemtyp ON elemtyp.oid = elemtypoid\n" +
+                        "    LEFT JOIN pg_class AS elemcls ON (elemcls.oid = elemtyp.typrelid)\n" +
+                        "    LEFT JOIN pg_proc AS elemproc ON elemproc.oid = elemtyp.typreceive\n" +
+                        ") AS typ_and_elem_type\n" +
+                        "JOIN pg_namespace AS ns ON (ns.oid = typnamespace)\n" +
+                        "WHERE\n" +
+                        "    typtype IN ('b', 'r', 'e', 'd') OR -- Base, range, enum, domain\n" +
+                        "    (typtype = 'c' AND relkind='c') OR -- User-defined free-standing composites (not table composites) by default\n" +
+                        "    (typtype = 'p' AND typname IN ('record', 'void')) OR -- Some special supported pseudo-types\n" +
+                        "    (typtype = 'a' AND (  -- Array of...\n" +
+                        "        elemtyptype IN ('b', 'r', 'e', 'd') OR -- Array of base, range, enum, domain\n" +
+                        "        (elemtyptype = 'p' AND elemtypname IN ('record', 'void')) OR -- Arrays of special supported pseudo-types\n" +
+                        "        (elemtyptype = 'c' AND elemrelkind='c') -- Array of user-defined free-standing composites (not table composites) by default\n" +
+                        "    ))\n" +
+                        "ORDER BY ord",
+                null,
+                true,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testFrequentSql() throws SqlException {
         assertQuery(
                 "current_schema\tsession_user\n" +
@@ -68,37 +137,6 @@ public class DBeaverTest extends AbstractGriffinTest {
                     false
             );
         });
-    }
-
-    @Test
-    public void testNamespaceListSql() throws SqlException {
-        assertQuery(
-                "oid\tnspname\toid1\tdescription\n" +
-                        "11\tpg_catalog\t11\t\n" +
-                        "2200\tpublic\t2200\t\n",
-                "SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n\n" +
-                        "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass\n" +
-                        " ORDER BY nspname",
-                null,
-                true,
-                sqlExecutionContext,
-                false,
-                false
-        );
-    }
-
-    @Test
-    public void testShowSearchPath() throws SqlException {
-        assertQuery(
-                "search_path\n" +
-                        "\"$user\", public\n",
-                "SHOW search_path",
-                null,
-                false,
-                sqlExecutionContext,
-                false,
-                true
-        );
     }
 
     @Test
@@ -152,6 +190,36 @@ public class DBeaverTest extends AbstractGriffinTest {
                 false,
                 false
         );
+    }
 
+    @Test
+    public void testNamespaceListSql() throws SqlException {
+        assertQuery(
+                "oid\tnspname\toid1\tdescription\n" +
+                        "11\tpg_catalog\t11\t\n" +
+                        "2200\tpublic\t2200\t\n",
+                "SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n\n" +
+                        "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass\n" +
+                        " ORDER BY nspname",
+                null,
+                true,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testShowSearchPath() throws SqlException {
+        assertQuery(
+                "search_path\n" +
+                        "\"$user\", public\n",
+                "SHOW search_path",
+                null,
+                false,
+                sqlExecutionContext,
+                false,
+                true
+        );
     }
 }

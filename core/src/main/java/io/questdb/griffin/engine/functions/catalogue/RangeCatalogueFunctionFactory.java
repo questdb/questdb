@@ -24,20 +24,24 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.ObjList;
 
-public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
+public class RangeCatalogueFunctionFactory implements FunctionFactory {
     static final RecordMetadata METADATA;
 
     @Override
     public String getSignature() {
-        return "pg_description()";
+        return "pg_range()";
     }
 
     @Override
@@ -52,11 +56,12 @@ public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT, null));
-        //TODO the below column was downgraded to short. We need to support type downgrading of compatible types when joining
-        metadata.add(new TableColumnMetadata("objsubid", ColumnType.SHORT, null));
-        metadata.add(new TableColumnMetadata("description", ColumnType.STRING, null));
+        metadata.add(new TableColumnMetadata("rngtypid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngsubtype", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngcollation", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngsubopc", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngcanonical", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngsubdiff", ColumnType.INT, null));
         METADATA = metadata;
     }
 }
