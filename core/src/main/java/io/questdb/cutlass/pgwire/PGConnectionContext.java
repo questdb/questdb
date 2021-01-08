@@ -667,9 +667,11 @@ public class PGConnectionContext implements IOContext, Mutable {
                     appendIntCol(record, i);
                     break;
                 case ColumnType.STRING:
+                case BINARY_TYPE_STRING:
                     appendStrColumn(record, i);
                     break;
                 case ColumnType.SYMBOL:
+                case BINARY_TYPE_SYMBOL:
                     appendSymbolColumn(record, i);
                     break;
                 case BINARY_TYPE_LONG:
@@ -712,6 +714,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                     appendDateColumn(record, i);
                     break;
                 case ColumnType.BOOLEAN:
+                case BINARY_TYPE_BOOLEAN:
                     appendBooleanColumn(record, i);
                     break;
                 case ColumnType.BYTE:
@@ -722,9 +725,11 @@ public class PGConnectionContext implements IOContext, Mutable {
                     appendBinColumn(record, i);
                     break;
                 case ColumnType.CHAR:
+                case BINARY_TYPE_CHAR:
                     appendCharColumn(record, i);
                     break;
                 case ColumnType.LONG256:
+                case BINARY_TYPE_LONG256:
                     appendLong256Column(record, i);
                     break;
                 default:
@@ -1395,7 +1400,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
             } else {
                 // type size
-                sink.put((short) -1);
+                sink.putNetworkShort((short) -1);
             }
 
             //type modifier
@@ -1468,17 +1473,28 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // but check if there is message is consistent
 
                 final long spaceNeeded = lo + (columnFormatCodeCount + 1) * Short.BYTES;
-                if (spaceNeeded <= msgLimit && columnFormatCodeCount == columnCount) {
-                    // good to go
-                    for (int i = 0; i < columnCount; i++) {
-                        lo += Short.BYTES;
-                        activeSelectColumnTypes.setQuick(i, toColumnBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
+                if (spaceNeeded <= msgLimit) {
+                    if (columnFormatCodeCount == columnCount) {
+                        // good to go
+                        for (int i = 0; i < columnCount; i++) {
+                            lo += Short.BYTES;
+                            activeSelectColumnTypes.setQuick(i, toColumnBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
+                        }
+                    } else if(columnFormatCodeCount == 1) {
+                        final short code = getShortUnsafe(lo);
+                        for (int i = 0; i < columnCount; i++) {
+                            activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));
+                        }
+                    } else {
+                        LOG.error()
+                                .$("could not process column format codes [fmtCount=").$(columnFormatCodeCount)
+                                .$(", columnCount=").$(columnCount)
+                                .$(']').$();
+                        throw BadProtocolException.INSTANCE;
                     }
                 } else {
                     LOG.error()
-                            .$("could not process column format codes [fmtCount=").$(columnFormatCodeCount)
-                            .$(", columnCount=").$(columnCount)
-                            .$(", bufSpaceNeeded=").$(spaceNeeded)
+                            .$("could not process column format codes [bufSpaceNeeded=").$(spaceNeeded)
                             .$(", bufSpaceAvail=").$(msgLimit)
                             .$(']').$();
                     throw BadProtocolException.INSTANCE;
