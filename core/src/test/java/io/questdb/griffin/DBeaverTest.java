@@ -165,19 +165,19 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testListTypes() throws SqlException {
         assertQuery(
-                "oid\toid1\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\trelkind\tbase_type_name\tdescription\n" +
-                        "16\t16\tBOOL\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "17\t17\tBINARY\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "18\t18\tCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "20\t20\tINT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "21\t21\tINT2\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "23\t23\tINT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "700\t700\tFLOAT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "701\t701\tFLOAT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "1043\t1043\tVARCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "1082\t1082\tDATE\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "1114\t1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "1700\t1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n",
+                "oid\toid1\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\trelkind\tbase_type_name\tdescription\n" +
+                        "16\t16\tBOOL\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "17\t17\tBINARY\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "18\t18\tCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "20\t20\tINT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "21\t21\tINT2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "23\t23\tINT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "700\t700\tFLOAT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "701\t701\tFLOAT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "1043\t1043\tVARCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "1082\t1082\tDATE\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "1114\t1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "1700\t1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n",
                 "SELECT t.oid,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
                         "FROM pg_catalog.pg_type t\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +
