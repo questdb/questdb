@@ -38,32 +38,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Vect;
-import java.io.Closeable;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.net.URL;
-import java.util.Collections;
-import java.util.Date;
-import java.util.Enumeration;
-import java.util.Map;
-import java.util.Properties;
-import java.util.ServiceLoader;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
 import sun.misc.Signal;
 
+import java.io.*;
+import java.net.*;
+import java.util.*;
 import java.util.concurrent.locks.LockSupport;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
@@ -211,7 +192,9 @@ public class ServerMain {
             ));
 
             startQuestDb(workerPool, cairoEngine, log);
-            logWebConsoleUrls(log, configuration);
+            if (configuration.getHttpServerConfiguration().isEnabled()) {
+                logWebConsoleUrls(log, configuration);
+            }
 
             System.gc();
 
