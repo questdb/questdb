@@ -94,7 +94,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -130,6 +130,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from append",
                             "x"
                     );
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -334,28 +336,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
     }
 
-    private void assertIndexConsistency() throws SqlException {
-        // index test
-        // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
-
-        String expected = Chars.toString(sink);
-
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x where sym = 'googl'", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
-
-        TestUtils.assertEquals(expected, sink);
-    }
-
     @Test
     public void testPartitionedDataMergeData() throws Exception {
         assertMemoryLeak(() -> {
@@ -381,7 +361,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -416,6 +396,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from middle",
                             "/oo/testPartitionedDataMergeData.txt"
                     );
+                    assertIndexResultAgainstFile("/oo/testPartitionedDataMergeData_index.txt");
                 }
         );
     }
@@ -445,7 +426,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(295)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -479,6 +460,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from middle",
                             "/oo/testPartitionedDataMergeEnd.txt"
                     );
+
+                    assertIndexResultAgainstFile("/oo/testPartitionedDataMergeEnd_Index.txt");
                 }
         );
     }
@@ -508,7 +491,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -545,6 +528,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from middle",
                             "/oo/testPartitionedDataOOData.txt"
                     );
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -575,7 +560,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -637,6 +622,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from (1am union all top2)",
                             "/oo/testPartitionedDataOODataPbOOData.txt"
                     );
+
+                    assertIndexResultAgainstFile("/oo/testPartitionedDataOODataPbOOData_Index.txt");
                 }
         );
     }
@@ -667,7 +654,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -734,7 +721,10 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         }
                     }
 
-                    String expected = Chars.toString(sink);
+                    final String expected = Chars.toString(sink);
+
+                    // close readers to allow "rename" to succeed on Windows
+                    engine.releaseAllReaders();
 
                     // The query above generates expected result, but there is a problem using it
                     // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
@@ -758,6 +748,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     }
 
                     TestUtils.assertEquals(expected, sink);
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -788,7 +780,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -856,6 +848,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     }
 
 //                    String expected = Chars.toString(sink);
+                    engine.releaseAllReaders();
 
                     compiler.compile("insert into x select * from 1am", sqlExecutionContext);
                     compiler.compile("insert into x select * from tail", sqlExecutionContext);
@@ -865,29 +858,9 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
                     engine.releaseAllReaders();
 
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
+                    assertSqlResultAgainstFile("x", "/oo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt");
 
-                    URL url = OutOfOrderTest.class.getResource("/oo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt");
-                    Assert.assertNotNull(url);
-                    TestUtils.assertEquals(new File(url.toURI()), sink);
-
-                    // test reader after writer close
-                    engine.releaseAllReaders();
-                    engine.releaseAllWriters();
-
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    TestUtils.assertEquals(new File(url.toURI()), sink);
+                    assertIndexConsistency();
                 }
         );
     }
@@ -918,7 +891,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -987,6 +960,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     String expected = Chars.toString(sink);
 
+                    engine.releaseAllReaders();
+
                     // insert 1AM data into X
                     compiler.compile("insert into x select * from 1am", sqlExecutionContext);
                     compiler.compile("insert into x select * from tail", sqlExecutionContext);
@@ -1000,9 +975,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     TestUtils.assertEquals(expected, sink);
 
-                    // close writer and ensure that table remains intact
-
-                    engine.releaseAllWriters();
                     engine.releaseAllReaders();
 
                     sink.clear();
@@ -1014,6 +986,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     TestUtils.assertEquals(expected, sink);
 
+                    assertIndexConsistency();
                 }
         );
     }
@@ -1043,7 +1016,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -1081,6 +1054,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from middle",
                             "x"
                     );
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -1110,7 +1085,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -1173,6 +1148,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from (1am union all prev)",
                             "x"
                     );
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -1203,7 +1180,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -1272,6 +1249,9 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     String expected = Chars.toString(sink);
 
+                    // close reader to enable "rename" to succeed
+                    engine.releaseAllReaders();
+
                     // insert 1AM data into X
                     compiler.compile("insert into x select * from 1am", sqlExecutionContext);
                     compiler.compile("insert into x select * from tail", sqlExecutionContext);
@@ -1285,8 +1265,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     TestUtils.assertEquals(expected, sink);
 
-                    // close writer and ensure table remains intact
-                    engine.releaseAllWriters();
+                    //
                     engine.releaseAllReaders();
 
                     sink.clear();
@@ -1297,6 +1276,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     }
 
                     TestUtils.assertEquals(expected, sink);
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -1327,7 +1308,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -1398,6 +1379,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
                     String expected = Chars.toString(sink);
 
+                    engine.releaseAllReaders();
+
                     // insert 1AM data into X
                     compiler.compile("insert into x select * from 1am", sqlExecutionContext);
                     compiler.compile("insert into x select * from tail", sqlExecutionContext);
@@ -1410,6 +1393,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     }
 
                     TestUtils.assertEquals(expected, sink);
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -1443,19 +1428,19 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     compiler.compile(
-                            "create table x as (select * from x_1 order by ts) timestamp(ts) partition by DAY",
+                            "create table y as (select * from x_1 order by ts) timestamp(ts) partition by DAY",
                             sqlExecutionContext
                     );
 
                     compiler.compile(
-                            "create table y as (select * from x_1) timestamp(ts) partition by DAY",
+                            "create table x as (select * from x_1), index(sym) timestamp(ts) partition by DAY",
                             sqlExecutionContext
                     );
 
                     final String sqlTemplate = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,ts,l,n,t,m from ";
 
                     sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "x", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "y", sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             printer.print(cursor, factory.getMetadata(), true);
                         }
@@ -1464,12 +1449,14 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     String expected = Chars.toString(sink);
 
                     sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "y", sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "x", sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             printer.print(cursor, factory.getMetadata(), true);
                         }
                     }
                     TestUtils.assertEquals(expected, sink);
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -1545,7 +1532,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -1583,6 +1570,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from top",
                             "x"
                     );
+
+                    assertIndexConsistency();
                 }
         );
     }
@@ -1612,7 +1601,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(500)" +
-                                    ") timestamp (ts) partition by DAY",
+                                    "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -1675,19 +1664,60 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from (top union all bottom)",
                             "x"
                     );
+
+                    assertIndexConsistency();
                 }
         );
     }
 
+    private void assertIndexConsistency() throws SqlException {
+        // index test
+        // expected outcome
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+        String expected = Chars.toString(sink);
+
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile("x where sym = 'googl'", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    private void assertIndexResultAgainstFile(String resourceName) throws SqlException, URISyntaxException {
+        // file contains output of this SQL
+        // we use file comparison because result set containing duplicate timestamps
+        // order of records with duplicate timestamps is non-deterministic
+/*
+                    sink.clear();
+                    try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            printer.print(cursor, factory.getMetadata(), true);
+                        }
+                    }
+
+                    String expected = Chars.toString(sink);
+*/
+        assertSqlResultAgainstFile("x where sym = 'googl'", resourceName);
+    }
+
     private void assertOutOfOrderDataConsistency(
             final String referenceTableDDL,
-            final String referenceSQL,
+            final String outOfOrderSQL,
             final String resourceName
     ) throws SqlException, URISyntaxException {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
 
-        // expected outcome
+        // expected outcome - output ignored, but useful for debug
         sink.clear();
         try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1695,26 +1725,14 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             }
         }
 
-        // uncomment these to look at result comparison from two queries
-        // we are using file comparison here because of ordering issue on the identical timestamps
-//                    String expected = Chars.toString(sink);
+        engine.releaseAllReaders();
 
-        compiler.compile(referenceSQL, sqlExecutionContext);
+        compiler.compile(outOfOrderSQL, sqlExecutionContext);
 
         // release reader
         engine.releaseAllReaders();
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
-
-//                    TestUtils.assertEquals(expected, sink);
-        URL url = OutOfOrderTest.class.getResource(resourceName);
-        Assert.assertNotNull(url);
-        TestUtils.assertEquals(new File(url.toURI()), sink);
+        assertSqlResultAgainstFile("x", resourceName);
     }
 
     private void assertOutOfOrderDataConsistency(
@@ -1738,9 +1756,15 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         // we are using file comparison here because of ordering issue on the identical timestamps
         String expected = Chars.toString(sink);
 
+        // release reader "before" out-of-order is handled
+        // we aim directory rename operations to succeed on Windows
+        // Linux should be fine without closing readers
+        engine.releaseAllReaders();
+
         compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
 
-        // release reader
+        // todo: ensure reader can pick up out of order stuff
+        // release reader for now because it is unable to reload out-of-order results
         engine.releaseAllReaders();
 
         sink.clear();
@@ -1751,5 +1775,18 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         }
 
         TestUtils.assertEquals(expected, sink);
+    }
+
+    private void assertSqlResultAgainstFile(String sql, String resourceName) throws URISyntaxException, SqlException {
+        sink.clear();
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+        }
+
+        URL url = OutOfOrderTest.class.getResource(resourceName);
+        Assert.assertNotNull(url);
+        TestUtils.assertEquals(new File(url.toURI()), sink);
     }
 }

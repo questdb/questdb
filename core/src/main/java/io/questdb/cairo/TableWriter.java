@@ -2063,9 +2063,7 @@ public class TableWriter implements Closeable {
 
     private void freeIndexers() {
         if (indexers != null) {
-            for (int i = 0, n = indexers.size(); i < n; i++) {
-                Misc.free(indexers.getQuick(i));
-            }
+            Misc.freeObjList(indexers);
             indexers.clear();
             denseIndexers.clear();
         }
@@ -2077,8 +2075,8 @@ public class TableWriter implements Closeable {
             freeMergeStructArtefact(mergeStruct, MergeStruct.getFirstColumnOffset(i) + 3, false);
             freeMergeStructArtefact(mergeStruct, MergeStruct.getSecondColumnOffset(i), true);
             freeMergeStructArtefact(mergeStruct, MergeStruct.getSecondColumnOffset(i) + 3, false);
-            closeFd(MergeStruct.getIndexKeyFd(mergeStruct, i));
-            closeFd(MergeStruct.getIndexValueFd(mergeStruct, i));
+            closeFd(MergeStruct.getDestIndexKeyFd(mergeStruct, i));
+            closeFd(MergeStruct.getDestIndexValueFd(mergeStruct, i));
         }
     }
 
@@ -2145,14 +2143,14 @@ public class TableWriter implements Closeable {
                     long fd = ff.openRO(path);
                     if (fd == -1) {
                         // oops
-                        throw CairoException.instance(Os.errno()).put("could not open [file=").put(path).put(']');
+                        throw CairoException.instance(ff.errno()).put("could not open [file=").put(path).put(']');
                     }
                     try {
                         long buf = Unsafe.malloc(Long.BYTES);
                         try {
                             long n = ff.read(fd, buf, Long.BYTES, 0);
                             if (n != Long.BYTES) {
-                                throw CairoException.instance(Os.errno()).put("could not read timestamp value");
+                                throw CairoException.instance(ff.errno()).put("could not read timestamp value");
                             }
                             nextMinTimestamp = Unsafe.getUnsafe().getLong(buf);
                         } finally {
@@ -2487,6 +2485,7 @@ public class TableWriter implements Closeable {
     private void mergeOutOfOrderRecords() {
         final int timestampIndex = metadata.getTimestampIndex();
         final long ceilOfMaxTimestamp = ceilMaxTimestamp();
+        boolean reopenLastPartition = false;
         try {
 
             // we may need to re-use file descriptors when this partition is the "current" one
@@ -2610,6 +2609,7 @@ public class TableWriter implements Closeable {
                     );
                     try {
                         copyOutOfOrderData(indexLo, indexHi, mergeStruct, timestampIndex);
+                        oooUpdateIndexes(mergeStruct);
                     } finally {
                         freeMergeStruct(mergeStruct);
                     }
@@ -2995,11 +2995,48 @@ public class TableWriter implements Closeable {
                             oooUpdateIndexes(mergeStruct);
 
                             if (prefixType != OO_BLOCK_NONE || mergeType != OO_BLOCK_NONE) {
-                                copyTempPartitionBack(mergeStruct);
+//                                copyTempPartitionBack(mergeStruct);
                             }
 
                         } finally {
                             freeMergeStruct(mergeStruct);
+                        }
+
+                        if (prefixType != OO_BLOCK_NONE || mergeType != OO_BLOCK_NONE) {
+                            if (timestampFd < 0) {
+                                // timestampFd negative indicates that we are reusing existing file descriptor
+                                // as opposed to opening file by name. This also indicated that "this" partition
+                                // is, or used to be, active for the writer. So we have to close existing files so that
+                                // rename on Windows does not fall flat.
+                                closeAppendMemoryNoTruncate(false);
+                                Misc.freeObjList(denseIndexers);
+
+                                // we also indicate that "active" partition has to be reloaded
+                                // after rename
+                                reopenLastPartition = true;
+                            } else {
+
+                                // this timestamp column was opened by file name
+                                // so we can close it as not needed (and to enable table rename on Windows)
+                                ff.close(timestampFd);
+                                timestampFd = -1;
+                            }
+                            // rename after we closed all FDs associated with source partition
+                            path.trimTo(plen).$();
+                            other.of(path).put(".old").$();
+                            if (ff.rename(path, other)) {
+                                // rename .1 to the original
+                                other.trimTo(plen).put(".1").$();
+                                if (ff.rename(other, path)) {
+                                    other.trimTo(plen).put(".old").$();
+                                    ff.rmdir(other);
+                                    System.out.println("ok");
+                                }
+                            } else {
+                                throw CairoException.instance(ff.errno())
+                                        .put("could not rename [from=").put(path)
+                                        .put(", to=").put(other);
+                            }
                         }
                     } finally {
                         if (timestampFd > 0) {
@@ -3007,6 +3044,7 @@ public class TableWriter implements Closeable {
                         }
                     }
                 }
+
 
                 final long partitionSize = dataIndexMax + indexHi - indexLo + 1;
                 if (indexHi + 1 < indexMax || partitionTimestampHi < floorMaxTimestamp) {
@@ -3070,9 +3108,9 @@ public class TableWriter implements Closeable {
         //
         // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
         // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
-        if (ceilOfMaxTimestamp != ceilMaxTimestamp()) {
+        if (reopenLastPartition) {
             // close all columns without truncating the underlying file
-            closeAppendMemoryNoTruncate(false);
+//            closeAppendMemoryNoTruncate(false);
             openPartition(maxTimestamp);
         }
         setAppendPosition(this.transientRowCount, true);
@@ -3140,14 +3178,14 @@ public class TableWriter implements Closeable {
 
     private void oooDoOpenIndexFiles(Path path, long[] mergeStruct, int plen, int columnIndex) {
         BitmapIndexUtils.keyFileName(path.trimTo(plen), metadata.getColumnName(columnIndex));
-        MergeStruct.setIndexKeyFd(mergeStruct, columnIndex, openReadWriteOrFail(ff, path));
-        LOG.info().$("open index key [path=").$(path).$(", fd=").$(MergeStruct.getIndexKeyFd(mergeStruct, columnIndex)).$(']').$();
+        MergeStruct.setDestIndexKeyFd(mergeStruct, columnIndex, openReadWriteOrFail(ff, path));
+        LOG.info().$("open index key [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexKeyFd(mergeStruct, columnIndex)).$(']').$();
         BitmapIndexUtils.valueFileName(path.trimTo(plen), metadata.getColumnName(columnIndex));
-        MergeStruct.setIndexValueFd(mergeStruct, columnIndex, openReadWriteOrFail(ff, path));
-        LOG.info().$("open index value [path=").$(path).$(", fd=").$(MergeStruct.getIndexValueFd(mergeStruct, columnIndex)).$(']').$();
+        MergeStruct.setDestIndexValueFd(mergeStruct, columnIndex, openReadWriteOrFail(ff, path));
+        LOG.info().$("open index value [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexValueFd(mergeStruct, columnIndex)).$(']').$();
         // Transfer value of destination offset to the index start offset
         // This is where we need to begin indexing from. The index will contain all the values before the offset
-        MergeStruct.setIndexStartOffset(mergeStruct, columnIndex, MergeStruct.getDestFixedAppendOffset(mergeStruct, columnIndex));
+        MergeStruct.setDestIndexStartOffset(mergeStruct, columnIndex, MergeStruct.getDestFixedAppendOffset(mergeStruct, columnIndex));
     }
 
     private void oooMapDestColumn(
@@ -3201,7 +3239,7 @@ public class TableWriter implements Closeable {
         MergeStruct.setSrcAddressSizeFromOffset(mergeStruct, offset, size);
     }
 
-    private void oooOpenIndexFiles(long[] mergeStruct, Path path, int plen, int columnIndex) {
+    private void oooOpenDestIndexFiles(long[] mergeStruct, Path path, int plen, int columnIndex) {
         if (metadata.isColumnIndexed(columnIndex)) {
             oooDoOpenIndexFiles(path, mergeStruct, plen, columnIndex);
         }
@@ -3235,7 +3273,7 @@ public class TableWriter implements Closeable {
                             MergeStruct.getFirstColumnOffset(i),
                             (indexHi - indexLo + 1) << ColumnType.pow2SizeOf(columnType)
                     );
-                    oooOpenIndexFiles(mergeStruct, path, path.length(), i);
+                    oooOpenDestIndexFiles(mergeStruct, path, path.length(), i);
                     break;
             }
         }
@@ -3278,7 +3316,13 @@ public class TableWriter implements Closeable {
                             path
                     );
 
-                    oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_I);
+                    path.trimTo(plen).put('.').put(1);
+                    path.concat(metadata.getColumnName(i));
+                    int pColNameLen = path.length();
+
+                    path.put(FILE_SUFFIX_I).$();
+                    createDirsOrFail(path);
+
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getFirstColumnOffset(i),
@@ -3287,7 +3331,9 @@ public class TableWriter implements Closeable {
                             0L
                     );
 
-                    oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_D);
+                    path.trimTo(pColNameLen);
+                    path.put(FILE_SUFFIX_D).$();
+                    createDirsOrFail(path);
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getSecondColumnOffset(i),
@@ -3320,7 +3366,12 @@ public class TableWriter implements Closeable {
                         );
                     }
 
-                    oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_D);
+                    path.trimTo(plen).put('.').put(1);
+                    int pDirNameLen = path.length();
+
+                    path.concat(metadata.getColumnName(i)).put(FILE_SUFFIX_D).$();
+                    createDirsOrFail(path);
+
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getFirstColumnOffset(i),
@@ -3329,10 +3380,11 @@ public class TableWriter implements Closeable {
                             0L
                     );
 
-                    oooOpenIndexFiles(
+                    // we have "src" index
+                    oooOpenDestIndexFiles(
                             mergeStruct,
                             path,
-                            plen,
+                            pDirNameLen,
                             i
                     );
                     break;
@@ -3414,7 +3466,9 @@ public class TableWriter implements Closeable {
                                 dataSize,
                                 dataIndexMax << shl
                         );
-                        oooOpenIndexFiles(mergeStruct, path, plen, i);
+
+                        // no "src" index files to copy back to
+                        oooOpenDestIndexFiles(mergeStruct, path, plen, i);
                     }
                     break;
             }
@@ -3499,6 +3553,7 @@ public class TableWriter implements Closeable {
                     } else {
                         dataFd = openReadWriteOrFail(ff, path);
                     }
+
                     oooMapSrcColumn(
                             mergeStruct,
                             MergeStruct.getFirstColumnOffset(i),
@@ -3507,7 +3562,10 @@ public class TableWriter implements Closeable {
                             dataIndexMax << shl
                     );
 
-                    oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_D);
+                    path.trimTo(plen).put('.').put(1);
+                    int pDirNameLen = path.length();
+                    path.concat(metadata.getColumnName(i)).put(FILE_SUFFIX_D).$();
+                    createDirsOrFail(path);
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getFirstColumnOffset(i),
@@ -3515,7 +3573,12 @@ public class TableWriter implements Closeable {
                             ((indexHi - indexLo + 1) + dataIndexMax) << shl,
                             0L
                     );
-                    oooOpenIndexFiles(mergeStruct, path, plen, i);
+                    oooOpenDestIndexFiles(
+                            mergeStruct,
+                            path,
+                            pDirNameLen,
+                            i
+                    );
                     break;
             }
         }
@@ -3563,7 +3626,7 @@ public class TableWriter implements Closeable {
                             (indexHi - indexLo + 1) << ColumnType.pow2SizeOf(columnType),
                             0L
                     );
-                    oooOpenIndexFiles(
+                    oooOpenDestIndexFiles(
                             mergeStruct,
                             path,
                             plen,
@@ -3592,12 +3655,12 @@ public class TableWriter implements Closeable {
                 // todo: this is hugely inefficient, but we will figure out to cache index writers later
                 for (int i = 0; i < columnCount; i++) {
                     if (metadata.isColumnIndexed(i)) {
-                        long row = MergeStruct.getIndexStartOffset(mergeStruct, i) / Integer.BYTES;
+                        long row = MergeStruct.getDestIndexStartOffset(mergeStruct, i) / Integer.BYTES;
 
                         w.of(
                                 configuration,
-                                MergeStruct.getIndexKeyFd(mergeStruct, i),
-                                MergeStruct.getIndexValueFd(mergeStruct, i),
+                                MergeStruct.getDestIndexKeyFd(mergeStruct, i),
+                                MergeStruct.getDestIndexValueFd(mergeStruct, i),
                                 row == 0
                         );
 
@@ -3616,7 +3679,7 @@ public class TableWriter implements Closeable {
     private long openAppend(LPSZ name) {
         long fd = ff.openAppend(name);
         if (fd == -1) {
-            throw CairoException.instance(Os.errno()).put("Cannot open for append: ").put(name);
+            throw CairoException.instance(ff.errno()).put("Cannot open for append: ").put(name);
         }
         return fd;
     }
@@ -3774,7 +3837,7 @@ public class TableWriter implements Closeable {
             if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
                 long todoFd = ff.openRO(path);
                 if (todoFd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
+                    throw CairoException.instance(ff.errno()).put("Cannot open *todo*: ").put(path);
                 }
                 long len = ff.read(todoFd, tempMem8b, 8, 0);
                 ff.close(todoFd);
@@ -4026,7 +4089,7 @@ public class TableWriter implements Closeable {
     private void removeTodoFile() {
         try {
             if (!ff.remove(path.concat(TODO_FILE_NAME).$())) {
-                throw CairoException.instance(Os.errno()).put("Recovery operation completed successfully but I cannot remove todo file: ").put(path).put(". Please remove manually before opening table again,");
+                throw CairoException.instance(ff.errno()).put("Recovery operation completed successfully but I cannot remove todo file: ").put(path).put(". Please remove manually before opening table again,");
             }
         } finally {
             path.trimTo(rootLen);
@@ -4244,11 +4307,11 @@ public class TableWriter implements Closeable {
             if (ff.exists(path)) {
                 LOG.info().$("Repairing metadata from: ").$(path).$();
                 if (ff.exists(other.concat(META_FILE_NAME).$()) && !ff.remove(other)) {
-                    throw CairoException.instance(Os.errno()).put("Repair failed. Cannot replace ").put(other);
+                    throw CairoException.instance(ff.errno()).put("Repair failed. Cannot replace ").put(other);
                 }
 
                 if (!ff.rename(path, other)) {
-                    throw CairoException.instance(Os.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
+                    throw CairoException.instance(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
                 }
             }
         } finally {
@@ -4670,7 +4733,7 @@ public class TableWriter implements Closeable {
         try {
             Unsafe.getUnsafe().putLong(tempMem8b, columnTop);
             if (ff.append(fd, tempMem8b, Long.BYTES) != Long.BYTES) {
-                throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
+                throw CairoException.instance(ff.errno()).put("Cannot append ").put(path);
             }
         } finally {
             ff.close(fd);
@@ -4691,7 +4754,7 @@ public class TableWriter implements Closeable {
             try {
                 Unsafe.getUnsafe().putLong(tempMem8b, code);
                 if (ff.append(fd, tempMem8b, 8) != 8) {
-                    throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
+                    throw CairoException.instance(ff.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
                 }
             } finally {
                 ff.close(fd);
