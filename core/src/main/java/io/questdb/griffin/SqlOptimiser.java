@@ -2177,6 +2177,18 @@ class SqlOptimiser {
             }
         }
 
+        // If this is group by model we need to add all non-selected keys, only if this is sub-query
+        // For top level models top-down column list will be empty
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY && model.getTopDownColumns().size() > 0) {
+            final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                QueryColumn qc = bottomUpColumns.getQuick(i);
+                if (qc.getAst().type != FUNCTION || !functionParser.isGroupBy(qc.getAst().token)) {
+                    model.addTopDownColumn(qc, qc.getAlias());
+                }
+            }
+        }
+
         // latest by
         emitLiteralsTopDown(model.getLatestBy(), model);
 
