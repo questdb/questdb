@@ -50,6 +50,15 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByTimeInSubQuery() throws SqlException {
+        assertQuery(
+                "select-group-by min(s) min, max(s) max, avg(s) avg from (select-group-by [sum(value) s, ts] ts, sum(value) s from (select [value, ts] from erdem_x timestamp (ts)))",
+                "select min(s), max(s), avg(s) from (select ts, sum(value) s from erdem_x)",
+                modelOf("erdem_x").timestamp("ts").col("value", ColumnType.LONG)
+        );
+    }
+
+    @Test
     public void testAliasWithSpace() throws Exception {
         assertQuery("select-choose x from (select [x] from x 'b a' where x > 1) 'b a'",
                 "x 'b a' where x > 1",
@@ -4674,7 +4683,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectGroupByUnion() throws SqlException {
-        assertQuery("select-choose b from (select-group-by [sum(b) b] a, sum(b) b from (select [b] from trips) union all select-group-by [avg(d) b] c, avg(d) b from (select [d] from trips))",
+        assertQuery("select-choose b from (select-group-by [sum(b) b, a] a, sum(b) b from (select [b, a] from trips) union all select-group-by [avg(d) b, c] c, avg(d) b from (select [d, c] from trips))",
                 "select b from (select a, sum(b) b from trips union all select c, avg(d) b from trips)",
                 modelOf("trips")
                         .col("a", ColumnType.INT)
