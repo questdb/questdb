@@ -1400,7 +1400,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
             } else {
                 // type size
-                sink.put((short) -1);
+                sink.putNetworkShort((short) -1);
             }
 
             //type modifier

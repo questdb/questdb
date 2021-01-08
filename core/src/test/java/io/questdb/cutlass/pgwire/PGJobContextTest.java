@@ -1365,6 +1365,31 @@ nodejs code:
     }
 
     @Test
+    public void testDotNetHex() throws Exception {
+        // DotNet code sends the following:
+        //   SELECT version()
+        // The issue that was here is STRING is required to be sent as "binary" type
+        // it is the same as non-binary, but DotNet puts strict criteria on field format. It has to be 1.
+        // Other drivers are less sensitive, perhaps they just do non-zero check
+        // Here we assert that 1 is correctly derived from column type
+
+        String script = ">0000003b00030000757365720061646d696e00636c69656e745f656e636f64696e67005554463800646174616261736500706f7374677265730000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">50000000180053454c4543542076657273696f6e2829000000420000000e0000000000000001000144000000065000450000000900000000005300000004\n" +
+                "<310000000432000000045400000020000176657273696f6e0000000000000100000413ffffffffffff0001440000004400010000003a506f737467726553514c2031322e332c20636f6d70696c65642062792056697375616c20432b2b206275696c6420313931342c2036342d626974430000000d53454c4543542031005a0000000549\n" +
+                ">51000000104449534341524420414c4c005800000004\n" +
+                "<4300000008534554005a0000000549";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                getHexPgWireConfig()
+        );
+    }
+
+    @Test
     public void testLoginBadPassword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CountDownLatch haltLatch = new CountDownLatch(1);

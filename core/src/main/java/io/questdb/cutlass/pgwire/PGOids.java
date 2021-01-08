@@ -97,7 +97,7 @@ public class PGOids {
     }
 
     static short getColumnBinaryFlag(int type) {
-        return (short) ((type >> 31) & 0xff);
+        return (short) ((type >>> 31) & 0xff);
     }
 
     static int toColumnType(int type) {

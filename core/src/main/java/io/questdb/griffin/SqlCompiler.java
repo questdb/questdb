@@ -127,26 +127,38 @@ public class SqlCompiler implements Closeable {
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);
 
-        keywordBasedExecutors.put("truncate", this::truncateTables);
-        keywordBasedExecutors.put("TRUNCATE", this::truncateTables);
-        keywordBasedExecutors.put("alter", this::alterTable);
-        keywordBasedExecutors.put("ALTER", this::alterTable);
-        keywordBasedExecutors.put("repair", this::repairTables);
-        keywordBasedExecutors.put("REPAIR", this::repairTables);
-        keywordBasedExecutors.put("set", this::compileSet);
-        keywordBasedExecutors.put("SET", this::compileSet);
-        keywordBasedExecutors.put("begin", this::compileSet);
-        keywordBasedExecutors.put("BEGIN", this::compileSet);
-        keywordBasedExecutors.put("commit", this::compileSet);
-        keywordBasedExecutors.put("COMMIT", this::compileSet);
-        keywordBasedExecutors.put("rollback", this::compileSet);
-        keywordBasedExecutors.put("ROLLBACK", this::compileSet);
-        keywordBasedExecutors.put("drop", this::dropTable);
-        keywordBasedExecutors.put("DROP", this::dropTable);
-        keywordBasedExecutors.put("backup", this::sqlBackup);
-        keywordBasedExecutors.put("BACKUP", this::sqlBackup);
-        keywordBasedExecutors.put("show", this::sqlShow);
-        keywordBasedExecutors.put("SHOW", this::sqlShow);
+        // For each 'this::method' reference java compiles a class
+        // We need to minimize repetition of this syntax as each site generates garbage
+        final KeywordBasedExecutor compileSet = this::compileSet;
+        final KeywordBasedExecutor truncateTables = this::truncateTables;
+        final KeywordBasedExecutor alterTable = this::alterTable;
+        final KeywordBasedExecutor repairTables = this::repairTables;
+        final KeywordBasedExecutor dropTable = this::dropTable;
+        final KeywordBasedExecutor sqlBackup = this::sqlBackup;
+        final KeywordBasedExecutor sqlShow = this::sqlShow;
+
+        keywordBasedExecutors.put("truncate", truncateTables);
+        keywordBasedExecutors.put("TRUNCATE", truncateTables);
+        keywordBasedExecutors.put("alter", alterTable);
+        keywordBasedExecutors.put("ALTER", alterTable);
+        keywordBasedExecutors.put("repair", repairTables);
+        keywordBasedExecutors.put("REPAIR", repairTables);
+        keywordBasedExecutors.put("set", compileSet);
+        keywordBasedExecutors.put("SET", compileSet);
+        keywordBasedExecutors.put("begin", compileSet);
+        keywordBasedExecutors.put("BEGIN", compileSet);
+        keywordBasedExecutors.put("commit", compileSet);
+        keywordBasedExecutors.put("COMMIT", compileSet);
+        keywordBasedExecutors.put("rollback", compileSet);
+        keywordBasedExecutors.put("ROLLBACK", compileSet);
+        keywordBasedExecutors.put("discard", compileSet);
+        keywordBasedExecutors.put("DISCARD", compileSet);
+        keywordBasedExecutors.put("drop", dropTable);
+        keywordBasedExecutors.put("DROP", dropTable);
+        keywordBasedExecutors.put("backup", sqlBackup);
+        keywordBasedExecutors.put("BACKUP", sqlBackup);
+        keywordBasedExecutors.put("show", sqlShow);
+        keywordBasedExecutors.put("SHOW", sqlShow);
 
         configureLexer(lexer);
 
