@@ -238,7 +238,7 @@ public final class TestUtils {
         Record l = cursorActual.getRecord();
         long rowNum = 0;
         while (cursorExpected.hasNext()) {
-            Assert.assertTrue("Expected cursor does not have record at " + rowNum++, cursorActual.hasNext());
+            Assert.assertTrue("Expected Actual cursor does not have record at " + rowNum++, cursorActual.hasNext());
             for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
                 String columnName = metadataExpected.getColumnName(i);
                 try {

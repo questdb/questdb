@@ -8,6 +8,7 @@ import java.util.Random;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
@@ -150,6 +151,30 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
             engine.releaseInactive();
         });
     }
+
+    @Test
+    @Ignore
+    public void testReplicateWithColumnTop() throws Exception {
+        runTest("testSimple1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                            "SELECT timestamp_sequence(0, 100000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(100000)" +
+                            ") TIMESTAMP (ts) PARTITION BY DAY;",
+                    sqlExecutionContext);
+            compiler.compile("ALTER TABLE source ADD COLUMN colTop LONG", sqlExecutionContext);
+            compiler.compile("INSERT INTO source(ts, l, colTop) " +
+                            "SELECT" +
+                            " timestamp_sequence(50000000000, 500000000) ts," +
+                            " rnd_long(-55, 9009, 2) l," +
+                            " rnd_long(-55, 9009, 2) colTop" +
+                            " from long_sequence(5)" +
+                            ";",
+                    sqlExecutionContext);
+
+            replicateTable("source", "dest", "(ts TIMESTAMP, l LONG, colTop LONG) TIMESTAMP(ts) PARTITION BY DAY;", 0, Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
 
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();

@@ -1359,6 +1359,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1740,6 +1741,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
@@ -1778,6 +1780,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -3888,6 +3891,7 @@ public class TableWriter implements Closeable {
                 ddlMem.putInt(timestampIndex);
             }
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -4099,6 +4103,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(partitionBy);
             ddlMem.putInt(timestampIndex);
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
