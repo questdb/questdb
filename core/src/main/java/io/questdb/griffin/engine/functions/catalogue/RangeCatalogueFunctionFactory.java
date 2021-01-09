@@ -24,34 +24,16 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.ObjList;
 
-public class RangeCatalogueFunctionFactory implements FunctionFactory {
-    static final RecordMetadata METADATA;
+public class RangeCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private static final RecordMetadata METADATA;
 
-    @Override
-    public String getSignature() {
-        return "pg_range()";
-    }
-
-    @Override
-    public boolean isCursor() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(position, new EmptyTableRecordCursorFactory(METADATA));
+    public RangeCatalogueFunctionFactory() {
+        super("pg_range()", METADATA);
     }
 
     static {

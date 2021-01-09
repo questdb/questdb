@@ -24,52 +24,37 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.ObjList;
 
-class IndexCatalogueCursor implements NoRandomAccessRecordCursor {
+public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionFactory {
+    private final String signature;
+    private final RecordMetadata metadata;
 
-    static final RecordMetadata METADATA;
-    private static final IndexCatalogueRecord record = new IndexCatalogueRecord();
-
-    @Override
-    public void close() {
-
+    public AbstractEmptyCatalogueFunctionFactory(String signature, RecordMetadata metadata) {
+        this.signature = signature;
+        this.metadata = metadata;
     }
 
     @Override
-    public Record getRecord() {
-        return record;
+    public String getSignature() {
+        return signature;
     }
 
     @Override
-    public boolean hasNext() {
-        return false;
+    public boolean isCursor() {
+        return true;
     }
 
     @Override
-    public void toTop() {
-
-    }
-
-    @Override
-    public long size() {
-        return 0;
-    }
-
-    private static class IndexCatalogueRecord implements Record {
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN, null));
-        METADATA = metadata;
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new CursorFunction(position, new EmptyTableRecordCursorFactory(metadata));
     }
 }
