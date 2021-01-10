@@ -246,6 +246,10 @@ public class SqlCodeGenerator implements Mutable {
         return true;
     }
 
+    private RecordMetadata calculateSetMetadata(RecordMetadata masterMetadata) {
+        return GenericRecordMetadata.removeTimestamp(masterMetadata);
+    }
+
     @Nullable
     private Function compileFilter(IntrinsicModel intrinsicModel, RecordMetadata readerMeta, SqlExecutionContext executionContext) throws SqlException {
         if (intrinsicModel.filter != null) {
@@ -2038,7 +2042,7 @@ public class SqlCodeGenerator implements Mutable {
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn column = columns.getQuick(i);
-                ExpressionNode node = column.getAst();
+                final ExpressionNode node = column.getAst();
                 if (node.type == ExpressionNode.LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
                     virtualMetadata.setTimestampIndex(i);
                 }
@@ -2053,7 +2057,6 @@ public class SqlCodeGenerator implements Mutable {
                     function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
                 }
                 functions.add(function);
-
 
                 if (function instanceof SymbolFunction) {
                     virtualMetadata.add(
@@ -2077,6 +2080,37 @@ public class SqlCodeGenerator implements Mutable {
                 }
             }
 
+            // if timestamp was required and present in the base model but
+            // not selected, we will need to add it
+            if (
+                    executionContext.isTimestampRequired()
+                            && timestampColumn != null
+                            && virtualMetadata.getTimestampIndex() == -1
+            ) {
+                final Function timestampFunction = FunctionParser.createColumn(
+                        0, timestampColumn, metadata
+                );
+                functions.add(timestampFunction);
+
+                // here the base timestamp column name can name-clash with one of the
+                // functions, so we have to use bottomUpColumns to lookup alias we should
+                // be using. Bottom up column should have our timestamp because optimiser puts it there
+
+                for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                    QueryColumn qc = model.getBottomUpColumns().getQuick(i);
+                    if (qc.getAst().type == LITERAL && Chars.equals(timestampColumn, qc.getAst().token)) {
+                        virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
+                        virtualMetadata.add(
+                                new TableColumnMetadata(
+                                        Chars.toString(qc.getAlias()),
+                                        timestampFunction.getType(),
+                                        timestampFunction.getMetadata()
+                                )
+                        );
+                        break;
+                    }
+                }
+            }
             return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
         } catch (SqlException | CairoException e) {
             factory.close();
@@ -2518,10 +2552,6 @@ public class SqlCodeGenerator implements Mutable {
                     columnIndexes
             );
         }
-    }
-
-    private RecordMetadata calculateSetMetadata(RecordMetadata masterMetadata) {
-        return GenericRecordMetadata.removeTimestamp(masterMetadata);
     }
 
     private RecordCursorFactory generateUnionAllFactory(

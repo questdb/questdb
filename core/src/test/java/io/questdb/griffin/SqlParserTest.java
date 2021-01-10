@@ -86,6 +86,15 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDuplicateColumnGroupBy() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
     public void testAnalyticFunctionReferencesSameColumnAsVirtual() throws Exception {
         assertQuery(
                 "select-analytic a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts] a, concat(b,'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
@@ -1811,10 +1820,10 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDuplicateColumnGroupBy() throws SqlException {
+    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1 from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
-                "select b, sum(a), k k1, k from x y sample by 3h",
+                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual [a, b, a + b column, k1] a, b, a + b column, k1, k1 k, timestamp from (select-choose [a, b, k k1] a, b, k k1, timestamp from (select [a, b, k] from x timestamp (timestamp)))) sample by 1m",
+                "select sum(b+a), a+b, k k1, k from x sample by 1m",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
@@ -1829,11 +1838,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
+    public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
-                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual [a, b, a + b column, k1] a, b, a + b column, k1, k1 k from (select-choose [a, b, k k1] a, b, k k1 from (select [a, b, k] from x timestamp (timestamp)))) sample by 1m",
-                "select sum(b+a), a+b, k k1, k from x sample by 1m",
-                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+                "select-group-by day, isin, last(start_price) last from (select-virtual [day(ts) day, isin, start_price] day(ts) day, isin, start_price, ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4')) sample by 1d",
+                "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
+                modelOf("xetra")
+                        .timestamp("ts")
+                        .col("isin", ColumnType.SYMBOL)
+                        .col("start_price", ColumnType.DOUBLE)
         );
     }
 
@@ -5419,7 +5431,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionKeepOrderByWhenSampleByPresent() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
+                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z, t from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
                 "select x from (select * from a union select * from b union all select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -5457,7 +5469,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
+                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z, t from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
