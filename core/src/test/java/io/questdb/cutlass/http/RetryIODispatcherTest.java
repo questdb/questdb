@@ -25,15 +25,20 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.ServerDisconnectException;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.ComparisonFailure;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
@@ -126,24 +131,24 @@ public class RetryIODispatcherTest {
     public TemporaryFolder temp = new TemporaryFolder();
 
     @Test
-    public void testInsertWaitsWhenWriterLockedLoop() throws Exception {
+    public void testImportProcessedWhenClientDisconnectedLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testInsertWaitsWhenWriterLocked();
+            assertImportProcessedWhenClientDisconnected();
             temp.delete();
             temp.create();
         }
     }
 
     @Test
-    public void testInsertsIsPerformedWhenWriterLockedAndDisconnectedLoop() throws Exception {
-        for (int i = 0; i < 10; i++) {
+    public void testInsertWaitsExceedsRerunProcessingQueueSizeLoop() throws Exception {
+        for (int i = 0; i < 5; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testInsertsIsPerformedWhenWriterLockedAndDisconnected();
+            assertInsertWaitsExceedsRerunProcessingQueueSize();
             temp.delete();
             temp.create();
         }
@@ -170,24 +175,24 @@ public class RetryIODispatcherTest {
     }
 
     @Test
-    public void testImportProcessedWhenClientDisconnectedLoop() throws Exception {
+    public void testInsertWaitsWhenWriterLockedLoop() throws Exception {
         for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testImportProcessedWhenClientDisconnected();
+            assertInsertWaitsWhenWriterLocked();
             temp.delete();
             temp.create();
         }
     }
 
     @Test
-    public void testInsertWaitsExceedsRerunProcessingQueueSizeLoop() throws Exception {
-        for (int i = 0; i < 5; i++) {
+    public void testInsertsIsPerformedWhenWriterLockedAndDisconnectedLoop() throws Exception {
+        for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
-            testInsertWaitsExceedsRerunProcessingQueueSize();
+            assertInsertsIsPerformedWhenWriterLockedAndDisconnected();
             temp.delete();
             temp.create();
         }
@@ -285,40 +290,30 @@ public class RetryIODispatcherTest {
         }
     }
 
-    public void testInsertWaitsWhenWriterLocked() throws Exception {
+    private void assertImportProcessedWhenClientDisconnected() throws Exception {
         final int parallelCount = 2;
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
-                .withWorkerCount(parallelCount)
+                .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
-                    // create table
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                            "0c\r\n" +
-                                    "{\"ddl\":\"OK\"}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
-                    );
+                .run((engine) -> {
+                    // create table and do 1 import
+                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
 
-                    TableWriter writer = lockWriter(engine, "balances_x");
+                    TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
 
-                    final int insertCount = 10;
+                    final int validRequestRecordCount = 24;
+                    final int insertCount = 1;
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     for (int i = 0; i < parallelCount; i++) {
+                        int finalI = i;
                         new Thread(() -> {
                             try {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                                "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                "0c\r\n" +
-                                                        "{\"ddl\":\"OK\"}\r\n" +
-                                                        "00\r\n" +
-                                                        "\r\n"
-                                        );
+                                        new SendAndReceiveRequestBuilder().execute(ValidImportRequest, "");
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
                                     }
@@ -326,30 +321,39 @@ public class RetryIODispatcherTest {
                             } finally {
                                 countDownLatch.countDown();
                             }
+                            LOG.info().$("Stopped thread ").$(finalI).$();
                         }).start();
                     }
 
-                    boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
-
-                    // Cairo engine should not allow second writer to be opened on the same table
-                    // Cairo is expected to have finished == false
-                    Assert.assertFalse(finished);
-
-                    writer.close();
                     countDownLatch.await();
 
-                    // check if we have parallelCount x insertCount  records
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n",
-                            "71\r\n" +
-                                    "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount * insertCount + "]],\"count\":1}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
-                    );
+                    // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
+                    writer.close();
+
+                    for (int i = 0; i < 20; i++) {
+
+                        try {
+                            // check if we have parallelCount x insertCount  records
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                                    "83\r\n" +
+                                            "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n");
+                            return;
+                        } catch (ComparisonFailure e) {
+                            if (i < 9) {
+                                Thread.sleep(50);
+                            } else {
+                                throw e;
+                            }
+                        }
+                    }
+
                 });
     }
 
-    public void testInsertWaitsExceedsRerunProcessingQueueSize() throws Exception {
+    private void assertInsertWaitsExceedsRerunProcessingQueueSize() throws Exception {
         final int rerunProcessingQueueSize = 1;
         final int parallelCount = 4;
         new HttpQueryTestBuilder()
@@ -417,8 +421,8 @@ public class RetryIODispatcherTest {
 
     }
 
-    public void testInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
-        final int parallelCount = 4;
+    private void assertInsertWaitsWhenWriterLocked() throws Exception {
+        final int parallelCount = 2;
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(parallelCount)
@@ -435,58 +439,49 @@ public class RetryIODispatcherTest {
                     );
 
                     TableWriter writer = lockWriter(engine, "balances_x");
+
+                    final int insertCount = 10;
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    Thread[] threads = new Thread[parallelCount];
                     for (int i = 0; i < parallelCount; i++) {
-                        int finalI = i;
-                        threads[i] = new Thread(() -> {
+                        new Thread(() -> {
                             try {
-                                // insert one record
-                                // await nothing
-                                try {
-                                    Thread.sleep(finalI * 5);
-                                    new SendAndReceiveRequestBuilder()
-                                            .withPauseBetweenSendAndReceive(200)
-                                            .execute(
-                                                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n"
-                                                            + SendAndReceiveRequestBuilder.RequestHeaders,
-                                                    ""
-                                            );
-                                } catch (Exception e) {
-                                    LOG.error().$("Failed execute insert http request. Server error ").$(e);
+                                for (int r = 0; r < insertCount; r++) {
+                                    // insert one record
+                                    try {
+                                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                                "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                                                "0c\r\n" +
+                                                        "{\"ddl\":\"OK\"}\r\n" +
+                                                        "00\r\n" +
+                                                        "\r\n"
+                                        );
+                                    } catch (Exception e) {
+                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                    }
                                 }
                             } finally {
                                 countDownLatch.countDown();
                             }
-                        });
-                        threads[i].start();
+                        }).start();
                     }
 
-                    countDownLatch.await();
+                    boolean finished = countDownLatch.await(200, TimeUnit.MILLISECONDS);
+
+                    // Cairo engine should not allow second writer to be opened on the same table
+                    // Cairo is expected to have finished == false
+                    Assert.assertFalse(finished);
+
                     writer.close();
+                    countDownLatch.await();
 
                     // check if we have parallelCount x insertCount  records
-                    int waitCount = 1000 / 50 * parallelCount;
-                    for (int i = 0; i < waitCount; i++) {
-
-                        try {
-                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
-                                    "6f\r\n" +
-                                            "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
-                                            "00\r\n" +
-                                            "\r\n"
-                            );
-                            return;
-                        } catch (ComparisonFailure e) {
-                            if (i < waitCount - 1) {
-                                Thread.sleep(50);
-                            } else {
-                                throw e;
-                            }
-
-                        }
-                    }
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n",
+                            "71\r\n" +
+                                    "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount * insertCount + "]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
                 });
     }
 
@@ -569,66 +564,76 @@ public class RetryIODispatcherTest {
                 });
     }
 
-    public void testImportProcessedWhenClientDisconnected() throws Exception {
-        final int parallelCount = 2;
+    private void assertInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
+        final int parallelCount = 4;
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
-                .withWorkerCount(2)
+                .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
-                    // create table and do 1 import
-                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
+                .run(engine -> {
+                    // create table
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
+                            "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
 
-                    TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
-
-                    final int validRequestRecordCount = 24;
-                    final int insertCount = 1;
+                    TableWriter writer = lockWriter(engine, "balances_x");
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
+                    Thread[] threads = new Thread[parallelCount];
                     for (int i = 0; i < parallelCount; i++) {
                         int finalI = i;
-                        new Thread(() -> {
+                        threads[i] = new Thread(() -> {
                             try {
-                                for (int r = 0; r < insertCount; r++) {
-                                    // insert one record
-                                    try {
-                                        new SendAndReceiveRequestBuilder().execute(ValidImportRequest, "");
-                                    } catch (Exception e) {
-                                        LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
-                                    }
+                                // insert one record
+                                // await nothing
+                                try {
+                                    Thread.sleep(finalI * 5);
+                                    new SendAndReceiveRequestBuilder()
+                                            .withPauseBetweenSendAndReceive(200)
+                                            .execute(
+                                                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + finalI + "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n"
+                                                            + SendAndReceiveRequestBuilder.RequestHeaders,
+                                                    ""
+                                            );
+                                } catch (Exception e) {
+                                    LOG.error().$("Failed execute insert http request. Server error ").$(e);
                                 }
                             } finally {
                                 countDownLatch.countDown();
                             }
-                            LOG.info().$("Stopped thread ").$(finalI).$();
-                        }).start();
+                        });
+                        threads[i].start();
                     }
 
                     countDownLatch.await();
-
-                    // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
                     writer.close();
 
-                    for (int i = 0; i < 20; i++) {
+                    // check if we have parallelCount x insertCount  records
+                    int waitCount = 1000 / 50 * parallelCount;
+                    for (int i = 0; i < waitCount; i++) {
 
                         try {
-                            // check if we have parallelCount x insertCount  records
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                                    "83\r\n" +
-                                            "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount + 1) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                                    "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
+                                    "6f\r\n" +
+                                            "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
                                             "00\r\n" +
-                                            "\r\n");
+                                            "\r\n"
+                            );
                             return;
                         } catch (ComparisonFailure e) {
-                            if (i < 9) {
+                            if (i < waitCount - 1) {
                                 Thread.sleep(50);
                             } else {
                                 throw e;
                             }
+
                         }
                     }
-
                 });
     }
 
