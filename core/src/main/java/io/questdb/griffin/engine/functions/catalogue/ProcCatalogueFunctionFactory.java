@@ -27,49 +27,19 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 
-class IndexCatalogueCursor implements NoRandomAccessRecordCursor {
+public class ProcCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private static final RecordMetadata METADATA;
 
-    static final RecordMetadata METADATA;
-    private static final IndexCatalogueRecord record = new IndexCatalogueRecord();
-
-    @Override
-    public void close() {
-
-    }
-
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @Override
-    public void toTop() {
-
-    }
-
-    @Override
-    public long size() {
-        return 0;
-    }
-
-    private static class IndexCatalogueRecord implements Record {
+    public ProcCatalogueFunctionFactory() {
+        super("pg_proc()", METADATA);
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN, null));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("proname", ColumnType.STRING, null));
         METADATA = metadata;
     }
 }

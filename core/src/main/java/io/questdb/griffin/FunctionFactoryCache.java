@@ -55,6 +55,7 @@ public class FunctionFactoryCache {
                         switch (name) {
                             case "=":
                                 addFactory(booleanFactories, "!=", descriptor);
+                                addFactory(booleanFactories, "<>", descriptor);
                                 break;
                             case "<":
                                 // `a < b` == `a >= b`

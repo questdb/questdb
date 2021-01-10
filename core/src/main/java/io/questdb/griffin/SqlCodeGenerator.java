@@ -1237,7 +1237,6 @@ public class SqlCodeGenerator implements Mutable {
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
             // we require timestamp
-            // todo: this looks like generic code
             final int timestampIndex = getTimestampIndex(model, factory);
             if (timestampIndex == -1) {
                 Misc.free(factory);
