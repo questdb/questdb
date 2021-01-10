@@ -44,8 +44,8 @@ public class DirectLongList implements Mutable, Closeable {
 
     public DirectLongList(long capacity) {
         this.pow2 = 3;
-        this.address = Unsafe.malloc(this.capacity = ((capacity << 3) + Misc.CACHE_LINE_SIZE));
-        this.start = this.pos = address + (address & (Misc.CACHE_LINE_SIZE - 1));
+        this.address = Unsafe.malloc(this.capacity = ((capacity << 3)));
+        this.start = this.pos = address;
         this.limit = pos + ((capacity - 1) << 3);
         this.onePow2 = (1 << 3);
     }
@@ -65,9 +65,9 @@ public class DirectLongList implements Mutable, Closeable {
         this.pos += count;
     }
 
-    public int binarySearch(long v) {
-        int low = 0;
-        int high = (int) ((pos - start) >> 3) - 1;
+    public long binarySearch(long v) {
+        long low = 0;
+        long high = ((pos - start) >> 3) - 1;
 
         while (low <= high) {
 
@@ -75,7 +75,7 @@ public class DirectLongList implements Mutable, Closeable {
                 return scanSearch(v, low, high);
             }
 
-            int mid = (low + high) >>> 1;
+            long mid = (low + high) >>> 1;
             long midVal = Unsafe.getUnsafe().getLong(start + (mid << 3));
 
             if (midVal < v)
@@ -109,8 +109,8 @@ public class DirectLongList implements Mutable, Closeable {
         return Unsafe.getUnsafe().getLong(start + (p << 3));
     }
 
-    public int scanSearch(long v, int low, int high) {
-        for (int i = low; i < high; i++) {
+    public long scanSearch(long v, long low, long high) {
+        for (long i = low; i < high; i++) {
             long f = get(i);
             if (f == v) {
                 return i;
@@ -141,7 +141,7 @@ public class DirectLongList implements Mutable, Closeable {
         return (int) ((pos - start) >> pow2);
     }
 
-    public DirectLongList subset(int lo, int hi) {
+    public DirectLongList subset(long lo, long hi) {
         DirectLongList that = new DirectLongList(hi - lo);
         Unsafe.getUnsafe().copyMemory(start + (lo << 3), that.start, (hi - lo) << 3);
         that.pos += (hi - lo) << 3;
@@ -175,11 +175,10 @@ public class DirectLongList implements Mutable, Closeable {
     private void extend(long capacity) {
         final long oldCapacity = this.capacity;
         long address = Unsafe.realloc(this.address, oldCapacity, this.capacity = ((capacity << pow2) + Misc.CACHE_LINE_SIZE));
-        long start = address + (address & (Misc.CACHE_LINE_SIZE - 1));
-        this.pos = this.pos - this.start + start;
-        this.limit = start + ((capacity - 1) << pow2);
+        this.pos = this.pos - this.start + address;
+        this.limit = address + ((capacity - 1) << pow2);
         this.address = address;
-        this.start = start;
-        LOG.info().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+        this.start = address;
+        LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
     }
 }

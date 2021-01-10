@@ -3181,11 +3181,11 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestBySyntax() throws Exception {
-        assertSyntaxError(
-                "select * from tab latest",
-                24,
-                "'by' expected"
+    public void testLatestByMultipleColumns() throws SqlException {
+        assertQuery(
+                "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price] from market_updates timestamp (ts) latest by ts,market_type) sample by 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
+                modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
         );
     }
 
@@ -5424,6 +5424,15 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest",
+                24,
+                "by expected"
         );
     }
 

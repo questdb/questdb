@@ -808,6 +808,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (getLatestBy().size() > 0) {
             sink.put(" latest by ");
             for (int i = 0, n = getLatestBy().size(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
                 getLatestBy().getQuick(i).toSink(sink);
             }
         }
