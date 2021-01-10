@@ -24,24 +24,26 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
 
-public class CurrentDatabaseFunctionFactory implements FunctionFactory {
-    private final static StrFunction INSTANCE = new StrConstant(0, "qdb");
+public class RangeCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private static final RecordMetadata METADATA;
 
-    @Override
-    public String getSignature() {
-        return "current_database()";
+    public RangeCatalogueFunctionFactory() {
+        super("pg_range()", METADATA);
     }
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return INSTANCE;
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("rngtypid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngsubtype", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngcollation", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngsubopc", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngcanonical", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("rngsubdiff", ColumnType.INT, null));
+        METADATA = metadata;
     }
 }

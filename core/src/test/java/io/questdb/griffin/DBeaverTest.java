@@ -28,6 +28,75 @@ import org.junit.Test;
 
 public class DBeaverTest extends AbstractGriffinTest {
     @Test
+    public void testDotNetGetTypes() throws SqlException {
+        assertQuery(
+                "nspname\toid\ttypnamespace\ttypname\ttyptype\ttyprelid\ttypnotnull\trelkind\telemtypoid\telemtypname\telemrelkind\telemtyptype\tord\n" +
+                        "public\t1043\t2200\tVARCHAR\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1114\t2200\tTIMESTAMP\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t701\t2200\tFLOAT8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t700\t2200\tFLOAT4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t23\t2200\tINT4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t21\t2200\tINT2\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t18\t2200\tCHAR\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t20\t2200\tINT8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t16\t2200\tBOOL\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t17\t2200\tBINARY\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1700\t2200\tNUMERIC\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
+                        "public\t1082\t2200\tDATE\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n",
+                "SELECT ns.nspname, typ_and_elem_type.*,\n" +
+                        "   CASE\n" +
+                        "       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types\n" +
+                        "       WHEN typtype = 'r' THEN 1                        -- Ranges after\n" +
+                        "       WHEN typtype = 'c' THEN 2                        -- Composites after\n" +
+                        "       WHEN typtype = 'd' AND elemtyptype <> 'a' THEN 3 -- Domains over non-arrays after\n" +
+                        "       WHEN typtype = 'a' THEN 4                        -- Arrays before\n" +
+                        "       WHEN typtype = 'd' AND elemtyptype = 'a' THEN 5  -- Domains over arrays last\n" +
+                        "    END AS ord\n" +
+                        "FROM (\n" +
+                        "    -- Arrays have typtype=b - this subquery identifies them by their typreceive and converts their typtype to a\n" +
+                        "    -- We first do this for the type (innerest-most subquery), and then for its element type\n" +
+                        "    -- This also returns the array element, range subtype and domain base type as elemtypoid\n" +
+                        "    SELECT\n" +
+                        "        typ.oid, typ.typnamespace, typ.typname, typ.typtype, typ.typrelid, typ.typnotnull, typ.relkind,\n" +
+                        "        elemtyp.oid AS elemtypoid, elemtyp.typname AS elemtypname, elemcls.relkind AS elemrelkind,\n" +
+                        "        CASE WHEN elemproc.proname='array_recv' THEN 'a' ELSE elemtyp.typtype END AS elemtyptype\n" +
+                        "    FROM (\n" +
+                        "        SELECT typ.oid, typnamespace, typname, typrelid, typnotnull, relkind, typelem AS elemoid,\n" +
+                        "            CASE WHEN proc.proname='array_recv' THEN 'a' ELSE typ.typtype END AS typtype,\n" +
+                        "            CASE\n" +
+                        "                WHEN proc.proname='array_recv' THEN typ.typelem\n" +
+                        "                WHEN typ.typtype='r' THEN rngsubtype\n" +
+                        "                WHEN typ.typtype='d' THEN typ.typbasetype\n" +
+                        "            END AS elemtypoid\n" +
+                        "        FROM pg_type AS typ\n" +
+                        "        LEFT JOIN pg_class AS cls ON (cls.oid = typ.typrelid)\n" +
+                        "        LEFT JOIN pg_proc AS proc ON proc.oid = typ.typreceive\n" +
+                        "        LEFT JOIN pg_range ON (pg_range.rngtypid = typ.oid)\n" +
+                        "    ) AS typ\n" +
+                        "    LEFT JOIN pg_type AS elemtyp ON elemtyp.oid = elemtypoid\n" +
+                        "    LEFT JOIN pg_class AS elemcls ON (elemcls.oid = elemtyp.typrelid)\n" +
+                        "    LEFT JOIN pg_proc AS elemproc ON elemproc.oid = elemtyp.typreceive\n" +
+                        ") AS typ_and_elem_type\n" +
+                        "JOIN pg_namespace AS ns ON (ns.oid = typnamespace)\n" +
+                        "WHERE\n" +
+                        "    typtype IN ('b', 'r', 'e', 'd') OR -- Base, range, enum, domain\n" +
+                        "    (typtype = 'c' AND relkind='c') OR -- User-defined free-standing composites (not table composites) by default\n" +
+                        "    (typtype = 'p' AND typname IN ('record', 'void')) OR -- Some special supported pseudo-types\n" +
+                        "    (typtype = 'a' AND (  -- Array of...\n" +
+                        "        elemtyptype IN ('b', 'r', 'e', 'd') OR -- Array of base, range, enum, domain\n" +
+                        "        (elemtyptype = 'p' AND elemtypname IN ('record', 'void')) OR -- Arrays of special supported pseudo-types\n" +
+                        "        (elemtyptype = 'c' AND elemrelkind='c') -- Array of user-defined free-standing composites (not table composites) by default\n" +
+                        "    ))\n" +
+                        "ORDER BY ord",
+                null,
+                true,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testFrequentSql() throws SqlException {
         assertQuery(
                 "current_schema\tsession_user\n" +
@@ -71,6 +140,59 @@ public class DBeaverTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testListTables() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table xyz(a int)", sqlExecutionContext);
+            compiler.compile("create table tab2(b long)", sqlExecutionContext);
+            assertQuery(
+                    "oid\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\tdescription\tpartition_expr\tpartition_key\n" +
+                            "2\ttab2\t2200\tr\t0\t2\t\t\t\t\n" +
+                            "1\txyz\t2200\tr\t0\t1\t\t\t\t\n",
+                    "SELECT c.oid,c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key \n" +
+                            "FROM pg_catalog.pg_class c\n" +
+                            "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass\n" +
+                            "WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c')",
+                    null,
+                    false,
+                    sqlExecutionContext,
+                    false,
+                    false
+            );
+
+        });
+    }
+
+    @Test
+    public void testListTypes() throws SqlException {
+        assertQuery(
+                "oid\toid1\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\ttypelem\ttypreceive\trelkind\tbase_type_name\tdescription\n" +
+                        "16\t16\tBOOL\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "17\t17\tBINARY\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "18\t18\tCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "20\t20\tINT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "21\t21\tINT2\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "23\t23\tINT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "700\t700\tFLOAT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "701\t701\tFLOAT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "1043\t1043\tVARCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "1082\t1082\tDATE\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "1114\t1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n" +
+                        "1700\t1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t\t\t\n",
+                "SELECT t.oid,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
+                        "FROM pg_catalog.pg_type t\n" +
+                        "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +
+                        "LEFT OUTER JOIN pg_catalog.pg_description d ON t.oid=d.objoid\n" +
+                        "WHERE typnamespace=2200\n" +
+                        "ORDER by t.oid",
+                null,
+                true,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testNamespaceListSql() throws SqlException {
         assertQuery(
                 "oid\tnspname\toid1\tdescription\n" +
@@ -99,59 +221,5 @@ public class DBeaverTest extends AbstractGriffinTest {
                 false,
                 true
         );
-    }
-
-    @Test
-    public void testListTables() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table xyz(a int)", sqlExecutionContext);
-            compiler.compile("create table tab2(b long)", sqlExecutionContext);
-            assertQuery(
-                    "oid\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\tdescription\tpartition_expr\tpartition_key\n" +
-                            "2\ttab2\t2200\tr\t0\t2\t\t\t\t\n" +
-                            "1\txyz\t2200\tr\t0\t1\t\t\t\t\n",
-                    "SELECT c.oid,c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key \n" +
-                            "FROM pg_catalog.pg_class c\n" +
-                            "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass\n" +
-                            "WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c')",
-                    null,
-                    false,
-                    sqlExecutionContext,
-                    false,
-                    false
-            );
-
-        });
-    }
-
-    @Test
-    public void testListTypes() throws SqlException {
-        assertQuery(
-                "oid\toid1\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttyprelid\trelkind\tbase_type_name\tdescription\n" +
-                        "16\t16\tBOOL\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "17\t17\tBINARY\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "18\t18\tCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "20\t20\tINT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "21\t21\tINT2\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "23\t23\tINT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "700\t700\tFLOAT4\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "701\t701\tFLOAT8\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "1043\t1043\tVARCHAR\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "1082\t1082\tDATE\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "1114\t1114\tTIMESTAMP\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n" +
-                        "1700\t1700\tNUMERIC\t0\t0\t2200\tfalse\t0\tb\tNaN\t\t\t\n",
-                "SELECT t.oid,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
-                        "FROM pg_catalog.pg_type t\n" +
-                        "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +
-                        "LEFT OUTER JOIN pg_catalog.pg_description d ON t.oid=d.objoid\n" +
-                        "WHERE typnamespace=2200\n" +
-                        "ORDER by t.oid",
-                null,
-                true,
-                sqlExecutionContext,
-                false,
-                false
-        );
-
     }
 }
