@@ -65,6 +65,7 @@ public final class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteTypeQualifier0Ref = this::rewriteTypeQualifier0;
     private boolean subQueryMode = false;
+
     SqlParser(
             CairoConfiguration configuration,
             SqlOptimiser optimiser,
@@ -147,18 +148,18 @@ public final class SqlParser {
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
-        CharSequence tok = optTok(lexer);
-        if (tok == null || !isByKeyword(tok)) {
-            throw SqlException.$((lexer.getPosition()), "'by' expected");
+        if (isByKeyword(tok(lexer, "by"))) {
+            return;
         }
+        throw SqlException.$((lexer.getPosition()), "'by' expected");
     }
 
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
-        ExpressionNode n = expr(lexer, (QueryModel) null);
-        if (n == null) {
-            throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Expression expected");
+        final ExpressionNode n = expr(lexer, (QueryModel) null);
+        if (n != null) {
+            return n;
         }
-        return n;
+        throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Expression expected");
     }
 
     private int expectInt(GenericLexer lexer) throws SqlException {
@@ -1405,11 +1406,6 @@ public final class SqlParser {
         return parent;
     }
 
-    private ExpressionNode rewriteTypeQualifier(ExpressionNode parent) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteTypeQualifier0Ref);
-        return parent;
-    }
-
     private void rewriteConcat0(ExpressionNode node) {
         if (node.type == ExpressionNode.OPERATION && isConcatOperator(node.token)) {
             node.type = ExpressionNode.FUNCTION;
@@ -1449,6 +1445,15 @@ public final class SqlParser {
         }
     }
 
+    private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
+        return rewriteConcat(rewriteCase(rewriteCount(rewriteTypeQualifier(parent))));
+    }
+
+    private ExpressionNode rewriteTypeQualifier(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, rewriteTypeQualifier0Ref);
+        return parent;
+    }
+
     /**
      * Rewrites 'abc'::blah - type qualifier
      *
@@ -1463,10 +1468,6 @@ public final class SqlParser {
                 }
             }
         }
-    }
-
-    private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
-        return rewriteConcat(rewriteCase(rewriteCount(rewriteTypeQualifier(parent))));
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
