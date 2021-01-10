@@ -2575,6 +2575,44 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableIfNotExists() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 10; i++) {
+                compiler.compile("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
+            }
+        });
+
+        assertQuery(
+                "a\n" +
+                        "-1148479920\n" +
+                        "315515118\n" +
+                        "1548800833\n" +
+                        "-727724771\n" +
+                        "73575701\n" +
+                        "-948263339\n" +
+                        "1326447242\n" +
+                        "592859671\n" +
+                        "1868723706\n" +
+                        "-847531048\n" +
+                        "-1191262516\n" +
+                        "-2041844972\n" +
+                        "-1436881714\n" +
+                        "-1575378703\n" +
+                        "806715481\n" +
+                        "1545253512\n" +
+                        "1569490116\n" +
+                        "1573662097\n" +
+                        "-409854405\n" +
+                        "339631474\n" +
+                        "1530831067\n",
+                "y",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testLatestByNonExistingColumn() throws Exception {
         assertFailure(
                 "select * from x latest by y",
