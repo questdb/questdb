@@ -348,7 +348,7 @@ public class FastMap implements Map {
         pointers.setPos(capacity);
         pointers.zero(-1);
 
-        for (int i = 0, k = this.offsets.size(); i < k; i++) {
+        for (long i = 0, k = this.offsets.size(); i < k; i++) {
             long offset = this.offsets.get(i);
             if (offset == -1) {
                 continue;
