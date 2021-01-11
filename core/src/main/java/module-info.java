@@ -491,6 +491,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.NullIfIFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()

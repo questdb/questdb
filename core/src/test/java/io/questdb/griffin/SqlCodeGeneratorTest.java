@@ -163,6 +163,43 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNonAggFunctionWithAggFunctionSampleBy() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "day\tisin\tlast\n" +
+                        "1\tcc\t0.7544827361952741\n",
+                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "create table xetra as (" +
+                        "select" +
+                        " rnd_symbol('aa', 'bb', 'cc') isin," +
+                        " rnd_double() start_price," +
+                        " timestamp_sequence(0, 1000000) ts" +
+                        " from long_sequence(10000)" +
+                        ") timestamp(ts)",
+                null,
+                false
+        ));
+    }
+
+    @Test
+    public void testNonAggFunctionWithAggFunctionSampleBySubQuery() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "day\tisin\tlast\n" +
+                        "1\tcc\t0.7544827361952741\n",
+//                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d)",
+                "create table xetra as (" +
+                        "select" +
+                        " rnd_symbol('aa', 'bb', 'cc') isin," +
+                        " rnd_double() start_price," +
+                        " timestamp_sequence(0, 1000000) ts" +
+                        " from long_sequence(10000)" +
+                        ") timestamp(ts)",
+                null,
+                false
+        ));
+    }
+
+    @Test
     public void testBindVariableInSelect() throws Exception {
         assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
@@ -2499,6 +2536,77 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "0\tEUR\t0.5921457770297527\t1\t1970-01-01T00:00:00.000000Z\n" +
                         "3\tGBP\t0.31861843394057765\t1\t1970-01-01T00:00:00.000000Z\n",
                 true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByTimestampInclusion() throws Exception {
+        assertQuery("ts\tmarket_type\tavg\n" +
+                        "1970-01-01T00:00:00.000000Z\taaa\t0.49992728629932576\n" +
+                        "1970-01-01T00:00:00.000000Z\tbbb\t0.500285563758478\n" +
+                        "1970-01-01T00:00:01.000000Z\taaa\t0.500040169925671\n" +
+                        "1970-01-01T00:00:01.000000Z\tbbb\t0.5008686113849173\n" +
+                        "1970-01-01T00:00:02.000000Z\taaa\t0.49977074601999855\n" +
+                        "1970-01-01T00:00:02.000000Z\tbbb\t0.4999258418217269\n" +
+                        "1970-01-01T00:00:03.000000Z\taaa\t0.5003595019568708\n" +
+                        "1970-01-01T00:00:03.000000Z\tbbb\t0.5002857992170555\n" +
+                        "1970-01-01T00:00:04.000000Z\tbbb\t0.4997116251279621\n" +
+                        "1970-01-01T00:00:04.000000Z\taaa\t0.5006208473770267\n" +
+                        "1970-01-01T00:00:05.000000Z\tbbb\t0.49988619432529985\n" +
+                        "1970-01-01T00:00:05.000000Z\taaa\t0.5002852550150528\n" +
+                        "1970-01-01T00:00:06.000000Z\taaa\t0.4998229395659802\n" +
+                        "1970-01-01T00:00:06.000000Z\tbbb\t0.4997012831335711\n" +
+                        "1970-01-01T00:00:07.000000Z\tbbb\t0.49945806525231845\n" +
+                        "1970-01-01T00:00:07.000000Z\taaa\t0.4995901449794158\n" +
+                        "1970-01-01T00:00:08.000000Z\taaa\t0.5002616949495469\n" +
+                        "1970-01-01T00:00:08.000000Z\tbbb\t0.5005399447758458\n" +
+                        "1970-01-01T00:00:09.000000Z\taaa\t0.5003054203632804\n" +
+                        "1970-01-01T00:00:09.000000Z\tbbb\t0.500094369884023\n",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
+                "create table market_updates as (select rnd_symbol('aaa','bbb') market_type, rnd_double() bid_price, timestamp_sequence(0,1) ts from long_sequence(10000000)" +
+                        ") timestamp(ts)",
+                "ts",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testCreateTableIfNotExists() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 10; i++) {
+                compiler.compile("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
+            }
+        });
+
+        assertQuery(
+                "a\n" +
+                        "-1148479920\n" +
+                        "315515118\n" +
+                        "1548800833\n" +
+                        "-727724771\n" +
+                        "73575701\n" +
+                        "-948263339\n" +
+                        "1326447242\n" +
+                        "592859671\n" +
+                        "1868723706\n" +
+                        "-847531048\n" +
+                        "-1191262516\n" +
+                        "-2041844972\n" +
+                        "-1436881714\n" +
+                        "-1575378703\n" +
+                        "806715481\n" +
+                        "1545253512\n" +
+                        "1569490116\n" +
+                        "1573662097\n" +
+                        "-409854405\n" +
+                        "339631474\n" +
+                        "1530831067\n",
+                "y",
+                null,
                 true,
                 true
         );

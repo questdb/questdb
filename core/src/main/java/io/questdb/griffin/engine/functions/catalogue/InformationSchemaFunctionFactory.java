@@ -24,33 +24,22 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
 
-public class InformationSchemaFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "information_schema._pg_expandarray(V)";
+public class InformationSchemaFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private static final RecordMetadata METADATA;
+
+    public InformationSchemaFunctionFactory() {
+        super("information_schema._pg_expandarray(V)", METADATA);
     }
 
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(
-                position,
-                new GenericRecordCursorFactory(
-                        InformationSchemaCursor.METADATA,
-                        new InformationSchemaCursor(),
-                        false
-                )
-        );
-    }
-
-    @Override
-    public boolean isCursor() {
-        return true;
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("x", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("n", ColumnType.INT, null));
+        METADATA = metadata;
     }
 }

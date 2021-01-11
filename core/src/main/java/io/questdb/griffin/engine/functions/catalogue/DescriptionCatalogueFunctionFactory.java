@@ -24,85 +24,16 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
 
-public class DescriptionCatalogueFunctionFactory implements FunctionFactory {
-    static final RecordMetadata METADATA;
+public class DescriptionCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private static final RecordMetadata METADATA;
 
-    @Override
-    public String getSignature() {
-        return "pg_description()";
-    }
-
-    @Override
-    public boolean isCursor() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(
-                position,
-                new DescriptionCatalogueCursorFactory(
-                        METADATA
-                )
-        );
-    }
-
-    private static class DescriptionCatalogueCursorFactory extends AbstractRecordCursorFactory {
-        private final DescriptionCatalogueCursor cursor;
-
-        public DescriptionCatalogueCursorFactory(RecordMetadata metadata) {
-            super(metadata);
-            this.cursor = new DescriptionCatalogueCursor();
-        }
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.toTop();
-            return cursor;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return false;
-        }
-    }
-
-    static class DescriptionCatalogueCursor implements NoRandomAccessRecordCursor {
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return null;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return false;
-        }
-
-
-        @Override
-        public void toTop() {
-        }
-
-        @Override
-        public long size() {
-            return -1;
-        }
+    public DescriptionCatalogueFunctionFactory() {
+        super("pg_description()", METADATA);
     }
 
     static {
