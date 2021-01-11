@@ -22,24 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.ObjList;
+public class BuildInformationHolder implements BuildInformation {
+    private final CharSequence questDbVersion;
 
-public class GetExprCatalogueFunctionFactory implements FunctionFactory {
+    private final CharSequence jdkVersion;
 
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_get_expr(SI)";
+    private final CharSequence commitHash;
+
+    public BuildInformationHolder(final CharSequence questDbVersion,
+                                  final CharSequence jdkVersion,
+                                  final CharSequence commitHash) {
+        this.questDbVersion = questDbVersion;
+        this.jdkVersion = jdkVersion;
+        this.commitHash = commitHash;
+    }
+
+    public BuildInformationHolder() {
+        this.questDbVersion = "Unknown Version";
+        this.jdkVersion = "Unknown Version";
+        this.commitHash = "Unknown Version";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new StrConstant(position, "");
+    public CharSequence getQuestDbVersion() {
+        return questDbVersion;
+    }
+
+    @Override
+    public CharSequence getJdkVersion() {
+        return jdkVersion;
+    }
+
+    @Override
+    public CharSequence getCommitHash() {
+        return commitHash;
     }
 }

@@ -24,50 +24,22 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.ObjList;
 
-class InformationSchemaCursor implements NoRandomAccessRecordCursor {
-
-    static final RecordMetadata METADATA;
-    private static final InformationSchemaRecord record = new InformationSchemaRecord();
-
+public class PrefixedPgGetSIExprFunctionFactory implements FunctionFactory {
     @Override
-    public void close() {
-
+    public String getSignature() {
+        return "pg_catalog.pg_get_expr(SI)";
     }
 
     @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @Override
-    public void toTop() {
-
-    }
-
-    @Override
-    public long size() {
-        return 0;
-    }
-
-    private static class InformationSchemaRecord implements Record {
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("x", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("n", ColumnType.INT, null));
-        METADATA = metadata;
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return StrConstant.NULL;
     }
 }

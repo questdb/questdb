@@ -67,6 +67,48 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         this.functionFactoryCache = functionFactoryCache;
     }
 
+    @NotNull
+    public static ScalarFunction createColumn(int position, CharSequence name, RecordMetadata metadata) throws SqlException {
+        final int index = metadata.getColumnIndexQuiet(name);
+
+        if (index == -1) {
+            throw SqlException.invalidColumn(position, name);
+        }
+
+        switch (metadata.getColumnType(index)) {
+            case ColumnType.BOOLEAN:
+                return new BooleanColumn(position, index);
+            case ColumnType.BYTE:
+                return new ByteColumn(position, index);
+            case ColumnType.SHORT:
+                return new ShortColumn(position, index);
+            case ColumnType.CHAR:
+                return new CharColumn(position, index);
+            case ColumnType.INT:
+                return new IntColumn(position, index);
+            case ColumnType.LONG:
+                return new LongColumn(position, index);
+            case ColumnType.FLOAT:
+                return new FloatColumn(position, index);
+            case ColumnType.DOUBLE:
+                return new DoubleColumn(position, index);
+            case ColumnType.STRING:
+                return new StrColumn(position, index);
+            case ColumnType.SYMBOL:
+                return new SymbolColumn(position, index, metadata.isSymbolTableStatic(index));
+            case ColumnType.BINARY:
+                return new BinColumn(position, index);
+            case ColumnType.DATE:
+                return new DateColumn(position, index);
+            case ColumnType.TIMESTAMP:
+                return new TimestampColumn(position, index);
+            case ColumnType.RECORD:
+                return new RecordColumn(position, index, metadata.getMetadata(index));
+            default:
+                return new Long256Column(position, index);
+        }
+    }
+
     public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
@@ -98,6 +140,22 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     public boolean isGroupBy(CharSequence token) {
         return functionFactoryCache.isGroupBy(token);
+    }
+
+    public boolean isValidNoArgFunction(ExpressionNode node) {
+        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
+        if (overload == null) {
+            return false;
+        }
+
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            FunctionFactoryDescriptor ffd = overload.getQuick(i);
+            if (ffd.getSigArgCount() == 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -235,7 +293,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         ex.put(". expected args: ");
         ex.put('(');
         if (descriptor != null) {
-            for (int i = 0, n = descriptor.getSigCount(); i < n; i++) {
+            for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                 if (i > 0) {
                     ex.put(',');
                 }
@@ -301,44 +359,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function createColumn(ExpressionNode node) throws SqlException {
-        final int index = metadata.getColumnIndexQuiet(node.token);
-
-        if (index == -1) {
-            throw SqlException.invalidColumn(node.position, node.token);
-        }
-
-        switch (metadata.getColumnType(index)) {
-            case ColumnType.BOOLEAN:
-                return new BooleanColumn(node.position, index);
-            case ColumnType.BYTE:
-                return new ByteColumn(node.position, index);
-            case ColumnType.SHORT:
-                return new ShortColumn(node.position, index);
-            case ColumnType.CHAR:
-                return new CharColumn(node.position, index);
-            case ColumnType.INT:
-                return new IntColumn(node.position, index);
-            case ColumnType.LONG:
-                return new LongColumn(node.position, index);
-            case ColumnType.FLOAT:
-                return new FloatColumn(node.position, index);
-            case ColumnType.DOUBLE:
-                return new DoubleColumn(node.position, index);
-            case ColumnType.STRING:
-                return new StrColumn(node.position, index);
-            case ColumnType.SYMBOL:
-                return new SymbolColumn(node.position, index, metadata.isSymbolTableStatic(index));
-            case ColumnType.BINARY:
-                return new BinColumn(node.position, index);
-            case ColumnType.DATE:
-                return new DateColumn(node.position, index);
-            case ColumnType.TIMESTAMP:
-                return new TimestampColumn(node.position, index);
-            case ColumnType.RECORD:
-                return new RecordColumn(node.position, index, metadata.getMetadata(index));
-            default:
-                return new Long256Column(node.position, index);
-        }
+        return createColumn(node.position, node.token, metadata);
     }
 
     private Function createConstant(ExpressionNode node) throws SqlException {
@@ -413,10 +434,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return new CursorFunction(node.position, sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
     }
 
-    private Function createFunction(
-            ExpressionNode node,
-            @Transient ObjList<Function> args
-    ) throws SqlException {
+    private Function createFunction(ExpressionNode node, @Transient ObjList<Function> args) throws SqlException {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         boolean isNegated = functionFactoryCache.isNegated(node.token);
         boolean isFlipped = functionFactoryCache.isFlipped(node.token);
@@ -451,7 +469,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         for (int i = 0, n = overload.size(); i < n; i++) {
             final FunctionFactoryDescriptor descriptor = overload.getQuick(i);
             final FunctionFactory factory = descriptor.getFactory();
-            int sigArgCount = descriptor.getSigCount();
+            int sigArgCount = descriptor.getSigArgCount();
 
             final boolean sigVarArg;
             final boolean sigVarArgConst;

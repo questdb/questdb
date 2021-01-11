@@ -29,6 +29,9 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 
 public class BooleanConstant extends BooleanFunction implements ConstantFunction {
 
+    public static final BooleanConstant TRUE = new BooleanConstant(0, true);
+    public static final BooleanConstant FALSE = new BooleanConstant(0, false);
+
     private final boolean value;
 
     public BooleanConstant(int position, boolean value) {

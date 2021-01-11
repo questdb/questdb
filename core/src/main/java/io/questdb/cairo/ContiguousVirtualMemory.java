@@ -501,10 +501,7 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
 
     private void putLong256Null() {
         checkLimits(32);
-        Unsafe.getUnsafe().putLong(appendAddress, Long256Impl.NULL_LONG256.getLong0());
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, Long256Impl.NULL_LONG256.getLong1());
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, Long256Impl.NULL_LONG256.getLong2());
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, Long256Impl.NULL_LONG256.getLong3());
+        Long256Impl.putNull(appendAddress);
     }
 
     private long putStr0(CharSequence value, int pos, int len) {
@@ -586,7 +583,7 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
 
     private class InPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
         @Override
-        protected void onDecoded(long l0, long l1, long l2, long l3) {
+        public void onDecoded(long l0, long l1, long l2, long l3) {
             checkLimits(Long256.BYTES);
             Unsafe.getUnsafe().putLong(appendAddress, l0);
             Unsafe.getUnsafe().putLong(appendAddress + 8, l1);
@@ -596,7 +593,7 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
 
         private void putLong256(CharSequence hexString, int start, int end) {
             try {
-                inPageLong256Decoder.decode(hexString, start, end);
+                decode(hexString, start, end, inPageLong256Decoder);
             } catch (NumericException e) {
                 throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
             }

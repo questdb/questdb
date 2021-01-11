@@ -295,17 +295,27 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
+    private final BuildInformation buildInformation;
 
     public PropServerConfiguration(
             String root,
             Properties properties,
             @Nullable Map<String, String> env,
-            Log log
+            Log log,
+            final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
         this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
+
+        final String databaseRoot = getString(properties, env, "cairo.root", "db");
+        if (new File(databaseRoot).isAbsolute()) {
+            this.databaseRoot = databaseRoot;
+        } else {
+            this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
+        }
+
         this.httpMinServerEnabled = getBoolean(properties, env, "http.min.enabled", true);
         if (httpMinServerEnabled) {
             this.httpMinWorkerAffinity = getAffinity(properties, env, "http.min.worker.affinity", httpWorkerCount);
@@ -366,13 +376,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
             }
 
-            final String databaseRoot = getString(properties, env, "cairo.root", "db");
-            if (new File(databaseRoot).isAbsolute()) {
-                this.databaseRoot = databaseRoot;
-            } else {
-                this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
-            }
-
             this.httpActiveConnectionLimit = getInt(properties, env, "http.net.active.connection.limit", 256);
             this.httpEventCapacity = getInt(properties, env, "http.net.event.capacity", 1024);
             this.httpIOQueueCapacity = getInt(properties, env, "http.net.io.queue.capacity", 1024);
@@ -413,12 +416,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             try (Path path = new Path().of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath()).$()) {
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
             }
-
-            this.maxRerunWaitCapMs = getLong(properties, env, "http.busy.retry.maximum.wait.before.retry", 1000);
-            this.rerunExponentialWaitMultiplier = getDouble(properties, env, "http.busy.retry.exponential.wait.multipier", 2.0);
-            this.rerunInitialWaitQueueSize = getIntSize(properties, env, "http.busy.retry.initialWaitQueueSize", 64);
-            this.rerunMaxProcessingQueueSize = getIntSize(properties, env, "http.busy.retry.maxProcessingQueueSize", 4096);
         }
+
+        this.maxRerunWaitCapMs = getLong(properties, env, "http.busy.retry.maximum.wait.before.retry", 1000);
+        this.rerunExponentialWaitMultiplier = getDouble(properties, env, "http.busy.retry.exponential.wait.multipier", 2.0);
+        this.rerunInitialWaitQueueSize = getIntSize(properties, env, "http.busy.retry.initialWaitQueueSize", 64);
+        this.rerunMaxProcessingQueueSize = getIntSize(properties, env, "http.busy.retry.maxProcessingQueueSize", 4096);
+
         this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
         if (pgEnabled) {
             pgNetActiveConnectionLimit = getInt(properties, env, "pg.net.active.connection.limit", 10);
@@ -611,6 +615,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
         }
+
+        this.buildInformation = buildInformation;
     }
 
     @Override
@@ -1657,6 +1663,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getTableBlockWriterQueueSize() {
             return tableBlockWriterQueueSize;
         }
+
+        @Override
+        public BuildInformation getBuildInformation() {
+            return buildInformation;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
@@ -2128,11 +2139,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return propPGWireDispatcherConfiguration;
-        }
-
-        @Override
-        public boolean getDumpNetworkTraffic() {
-            return false;
         }
 
         @Override

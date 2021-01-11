@@ -42,6 +42,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private QueryModel queryModel;
     private ExpressionNode timestamp;
     private ExpressionNode partitionBy;
+    private boolean ignoreIfExists = false;
 
     private CreateTableModel() {
     }
@@ -82,6 +83,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         columnBits.clear();
         columnNames.clear();
         columnNameIndexMap.clear();
+        ignoreIfExists = false;
     }
 
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
@@ -181,6 +183,14 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setTimestamp(ExpressionNode timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public boolean isIgnoreIfExists() {
+        return ignoreIfExists;
+    }
+
+    public void setIgnoreIfExists(boolean flag) {
+        this.ignoreIfExists = flag;
     }
 
     public void setIndexFlags(boolean indexFlag, int indexValueBlockSize) {

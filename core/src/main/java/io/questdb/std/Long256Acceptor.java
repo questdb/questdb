@@ -22,27 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.std;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
-
-public class GetExprCatalogueFunctionFactoryTest extends AbstractFunctionFactoryTest {
-
-    @Test
-    public void testGetExprCatalogueNoop1() throws SqlException {
-        call("AAA", 0).andAssert("");
-    }
-
-    @Test
-    public void testGetExprCatalogueNoop2() throws SqlException {
-        call("", 0).andAssert("");
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new GetExprCatalogueFunctionFactory();
-    }
+@FunctionalInterface
+public interface Long256Acceptor {
+    void onDecoded(long l0, long l1, long l2, long l3);
 }

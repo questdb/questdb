@@ -63,7 +63,9 @@ public final class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteTypeQualifier0Ref = this::rewriteTypeQualifier0;
     private boolean subQueryMode = false;
+
     SqlParser(
             CairoConfiguration configuration,
             SqlOptimiser optimiser,
@@ -146,18 +148,18 @@ public final class SqlParser {
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
-        CharSequence tok = optTok(lexer);
-        if (tok == null || !isByKeyword(tok)) {
-            throw SqlException.$((lexer.getPosition()), "'by' expected");
+        if (isByKeyword(tok(lexer, "by"))) {
+            return;
         }
+        throw SqlException.$((lexer.getPosition()), "'by' expected");
     }
 
     private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
-        ExpressionNode n = expr(lexer, (QueryModel) null);
-        if (n == null) {
-            throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Expression expected");
+        final ExpressionNode n = expr(lexer, (QueryModel) null);
+        if (n != null) {
+            return n;
         }
-        return n;
+        throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Expression expected");
     }
 
     private int expectInt(GenericLexer lexer) throws SqlException {
@@ -359,10 +361,22 @@ public final class SqlParser {
 
     private ExecutionModel parseCreateTable(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel model = createTableModelPool.next();
-        final CharSequence tableName = tok(lexer, "table name");
+        final CharSequence tableName;
+        CharSequence tok = tok(lexer, "table name or 'if'");
+        if (SqlKeywords.isIfKeyword(tok)) {
+            if (SqlKeywords.isNotKeyword(tok(lexer, "'not'")) && SqlKeywords.isExistsKeyword(tok(lexer, "'exists'"))) {
+                model.setIgnoreIfExists(true);
+                tableName = tok(lexer, "table name");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
+            }
+        } else {
+            tableName = tok;
+        }
+
         model.setName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
-        CharSequence tok = tok(lexer, "'(' or 'as'");
+        tok = tok(lexer, "'(' or 'as'");
 
         if (Chars.equals(tok, '(')) {
             lexer.unparse();
@@ -735,45 +749,13 @@ public final class SqlParser {
         if (Chars.equals(tok, '(')) {
             model.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses()));
             model.setNestedModelIsSubQuery(true);
-
-            tok = optTok(lexer);
-
-            // check if tok is not "where" - should be alias
-
-            if (tok != null && tableAliasStop.excludes(tok)) {
-                model.setAlias(literal(lexer, tok));
-                tok = optTok(lexer);
-            }
-
-            // expect [timestamp(column)]
-
-            ExpressionNode timestamp = parseTimestamp(lexer, tok);
-            if (timestamp != null) {
-                model.setTimestamp(timestamp);
-                tok = optTok(lexer);
-            }
+            tok = setModelAliasAndTimestamp(lexer, model);
         } else {
-
             lexer.unparse();
             parseSelectFrom(lexer, model, masterModel);
-
-            tok = optTok(lexer);
-
-            if (tok != null && tableAliasStop.excludes(tok)) {
-                model.setAlias(literal(lexer, tok));
-                tok = optTok(lexer);
-            }
-
-            // expect [timestamp(column)]
-
-            ExpressionNode timestamp = parseTimestamp(lexer, tok);
-            if (timestamp != null) {
-                model.setTimestamp(timestamp);
-                tok = optTok(lexer);
-            }
+            tok = setModelAliasAndTimestamp(lexer, model);
 
             // expect [latest by]
-
             if (tok != null && isLatestKeyword(tok)) {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
@@ -896,6 +878,19 @@ public final class SqlParser {
         }
     }
 
+    private CharSequence setModelAliasAndTimestamp(GenericLexer lexer, QueryModel model) throws SqlException {
+        CharSequence tok;
+        tok = setModelAliasAndGetOptTok(lexer, model);
+
+        // expect [timestamp(column)]
+        ExpressionNode timestamp = parseTimestamp(lexer, tok);
+        if (timestamp != null) {
+            model.setTimestamp(timestamp);
+            tok = optTok(lexer);
+        }
+        return tok;
+    }
+
     private ExecutionModel parseInsert(GenericLexer lexer) throws SqlException {
         expectTok(lexer, "into");
 
@@ -955,12 +950,29 @@ public final class SqlParser {
 
     private QueryModel parseJoin(GenericLexer lexer, CharSequence tok, int joinType, QueryModel parent) throws SqlException {
         QueryModel joinModel = queryModelPool.next();
-        joinModel.setJoinType(joinType);
-        joinModel.setJoinKeywordPosition(lexer.lastTokenPosition());
 
-        if (!isJoinKeyword(tok) && !Chars.equals(tok, ',')) {
-            expectTok(lexer, "join");
+        int errorPos = lexer.lastTokenPosition();
+
+        if (isNotJoinKeyword(tok) && !Chars.equals(tok, ',')) {
+            // not already a join?
+            // was it "left" ?
+            if (isLeftKeyword(tok)) {
+                tok = tok(lexer, "join");
+                joinType = QueryModel.JOIN_OUTER;
+                if (isOuterKeyword(tok)) {
+                    // LEFT OUTER
+                    tok = tok(lexer, "join");
+                }
+            } else {
+                tok = tok(lexer, "join");
+            }
+            if (isNotJoinKeyword(tok)) {
+                throw SqlException.position(errorPos).put("'join' expected");
+            }
         }
+
+        joinModel.setJoinType(joinType);
+        joinModel.setJoinKeywordPosition(errorPos);
 
         tok = expectTableNameOrSubQuery(lexer);
 
@@ -971,16 +983,7 @@ public final class SqlParser {
             parseSelectFrom(lexer, joinModel, parent);
         }
 
-        tok = optTok(lexer);
-
-        if (tok != null && tableAliasStop.excludes(tok)) {
-            lexer.unparse();
-            joinModel.setAlias(literal(lexer, optTok(lexer)));
-        } else {
-            lexer.unparse();
-        }
-
-        tok = optTok(lexer);
+        tok = setModelAliasAndGetOptTok(lexer, joinModel);
 
         if (joinType == QueryModel.JOIN_CROSS && tok != null && isOnKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "Cross joins cannot have join clauses");
@@ -1035,6 +1038,18 @@ public final class SqlParser {
         }
 
         return joinModel;
+    }
+
+    private CharSequence setModelAliasAndGetOptTok(GenericLexer lexer, QueryModel joinModel) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok != null && tableAliasStop.excludes(tok)) {
+            if (SqlKeywords.isAsKeyword(tok)) {
+                tok = tok(lexer, "alias");
+            }
+            joinModel.setAlias(literal(lexer, tok));
+            tok = optTok(lexer);
+        }
+        return tok;
     }
 
     private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -1443,7 +1458,28 @@ public final class SqlParser {
     }
 
     private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
-        return rewriteConcat(rewriteCase(rewriteCount(parent)));
+        return rewriteConcat(rewriteCase(rewriteCount(rewriteTypeQualifier(parent))));
+    }
+
+    private ExpressionNode rewriteTypeQualifier(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, rewriteTypeQualifier0Ref);
+        return parent;
+    }
+
+    /**
+     * Rewrites 'abc'::blah - type qualifier
+     *
+     * @param node expression node, provided by tree walking algo
+     */
+    private void rewriteTypeQualifier0(ExpressionNode node) {
+        if (node.type == ExpressionNode.OPERATION && isColonColonKeyword(node.token)) {
+            if (node.paramCount == 2) {
+                ExpressionNode that = node.rhs;
+                if (that.type == ExpressionNode.LITERAL) {
+                    that.type = ExpressionNode.MEMBER_ACCESS;
+                }
+            }
+        }
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {

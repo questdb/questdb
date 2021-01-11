@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGOids;
+import io.questdb.std.Numbers;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_OIDS;
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_NAME;
@@ -39,7 +40,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
     private static final int rowCount = PG_TYPE_OIDS.size();
     private final TypeCatalogueRecord record = new TypeCatalogueRecord();
-    public int[] intValues = new int[8];
+    public int[] intValues = new int[METADATA.getColumnCount()];
     private int row = -1;
 
     public TypeCatalogueCursor() {
@@ -60,6 +61,9 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     public boolean hasNext() {
         if (++row < rowCount) {
             intValues[0] = PG_TYPE_OIDS.get(row);
+            intValues[8] = Numbers.INT_NaN;
+            intValues[9] = 0;
+            intValues[10] = 0;
             return true;
         }
         return false;
@@ -118,6 +122,9 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN, null));
         metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR, null));
+        metadata.add(new TableColumnMetadata("typrelid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typelem", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("typreceive", ColumnType.INT, null));
         METADATA = metadata;
     }
 }

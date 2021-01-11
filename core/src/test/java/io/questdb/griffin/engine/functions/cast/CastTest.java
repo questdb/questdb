@@ -568,7 +568,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(cast(0 as byte) as boolean) from long_sequence(10)",
+                "insert into tab select cast(cast(1 as byte) as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
                         "true\n" +
@@ -1042,7 +1042,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(rnd_char() as boolean) from long_sequence(10)",
+                "insert into tab select cast('f' as boolean) from long_sequence(10)",
                 "a\n" +
                         "false\n" +
                         "false\n" +
@@ -1067,7 +1067,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(cast(0 as char) as boolean) from long_sequence(10)",
+                "insert into tab select cast(cast(116 as char) as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
                         "true\n" +
@@ -1591,7 +1591,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(cast(0 as date) as boolean) from long_sequence(10)",
+                "insert into tab select cast(cast(1 as date) as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
                         "true\n" +
@@ -2963,7 +2963,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(0 as boolean) from long_sequence(10)",
+                "insert into tab select cast(1 as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
                         "true\n" +
@@ -3462,7 +3462,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(cast(0 as long256) as boolean) from long_sequence(10)",
+                "insert into tab select cast(cast(1 as long256) as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
                         "true\n" +
@@ -3541,7 +3541,7 @@ public class CastTest extends AbstractGriffinTest {
                 "a\n" +
                         "false\n" +
                         "false\n" +
-                        "false\n" +
+                        "true\n" +
                         "false\n" +
                         "false\n" +
                         "false\n" +
@@ -3562,7 +3562,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(0l as boolean) from long_sequence(10)",
+                "insert into tab select cast(1l as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
                         "true\n" +
@@ -4061,7 +4061,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(cast(0 as short) as boolean) from long_sequence(10)",
+                "insert into tab select cast(cast(1 as short) as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
                         "true\n" +
@@ -5270,7 +5270,7 @@ public class CastTest extends AbstractGriffinTest {
                 "select a from tab",
                 "create table tab (a boolean)",
                 null,
-                "insert into tab select cast(cast(0 as timestamp) as boolean) from long_sequence(10)",
+                "insert into tab select cast(cast(1 as timestamp) as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
                         "true\n" +

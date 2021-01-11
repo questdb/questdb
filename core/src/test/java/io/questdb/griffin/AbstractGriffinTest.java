@@ -362,10 +362,14 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         long timestamp = Long.MIN_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
+            long c = 0;
             while (cursor.hasNext()) {
                 long ts = record.getTimestamp(index);
-                Assert.assertTrue(timestamp <= ts);
+                if (timestamp > ts) {
+                    Assert.fail("record #" + c);
+                }
                 timestamp = ts;
+                c++;
             }
         }
     }

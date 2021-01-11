@@ -41,6 +41,7 @@ public final class Numbers {
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final int MAX_SCALE = 19;
     public static final long SIGN_BIT_MASK = 0x8000000000000000L;
+    public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     private static final int EXP_BIAS = 1023;
     private static final long EXP_BIT_MASK = 0x7FF0000000000000L;
     private static final long SIGNIF_BIT_MASK = 0x000FFFFFFFFFFFFFL;
@@ -64,7 +65,6 @@ public final class Numbers {
     static final long EXP_ONE = ((long) EXP_BIAS) << EXP_SHIFT; // exponent of 1.0
     private static final long FRACT_HOB = (1L << EXP_SHIFT); // assumed High-Order bit
     private static final int[] insignificantDigitsNumber = new int[]{0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 15, 16, 16, 16, 17, 17, 17, 18, 18, 18, 19};
-    public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
 
     private Numbers() {
     }
@@ -434,7 +434,7 @@ public final class Numbers {
     }
 
     public static short bswap(short value) {
-        return (short) ((value >> 8) | (value << 8));
+        return (short) ((((value >> 8) & 0xff) | (value << 8)) & 0xffff);
     }
 
     public static long bswap(long val) {

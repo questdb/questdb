@@ -214,7 +214,7 @@ public class FunctionFactoryDescriptor {
         return factory.getSignature().substring(0, openBraceIndex);
     }
 
-    public int getSigCount() {
+    public int getSigArgCount() {
         return sigArgCount;
     }
 }

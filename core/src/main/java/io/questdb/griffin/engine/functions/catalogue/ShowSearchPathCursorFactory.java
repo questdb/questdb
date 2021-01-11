@@ -24,36 +24,38 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import org.junit.Test;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlExecutionContext;
 
-public class DescriptionCatalogueFunctionFactoryTest extends AbstractGriffinTest {
+public class ShowSearchPathCursorFactory implements RecordCursorFactory {
+    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
+    private static final StringValueRecord RECORD = new StringValueRecord("\"$user\", public");
 
-    @Test
-    public void testPgDescriptionFunc() throws Exception {
-        assertQuery(
-                "objoid\tclassoid\tobjsubid\tdescription\n" +
-                        "1\t1259\t0\ttable\n" +
-                        "1\t1259\t1\tcolumn\n",
-                "pg_catalog.pg_description;",
-                "create table x(a int)",
-                null,
-                false,
-                false
-        );
+    static {
+        METADATA.add(new TableColumnMetadata("search_path", ColumnType.STRING, null));
     }
 
-    @Test
-    public void testNoPrefixPgDescriptionFunc() throws Exception {
-        assertQuery(
-                "objoid\tclassoid\tobjsubid\tdescription\n" +
-                        "1\t1259\t0\ttable\n" +
-                        "1\t1259\t1\tcolumn\n",
-                "pg_description;",
-                "create table x(a int)",
-                null,
-                false,
-                false
-        );
+    private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        cursor.toTop();
+        return cursor;
     }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return METADATA;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
 }

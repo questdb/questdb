@@ -24,10 +24,10 @@
 
 package io.questdb.cairo.map;
 
-import java.io.Closeable;
-
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Mutable;
+
+import java.io.Closeable;
 
 public interface Map extends Mutable, Closeable {
     @Override

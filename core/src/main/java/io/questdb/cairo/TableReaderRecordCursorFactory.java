@@ -24,14 +24,13 @@
 
 package io.questdb.cairo;
 
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
 
 public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory {
     private final TableReaderSelectedColumnRecordCursor cursor;
