@@ -47,7 +47,7 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     private volatile PartitionDetails cachedPartition;
     private long firstTimeStamp;
     private final AtomicBoolean writerLock = new AtomicBoolean(false);
-    private long tempMem8b = Unsafe.malloc(8);
+
 
     public SlaveWriterImpl(CairoConfiguration configuration) {
         root = configuration.getRoot();
@@ -162,8 +162,6 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             path.close();
             path = null;
         }
-        Unsafe.free(tempMem8b, 8);
-        tempMem8b = 0;
     }
 
     @Override
@@ -388,12 +386,14 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
                 final CharSequence name = writer.getMetadata().getColumnName(columnIndex);
                 LPSZ filename = path.trimTo(pathPartitionLen).concat(name).put(".top").$();
                 long fd = TableUtils.openFileRWOrFail(ff, filename);
+                long tempMem8b = Unsafe.malloc(8);
                 try {
                     Unsafe.getUnsafe().putLong(tempMem8b, size);
                     if (ff.append(fd, tempMem8b, Long.BYTES) != Long.BYTES) {
                         throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
                     }
                 } finally {
+                    Unsafe.free(tempMem8b, 8);
                     ff.close(fd);
                 }
             }
