@@ -59,7 +59,7 @@ public class CastCharToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getChar(rec) == 0;
+            return (arg.getChar(rec) | 32) == 't';
         }
     }
 }

@@ -163,6 +163,43 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNonAggFunctionWithAggFunctionSampleBy() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "day\tisin\tlast\n" +
+                        "1\tcc\t0.7544827361952741\n",
+                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "create table xetra as (" +
+                        "select" +
+                        " rnd_symbol('aa', 'bb', 'cc') isin," +
+                        " rnd_double() start_price," +
+                        " timestamp_sequence(0, 1000000) ts" +
+                        " from long_sequence(10000)" +
+                        ") timestamp(ts)",
+                null,
+                false
+        ));
+    }
+
+    @Test
+    public void testNonAggFunctionWithAggFunctionSampleBySubQuery() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "day\tisin\tlast\n" +
+                        "1\tcc\t0.7544827361952741\n",
+//                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d)",
+                "create table xetra as (" +
+                        "select" +
+                        " rnd_symbol('aa', 'bb', 'cc') isin," +
+                        " rnd_double() start_price," +
+                        " timestamp_sequence(0, 1000000) ts" +
+                        " from long_sequence(10000)" +
+                        ") timestamp(ts)",
+                null,
+                false
+        ));
+    }
+
+    @Test
     public void testBindVariableInSelect() throws Exception {
         assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
@@ -2534,6 +2571,44 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 false,
                 true,
                 false
+        );
+    }
+
+    @Test
+    public void testCreateTableIfNotExists() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 10; i++) {
+                compiler.compile("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
+            }
+        });
+
+        assertQuery(
+                "a\n" +
+                        "-1148479920\n" +
+                        "315515118\n" +
+                        "1548800833\n" +
+                        "-727724771\n" +
+                        "73575701\n" +
+                        "-948263339\n" +
+                        "1326447242\n" +
+                        "592859671\n" +
+                        "1868723706\n" +
+                        "-847531048\n" +
+                        "-1191262516\n" +
+                        "-2041844972\n" +
+                        "-1436881714\n" +
+                        "-1575378703\n" +
+                        "806715481\n" +
+                        "1545253512\n" +
+                        "1569490116\n" +
+                        "1573662097\n" +
+                        "-409854405\n" +
+                        "339631474\n" +
+                        "1530831067\n",
+                "y",
+                null,
+                true,
+                true
         );
     }
 

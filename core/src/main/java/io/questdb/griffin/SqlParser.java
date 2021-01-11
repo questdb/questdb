@@ -361,10 +361,22 @@ public final class SqlParser {
 
     private ExecutionModel parseCreateTable(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel model = createTableModelPool.next();
-        final CharSequence tableName = tok(lexer, "table name");
+        final CharSequence tableName;
+        CharSequence tok = tok(lexer, "table name or 'if'");
+        if (SqlKeywords.isIfKeyword(tok)) {
+            if (SqlKeywords.isNotKeyword(tok(lexer, "'not'")) && SqlKeywords.isExistsKeyword(tok(lexer, "'exists'"))) {
+                model.setIgnoreIfExists(true);
+                tableName = tok(lexer, "table name");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
+            }
+        } else {
+            tableName = tok;
+        }
+
         model.setName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
-        CharSequence tok = tok(lexer, "'(' or 'as'");
+        tok = tok(lexer, "'(' or 'as'");
 
         if (Chars.equals(tok, '(')) {
             lexer.unparse();

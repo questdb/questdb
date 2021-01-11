@@ -50,15 +50,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGroupByTimeInSubQuery() throws SqlException {
-        assertQuery(
-                "select-group-by min(s) min, max(s) max, avg(s) avg from (select-group-by [sum(value) s, ts] ts, sum(value) s from (select [value, ts] from erdem_x timestamp (ts)))",
-                "select min(s), max(s), avg(s) from (select ts, sum(value) s from erdem_x)",
-                modelOf("erdem_x").timestamp("ts").col("value", ColumnType.LONG)
-        );
-    }
-
-    @Test
     public void testAliasWithSpace() throws Exception {
         assertQuery("select-choose x from (select [x] from x 'b a' where x > 1) 'b a'",
                 "x 'b a' where x > 1",
@@ -82,6 +73,15 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
                 modelOf("orders").col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnGroupBy() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
 
@@ -903,6 +903,26 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableIf() throws Exception {
+        assertSyntaxError("create table if", 15, "'not' expected");
+    }
+
+    @Test
+    public void testCreateTableIfNot() throws Exception {
+        assertSyntaxError("create table if not", 19, "'exists' expected");
+    }
+
+    @Test
+    public void testCreateTableIfNotTable() throws Exception {
+        assertSyntaxError("create table if not x", 20, "'if not exists' expected");
+    }
+
+    @Test
+    public void testCreateTableIfTable() throws Exception {
+        assertSyntaxError("create table if x", 16, "'if not exists' expected");
+    }
+
+    @Test
     public void testCreateTableInPlaceIndex() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
@@ -1218,7 +1238,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableMissingName() throws Exception {
-        assertSyntaxError("create table ", 13, "table name expected");
+        assertSyntaxError("create table ", 13, "table name or 'if' expected");
     }
 
     @Test
@@ -1811,10 +1831,10 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDuplicateColumnGroupBy() throws SqlException {
+    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1 from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
-                "select b, sum(a), k k1, k from x y sample by 3h",
+                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual [a, b, a + b column, k1] a, b, a + b column, k1, k1 k, timestamp from (select-choose [a, b, k k1] a, b, k k1, timestamp from (select [a, b, k] from x timestamp (timestamp)))) sample by 1m",
+                "select sum(b+a), a+b, k k1, k from x sample by 1m",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
@@ -1829,11 +1849,14 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
+    public void testNonAggFunctionWithAggFunctionSampleBy() throws SqlException {
         assertQuery(
-                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual [a, b, a + b column, k1] a, b, a + b column, k1, k1 k from (select-choose [a, b, k k1] a, b, k k1 from (select [a, b, k] from x timestamp (timestamp)))) sample by 1m",
-                "select sum(b+a), a+b, k k1, k from x sample by 1m",
-                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+                "select-group-by day, isin, last(start_price) last from (select-virtual [day(ts) day, isin, start_price] day(ts) day, isin, start_price, ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4')) sample by 1d",
+                "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
+                modelOf("xetra")
+                        .timestamp("ts")
+                        .col("isin", ColumnType.SYMBOL)
+                        .col("start_price", ColumnType.DOUBLE)
         );
     }
 
@@ -2113,6 +2136,15 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ' and product = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING).col("orderId", ColumnType.INT).col("productId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testGroupByTimeInSubQuery() throws SqlException {
+        assertQuery(
+                "select-group-by min(s) min, max(s) max, avg(s) avg from (select-group-by [sum(value) s, ts] ts, sum(value) s from (select [value, ts] from erdem_x timestamp (ts)))",
+                "select min(s), max(s), avg(s) from (select ts, sum(value) s from erdem_x)",
+                modelOf("erdem_x").timestamp("ts").col("value", ColumnType.LONG)
         );
     }
 
@@ -3217,6 +3249,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLeftOuterJoin() throws Exception {
+        assertQuery(
+                "select-choose a.x x from (select [x] from a a outer join select [x] from b on b.x = a.x) a",
+                "select a.x from a a left outer join b on b.x = a.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testLexerReset() {
         for (int i = 0; i < 10; i++) {
             try {
@@ -3985,16 +4027,6 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertQuery(
                 "select-choose a.x x from (select [x] from a a outer join select [x] from b on b.x = a.x) a",
                 "select a.x from a a outer join b on b.x = a.x",
-                modelOf("a").col("x", ColumnType.INT),
-                modelOf("b").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testLeftOuterJoin() throws Exception {
-        assertQuery(
-                "select-choose a.x x from (select [x] from a a outer join select [x] from b on b.x = a.x) a",
-                "select a.x from a a left outer join b on b.x = a.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
         );
@@ -4982,15 +5014,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSpliceJoinNullFilter() throws SqlException {
-        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.x x, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [x, timestamp] from quotes q timestamp (timestamp) post-join-where x = null) t",
-                "trades t splice join quotes q where x = null",
-                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
-                modelOf("quotes").col("x", ColumnType.SYMBOL).timestamp()
-        );
-    }
-
-    @Test
     public void testSpliceJoinColumnAliasNull() throws SqlException {
         assertQuery(
                 "select-choose customerId, kk, count from (select-group-by [customerId, kk, count() count] customerId, kk, count() count from (select-choose [c.customerId customerId, o.customerId kk] c.customerId customerId, o.customerId kk from (select [customerId] from customers c splice join select [customerId] from orders o on o.customerId = c.customerId post-join-where o.customerId = null) c) c) limit 10",
@@ -4999,6 +5022,15 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " where kk = null limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSpliceJoinNullFilter() throws SqlException {
+        assertQuery("select-choose t.timestamp timestamp, t.tag tag, q.x x, q.timestamp timestamp1 from (select [timestamp, tag] from trades t timestamp (timestamp) splice join select [x, timestamp] from quotes q timestamp (timestamp) post-join-where x = null) t",
+                "trades t splice join quotes q where x = null",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
+                modelOf("quotes").col("x", ColumnType.SYMBOL).timestamp()
         );
     }
 
@@ -5361,6 +5393,32 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnionColumnMisSelection() throws SqlException {
+        assertQuery(
+                "select-group-by ts, avg(bid_price) futures_price, spot_price from (select-virtual [ts, bid_price, 0.0 spot_price] ts, bid_price, 0.0 spot_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'futures')) sample by 1m union all select-group-by ts, futures_price, avg(bid_price) spot_price from (select-virtual [ts, 0.0 futures_price, bid_price] ts, 0.0 futures_price, bid_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'spot')) sample by 1m",
+                "select \n" +
+                        "    ts, \n" +
+                        "    avg(bid_price) AS futures_price, \n" +
+                        "    0.0 AS spot_price \n" +
+                        "FROM market_updates \n" +
+                        "WHERE market_type = 'futures' \n" +
+                        "SAMPLE BY 1m \n" +
+                        "UNION ALL\n" +
+                        "SELECT \n" +
+                        "    ts, \n" +
+                        "    0.0 AS futures_price, \n" +
+                        "    avg(bid_price) AS spot_price\n" +
+                        "FROM market_updates\n" +
+                        "WHERE market_type = 'spot' \n" +
+                        "SAMPLE BY 1m",
+                modelOf("market_updates")
+                        .col("bid_price", ColumnType.DOUBLE)
+                        .col("market_type", ColumnType.SYMBOL)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testUnionDifferentColumnCount() throws Exception {
         assertSyntaxError(
                 "select x from (select * from a union select * from b union all select sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
@@ -5419,7 +5477,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionKeepOrderByWhenSampleByPresent() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
+                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by k, sum(z) sum from (select-virtual ['a' k, z] 'a' k, z, t from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
                 "select x from (select * from a union select * from b union all select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -5466,7 +5524,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
+                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-group-by 1, sum(z) sum from (select-virtual [1 1, z] 1 1, z, t from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t)) sample by 6h) order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -5605,32 +5663,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "missing expression",
                 modelOf("tab").col("a", ColumnType.INT)
 
-        );
-    }
-
-    @Test
-    public void testUnionColumnMisSelection() throws SqlException {
-        assertQuery(
-                "select-group-by ts, avg(bid_price) futures_price, spot_price from (select-virtual [ts, bid_price, 0.0 spot_price] ts, bid_price, 0.0 spot_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'futures')) sample by 1m union all select-group-by ts, futures_price, avg(bid_price) spot_price from (select-virtual [ts, 0.0 futures_price, bid_price] ts, 0.0 futures_price, bid_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'spot')) sample by 1m",
-                "select \n" +
-                        "    ts, \n" +
-                        "    avg(bid_price) AS futures_price, \n" +
-                        "    0.0 AS spot_price \n" +
-                        "FROM market_updates \n" +
-                        "WHERE market_type = 'futures' \n" +
-                        "SAMPLE BY 1m \n" +
-                        "UNION ALL\n" +
-                        "SELECT \n" +
-                        "    ts, \n" +
-                        "    0.0 AS futures_price, \n" +
-                        "    avg(bid_price) AS spot_price\n" +
-                        "FROM market_updates\n" +
-                        "WHERE market_type = 'spot' \n" +
-                        "SAMPLE BY 1m",
-                modelOf("market_updates")
-                        .col("bid_price", ColumnType.DOUBLE)
-                        .col("market_type", ColumnType.SYMBOL)
-                        .timestamp("ts")
         );
     }
 
