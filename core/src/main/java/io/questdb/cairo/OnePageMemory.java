@@ -67,7 +67,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         }
         if (fd != -1) {
             ff.close(fd);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
     }
@@ -97,27 +97,16 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         }
     }
 
-    protected void map(FilesFacade ff, LPSZ name, long size) {
-        this.size = size;
-        if (size > 0) {
-            this.page = ff.mmap(fd, size, 0, Files.MAP_RO);
-            if (page == FilesFacade.MAP_FAILED) {
-                long fd = this.fd;
-                close();
-                throw CairoException.instance(ff.errno())
-                        .put("Could not mmap ").put(name)
-                        .put(" [size=").put(size)
-                        .put(", fd=").put(fd)
-                        .put(", memUsed=").put(Unsafe.getMemUsed())
-                        .put(", fileLen=").put(ff.length(fd))
-                        .put(']');
-            }
-            this.absolutePointer = page;
-        } else {
-            this.page = -1;
-            this.absolutePointer = -1;
+    public final CharSequence getStr0(long offset, CharSequenceView view) {
+        final int len = getInt(offset);
+        if (len > -1 && offset + len * 2L + Integer.BYTES <= size) {
+            return view.of(offset + VirtualMemory.STRING_LENGTH_BYTES, len);
         }
-        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+
+        if (len == TableUtils.NULL_LEN) {
+            return null;
+        }
+        throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size).put(", fd=").put(fd).put(']');
     }
 
     @Override
@@ -261,16 +250,27 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         sink.setLong3(Unsafe.getUnsafe().getLong(addressOf(offset + Long.BYTES * 3)));
     }
 
-    public final CharSequence getStr0(long offset, CharSequenceView view) {
-        final int len = getInt(offset);
-        if (len > -1 && offset + len * Character.BYTES + Integer.BYTES <= size) {
-            return view.of(offset + VirtualMemory.STRING_LENGTH_BYTES, len);
+    protected void map(FilesFacade ff, LPSZ name, long size) {
+        this.size = size;
+        if (size > 0) {
+            this.page = ff.mmap(fd, size, 0, Files.MAP_RO);
+            if (page == FilesFacade.MAP_FAILED) {
+                long fd = this.fd;
+                close();
+                throw CairoException.instance(ff.errno())
+                        .put("Could not mmap ").put(name)
+                        .put(" [size=").put(size)
+                        .put(", fd=").put(fd)
+                        .put(", memUsed=").put(Unsafe.getMemUsed())
+                        .put(", fileLen=").put(ff.length(fd))
+                        .put(']');
+            }
+            this.absolutePointer = page;
+        } else {
+            this.page = -1;
+            this.absolutePointer = -1;
         }
-
-        if (len == TableUtils.NULL_LEN) {
-            return null;
-        }
-        throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size).put(", fd=").put(fd).put(']');
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 
     public long size() {

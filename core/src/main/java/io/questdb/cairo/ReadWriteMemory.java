@@ -97,7 +97,7 @@ public class ReadWriteMemory extends VirtualMemory {
         final long size = ff.length(fd);
         setPageSize(pageSize);
         ensurePagesListCapacity(size);
-        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
         try {
             // we may not be able to map page here
             // make sure we close file before bailing out
@@ -161,7 +161,7 @@ public class ReadWriteMemory extends VirtualMemory {
             long mem = ff.mmap(fd, fileSize, 0,  Files.MAP_RW);
             Unsafe.getUnsafe().setMemory(mem + pageSize, fileSize - pageSize, (byte) 0);
             ff.munmap(mem, fileSize);
-            LOG.info().$("could not truncate, zeroed [fd=").$(fd).$(']').$();
+            LOG.debug().$("could not truncate, zeroed [fd=").$(fd).$(']').$();
         }
     }
 }

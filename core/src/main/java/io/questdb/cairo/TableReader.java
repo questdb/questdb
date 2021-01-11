@@ -87,7 +87,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long tempMem8b = Unsafe.malloc(8);
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
-        LOG.info().$("open '").utf8(tableName).$('\'').$();
+        LOG.debug().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
@@ -195,7 +195,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txMem);
             freeColumns();
             freeTempMem();
-            LOG.info().$("closed '").utf8(tableName).$('\'').$();
+            LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }
     }
 

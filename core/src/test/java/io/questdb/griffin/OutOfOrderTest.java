@@ -396,7 +396,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "insert into x select * from middle",
                             "/oo/testPartitionedDataMergeData.txt"
                     );
-                    assertIndexResultAgainstFile("/oo/testPartitionedDataMergeData_index.txt");
+            assertIndexResultAgainstFile("/oo/testPartitionedDataMergeData_Index.txt");
                 }
         );
     }

@@ -179,7 +179,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return false;
         }
         notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS, -1, -1);
-        LOG.info().$("locked [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
+        LOG.debug().$("locked [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
         return true;
     }
 
@@ -200,7 +200,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         }
 
         notifyListener(thread, name, PoolListener.EV_UNLOCKED, -1, -1);
-        LOG.info().$("unlocked [table=`").utf8(name).$("`]").$();
+        LOG.debug().$("unlocked [table=`").utf8(name).$("`]").$();
     }
 
     private void checkClosed() {

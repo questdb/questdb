@@ -261,6 +261,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
+                LOG.info().$("locked [table=`").$(tableName).$("`, thread=").$(Thread.currentThread().getId()).$(']').$();
                 return true;
             }
             writerPool.unlock(tableName);
@@ -373,6 +374,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         readerPool.unlock(tableName);
         writerPool.unlock(tableName, writer);
+        LOG.info().$("unlocked [table=`").$(tableName).$(']').$();
     }
 
     public void unlockReaders(CharSequence tableName) {

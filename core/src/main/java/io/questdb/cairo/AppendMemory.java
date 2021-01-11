@@ -83,7 +83,7 @@ public class AppendMemory extends VirtualMemory {
         mappedPage = -1;
         setPageSize(pageSize);
         fd = TableUtils.openFileRWOrFail(ff, name);
-        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(']').$();
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(pageSize).$(']').$();
     }
 
     public final void of(FilesFacade ff, long fd, long pageSize) {
@@ -117,7 +117,7 @@ public class AppendMemory extends VirtualMemory {
             throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
         }
         updateLimits(0, pageAddress = mapPage(0));
-        LOG.info().$("truncated [fd=").$(fd).$(']').$();
+        LOG.debug().$("truncated [fd=").$(fd).$(']').$();
     }
 
     static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, long mapPageSize) {
@@ -125,7 +125,7 @@ public class AppendMemory extends VirtualMemory {
             if (truncate) {
                 bestEffortTruncate(ff, log, fd, size, mapPageSize);
             } else {
-                log.info().$("closed [fd=").$(fd).$(']').$();
+                log.debug().$("closed [fd=").$(fd).$(']').$();
             }
         } finally {
             if (fd > 0) {
@@ -136,14 +136,14 @@ public class AppendMemory extends VirtualMemory {
 
     static void bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, long mapPageSize) {
         if (ff.truncate(Math.abs(fd), size)) {
-            log.info().$("truncated and closed [fd=").$(fd).$(']').$();
+            log.debug().$("truncated and closed [fd=").$(fd).$(']').$();
         } else {
             if (ff.isRestrictedFileSystem()) {
                 // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
                 // To make it work size needs to be rounded up to nearest page.
                 long n = (size - 1) / mapPageSize;
                 if (ff.truncate(Math.abs(fd), (n + 1) * mapPageSize)) {
-                    log.info().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
+                    log.debug().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
                     return;
                 }
             }

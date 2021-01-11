@@ -72,7 +72,7 @@ public class SlidingWindowMemory extends VirtualMemory {
         this.setPageSize(parent.getMapPageSize());
         updateSize();
         this.pageIndex = -1;
-        LOG.info().$("open [fd=").$(fd).$(", size=").$(this.size).$(']').$();
+        LOG.debug().$("open [fd=").$(fd).$(", size=").$(this.size).$(']').$();
     }
 
     public void updateSize() {
@@ -83,7 +83,7 @@ public class SlidingWindowMemory extends VirtualMemory {
 
     private void closeFile() {
         if (fd != -1) {
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
             this.size = 0;
             this.parent = null;

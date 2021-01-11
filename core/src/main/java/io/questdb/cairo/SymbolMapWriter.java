@@ -98,7 +98,7 @@ public class SymbolMapWriter implements Closeable {
             }
 
             tmpSymbol = new DirectCharSequence();
-            LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
+            LOG.debug().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
         } catch (CairoException e) {
             close();
             throw e;
@@ -143,7 +143,7 @@ public class SymbolMapWriter implements Closeable {
         if (this.offsetMem != null) {
             long fd = this.offsetMem.getFd();
             Misc.free(offsetMem);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
     }
@@ -256,7 +256,7 @@ public class SymbolMapWriter implements Closeable {
             long symCharsOffset = offset;
             int symLen = charMem.getInt(offset);
             offset += Integer.BYTES;
-            long symCharsOffsetHi = offset + symLen * Character.BYTES;
+            long symCharsOffsetHi = offset + symLen * 2L;
             tmpSymbol.of(charMem.addressOf(offset), charMem.addressOf(symCharsOffsetHi));
 
             long offsetOffset = offsetMem.getAppendOffset();
@@ -272,7 +272,7 @@ public class SymbolMapWriter implements Closeable {
             charMem.jumpTo(offset);
             symbolIndex++;
         }
-        LOG.info().$("appended a block of ").$(nSymbolsAdded).$("symbols [fd=").$(this.offsetMem.getFd()).$(']').$();
+        LOG.debug().$("appended a block of ").$(nSymbolsAdded).$("symbols [fd=").$(this.offsetMem.getFd()).$(']').$();
     }
 
     void truncate() {

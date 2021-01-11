@@ -57,7 +57,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         this.cache.clear();
         long fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
-        LOG.info().$("closed [fd=").$(fd).$(']').$();
+        LOG.debug().$("closed [fd=").$(fd).$(']').$();
     }
 
     @Override
@@ -135,7 +135,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 this.cache.setPos(symbolCapacity);
             }
             this.cache.clear();
-            LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
+            LOG.debug().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
         } catch (CairoException e) {
             close();
             throw e;
@@ -198,7 +198,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
             this.charMem.grow(lastSymbolOffset + 4);
-            charMemLength = lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2 + 4;
+            charMemLength = lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2L + 4;
         } else {
             charMemLength = 0;
         }

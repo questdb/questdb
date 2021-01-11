@@ -465,12 +465,14 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
         long newSize = addressHi - baseAddress;
         long nPages = (newSize / pageSize) + 1;
         newSize = nPages * pageSize;
-        long oldSize = getMemorySize();
+        final long oldSize = getMemorySize();
         if (nPages > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        long newBaseAddress = reallocateMemory(baseAddress, getMemorySize(), newSize);
-        LOG.info().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
+        final long newBaseAddress = reallocateMemory(baseAddress, getMemorySize(), newSize);
+        if (oldSize > 0) {
+            LOG.info().$("extended [oldBase=").$(baseAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
+        }
         handleMemoryReallocation(newBaseAddress, newSize);
     }
 

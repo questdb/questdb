@@ -270,7 +270,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, name, PoolListener.EV_UNLOCKED);
-            LOG.info().$("unlocked [table=`").utf8(name).$("`]").$();
+            LOG.debug().$("unlocked [table=`").utf8(name).$("`]").$();
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not lock owner of ").put(name);
@@ -391,7 +391,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             e.owner = UNALLOCATED;
             return false;
         }
-        LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
+        LOG.debug().$("locked [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
         return true;
     }

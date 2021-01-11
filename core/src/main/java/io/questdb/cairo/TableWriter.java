@@ -2094,7 +2094,7 @@ public class TableWriter implements Closeable {
 
         if (fd > 0) {
             ff.close(fd);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
     }
 
@@ -2994,10 +2994,6 @@ public class TableWriter implements Closeable {
 
                             oooUpdateIndexes(mergeStruct);
 
-                            if (prefixType != OO_BLOCK_NONE || mergeType != OO_BLOCK_NONE) {
-//                                copyTempPartitionBack(mergeStruct);
-                            }
-
                         } finally {
                             freeMergeStruct(mergeStruct);
                         }
@@ -3023,19 +3019,23 @@ public class TableWriter implements Closeable {
                             }
                             // rename after we closed all FDs associated with source partition
                             path.trimTo(plen).$();
-                            other.of(path).put(".old").$();
+                            other.of(path).put("x-").put(txn).$();
                             if (ff.rename(path, other)) {
                                 // rename .1 to the original
+                                // todo: do not use .1 suffix, use txn instead
                                 other.trimTo(plen).put(".1").$();
-                                if (ff.rename(other, path)) {
-                                    other.trimTo(plen).put(".old").$();
-                                    ff.rmdir(other);
-                                    System.out.println("ok");
+                                if (!ff.rename(other, path)) {
+                                    throw CairoException.instance(ff.errno())
+                                            .put("could not rename [from=").put(other)
+                                            .put(", to=").put(path).put(']');
                                 }
                             } else {
+                                // todo: we could not move old partition, which means
+                                //    we have to rollback all partitions that we moved in this
+                                //    transaction
                                 throw CairoException.instance(ff.errno())
                                         .put("could not rename [from=").put(path)
-                                        .put(", to=").put(other);
+                                        .put(", to=").put(other).put(']');
                             }
                         }
                     } finally {
@@ -3112,6 +3112,7 @@ public class TableWriter implements Closeable {
             // close all columns without truncating the underlying file
 //            closeAppendMemoryNoTruncate(false);
             openPartition(maxTimestamp);
+            populateDenseIndexerList();
         }
         setAppendPosition(this.transientRowCount, true);
         avoidIndexOnCommit = true;
@@ -3179,10 +3180,10 @@ public class TableWriter implements Closeable {
     private void oooDoOpenIndexFiles(Path path, long[] mergeStruct, int plen, int columnIndex) {
         BitmapIndexUtils.keyFileName(path.trimTo(plen), metadata.getColumnName(columnIndex));
         MergeStruct.setDestIndexKeyFd(mergeStruct, columnIndex, openReadWriteOrFail(ff, path));
-        LOG.info().$("open index key [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexKeyFd(mergeStruct, columnIndex)).$(']').$();
+        LOG.debug().$("open index key [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexKeyFd(mergeStruct, columnIndex)).$(']').$();
         BitmapIndexUtils.valueFileName(path.trimTo(plen), metadata.getColumnName(columnIndex));
         MergeStruct.setDestIndexValueFd(mergeStruct, columnIndex, openReadWriteOrFail(ff, path));
-        LOG.info().$("open index value [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexValueFd(mergeStruct, columnIndex)).$(']').$();
+        LOG.debug().$("open index value [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexValueFd(mergeStruct, columnIndex)).$(']').$();
         // Transfer value of destination offset to the index start offset
         // This is where we need to begin indexing from. The index will contain all the values before the offset
         MergeStruct.setDestIndexStartOffset(mergeStruct, columnIndex, MergeStruct.getDestFixedAppendOffset(mergeStruct, columnIndex));
@@ -4037,7 +4038,7 @@ public class TableWriter implements Closeable {
         if (timestamp > Long.MIN_VALUE) {
             LOG.info().$("purging [newerThen=").$ts(timestamp).$(", path=").$(path.$()).$(']').$();
         } else {
-            LOG.info().$("cleaning [path=").$(path.$()).$(']').$();
+            LOG.debug().$("cleaning [path=").$(path.$()).$(']').$();
         }
         try {
             ff.iterateDir(path.$(), (pName, type) -> {
@@ -4728,6 +4729,7 @@ public class TableWriter implements Closeable {
         writeColumnTop(name, transientRowCount);
     }
 
+    @SuppressWarnings("SuspiciousNameCombination")
     private void writeColumnTop(CharSequence name, long columnTop) {
         long fd = openAppend(path.concat(name).put(".top").$());
         try {
