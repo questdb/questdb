@@ -168,12 +168,12 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
 
     @Override
     public long getDataMap(long timestamp, int columnIndex, long offset, long size) {
+        if (timestamp < firstTimeStamp) {
+            firstTimeStamp = timestamp;
+        }
         PartitionDetails partition = cachedPartition;
         if (null == partition || timestamp > partition.timestampHi || timestamp < partition.timestampLo) {
             partition = getPartitionDetails(timestamp);
-        }
-        if (timestamp < firstTimeStamp) {
-            firstTimeStamp = timestamp;
         }
         if (offset !=  Long.MIN_VALUE) {
             return partition.getDataMap(timestamp, columnIndex, offset, size);
