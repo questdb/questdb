@@ -163,6 +163,43 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNonAggFunctionWithAggFunctionSampleBy() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "day\tisin\tlast\n" +
+                        "1\tcc\t0.7544827361952741\n",
+                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "create table xetra as (" +
+                        "select" +
+                        " rnd_symbol('aa', 'bb', 'cc') isin," +
+                        " rnd_double() start_price," +
+                        " timestamp_sequence(0, 1000000) ts" +
+                        " from long_sequence(10000)" +
+                        ") timestamp(ts)",
+                null,
+                false
+        ));
+    }
+
+    @Test
+    public void testNonAggFunctionWithAggFunctionSampleBySubQuery() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "day\tisin\tlast\n" +
+                        "1\tcc\t0.7544827361952741\n",
+//                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d)",
+                "create table xetra as (" +
+                        "select" +
+                        " rnd_symbol('aa', 'bb', 'cc') isin," +
+                        " rnd_double() start_price," +
+                        " timestamp_sequence(0, 1000000) ts" +
+                        " from long_sequence(10000)" +
+                        ") timestamp(ts)",
+                null,
+                false
+        ));
+    }
+
+    @Test
     public void testBindVariableInSelect() throws Exception {
         assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);

@@ -783,6 +783,50 @@ class SqlOptimiser {
         }
     }
 
+    private void createSelectColumn0(
+            CharSequence columnName,
+            ExpressionNode columnAst,
+            QueryModel validatingModel,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel analyticModel
+    ) throws SqlException {
+        // add duplicate column names only to group-by model
+        // taking into account that column is pre-aliased, e.g.
+        // "col, col" will look like "col, col col1"
+
+        LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
+        int index = translatingAliasMap.keyIndex(columnAst.token);
+        if (index < 0) {
+            // column is already being referenced by translating model
+            final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
+            final CharSequence innerAlias = createColumnAlias(columnName, innerModel);
+            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
+            innerModel.addBottomUpColumn(translatedColumn);
+
+            // analytic model is used together with inner model
+            final CharSequence analyticAlias = createColumnAlias(innerAlias, analyticModel);
+            final QueryColumn analyticColumn = nextColumn(analyticAlias, innerAlias);
+            analyticModel.addBottomUpColumn(analyticColumn);
+        } else {
+            final CharSequence alias = createColumnAlias(columnName, translatingModel);
+            addColumnToTranslatingModel(
+                    queryColumnPool.next().of(
+                            alias,
+                            columnAst
+                    ),
+                    translatingModel,
+                    validatingModel
+            );
+
+            final QueryColumn translatedColumn = nextColumn(alias);
+
+            // create column that references inner alias we just created
+            innerModel.addBottomUpColumn(translatedColumn);
+            analyticModel.addBottomUpColumn(translatedColumn);
+        }
+    }
+
     private void createSelectColumnsForWildcard(
             QueryColumn qc,
             boolean hasJoins,
@@ -2880,6 +2924,17 @@ class SqlOptimiser {
         // fail if we have both analytic and group-by models
         if (useAnalyticModel && useGroupByModel) {
             throw SqlException.$(0, "Analytic function is not allowed in context of aggregation. Use sub-query.");
+        }
+
+        if (sampleBy != null && baseModel.getTimestamp() != null && innerVirtualModel.getColumnNameToAliasMap().excludes(baseModel.getTimestamp().token)) {
+            createSelectColumn0(
+                    baseModel.getTimestamp().token,
+                    baseModel.getTimestamp(),
+                    baseModel,
+                    translatingModel,
+                    innerVirtualModel,
+                    analyticModel
+            );
         }
 
         // check if translating model is redundant, e.g.
