@@ -15,11 +15,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongObjHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 public class SlaveWriterImpl implements SlaveWriter, Closeable {
@@ -48,6 +46,8 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
     private final AtomicInteger nRemainingFrames = new AtomicInteger();
     private volatile PartitionDetails cachedPartition;
     private long firstTimeStamp;
+    private final AtomicBoolean writerLock = new AtomicBoolean(false);
+    private long tempMem8b = Unsafe.malloc(8);
 
     public SlaveWriterImpl(CairoConfiguration configuration) {
         root = configuration.getRoot();
@@ -162,6 +162,8 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             path.close();
             path = null;
         }
+        Unsafe.free(tempMem8b, 8);
+        tempMem8b = 0;
     }
 
     @Override
@@ -173,7 +175,13 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
         if (null == partition || timestamp > partition.timestampHi || timestamp < partition.timestampLo) {
             partition = getPartitionDetails(timestamp);
         }
-        return partition.getDataMap(timestamp, columnIndex, offset, size);
+        if (offset !=  Long.MIN_VALUE) {
+            return partition.getDataMap(timestamp, columnIndex, offset, size);
+        } else {
+            // This is column top, create .top file
+            partition.writeColumnTop(columnIndex, size);
+            return Long.MIN_VALUE;
+        }
     }
 
     @Override
@@ -261,8 +269,6 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
         }
     }
 
-    private final AtomicBoolean writerLock = new AtomicBoolean(false);
-
     private void lockWriter() {
         while (!writerLock.compareAndSet(false, true)) {
             ;
@@ -280,6 +286,10 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
         private int pathPartitionLen;
         private ObjList<ColumnDetails> columns = new ObjList<>();
         private final PartitionStruct partitionStruct = new PartitionStruct();
+
+        public void writeColumnTop(int columnIndex, long size) {
+            columns.getQuick(columnIndex).writeColumnTop(size);
+        }
 
         private PartitionDetails of(long timestampLo, long timestampHi, Path path) {
             this.timestampLo = timestampLo;
@@ -372,6 +382,20 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
 
             private ColumnDetails(int columnIndex) {
                 this.columnIndex = columnIndex;
+            }
+
+            public void writeColumnTop(long size) {
+                final CharSequence name = writer.getMetadata().getColumnName(columnIndex);
+                LPSZ filename = path.trimTo(pathPartitionLen).concat(name).put(".top").$();
+                long fd = TableUtils.openFileRWOrFail(ff, filename);
+                try {
+                    Unsafe.getUnsafe().putLong(tempMem8b, size);
+                    if (ff.append(fd, tempMem8b, Long.BYTES) != Long.BYTES) {
+                        throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
             }
 
             private ColumnDetails of() {
@@ -623,14 +647,14 @@ public class SlaveWriterImpl implements SlaveWriter, Closeable {
             if (fd != -1) {
                 if (charMappingAddress != 0) {
                     TableBlockWriter.unmapFile(ff, charMappingAddress, charMappingSize);
-                    charMappingAddress = 0;
                 }
                 try {
                     if (!ff.truncate(fd, originalCharSize)) {
                         throw CairoException.instance(ff.errno()).put("could not truncate char file for clear [table=").put(writer.getName()).put(", name=").put(name).put(", fd=").put(fd)
-                                .put(", size=").put(originalCharSize);
+                                .put(", size=").put(originalCharSize).put(", error=").put(ff.errno());
                     }
                 } finally {
+                    charMappingAddress = 0;
                     ff.close(fd);
                     fd = -1;
                 }

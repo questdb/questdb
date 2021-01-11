@@ -206,6 +206,14 @@ public class ReplicationMasterConnectionDemultiplexer extends AbstractMultipleCo
                             activeSendFrame.complete();
                             activeSendFrame = null;
                         }
+
+                        if (sendAddress == 0) {
+                            // This is columnTop frame.
+                            // Only header is sent.
+                            activeSendFrame.complete();
+                            activeSendFrame = null;
+                            continue;
+                        }
                     } else {
                         sendOffset += nWritten;
                         sendLength -= nWritten;

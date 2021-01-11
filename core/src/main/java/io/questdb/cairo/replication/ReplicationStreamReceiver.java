@@ -122,6 +122,15 @@ public class ReplicationStreamReceiver implements Closeable {
             }
         }
 
+        if (frameMappingAddress == Long.MIN_VALUE) {
+            // Column top file created.
+            if (slaveWriter.completeFrame()) {
+                handleReadyToCommit();
+            }
+            resetReading();
+            return true;
+        }
+
         int nRead = nf.recv(fd, frameMappingAddress + frameMappingOffset, frameDataNBytesRemaining);
         if (nRead < 0) {
             LOG.info().$("peer disconnected when reading frame data [fd=").$(fd).$(']').$();
@@ -133,7 +142,6 @@ public class ReplicationStreamReceiver implements Closeable {
             if (slaveWriter.completeFrame()) {
                 handleReadyToCommit();
             }
-            slaveWriter = null;
             resetReading();
         } else {
             frameMappingOffset += nRead;

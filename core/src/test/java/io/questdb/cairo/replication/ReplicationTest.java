@@ -120,8 +120,8 @@ public class ReplicationTest extends AbstractGriffinTest {
     public void testSimple1() throws Exception {
         runTest("testSimple1", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
-                    ") TIMESTAMP (ts);",
+                            "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(20)" +
+                            ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             replicateTable("source", "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 0, Long.MAX_VALUE);
         });
@@ -136,6 +136,91 @@ public class ReplicationTest extends AbstractGriffinTest {
                     sqlExecutionContext);
             replicateTable("source", null, 0, Long.MAX_VALUE);
         });
+    }
+
+    @Test
+    public void testAddColumnBeforeReplication() throws Exception {
+        runTest("testSimple1", () -> {
+            runMasterSql("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(0)" +
+                    ") TIMESTAMP (ts);");
+            runMasterSql("ALTER TABLE source ADD COLUMN str STRING");
+            runMasterSql("INSERT INTO source(ts, l, str) " +
+                    "SELECT" +
+                    " timestamp_sequence(5000000000, 500000000) ts," +
+                    " rnd_long(-55, 9009, 2) l," +
+                    " rnd_str(3,3,2) str" +
+                    " from long_sequence(5)" +
+                    ";");
+            replicateTable("source", null, 0, Long.MAX_VALUE);
+        });
+    }
+
+    @Test
+    public void testAddColumnTopBeforeReplication() throws Exception {
+        runTest("testSimple1", () -> {
+            runMasterSql("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
+                    ") TIMESTAMP (ts);");
+            runMasterSql("ALTER TABLE source ADD COLUMN colTop LONG");
+            runMasterSql("INSERT INTO source(ts, l, colTop) " +
+                    "SELECT" +
+                    " timestamp_sequence(5000000000, 500000000) ts," +
+                    " rnd_long(-55, 9009, 2) l," +
+                    " rnd_long(-55, 9009, 2) l2" +
+                    " from long_sequence(5)" +
+                    ";");
+            replicateTable("source", null, 0, Long.MAX_VALUE);
+        });
+    }
+
+    @Test
+    public void testColumnTopPartitioned() throws Exception {
+        runTest("testSimple1", () -> {
+            runMasterSql("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(200)" +
+                    ") TIMESTAMP (ts) PARTITION BY DAY;;");
+
+            runMasterSql("ALTER TABLE source ADD COLUMN colTop LONG");
+            runMasterSql("INSERT INTO source(ts, l, colTop) " +
+                    "SELECT" +
+                    " timestamp_sequence(500000000000, 500000000) ts," +
+                    " rnd_long(-55, 9009, 2) l," +
+                    " rnd_long(-55, 9009, 2) colTop" +
+                    " from long_sequence(200)" +
+                    ";");
+            replicateTable("source", null, 0, Long.MAX_VALUE);
+        });
+    }
+
+    @Test
+    public void testAddColumn() throws Exception {
+        runTest("testSimple1", () -> {
+            runMasterSql("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(5)" +
+                    ") TIMESTAMP (ts);");
+
+            replicateTable("source", null, 0, Long.MAX_VALUE);
+
+            runSlaveSql("DROP TABLE source;");
+            runMasterSql("ALTER TABLE source ADD COLUMN str STRING");
+            runMasterSql("INSERT INTO source(ts, l, str) " +
+                    "SELECT" +
+                    " timestamp_sequence(5000000000, 500000000) ts," +
+                    " rnd_long(-55, 9009, 2) l," +
+                    " rnd_str(3,3,2) str" +
+                    " from long_sequence(5)" +
+                    ";");
+            replicateTable("source", null, 0, Long.MAX_VALUE);
+        });
+    }
+
+    private void runSlaveSql(String sql) throws SqlException {
+        slaveCompiler.compile(sql, slaveSqlExecutionContext);
+    }
+
+    private void runMasterSql(String sql) throws SqlException {
+        compiler.compile(sql, sqlExecutionContext);
     }
 
     @Test
@@ -204,7 +289,7 @@ public class ReplicationTest extends AbstractGriffinTest {
     private void replicateTable(String tableName, String tableCreateFields, long nFirstRow, long maxRowsPerFrame)
             throws SqlException, IOException {
         WorkerPoolConfiguration workerPoolConfig = new WorkerPoolConfiguration() {
-            private final int[] affinity = { -1, -1 };
+            private final int[] affinity = {-1, -1};
 
             @Override
             public boolean haltOnError() {
@@ -244,7 +329,7 @@ public class ReplicationTest extends AbstractGriffinTest {
         Assert.assertTrue(slaveReplicationService.tryAdd(replicationConf));
 
         // Wait for slave to commit
-        long epochMsTimeout = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(2);
+        long epochMsTimeout = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(120);
         while (true) {
             String countText = getSlaveTableRowCount(tableName);
             if (ZERO_COUNT.equals(countText)) {

@@ -1,10 +1,7 @@
 package io.questdb.cairo.replication;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -151,17 +148,103 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testReplicateWithColumnTop() throws Exception {
+        runTest("testSimple1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                            "SELECT timestamp_sequence(0, 100000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(100000)" +
+                            ") TIMESTAMP (ts) PARTITION BY DAY;",
+                    sqlExecutionContext);
+            compiler.compile("ALTER TABLE source ADD COLUMN colTop LONG", sqlExecutionContext);
+            compiler.compile("INSERT INTO source(ts, l, colTop) " +
+                            "SELECT" +
+                            " timestamp_sequence(50000000000, 500000000) ts," +
+                            " rnd_long(-55, 9009, 2) l," +
+                            " rnd_long(-55, 9009, 2) colTop" +
+                            " from long_sequence(5)" +
+                            ";",
+                    sqlExecutionContext);
+
+            replicateTable(
+                    "source",
+                    "dest",
+                    "(ts TIMESTAMP, l LONG, colTop LONG) TIMESTAMP(ts) PARTITION BY DAY;",
+                    0,
+                    Long.MAX_VALUE);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testReplicateWithColumnTopWhenFirstFrameIsColumnTop() throws Exception {
+        runTest("testSimple1", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                            "SELECT timestamp_sequence(0, 100000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(100000)" +
+                            ") TIMESTAMP (ts) PARTITION BY DAY;",
+                    sqlExecutionContext);
+            compiler.compile("ALTER TABLE source ADD COLUMN colTop LONG", sqlExecutionContext);
+            compiler.compile("INSERT INTO source(ts, l, colTop) " +
+                            "SELECT" +
+                            " timestamp_sequence(50000000000, 500000000) ts," +
+                            " rnd_long(-55, 9009, 2) l," +
+                            " rnd_long(-55, 9009, 2) colTop" +
+                            " from long_sequence(5)" +
+                            ";",
+                    sqlExecutionContext);
+
+            replicateTable(
+                    "source",
+                    "dest",
+                    "(ts TIMESTAMP, l LONG, colTop LONG) TIMESTAMP(ts) PARTITION BY DAY;",
+                    0,
+                    Long.MAX_VALUE,
+                    list -> {
+                        // sort so that column top frame (with data address 0) is first.
+                        Collections.sort(list, Comparator.comparingLong(f -> f.getFrame().getFrameDataAddress()));
+                        return list;
+                    });
+            engine.releaseInactive();
+        });
+    }
+
     private void runTest(String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
         TestUtils.assertMemoryLeak(runnable);
         LOG.info().$("Finished test ").$(name).$();
     }
 
-    private void replicateTable(String sourceTableName, String destTableName, String tableCreateFields, long nFirstRow, long maxRowsPerFrame) throws SqlException {
+    private void replicateTable(
+            String sourceTableName,
+            String destTableName,
+            String tableCreateFields, long nFirstRow,
+            long maxRowsPerFrame) throws SqlException {
+        long seed = System.currentTimeMillis();
+        Random rnd = new Random(seed);
+        LOG.info().$("Random seed [seed=").$(seed).$(']').$();
+        replicateTable(
+                sourceTableName,
+                destTableName,
+                tableCreateFields,
+                nFirstRow,
+                maxRowsPerFrame,
+                list -> {
+                    Collections.shuffle(list, rnd);
+                    return list;
+                }
+        );
+    }
+
+    private void replicateTable(
+            String sourceTableName,
+            String destTableName,
+            String tableCreateFields,
+            long nFirstRow,
+            long maxRowsPerFrame,
+            ShuffleAlgo shuffleAlgo) throws SqlException {
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$();
         compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, destTableName)) {
-            sendReplicationStream(sourceTableName, nFirstRow, maxRowsPerFrame, writer);
+            sendReplicationStream(sourceTableName, nFirstRow, maxRowsPerFrame, writer, shuffleAlgo);
         }
         assertTableEquals(sourceTableName, destTableName);
     }
@@ -189,7 +272,12 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
     private long streamTargetWriteBufferAddress;
     private int streamTargetWriteBufferOffset;
 
-    private void sendReplicationStream(String sourceTableName, long nFirstRow, long maxRowsPerFrame, TableWriter writer) {
+    private void sendReplicationStream(
+            String sourceTableName,
+            long nFirstRow,
+            long maxRowsPerFrame,
+            TableWriter writer,
+            ShuffleAlgo frameShuffle) {
         RECV_HANDLER = new FilesFacadeRecvHandler() {
             @Override
             public int recv(long fd, long buf, int len) {
@@ -221,9 +309,6 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 return nWrote;
             }
         };
-        long seed = System.currentTimeMillis();
-        Random rnd = new Random(seed);
-        LOG.info().$("Random seed [seed=").$(seed).$(']').$();
 
         IntObjHashMap<SlaveWriter> slaveWriteByMasterTableId = new IntObjHashMap<>();
         try (
@@ -261,13 +346,13 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
                 if (!streamResult.isRetry()) {
                     frames.add(streamResult);
                     if (frames.size() == nConcurrentFrames) {
-                        shuffleAndSend(frames, streamReceiver, rnd);
+                        shuffleAndSend(frames, streamReceiver, frameShuffle);
                     }
                 } else {
                     Thread.yield();
                 }
             }
-            shuffleAndSend(frames, streamReceiver, rnd);
+            shuffleAndSend(frames, streamReceiver, frameShuffle);
 
             // Wait for ready to commit from slave
             Assert.assertEquals(0, streamTargetWriteBufferOffset);
@@ -292,8 +377,8 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         Unsafe.free(streamTargetWriteBufferAddress, streamTargetWriteBufferSize);
     }
 
-    private void shuffleAndSend(List<ReplicationStreamGeneratorResult> frames, ReplicationStreamReceiver streamReceiver, Random rnd) {
-        Collections.shuffle(frames, rnd);
+    private void shuffleAndSend(List<ReplicationStreamGeneratorResult> frames, ReplicationStreamReceiver streamReceiver, ShuffleAlgo shuffleAlgo) {
+        frames = shuffleAlgo.shuffle(frames);
         for (int i = 0; i < frames.size(); i++) {
             ReplicationStreamGeneratorResult streamResult = frames.get(i);
             try {
@@ -313,8 +398,13 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         }
         Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameHeaderAddress(), streamTargetReadBufferAddress, streamFrameMeta.getFrameHeaderLength());
         if (streamFrameMeta.getFrameDataLength() > 0) {
-            Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameDataAddress(), streamTargetReadBufferAddress + streamFrameMeta.getFrameHeaderLength(),
-                    streamFrameMeta.getFrameDataLength());
+            if (streamFrameMeta.getFrameDataAddress() != 0) {
+                Unsafe.getUnsafe().copyMemory(streamFrameMeta.getFrameDataAddress(), streamTargetReadBufferAddress + streamFrameMeta.getFrameHeaderLength(),
+                        streamFrameMeta.getFrameDataLength());
+            } else {
+                // Column tops, header only, don't send any data.
+                sz -= streamFrameMeta.getFrameDataLength();
+            }
         }
         streamTargetReadBufferOffset = 0;
         streamTargetReadBufferLength = sz;
@@ -324,5 +414,10 @@ public class ReplicationStreamTest extends AbstractGriffinTest {
         }
         streamTargetReadBufferOffset = 0;
         streamTargetReadBufferLength = 0;
+    }
+
+    @FunctionalInterface
+    private interface ShuffleAlgo {
+        List<ReplicationStreamGeneratorResult> shuffle(List<ReplicationStreamGeneratorResult> items);
     }
 }
