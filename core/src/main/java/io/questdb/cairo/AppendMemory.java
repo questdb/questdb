@@ -147,7 +147,7 @@ public class AppendMemory extends VirtualMemory {
                     return;
                 }
             }
-            log.info().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+            log.debug().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         }
     }
 

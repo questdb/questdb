@@ -3015,16 +3015,14 @@ public class TableWriter implements Closeable {
                                 // this timestamp column was opened by file name
                                 // so we can close it as not needed (and to enable table rename on Windows)
                                 ff.close(timestampFd);
-                                timestampFd = -1;
+                                timestampFd = 0;
                             }
                             // rename after we closed all FDs associated with source partition
                             path.trimTo(plen).$();
                             other.of(path).put("x-").put(txn).$();
                             if (ff.rename(path, other)) {
-                                // rename .1 to the original
-                                // todo: do not use .1 suffix, use txn instead
-                                other.trimTo(plen).put(".1").$();
-                                if (!ff.rename(other, path)) {
+                                appendTxnToPath(other.trimTo(plen));
+                                if (!ff.rename(other.$(), path)) {
                                     throw CairoException.instance(ff.errno())
                                             .put("could not rename [from=").put(other)
                                             .put(", to=").put(path).put(']');
@@ -3281,6 +3279,10 @@ public class TableWriter implements Closeable {
         return mergeStruct;
     }
 
+    private void appendTxnToPath(Path path) {
+        path.put("-n-").put(txn);
+    }
+
     private long[] oooOpenLastPartitionForMerge(
             Path path,
             long indexLo,
@@ -3317,7 +3319,7 @@ public class TableWriter implements Closeable {
                             path
                     );
 
-                    path.trimTo(plen).put('.').put(1);
+                    appendTxnToPath(path.trimTo(plen));
                     path.concat(metadata.getColumnName(i));
                     int pColNameLen = path.length();
 
@@ -3367,7 +3369,8 @@ public class TableWriter implements Closeable {
                         );
                     }
 
-                    path.trimTo(plen).put('.').put(1);
+//                    path.trimTo(plen).put('.').put(1);
+                    appendTxnToPath(path.trimTo(plen));
                     int pDirNameLen = path.length();
 
                     path.concat(metadata.getColumnName(i)).put(FILE_SUFFIX_D).$();
@@ -3524,7 +3527,7 @@ public class TableWriter implements Closeable {
                             dataSize
                     );
 
-                    oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_I);
+                    oooSetAsidePathAndEnsureDir(path.trimTo(plen), i, FILE_SUFFIX_I);
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getFirstColumnOffset(i),
@@ -3533,7 +3536,7 @@ public class TableWriter implements Closeable {
                             0L
                     );
 
-                    oooSetPathAndEnsureDir(path, 1, plen, i, FILE_SUFFIX_D);
+                    oooSetAsidePathAndEnsureDir(path.trimTo(plen), i, FILE_SUFFIX_D);
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getSecondColumnOffset(i),
@@ -3563,7 +3566,8 @@ public class TableWriter implements Closeable {
                             dataIndexMax << shl
                     );
 
-                    path.trimTo(plen).put('.').put(1);
+//                    path.trimTo(plen).put('.').put(1);
+                    appendTxnToPath(path.trimTo(plen));
                     int pDirNameLen = path.length();
                     path.concat(metadata.getColumnName(i)).put(FILE_SUFFIX_D).$();
                     createDirsOrFail(path);
@@ -3599,7 +3603,7 @@ public class TableWriter implements Closeable {
             switch (columnType) {
                 case ColumnType.BINARY:
                 case ColumnType.STRING:
-                    oooSetPathAndEnsureDir(path, plen, i, FILE_SUFFIX_I);
+                    oooSetPathAndEnsureDir(path.trimTo(plen), i, FILE_SUFFIX_I);
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getFirstColumnOffset(i),
@@ -3608,7 +3612,7 @@ public class TableWriter implements Closeable {
                             0L
                     );
 
-                    oooSetPathAndEnsureDir(path, plen, i, FILE_SUFFIX_D);
+                    oooSetPathAndEnsureDir(path.trimTo(plen), i, FILE_SUFFIX_D);
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getSecondColumnOffset(i),
@@ -3619,7 +3623,7 @@ public class TableWriter implements Closeable {
                     break;
 
                 default:
-                    oooSetPathAndEnsureDir(path, plen, i, FILE_SUFFIX_D);
+                    oooSetPathAndEnsureDir(path.trimTo(plen), i, FILE_SUFFIX_D);
                     oooMapDestColumn(
                             mergeStruct,
                             MergeStruct.getFirstColumnOffset(i),
@@ -3639,15 +3643,13 @@ public class TableWriter implements Closeable {
         return mergeStruct;
     }
 
-    private void oooSetPathAndEnsureDir(Path path, int destIndex, int plen, int columnIndex, CharSequence suffix) {
-        path.trimTo(plen).put('.').put(destIndex);
-        path.concat(metadata.getColumnName(columnIndex)).put(suffix).$();
-        createDirsOrFail(path);
+    private void oooSetAsidePathAndEnsureDir(Path path, int columnIndex, CharSequence suffix) {
+        appendTxnToPath(path);
+        oooSetPathAndEnsureDir(path, columnIndex, suffix);
     }
 
-    private void oooSetPathAndEnsureDir(Path path, int plen, int columnIndex, CharSequence suffix) {
-        path.trimTo(plen).concat(metadata.getColumnName(columnIndex)).put(suffix).$();
-        createDirsOrFail(path);
+    private void oooSetPathAndEnsureDir(Path path, int columnIndex, CharSequence suffix) {
+        createDirsOrFail(path.concat(metadata.getColumnName(columnIndex)).put(suffix).$());
     }
 
     private void oooUpdateIndexes(long[] mergeStruct) {
