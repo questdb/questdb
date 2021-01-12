@@ -3110,7 +3110,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     }
                 }).start();
 
-                Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue(haltLatch.await(30, TimeUnit.SECONDS));
 
                 Assert.assertEquals(1, success.get());
                 Assert.assertNotEquals(-1, index.get());
