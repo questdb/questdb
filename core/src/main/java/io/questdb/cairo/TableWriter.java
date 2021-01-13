@@ -1694,22 +1694,22 @@ public class TableWriter implements Closeable {
     private void copyFixedSizeCol(
             long src,
             long[] mergeStruct,
-            int columnIndex,
+            int columnOffset,
             long srcLo,
             long srcHi,
             final int shl,
             final int stage
     ) {
         final long len = (srcHi - srcLo + 1) << shl;
-        final long dst = MergeStruct.getDestFixedAddress(mergeStruct, columnIndex);
-        final long offset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getFirstColumnOffset(columnIndex), stage);
+        final long dst = MergeStruct.getDestAddressFromOffset(mergeStruct, columnOffset);
+        final long offset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, columnOffset, stage);
         Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst + offset, len);
     }
 
     private void copyFromTimestampIndex(
             long src,
             long[] mergeStruct,
-            int columnIndex,
+            int fixColumnOffset,
             long srcLo,
             long srcHi,
             int stage
@@ -1718,17 +1718,22 @@ public class TableWriter implements Closeable {
         final long lo = srcLo << shl;
         final long hi = (srcHi + 1) << shl;
         final long start = src + lo;
-        final long destOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getFirstColumnOffset(columnIndex), stage);
-        final long dest = MergeStruct.getDestFixedAddress(mergeStruct, columnIndex) + destOffset;
+        final long destOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnOffset, stage);
+        final long dest = MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnOffset) + destOffset;
         final long len = hi - lo;
         for (long l = 0; l < len; l += 16) {
             Unsafe.getUnsafe().putLong(dest + l / 2, Unsafe.getUnsafe().getLong(start + l));
         }
     }
 
-    private void copyIndex(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int columnIndex) {
-        final long offset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getFirstColumnOffset(columnIndex), MergeStruct.STAGE_MERGE);
-        final long dst = MergeStruct.getDestFixedAddress(mergeStruct, columnIndex) + offset;
+    private void copyIndex(
+            long[] mergeStruct,
+            long dataOOMergeIndex,
+            long dataOOMergeIndexLen,
+            int fixColumnOffset
+    ) {
+        final long offset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnOffset, MergeStruct.STAGE_MERGE);
+        final long dst = MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnOffset) + offset;
         for (long l = 0; l < dataOOMergeIndexLen; l++) {
             Unsafe.getUnsafe().putLong(
                     dst + l * Long.BYTES,
@@ -1808,6 +1813,7 @@ public class TableWriter implements Closeable {
             ContiguousVirtualMemory mem2;
             final int columnType = metadata.getColumnType(i);
             final int fixColumnStructOffset = MergeStruct.getFirstColumnOffset(i);
+            final int varColumnStructOffset = MergeStruct.getSecondColumnOffset(i);
             switch (columnType) {
                 case ColumnType.STRING:
                 case ColumnType.BINARY:
@@ -1821,7 +1827,8 @@ public class TableWriter implements Closeable {
                             mem.addressOf(0),
                             mem.getAppendOffset(),
                             mergeStruct,
-                            i,
+                            fixColumnStructOffset,
+                            varColumnStructOffset,
                             indexLo,
                             indexHi,
                             stage
@@ -1829,27 +1836,27 @@ public class TableWriter implements Closeable {
                     break;
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
-                    copyFixedSizeCol(mem.addressOf(0), mergeStruct, i, indexLo, indexHi, 0, stage);
+                    copyFixedSizeCol(mem.addressOf(0), mergeStruct, fixColumnStructOffset, indexLo, indexHi, 0, stage);
                     break;
                 case ColumnType.CHAR:
                 case ColumnType.SHORT:
-                    copyFixedSizeCol(mem.addressOf(0), mergeStruct, i, indexLo, indexHi, 1, stage);
+                    copyFixedSizeCol(mem.addressOf(0), mergeStruct, fixColumnStructOffset, indexLo, indexHi, 1, stage);
                     break;
                 case ColumnType.INT:
                 case ColumnType.FLOAT:
                 case ColumnType.SYMBOL:
-                    copyFixedSizeCol(mem.addressOf(0), mergeStruct, i, indexLo, indexHi, 2, stage);
+                    copyFixedSizeCol(mem.addressOf(0), mergeStruct, fixColumnStructOffset, indexLo, indexHi, 2, stage);
                     break;
                 case ColumnType.LONG:
                 case ColumnType.DATE:
                 case ColumnType.DOUBLE:
-                    copyFixedSizeCol(mem.addressOf(0), mergeStruct, i, indexLo, indexHi, 3, stage);
+                    copyFixedSizeCol(mem.addressOf(0), mergeStruct, fixColumnStructOffset, indexLo, indexHi, 3, stage);
                     break;
                 case ColumnType.TIMESTAMP:
                     if (i != timestampIndex) {
-                        copyFixedSizeCol(mem.addressOf(0), mergeStruct, i, indexLo, indexHi, 3, stage);
+                        copyFixedSizeCol(mem.addressOf(0), mergeStruct, fixColumnStructOffset, indexLo, indexHi, 3, stage);
                     } else {
-                        copyFromTimestampIndex(mem.addressOf(0), mergeStruct, i, indexLo, indexHi, stage);
+                        copyFromTimestampIndex(mem.addressOf(0), mergeStruct, fixColumnStructOffset, indexLo, indexHi, stage);
                     }
                     break;
                 default:
@@ -1861,16 +1868,19 @@ public class TableWriter implements Closeable {
     private void copyPartitionData(long indexLo, long indexHi, long[] mergeStruct, int stage) {
         for (int i = 0; i < columnCount; i++) {
             final int columnType = metadata.getColumnType(i);
+            final int fixColumnStructOffset = MergeStruct.getFirstColumnOffset(i);
+            final int varColumnStructOffset = MergeStruct.getSecondColumnOffset(i);
             switch (columnType) {
                 case ColumnType.STRING:
                 case ColumnType.BINARY:
                     copyVarSizeCol(
-                            MergeStruct.getSrcFixedAddress(mergeStruct, i),
-                            MergeStruct.getSrcFixedAddressSize(mergeStruct, i),
-                            MergeStruct.getSrcVarAddress(mergeStruct, i),
-                            MergeStruct.getSrcVarAddressSize(mergeStruct, i),
+                            MergeStruct.getSrcAddressFromOffset(mergeStruct, fixColumnStructOffset),
+                            MergeStruct.getSrcAddressSizeFromOffset(mergeStruct, fixColumnStructOffset),
+                            MergeStruct.getSrcAddressFromOffset(mergeStruct, varColumnStructOffset),
+                            MergeStruct.getSrcAddressSizeFromOffset(mergeStruct, varColumnStructOffset),
                             mergeStruct,
-                            i,
+                            fixColumnStructOffset,
+                            varColumnStructOffset,
                             indexLo,
                             indexHi,
                             stage
@@ -1878,9 +1888,9 @@ public class TableWriter implements Closeable {
                     break;
                 default:
                     copyFixedSizeCol(
-                            MergeStruct.getSrcFixedAddress(mergeStruct, i),
+                            MergeStruct.getSrcAddressFromOffset(mergeStruct, fixColumnStructOffset),
                             mergeStruct,
-                            i,
+                            fixColumnStructOffset,
                             indexLo,
                             indexHi,
                             (ColumnType.pow2SizeOf(columnType)),
@@ -1927,7 +1937,8 @@ public class TableWriter implements Closeable {
             long srcVar,
             long srcVarSize,
             long[] mergeStruct,
-            int columnIndex,
+            int fixColumnOffset,
+            int varColumnOffset,
             long indexLo,
             long indexHi,
             int stage
@@ -1940,15 +1951,15 @@ public class TableWriter implements Closeable {
             hi = Unsafe.getUnsafe().getLong(srcFixed + (indexHi + 1) * Long.BYTES);
         }
         // copy this before it changes
-        final long offset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getSecondColumnOffset(columnIndex), stage);
-        final long dest = MergeStruct.getDestVarAddress(mergeStruct, columnIndex) + offset;
+        final long offset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, varColumnOffset, stage);
+        final long dest = MergeStruct.getDestAddressFromOffset(mergeStruct, varColumnOffset) + offset;
         final long len = hi - lo;
-        assert offset + len <= MergeStruct.getDestVarAddressSize(mergeStruct, columnIndex);
+        assert offset + len <= MergeStruct.getDestAddressSizeFromOffset(mergeStruct, varColumnOffset);
         Unsafe.getUnsafe().copyMemory(srcVar + lo, dest, len);
         if (lo == offset) {
-            copyFixedSizeCol(srcFixed, mergeStruct, columnIndex, indexLo, indexHi, 3, stage);
+            copyFixedSizeCol(srcFixed, mergeStruct, fixColumnOffset, indexLo, indexHi, 3, stage);
         } else {
-            shiftCopyFixedSizeColumnData(lo - offset, srcFixed, mergeStruct, columnIndex, indexLo, indexHi, stage);
+            shiftCopyFixedSizeColumnData(lo - offset, srcFixed, mergeStruct, fixColumnOffset, indexLo, indexHi, stage);
         }
     }
 
@@ -2363,18 +2374,25 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void mergeCopyBin(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int columnIndex) {
+    private void mergeCopyBin(
+            long[] mergeStruct,
+            long dataOOMergeIndex,
+            long dataOOMergeIndexLen,
+            int columnIndex,
+            int fixColumnOffset,
+            int varColumnOffset
+    ) {
         // destination of variable length data
-        long destVarOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getSecondColumnOffset(columnIndex), MergeStruct.STAGE_MERGE);
-        final long destVar = MergeStruct.getDestVarAddress(mergeStruct, columnIndex);
-        final long destFixOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getFirstColumnOffset(columnIndex), MergeStruct.STAGE_MERGE);
-        final long dstFix = MergeStruct.getDestFixedAddress(mergeStruct, columnIndex) + destFixOffset;
+        long destVarOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, varColumnOffset, MergeStruct.STAGE_MERGE);
+        final long destVar = MergeStruct.getDestAddressFromOffset(mergeStruct, varColumnOffset);
+        final long destFixOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnOffset, MergeStruct.STAGE_MERGE);
+        final long dstFix = MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnOffset) + destFixOffset;
 
         // fixed length column
-        final long srcFix1 = MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex);
+        final long srcFix1 = MergeStruct.getSrcAddressFromOffset(mergeStruct, fixColumnOffset);
         final long srcFix2 = oooColumns.getQuick(getSecondaryColumnIndex(columnIndex)).addressOf(0);
 
-        long srcVar1 = MergeStruct.getSrcVarAddress(mergeStruct, columnIndex);
+        long srcVar1 = MergeStruct.getSrcAddressFromOffset(mergeStruct, varColumnOffset);
         long srcVar2 = oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0);
 
         // reverse order
@@ -2402,18 +2420,25 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void mergeCopyStr(long[] mergeStruct, long dataOOMergeIndex, long dataOOMergeIndexLen, int columnIndex) {
+    private void mergeCopyStr(
+            long[] mergeStruct,
+            long dataOOMergeIndex,
+            long dataOOMergeIndexLen,
+            int columnIndex,
+            int fixColumnOffset,
+            int varColumnOffset
+    ) {
         // destination of variable length data
-        long destVarOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getSecondColumnOffset(columnIndex), MergeStruct.STAGE_MERGE);
-        final long destVar = MergeStruct.getDestVarAddress(mergeStruct, columnIndex);
-        final long destFixOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getFirstColumnOffset(columnIndex), MergeStruct.STAGE_MERGE);
-        final long dstFix = MergeStruct.getDestFixedAddress(mergeStruct, columnIndex) + destFixOffset;
+        long destVarOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, varColumnOffset, MergeStruct.STAGE_MERGE);
+        final long destVar = MergeStruct.getDestAddressFromOffset(mergeStruct, varColumnOffset);
+        final long destFixOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnOffset, MergeStruct.STAGE_MERGE);
+        final long dstFix = MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnOffset) + destFixOffset;
 
         // fixed length column
-        final long srcFix1 = MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex);
+        final long srcFix1 = MergeStruct.getSrcAddressFromOffset(mergeStruct, fixColumnOffset);
         final long srcFix2 = oooColumns.getQuick(getSecondaryColumnIndex(columnIndex)).addressOf(0);
 
-        long srcVar1 = MergeStruct.getSrcVarAddress(mergeStruct, columnIndex);
+        long srcVar1 = MergeStruct.getSrcAddressFromOffset(mergeStruct, varColumnOffset);
         long srcVar2 = oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0);
 
         // reverse order
@@ -2466,25 +2491,27 @@ public class TableWriter implements Closeable {
 
         try {
             for (int i = 0; i < columnCount; i++) {
+                final int fixColumnOffset = MergeStruct.getFirstColumnOffset(i);
+                final int varColumnOffset = MergeStruct.getSecondColumnOffset(i);
                 switch (metadata.getColumnType(i)) {
                     case ColumnType.BOOLEAN:
                     case ColumnType.BYTE:
-                        mergeShuffle(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, MERGE_SHUFFLE_8);
+                        mergeShuffle(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, MERGE_SHUFFLE_8);
                         break;
                     case ColumnType.SHORT:
                     case ColumnType.CHAR:
-                        mergeShuffle(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, MERGE_SHUFFLE_16);
+                        mergeShuffle(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, MERGE_SHUFFLE_16);
                         break;
                     case ColumnType.STRING:
-                        mergeCopyStr(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                        mergeCopyStr(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, varColumnOffset);
                         break;
                     case ColumnType.BINARY:
-                        mergeCopyBin(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                        mergeCopyBin(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, varColumnOffset);
                         break;
                     case ColumnType.INT:
                     case ColumnType.FLOAT:
                     case ColumnType.SYMBOL:
-                        mergeShuffle(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, MERGE_SHUFFLE_32);
+                        mergeShuffle(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, MERGE_SHUFFLE_32);
                         break;
                     case ColumnType.DOUBLE:
                     case ColumnType.LONG:
@@ -2492,10 +2519,10 @@ public class TableWriter implements Closeable {
                     case ColumnType.TIMESTAMP:
                         if (i == timestampIndex) {
                             // copy timestamp values from the merge index
-                            copyIndex(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i);
+                            copyIndex(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, fixColumnOffset);
                             break;
                         }
-                        mergeShuffle(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, MERGE_SHUFFLE_64);
+                        mergeShuffle(mergeStruct, dataOOMergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, MERGE_SHUFFLE_64);
                         break;
                 }
             }
@@ -3158,13 +3185,14 @@ public class TableWriter implements Closeable {
             long dataOOMergeIndex,
             long count,
             int columnIndex,
+            int fixColumnOffset,
             MergeShuffleOutOfOrderDataInternal shuffleFunc
     ) {
-        final long offset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getFirstColumnOffset(columnIndex), MergeStruct.STAGE_MERGE);
         shuffleFunc.shuffle(
-                MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex),
+                MergeStruct.getSrcAddressFromOffset(mergeStruct, fixColumnOffset),
                 oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0),
-                MergeStruct.getDestFixedAddress(mergeStruct, columnIndex) + offset,
+                MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnOffset)
+                        + MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnOffset, MergeStruct.STAGE_MERGE),
                 dataOOMergeIndex,
                 count
         );
@@ -3301,9 +3329,9 @@ public class TableWriter implements Closeable {
                 vo1 = getVarColumnLength(
                         prefixLo,
                         prefixHi,
-                        MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex),
-                        MergeStruct.getSrcFixedAddressSize(mergeStruct, columnIndex),
-                        MergeStruct.getSrcVarAddressSize(mergeStruct, columnIndex)
+                        MergeStruct.getSrcAddressFromOffset(mergeStruct, fixColumnStructOffset),
+                        MergeStruct.getSrcAddressSizeFromOffset(mergeStruct, fixColumnStructOffset),
+                        MergeStruct.getSrcAddressSizeFromOffset(mergeStruct, varColumnStructOffset)
                 );
                 break;
             default:
@@ -3328,9 +3356,9 @@ public class TableWriter implements Closeable {
             long dataLen = getVarColumnLength(
                     mergeDataLo,
                     mergeDataHi,
-                    MergeStruct.getSrcFixedAddress(mergeStruct, columnIndex),
-                    MergeStruct.getSrcFixedAddressSize(mergeStruct, columnIndex),
-                    MergeStruct.getSrcVarAddressSize(mergeStruct, columnIndex)
+                    MergeStruct.getSrcAddressFromOffset(mergeStruct, fixColumnStructOffset),
+                    MergeStruct.getSrcAddressSizeFromOffset(mergeStruct, fixColumnStructOffset),
+                    MergeStruct.getSrcAddressSizeFromOffset(mergeStruct, varColumnStructOffset)
             );
 
             MergeStruct.setDestAppendOffsetFromOffset2(mergeStruct, varColumnStructOffset, vo1 + oooLen + dataLen);
@@ -3341,17 +3369,17 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void oooDoOpenIndexFiles(Path path, long[] mergeStruct, int plen, int columnIndex, int columnOffset) {
+    private void oooDoOpenIndexFiles(Path path, long[] mergeStruct, int plen, int columnIndex, int fixColumnOffset) {
         final CharSequence columnName = metadata.getColumnName(columnIndex);
         BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-        MergeStruct.setDestIndexKeyFd(mergeStruct, columnIndex, openReadWriteOrFail(ff, path));
-        LOG.debug().$("open index key [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexKeyFdFromOffset(mergeStruct, columnOffset)).$(']').$();
+        MergeStruct.setDestIndexKeyFdFromOffset(mergeStruct, fixColumnOffset, openReadWriteOrFail(ff, path));
+        LOG.debug().$("open index key [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexKeyFdFromOffset(mergeStruct, fixColumnOffset)).$(']').$();
         BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-        MergeStruct.setDestIndexValueFdFromOffset(mergeStruct, columnOffset, openReadWriteOrFail(ff, path));
-        LOG.debug().$("open index value [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexValueFdFromOffset(mergeStruct, columnOffset)).$(']').$();
+        MergeStruct.setDestIndexValueFdFromOffset(mergeStruct, fixColumnOffset, openReadWriteOrFail(ff, path));
+        LOG.debug().$("open index value [path=").$(path).$(", fd=").$(MergeStruct.getDestIndexValueFdFromOffset(mergeStruct, fixColumnOffset)).$(']').$();
         // Transfer value of destination offset to the index start offset
         // This is where we need to begin indexing from. The index will contain all the values before the offset
-        MergeStruct.setDestIndexStartOffset(mergeStruct, columnIndex, MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, columnOffset, MergeStruct.STAGE_PREFIX));
+        MergeStruct.setDestIndexStartOffsetFromOffset(mergeStruct, fixColumnOffset, MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnOffset, MergeStruct.STAGE_PREFIX));
     }
 
     private void oooMapDestColumn(
@@ -3594,7 +3622,7 @@ public class TableWriter implements Closeable {
                             columnType,
                             dataFd,
                             Unsafe.getUnsafe().getLong(
-                                    MergeStruct.getDestFixedAddress(mergeStruct, i)
+                                    MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnStructOffset)
                                             + MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnStructOffset, MergeStruct.STAGE_PREFIX)
                                             - Long.BYTES
                             )
@@ -3844,17 +3872,18 @@ public class TableWriter implements Closeable {
                 // todo: this is hugely inefficient, but we will figure out to cache index writers later
                 for (int i = 0; i < columnCount; i++) {
                     if (metadata.isColumnIndexed(i)) {
-                        long row = MergeStruct.getDestIndexStartOffset(mergeStruct, i) / Integer.BYTES;
+                        final int fixColumnOffset = MergeStruct.getFirstColumnOffset(i);
+                        long row = MergeStruct.getDestIndexStartOffsetFromOffset(mergeStruct, fixColumnOffset) / Integer.BYTES;
 
                         w.of(
                                 configuration,
-                                MergeStruct.getDestIndexKeyFd(mergeStruct, i),
-                                MergeStruct.getDestIndexValueFd(mergeStruct, i),
+                                MergeStruct.getDestIndexKeyFdFromOffset(mergeStruct, fixColumnOffset),
+                                MergeStruct.getDestIndexValueFdFromOffset(mergeStruct, fixColumnOffset),
                                 row == 0
                         );
 
-                        long addr = MergeStruct.getDestFixedAddress(mergeStruct, i);
-                        final long count = MergeStruct.getDestFixedAddressSize(mergeStruct, i) / Integer.BYTES;
+                        final long addr = MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnOffset);
+                        final long count = MergeStruct.getDestAddressSizeFromOffset(mergeStruct, fixColumnOffset) / Integer.BYTES;
 
                         for (; row < count; row++) {
                             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(addr + row * Integer.BYTES)), row);
@@ -4607,7 +4636,7 @@ public class TableWriter implements Closeable {
             long shift,
             long src,
             long[] mergeStruct,
-            int columnIndex,
+            int fixColumnOffset,
             long srcLo,
             long srcHi,
             int stage
@@ -4616,8 +4645,8 @@ public class TableWriter implements Closeable {
         final long lo = srcLo << shl;
         final long hi = (srcHi + 1) << shl;
         final long slo = src + lo;
-        final long destOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, MergeStruct.getFirstColumnOffset(columnIndex), stage);
-        final long dest = MergeStruct.getDestFixedAddress(mergeStruct, columnIndex) + destOffset;
+        final long destOffset = MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnOffset, stage);
+        final long dest = MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnOffset) + destOffset;
         final long len = hi - lo;
         for (long o = 0; o < len; o += Long.BYTES) {
             Unsafe.getUnsafe().putLong(dest + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
