@@ -1529,7 +1529,8 @@ public class SqlCompiler implements Closeable {
             int bottomUpColumnIndex,
             int metadataColumnIndex,
             Function function,
-            BindVariableService bindVariableService
+            BindVariableService bindVariableService,
+            boolean populateColumnFilter
     ) throws SqlException {
 
         final int columnType = metadata.getColumnType(metadataColumnIndex);
@@ -1543,14 +1544,16 @@ public class SqlCompiler implements Closeable {
                 return;
             }
             valueFunctions.add(function);
-            listColumnFilter.add(metadataColumnIndex + 1);
+            if (populateColumnFilter) {
+                listColumnFilter.add(metadataColumnIndex + 1);
+            }
             return;
         }
 
         throw SqlException.inconvertibleTypes(
                 function.getPosition(),
                 function.getType(),
-                model.getColumnValues().getQuick(bottomUpColumnIndex).token,
+                model.getColumnValues().getQuick(0).getQuick(bottomUpColumnIndex).token,
                 metadata.getColumnType(metadataColumnIndex),
                 metadata.getColumnName(metadataColumnIndex)
         );
@@ -1565,83 +1568,106 @@ public class SqlCompiler implements Closeable {
         final ExpressionNode name = model.getTableName();
         tableExistsOrFail(name.position, name.token, executionContext);
 
-        ObjList<Function> valueFunctions = null;
+        final CharSequenceHashSet columnSet = model.getColumnSet();
+        final int columnSetSize = columnSet.size();
+        final ObjListList<ExpressionNode> columnValues = model.getColumnValues();
+        final int recordCount = columnValues.size();
+        VirtualRecord[] records = new VirtualRecord[recordCount];
+
         try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
             final int writerTimestampIndex = metadata.getTimestampIndex();
-            final CharSequenceHashSet columnSet = model.getColumnSet();
-            final int columnSetSize = columnSet.size();
             Function timestampFunction = null;
-            listColumnFilter.clear();
+            listColumnFilter.clear(); // FIXME Is this wrong?
             if (columnSetSize > 0) {
-                listColumnFilter.clear();
-                valueFunctions = new ObjList<>(columnSetSize);
-                for (int i = 0; i < columnSetSize; i++) {
-                    int index = metadata.getColumnIndexQuiet(columnSet.get(i));
-                    if (index > -1) {
-                        final ExpressionNode node = model.getColumnValues().getQuick(i);
+                listColumnFilter.clear(); // FIXME Is this wrong?
 
-                        final Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
+                boolean first = true;
+                for (int i = 0; i < recordCount; i++) {
+                    ObjList<ExpressionNode> values = columnValues.getQuick(i);
+                    ObjList<Function> valueFunctions = new ObjList<>(columnSetSize);
+
+                    for (int j = 0; j < columnSetSize; j++) {
+                        int index = metadata.getColumnIndexQuiet(columnSet.get(j));
+                        if (index > -1) {
+                            final ExpressionNode node = values.getQuick(j);
+
+                            final Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
+                            validateAndConsume(
+                                    model,
+                                    valueFunctions,
+                                    metadata,
+                                    writerTimestampIndex,
+                                    j,
+                                    index,
+                                    function,
+                                    executionContext.getBindVariableService(),
+                                    first
+                            );
+
+                            if (writerTimestampIndex == index) {
+                                timestampFunction = function;
+                            }
+                        } else {
+                            throw SqlException.invalidColumn(model.getColumnPosition(j), columnSet.get(j));
+                        }
+                    }
+
+                    records[i] = new VirtualRecord(valueFunctions);
+                    first = false;
+                }
+            } else {
+                final int columnCount = metadata.getColumnCount();
+                final int valueCount = columnValues.getQuick(0).size();
+                if (columnCount != valueCount) {
+                    throw SqlException.$(model.getEndOfValuesPosition(), "not enough values [expected=").put(columnCount).put(", actual=").put(valueCount).put(']');
+                }
+
+                boolean first = true;
+                for (int i = 0; i < recordCount; i++) {
+                    ObjList<ExpressionNode> values = columnValues.getQuick(i);
+                    ObjList<Function> valueFunctions = new ObjList<>(columnCount);
+
+                    for (int j = 0; j < columnCount; j++) {
+                        final ExpressionNode node = values.getQuick(j);
+
+                        final Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
                         validateAndConsume(
                                 model,
                                 valueFunctions,
                                 metadata,
                                 writerTimestampIndex,
-                                i,
-                                index,
+                                j,
+                                j,
                                 function,
-                                executionContext.getBindVariableService()
+                                executionContext.getBindVariableService(),
+                                first
                         );
 
-                        if (writerTimestampIndex == index) {
+                        if (writerTimestampIndex == j) {
                             timestampFunction = function;
                         }
-
-                    } else {
-                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
                     }
-                }
-            } else {
-                final int columnCount = metadata.getColumnCount();
-                final ObjList<ExpressionNode> values = model.getColumnValues();
-                final int valueCount = values.size();
-                if (columnCount != valueCount) {
-                    throw SqlException.$(model.getEndOfValuesPosition(), "not enough values [expected=").put(columnCount).put(", actual=").put(values.size()).put(']');
-                }
-                valueFunctions = new ObjList<>(columnCount);
 
-                for (int i = 0; i < columnCount; i++) {
-                    final ExpressionNode node = values.getQuick(i);
-
-                    Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                    validateAndConsume(
-                            model,
-                            valueFunctions,
-                            metadata,
-                            writerTimestampIndex,
-                            i,
-                            i,
-                            function,
-                            executionContext.getBindVariableService()
-                    );
-
-                    if (writerTimestampIndex == i) {
-                        timestampFunction = function;
-                    }
+                    records[i] = new VirtualRecord(valueFunctions);
+                    first = false;
                 }
             }
 
-            // validate timestamp
             if (writerTimestampIndex > -1 && timestampFunction == null) {
                 throw SqlException.$(0, "insert statement must populate timestamp");
             }
 
-            VirtualRecord record = new VirtualRecord(valueFunctions);
-            RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
-            return compiledQuery.ofInsert(new InsertStatementImpl(engine, Chars.toString(name.token), record, copier, timestampFunction, structureVersion));
+            RecordToRowCopier copier = assembleRecordToRowCopier(asm, records[0], metadata, listColumnFilter);
+            return compiledQuery.ofInsert(new InsertStatementImpl(engine, Chars.toString(name.token), records, copier, timestampFunction, structureVersion));
         } catch (SqlException e) {
-            Misc.freeObjList(valueFunctions);
+            for (int i = 0; i < recordCount; i++) {
+                VirtualRecord record = records[i];
+                if (record != null) {
+                    Misc.freeObjList(record.getFunctions());
+                }
+            }
             throw e;
         }
     }
@@ -1760,7 +1786,8 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(tableName.position, "literal expected");
         }
 
-        if (model.getColumnSet().size() > 0 && model.getColumnSet().size() != model.getColumnValues().size()) {
+        int columnSetSize = model.getColumnSet().size();
+        if (columnSetSize > 0 && columnSetSize != model.getColumnValues().getQuick(0).size()) {
             throw SqlException.$(model.getColumnPosition(0), "value count does not match column count");
         }
 

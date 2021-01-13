@@ -929,18 +929,26 @@ public final class SqlParser {
         }
 
         if (isValuesKeyword(tok)) {
-            expectTok(lexer, '(');
+            model.beginAddColumnValues();
 
             do {
-                ExpressionNode expr = expectExpr(lexer);
-                if (Chars.equals(expr.token, ')')) {
-                    throw err(lexer, "missing column value");
-                }
+                expectTok(lexer, '(');
+                model.addNewColumnValues();
 
-                model.addColumnValue(expr);
-            } while (Chars.equals((tok = tok(lexer, "','")), ','));
+                do {
+                    ExpressionNode expr = expectExpr(lexer);
+                    if (Chars.equals(expr.token, ')')) {
+                        throw err(lexer, "missing column value");
+                    }
 
-            expectTok(tok, lexer.lastTokenPosition(), ')');
+                    model.addColumnValue(expr);
+                } while (Chars.equals((tok = tok(lexer, "','")), ','));
+
+                expectTok(tok, lexer.lastTokenPosition(), ')');
+
+                tok = optTok(lexer);
+            } while (tok != null && Chars.equals(tok, ','));
+
             model.setEndOfValuesPosition(lexer.lastTokenPosition());
 
             return model;

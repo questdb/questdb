@@ -30,7 +30,7 @@ import io.questdb.std.str.CharSink;
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
     private final CharSequenceHashSet columnSet = new CharSequenceHashSet();
-    private final ObjList<ExpressionNode> columnValues = new ObjList<>();
+    private final ObjListList<ExpressionNode> columnValues = new ObjListList<>();
     private final IntList columnPositions = new IntList();
     private ExpressionNode tableName;
     private QueryModel queryModel;
@@ -46,6 +46,14 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
             return true;
         }
         return false;
+    }
+
+    public void beginAddColumnValues() {
+        columnValues.resetCursor();
+    }
+
+    public void addNewColumnValues() {
+        columnValues.advanceCursor();
     }
 
     public void addColumnValue(ExpressionNode value) {
@@ -71,7 +79,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return columnSet;
     }
 
-    public ObjList<ExpressionNode> getColumnValues() {
+    public ObjListList<ExpressionNode> getColumnValues() {
         return columnValues;
     }
 
@@ -129,16 +137,24 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         if (queryModel != null) {
             queryModel.toSink(sink);
         } else {
-            sink.put("values (");
+            sink.put("values ");
 
             for (int i = 0, m = columnValues.size(); i < m; i++) {
                 if (i > 0) {
                     sink.put(", ");
                 }
-                sink.put(columnValues.getQuick(i));
-            }
+                sink.put('(');
 
-            sink.put(')');
+                ObjList<ExpressionNode> values = columnValues.getQuick(i);
+                for (int j = 0, o = values.size(); j < o; j++) {
+                    if (j > 0) {
+                        sink.put(", ");
+                    }
+                    sink.put(values.getQuick(j));
+                }
+
+                sink.put(')');
+            }
         }
     }
 }

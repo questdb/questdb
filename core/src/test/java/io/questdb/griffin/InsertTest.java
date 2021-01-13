@@ -595,6 +595,25 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testBulkInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab (a int, b string);", sqlExecutionContext);
+            executeInsert("insert into tab VALUES (1, 'a'), (2, 'b'), (3, 'c');");
+
+            final String expected = "a\tb\n" +
+                    "1\ta\n" +
+                    "2\tb\n" +
+                    "3\tc\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
     private void testBindVariableInsert(
             int partitionBy,
             TimestampFunction timestampFunction,
