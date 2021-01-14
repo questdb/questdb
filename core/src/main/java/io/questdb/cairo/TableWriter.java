@@ -2543,9 +2543,12 @@ public class TableWriter implements Closeable {
             // to determine that 'ooTimestampLo' goes into current partition
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
+            long t1 = System.nanoTime();
+            long t2 = t1;
             LOG.info().$("sorting [name=").$(name).$(']').$();
             final long mergedTimestamps = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(mergedTimestamps, mergeRowCount);
+            System.out.println("radix: " + ((t2 = System.nanoTime()) - t1));
 
             // reshuffle all variable length columns
             for (int i = 0; i < columnCount; i++) {
@@ -2581,7 +2584,11 @@ public class TableWriter implements Closeable {
                 }
             }
 
+            System.out.println("shuffle: " + ((t1 = System.nanoTime()) - t2));
+
             Vect.flattenIndex(mergedTimestamps, mergeRowCount);
+
+            System.out.println("flatten: " + ((t2 = System.nanoTime()) - t1));
 
             // we have three frames:
             // partition logical "lo" and "hi" - absolute bounds (partitionLo, partitionHi)
@@ -2624,6 +2631,7 @@ public class TableWriter implements Closeable {
                             .$(", partitionTimestampHi=").microTime(partitionTimestampHi)
                             .$(", minTimestamp=").microTime(minTimestamp)
                             .$(']').$();
+                    System.out.println("search: " + ((t1 = System.nanoTime()) - t2));
                 } else {
                     indexHi = indexMax - 1;
                     LOG.debug()
@@ -2633,6 +2641,7 @@ public class TableWriter implements Closeable {
                             .$(", partitionTimestampHi=").microTime(partitionTimestampHi)
                             .$(", minTimestamp=").microTime(minTimestamp)
                             .$(']').$();
+                    System.out.println("skip search: " + ((t1 = System.nanoTime()) - t2));
                 }
 
                 long timestampFd = 0;
@@ -2656,9 +2665,12 @@ public class TableWriter implements Closeable {
                             indexHi,
                             indexMax
                     );
+                    System.out.println("append open: " + ((t2 = System.nanoTime()) - t1));
                     try {
                         copyOutOfOrderData(indexLo, indexHi, mergeStruct, timestampIndex, 0);
+                        System.out.println("copyOutOfOrderData: " + ((t1 = System.nanoTime()) - t2));
                         oooUpdateIndexes(mergeStruct);
+                        System.out.println("oooUpdateIndexes: " + ((t2 = System.nanoTime()) - t1));
                     } finally {
                         freeMergeStruct(mergeStruct);
                     }
@@ -2939,6 +2951,8 @@ public class TableWriter implements Closeable {
                             timestampSearchColumn.detach();
                         }
 
+                        System.out.println("prepare: " + ((t2 = System.nanoTime()) - t1));
+
                         path.trimTo(plen);
                         final long[] mergeStruct;
                         if (prefixType == OO_BLOCK_NONE && mergeType == OO_BLOCK_NONE) {
@@ -2996,6 +3010,8 @@ public class TableWriter implements Closeable {
                                 );
                             }
                         }
+
+                        System.out.println("open: " + ((t1 = System.nanoTime()) - t2));
                         try {
                             switch (prefixType) {
                                 case OO_BLOCK_OO:
@@ -3009,6 +3025,8 @@ public class TableWriter implements Closeable {
                                 default:
                                     break;
                             }
+
+                            System.out.println("prefix: " + ((t2 = System.nanoTime()) - t1));
 
                             switch (mergeType) {
                                 case OO_BLOCK_MERGE:
@@ -3040,6 +3058,8 @@ public class TableWriter implements Closeable {
                                     break;
                             }
 
+                            System.out.println("merge: " + ((t1 = System.nanoTime()) - t2));
+
                             switch (suffixType) {
                                 case OO_BLOCK_OO:
                                     LOG.info().$("copy ooo suffix set [from=").$(suffixLo).$(", to=").$(suffixHi).$(']').$();
@@ -3052,7 +3072,12 @@ public class TableWriter implements Closeable {
                                 default:
                                     break;
                             }
+
+                            System.out.println("suffix: " + ((t2 = System.nanoTime()) - t1));
+
                             oooUpdateIndexes(mergeStruct);
+
+                            System.out.println("oooUpdateIndexes: " + ((t1 = System.nanoTime()) - t2));
                         } finally {
                             freeMergeStruct(mergeStruct);
                         }
@@ -3095,6 +3120,7 @@ public class TableWriter implements Closeable {
                                         .put(", to=").put(other).put(']');
                             }
                         }
+                        System.out.println("other: " + ((t2 = System.nanoTime()) - t1));
                     } finally {
                         if (timestampFd > 0) {
                             ff.close(timestampFd);
