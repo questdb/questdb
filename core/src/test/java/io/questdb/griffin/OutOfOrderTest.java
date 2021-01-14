@@ -37,6 +37,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -861,6 +862,70 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     assertSqlResultAgainstFile("x", "/oo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt");
 
                     assertIndexConsistency();
+                }
+        );
+    }
+
+    @Test
+    public void testBench() throws Exception {
+        assertMemoryLeak(() -> {
+
+                    // create table with roughly 2AM data
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " round(rnd_double(0)*100, 3) amt," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                    " rnd_boolean() b," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) ik," +
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(10000000000,1000000L) ts," +
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
+                                    " from long_sequence(1000000)" +
+                                    "), index(sym) timestamp (ts) partition by DAY",
+                            sqlExecutionContext
+                    );
+
+                    // create table with 1AM data
+
+                    compiler.compile(
+                            "create table 1am as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " round(rnd_double(0)*100, 3) amt," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                    " rnd_boolean() b," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) ik," +
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(3000000000l,100000000L) ts," + // mid partition for "x"
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
+                                    " from long_sequence(1000000)" +
+                                    ")",
+                            sqlExecutionContext
+                    );
+
+                    engine.releaseAllReaders();
+
+                    compiler.compile("insert into x select * from 1am", sqlExecutionContext);
                 }
         );
     }

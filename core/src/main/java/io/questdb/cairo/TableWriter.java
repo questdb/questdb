@@ -2544,7 +2544,7 @@ public class TableWriter implements Closeable {
             // we need to compare 'partitionTimestampHi', which is appropriately truncated to DAY/MONTH/YEAR
             // to this.maxTimestamp, which isn't truncated yet. So we need to truncate it first
             long t1 = System.nanoTime();
-            long t2 = t1;
+            long t2;
             LOG.info().$("sorting [name=").$(name).$(']').$();
             final long mergedTimestamps = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(mergedTimestamps, mergeRowCount);
@@ -2810,9 +2810,14 @@ public class TableWriter implements Closeable {
                                             mergeType = OO_BLOCK_DATA;
                                             mergeOOOHi--;
                                         }
-                                        suffixLo = mergeOOOHi + 1;
-                                        suffixType = OO_BLOCK_OO;
-                                        suffixHi = indexHi;
+
+                                        if (mergeOOOHi < indexHi) {
+                                            suffixLo = mergeOOOHi + 1;
+                                            suffixType = OO_BLOCK_OO;
+                                            suffixHi = Math.max(suffixLo, indexHi);
+                                        } else {
+                                            suffixType = OO_BLOCK_NONE;
+                                        }
                                     } else {
 
                                         // |      | |     |
