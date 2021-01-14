@@ -110,7 +110,10 @@ public class SendAndReceiveRequestBuilder {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             try {
                 Assert.assertTrue(fd > -1);
-                Assert.assertEquals(0, nf.connect(fd, sockAddr));
+                long ret = nf.connect(fd, sockAddr);
+                if (ret != 0) {
+                    Assert.fail("could not connect: " + nf.errno());
+                }
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
 
                 byte[] expectedResponse = response.getBytes();

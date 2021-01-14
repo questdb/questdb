@@ -27,10 +27,15 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -42,12 +47,11 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
@@ -56,12 +60,12 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
-
-    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
+
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
+    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -78,6 +82,31 @@ public class IODispatcherTest {
             }
             writer.commit();
         }
+    }
+
+    @Test
+    public void queryWithDoubleQuotesParsedCorrecly() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    // select 1 as "select"
+                    // with select being the column name to check double quote parsing
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
+                            "67\r\n"
+                                    + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
+                                    + "00\r\n"
+                                    + "\r\n"
+                    );
+                });
+    }
+
+    @Before
+    public void setUp3() {
+        SharedRandom.RANDOM.set(new Rnd());
     }
 
     @Test
@@ -2488,6 +2517,206 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    private static class QueryThread extends Thread {
+        private final String[][] requests;
+        private final int count;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final AtomicInteger errorCounter;
+
+        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
+            this.requests = requests;
+            this.count = count;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.errorCounter = errorCounter;
+        }
+
+        @Override
+        public void run() {
+            final Rnd rnd = new Rnd();
+            try {
+                barrier.await();
+                for (int i = 0; i < count; i++) {
+                    int index = rnd.nextPositiveInt() % requests.length;
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            requests[index][0],
+                            requests[index][1],
+                            1,
+                            0,
+                            false
+                    );
+                }
+            } catch (Throwable e) {
+                e.printStackTrace();
+                errorCounter.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        }
+    }
+    @Test
+    @Ignore
+    public void testJsonQueryMultiThreaded() throws Exception {
+
+        final StringSink sink = new StringSink();
+        final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
+        final int threadCount = 1;
+        final int requestsPerThread = 1_000_000;
+        final String[][] requests = {
+                {
+                        "GET /exec?query=xyz%20where%20sym%20%3D%20%27UDEYY%27 HTTP/1.1\r\n" +
+                                "Host: localhost:9001\r\n" +
+                                "Connection: keep-alive\r\n" +
+                                "Cache-Control: max-age=0\r\n" +
+                                "Upgrade-Insecure-Requests: 1\r\n" +
+                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                "\r\n",
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Server: questDB/1.0\r\n" +
+                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                "\r\n" +
+                                "d9\r\n" +
+                                "{\"query\":\"xyz where sym = 'UDEYY'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"UDEYY\",0.15786635599554755],[\"UDEYY\",0.8445258177211064],[\"UDEYY\",0.5778947915182423]],\"count\":3}\r\n" +
+                                "00\r\n" +
+                                "\r\n"
+                },
+                {
+                        "GET /exec?query=xyz%20where%20sym%20%3D%20%27QEHBH%27 HTTP/1.1\r\n" +
+                                "Host: localhost:9001\r\n" +
+                                "Connection: keep-alive\r\n" +
+                                "Cache-Control: max-age=0\r\n" +
+                                "Upgrade-Insecure-Requests: 1\r\n" +
+                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                "\r\n",
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Server: questDB/1.0\r\n" +
+                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                "\r\n" +
+                                "0114\r\n" +
+                                "{\"query\":\"xyz where sym = 'QEHBH'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"QEHBH\",0.4022810626779558],[\"QEHBH\",0.9038068796506872],[\"QEHBH\",0.05048190020054388],[\"QEHBH\",0.4149517697653501],[\"QEHBH\",0.44804689668613573]],\"count\":5}\r\n" +
+                                "00\r\n" +
+                                "\r\n"
+                },
+                {
+                        "GET /exec?query=xyz%20where%20sym%20%3D%20%27SXUXI%27 HTTP/1.1\r\n" +
+                                "Host: localhost:9001\r\n" +
+                                "Connection: keep-alive\r\n" +
+                                "Cache-Control: max-age=0\r\n" +
+                                "Upgrade-Insecure-Requests: 1\r\n" +
+                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                "\r\n",
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Server: questDB/1.0\r\n" +
+                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                "\r\n" +
+                                "da\r\n" +
+                                "{\"query\":\"xyz where sym = 'SXUXI'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"SXUXI\",0.6761934857077543],[\"SXUXI\",0.38642336707855873],[\"SXUXI\",0.48558682958070665]],\"count\":3}\r\n" +
+                                "00\r\n" +
+                                "\r\n"
+                },
+                {
+                        "GET /exec?query=xyz%20where%20sym%20%3D%20%27VTJWC%27 HTTP/1.1\r\n" +
+                                "Host: localhost:9001\r\n" +
+                                "Connection: keep-alive\r\n" +
+                                "Cache-Control: max-age=0\r\n" +
+                                "Upgrade-Insecure-Requests: 1\r\n" +
+                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                "\r\n",
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Server: questDB/1.0\r\n" +
+                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                "\r\n" +
+                                "f4\r\n" +
+                                "{\"query\":\"xyz where sym = 'VTJWC'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"dataset\":[[\"VTJWC\",0.3435685332942956],[\"VTJWC\",0.8258367614088108],[\"VTJWC\",0.437176959518218],[\"VTJWC\",0.7176053468281931]],\"count\":4}\r\n" +
+                                "00\r\n" +
+                                "\r\n"
+                }
+        };
+        final String baseDir = temp.getRoot().getAbsolutePath();
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+        try (
+                CairoEngine cairoEngine = new CairoEngine(configuration);
+                HttpServer ignored = HttpServer.create(
+                        new DefaultHttpServerConfiguration(
+                                new DefaultHttpContextConfiguration() {
+                                    @Override
+                                    public MillisecondClock getClock() {
+                                        return StationaryMillisClock.INSTANCE;
+                                    }
+                                },
+                                new DefaultIODispatcherConfiguration() {
+                                    @Override
+                                    public int getActiveConnectionLimit() {
+                                        return threadCount * 2;
+                                    }
+
+                                    @Override
+                                    public int getListenBacklog() {
+                                        return 1024;
+                                    }
+                                }
+
+                        ),
+                        null,
+                        LOG,
+                        cairoEngine
+                )) {
+
+            final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(cairoEngine, 1);
+            try (SqlCompiler compiler = new SqlCompiler(cairoEngine)) {
+                compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30))", sqlExecutionContext);
+
+                final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                final CountDownLatch latch = new CountDownLatch(threadCount);
+                final AtomicInteger errorCount = new AtomicInteger(0);
+
+                for (int i = 0; i < threadCount; i ++) {
+                    new QueryThread(
+                            requests,
+                            requestsPerThread,
+                            barrier,
+                            latch,
+                            errorCount
+                    ).start();
+                }
+
+                latch.await();
+                Assert.assertEquals(0, errorCount.get());
+
+//                try (RecordCursorFactory f = compiler.compile("select distinct sym from xyz", sqlExecutionContext).getRecordCursorFactory()) {
+//                    printer.print(f.getCursor(sqlExecutionContext), f.getMetadata(), true);
+//                    System.out.println(sink);
+//                }
+            }
+        }
     }
 
     @Test
@@ -5066,26 +5295,6 @@ public class IODispatcherTest {
         });
     }
 
-    @Test
-    public void queryWithDoubleQuotesParsedCorrecly() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(engine -> {
-                    // select 1 as "select"
-                    // with select being the column name to check double quote parsing
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
-                            "67\r\n"
-                                    + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
-                                    + "00\r\n"
-                                    + "\r\n"
-                    );
-                });
-    }
-
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
@@ -5193,7 +5402,7 @@ public class IODispatcherTest {
                 .build();
     }
 
-    private void sendAndReceive(
+    private static void sendAndReceive(
             NetworkFacade nf,
             String request,
             String response,
@@ -5212,7 +5421,7 @@ public class IODispatcherTest {
         );
     }
 
-    private void sendAndReceive(
+    private static void sendAndReceive(
             NetworkFacade nf,
             String request,
             String response,
