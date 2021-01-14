@@ -55,9 +55,21 @@ public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
 
     int getIdleSendCountBeforeGivingUp();
 
+    int getInsertCacheBlockCount();
+
+    int getInsertCacheRowCount();
+
+    int getInsertPoolCapacity();
+
     int getMaxBlobSizeOnQuery();
 
+    int getNamedStatementCacheCapacity();
+
+    int getNamesStatementPoolCapacity();
+
     NetworkFacade getNetworkFacade();
+
+    int getPendingWritersCacheSize();
 
     int getRecvBufferSize();
 
