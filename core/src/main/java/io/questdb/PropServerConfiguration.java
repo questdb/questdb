@@ -178,6 +178,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlAnalyticRowIdMaxPages;
     private final int sqlAnalyticTreeKeyPageSize;
     private final int sqlAnalyticTreeKeyMaxPages;
+    private final String databaseRoot;
+    private final long maxRerunWaitCapMs;
+    private final double rerunExponentialWaitMultiplier;
+    private final int rerunInitialWaitQueueSize;
+    private final int rerunMaxProcessingQueueSize;
+    private final BuildInformation buildInformation;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -215,7 +221,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
     private MimeTypesCache mimeTypesCache;
-    private String databaseRoot;
     private String keepAliveHeader;
     private int httpBindIPv4Address;
     private int httpBindPort;
@@ -257,10 +262,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgWorkerCount;
     private boolean pgHaltOnError;
     private boolean pgDaemonPool;
-    private long maxRerunWaitCapMs;
-    private double rerunExponentialWaitMultiplier;
-    private int rerunInitialWaitQueueSize;
-    private int rerunMaxProcessingQueueSize;
+    private int pgInsertCacheBlockCount;
+    private int pgInsertCacheRowCount;
+    private int pgInsertPoolCapacity;
+    private int pgNamedStatementCacheCapacity;
+    private int pgNamesStatementPoolCapacity;
+    private int pgPendingWritersCacheCapacity;
     private int lineTcpNetActiveConnectionLimit;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
@@ -295,7 +302,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
-    private final BuildInformation buildInformation;
 
     public PropServerConfiguration(
             String root,
@@ -459,6 +465,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
             this.pgHaltOnError = getBoolean(properties, env, "pg.halt.on.error", false);
             this.pgDaemonPool = getBoolean(properties, env, "pg.daemon.pool", true);
+            this.pgInsertCacheBlockCount = getInt(properties, env, "pg.insert.cache.block.count", 8);
+            this.pgInsertCacheRowCount = getInt(properties, env, "pg.insert.cache.row.count", 8);
+            this.pgInsertPoolCapacity = getInt(properties, env, "pg.insert.pool.capacity", 64);
+            this.pgNamedStatementCacheCapacity = getInt(properties, env, "pg.named.statement.cache.capacity", 32);
+            this.pgNamesStatementPoolCapacity = getInt(properties, env, "pg.named.statement.pool.capacity", 32);
+            this.pgPendingWritersCacheCapacity = getInt(properties, env, "pg.pending.writers.cache.capacity", 16);
         }
 
         this.commitMode = getCommitMode(properties, env, "cairo.commit.mode");
@@ -2162,13 +2174,43 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getInsertCacheBlockCount() {
+            return pgInsertCacheBlockCount;
+        }
+
+        @Override
+        public int getInsertCacheRowCount() {
+            return pgInsertCacheRowCount;
+        }
+
+        @Override
+        public int getInsertPoolCapacity() {
+            return pgInsertPoolCapacity;
+        }
+
+        @Override
         public int getMaxBlobSizeOnQuery() {
             return pgMaxBlobSizeOnQuery;
         }
 
         @Override
+        public int getNamedStatementCacheCapacity() {
+            return pgNamedStatementCacheCapacity;
+        }
+
+        @Override
+        public int getNamesStatementPoolCapacity() {
+            return pgNamesStatementPoolCapacity;
+        }
+
+        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getPendingWritersCacheSize() {
+            return pgPendingWritersCacheCapacity;
         }
 
         @Override

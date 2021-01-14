@@ -22,24 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.pool;
 
-import io.questdb.cairo.pool.WriterSource;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.TableWriter;
 
-import java.io.Closeable;
-
-public interface InsertStatement extends Closeable {
-    @Override
-    void close();
-
-    InsertMethod createMethod(SqlExecutionContext executionContext);
-
-    InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource);
-
-    long getStructureVersion();
-
-    CharSequence getTableName();
-
-    void detachWriter();
+@FunctionalInterface
+public interface WriterSource {
+    TableWriter getWriter(CairoSecurityContext context, CharSequence name);
 }

@@ -147,4 +147,34 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     public DateLocale getDefaultDateLocale() {
         return DateFormatUtils.enLocale;
     }
+
+    @Override
+    public int getInsertCacheBlockCount() {
+        return 8;
+    }
+
+    @Override
+    public int getInsertCacheRowCount() {
+        return 8;
+    }
+
+    @Override
+    public int getInsertPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getNamedStatementCacheCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getNamesStatementPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getPendingWritersCacheSize() {
+        return 16;
+    }
 }

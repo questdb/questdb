@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.MessageBus;
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
@@ -46,7 +47,7 @@ import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
-public class PGConnectionContext implements IOContext, Mutable {
+public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
@@ -107,15 +108,14 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final Path path = new Path();
     private final IntList bindVariableTypes = new IntList();
     private final IntList selectColumnTypes = new IntList();
-    /// todo: config
-    private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, 16);
-    private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, 8);
+    private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
+    private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool;
     private final DateLocale locale;
-    private final ObjHashSet<InsertMethod> pendingInsertMethods = new ObjHashSet<>();
+    private final CharSequenceObjHashMap<TableWriter> pendingWriters;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
-    private final AssociativeCache<TypesAndInsert> typesAndInsertCache = new AssociativeCache<>(8, 8);
-    private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap = new CharSequenceObjHashMap<>();
+    private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
+    private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final IntList syncActions = new IntList(4);
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
@@ -149,6 +149,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
+    private final CairoEngine engine;
 
     public PGConnectionContext(
             CairoEngine engine,
@@ -156,6 +157,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             @Nullable MessageBus messageBus,
             int workerCount
     ) {
+        this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
         this.nf = configuration.getNetworkFacade();
@@ -179,6 +181,23 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.locale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
+        this.namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 16
+        this.typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 32
+        this.typesAndInsertCache = new AssociativeCache<>(
+                configuration.getInsertCacheBlockCount(), // 8
+                configuration.getInsertCacheRowCount()
+        );
+        this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+        this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
+    }
+
+    @Override
+    public TableWriter getWriter(CairoSecurityContext context, CharSequence name) {
+        final int index = pendingWriters.keyIndex(name);
+        if (index < 0) {
+            return pendingWriters.valueAt(index);
+        }
+        return engine.getWriter(context, name);
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -257,10 +276,10 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     public void clearWriters() {
-        for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
-            Misc.free(pendingInsertMethods.get(i));
+        for (int i = 0, n = pendingWriters.size(); i < n; i++) {
+            Misc.free(pendingWriters.valueQuick(i));
         }
-        pendingInsertMethods.clear();
+        pendingWriters.clear();
     }
 
     @Override
@@ -934,12 +953,14 @@ public class PGConnectionContext implements IOContext, Mutable {
                     LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
                     break;
                 case CompiledQuery.INSERT:
+                    queryTag = TAG_INSERT;
                     typesAndInsert = typesAndInsertPool.pop();
                     typesAndInsert.of(cc.getInsertStatement(), bindVariableService);
-                    queryTag = TAG_INSERT;
-                    LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
-                    // we can add insert to cache right away because it is local to the connection
-                    typesAndInsertCache.put(queryText, typesAndInsert);
+                    if (bindVariableService.getIndexedVariableCount() > 0) {
+                        LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
+                        // we can add insert to cache right away because it is local to the connection
+                        typesAndInsertCache.put(queryText, typesAndInsert);
+                    }
                     break;
                 case CompiledQuery.COPY_LOCAL:
                     // uncached
@@ -1095,19 +1116,21 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void executeInsert() {
+        final TableWriter w;
         try {
             switch (transactionState) {
                 case IN_TRANSACTION:
-                    final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext);
+                    final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this);
                     rowCount = m.execute();
-                    pendingInsertMethods.add(m);
+                    w = m.getWriter();
+                    pendingWriters.put(w.getName(), w);
                     break;
                 case ERROR_TRANSACTION:
                     // when transaction is in error state, skip execution
                     break;
                 default:
                     // in any other case we will commit in place
-                    try (final InsertMethod m2 = typesAndInsert.getInsert().createMethod(sqlExecutionContext)) {
+                    try (final InsertMethod m2 = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this)) {
                         rowCount = m2.execute();
                         m2.commit();
                     }
@@ -1568,22 +1591,35 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     private void executeTag0() {
-        if (transactionState == COMMIT_TRANSACTION) {
-            for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
-                final InsertMethod m = pendingInsertMethods.get(i);
-                m.commit();
-                Misc.free(m);
-            }
-            pendingInsertMethods.clear();
-            transactionState = NO_TRANSACTION;
-        } else if (transactionState == ROLLING_BACK_TRANSACTION) {
-            for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
-                InsertMethod m = pendingInsertMethods.get(i);
-                m.rollback();
-                Misc.free(m);
-            }
-            pendingInsertMethods.clear();
-            transactionState = NO_TRANSACTION;
+        switch (transactionState) {
+            case COMMIT_TRANSACTION:
+                try {
+                    for (int i = 0, n = pendingWriters.size(); i < n; i++) {
+                        final TableWriter m = pendingWriters.valueQuick(i);
+                        m.commit();
+                        Misc.free(m);
+                    }
+                } finally {
+                    pendingWriters.clear();
+                    transactionState = NO_TRANSACTION;
+                }
+                break;
+            case ROLLING_BACK_TRANSACTION:
+                try {
+                    for (int i = 0, n = pendingWriters.size(); i < n; i++) {
+                        final TableWriter m = pendingWriters.valueQuick(i);
+                        m.rollback();
+                        Misc.free(m);
+                    }
+                } finally {
+                    pendingWriters.clear();
+                    transactionState = NO_TRANSACTION;
+                }
+                break;
+            default:
+                break;
+
+
         }
     }
 
