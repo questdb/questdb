@@ -1560,6 +1560,33 @@ public class PGConnectionContext implements IOContext, Mutable {
         wrapper = null;
     }
 
+    private void executeTag() {
+        LOG.debug().$("executing [tag=").$(queryTag).$(']').$();
+        if (queryTag != null && TAG_OK != queryTag) {  //do not run this for OK tag (i.e.: create table)
+            executeTag0();
+        }
+    }
+
+    private void executeTag0() {
+        if (transactionState == COMMIT_TRANSACTION) {
+            for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
+                final InsertMethod m = pendingInsertMethods.get(i);
+                m.commit();
+                Misc.free(m);
+            }
+            pendingInsertMethods.clear();
+            transactionState = NO_TRANSACTION;
+        } else if (transactionState == ROLLING_BACK_TRANSACTION) {
+            for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
+                InsertMethod m = pendingInsertMethods.get(i);
+                m.rollback();
+                Misc.free(m);
+            }
+            pendingInsertMethods.clear();
+            transactionState = NO_TRANSACTION;
+        }
+    }
+
     private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
@@ -1571,26 +1598,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             LOG.debug().$("executing insert").$();
             executeInsert();
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
-            LOG.debug().$("executing [tag=").$(queryTag).$(']').$();
-            if (queryTag != null && TAG_OK != queryTag) {  //do not run this for OK tag (i.e.: create table)
-                if (transactionState == COMMIT_TRANSACTION) {
-                    for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
-                        final InsertMethod m = pendingInsertMethods.get(i);
-                        m.commit();
-                        Misc.free(m);
-                    }
-                    pendingInsertMethods.clear();
-                    transactionState = NO_TRANSACTION;
-                } else if (transactionState == ROLLING_BACK_TRANSACTION) {
-                    for (int i = 0, n = pendingInsertMethods.size(); i < n; i++) {
-                        InsertMethod m = pendingInsertMethods.get(i);
-                        m.rollback();
-                        Misc.free(m);
-                    }
-                    pendingInsertMethods.clear();
-                    transactionState = NO_TRANSACTION;
-                }
-            }
+            executeTag();
             prepareCommandComplete(false);
         }
     }
@@ -1750,6 +1758,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         } else if (typesAndInsert != null) {
             executeInsert();
         } else {
+            executeTag();
             prepareCommandComplete(false);
         }
         prepareReadyForQuery();

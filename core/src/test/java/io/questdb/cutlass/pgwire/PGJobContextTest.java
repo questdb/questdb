@@ -698,6 +698,33 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSimpleModeTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(true, true)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table xyz(a int)").execute();
+                connection.prepareStatement("insert into xyz values (100)").execute();
+                connection.commit();
+
+                try (
+                        PreparedStatement ps = connection.prepareStatement("xyz");
+                        ResultSet rs = ps.executeQuery()
+                ) {
+                    assertResultSet(
+                            "a[INTEGER]\n" +
+                                    "100\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCharIntLongDoubleBooleanParametersWithoutExplicitParameterTypeHex() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
