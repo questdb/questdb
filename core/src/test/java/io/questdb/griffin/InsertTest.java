@@ -614,6 +614,107 @@ public class InsertTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testTypeConversions() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab (b byte, c char, s short, i int, l long, bo boolean, f float, d double);", sqlExecutionContext);
+            executeInsert("insert into tab VALUES (null, null, null, null, null, null, null, null);");
+
+            final String expected = "b\tc\ts\ti\tl\tbo\tf\td\n" +
+                    "0\t \t0\t0\t0\tfalse\t0.0000\t0.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tab")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab2 (b byte, c char, s short, i int, l long, f float);", sqlExecutionContext);
+            executeInsert("insert into tab2 VALUES (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);");
+
+            final String expected = "b\tc\ts\ti\tl\tf\n" +
+                    "0\t\t0\t0\t0\t0.0000\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tab2")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab3 (b byte, c char, s short, i int, l long, d double);", sqlExecutionContext);
+            executeInsert("insert into tab3 VALUES (0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000);");
+
+            final String expected = "b\tc\ts\ti\tl\td\n" +
+                    "0\t\t0\t0\t0\t0.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tab3")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab4 (b byte, c char, s short, i int, f float, d double);", sqlExecutionContext);
+            executeInsert("insert into tab4 VALUES (cast(0 as long), cast(0 as long), cast(0 as long), cast(0 as long), cast(0 as long), cast(0 as long));");
+
+            final String expected = "b\tc\ts\ti\tf\td\n" +
+                    "0\t\t0\t0\t0.0000\t0.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tab4")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab5 (b byte, c char, s short, l long, f float, d double);", sqlExecutionContext);
+            executeInsert("insert into tab5 VALUES (0, 0, 0, 0, 0, 0);");
+
+            final String expected = "b\tc\ts\tl\tf\td\n" +
+                    "0\t\t0\t0\t0.0000\t0.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tab5")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab6 (b byte, c char, i int, l long, f float, d double);", sqlExecutionContext);
+            executeInsert("insert into tab6 VALUES (cast(0 as short), cast(0 as short), cast(0 as short), cast(0 as short), cast(0 as short), cast(0 as short));");
+
+            final String expected = "b\tc\ti\tl\tf\td\n" +
+                    "0\t\t0\t0\t0.0000\t0.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tab6")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab7 (b byte, s short, i int, l long, f float, d double);", sqlExecutionContext);
+            executeInsert("insert into tab7 VALUES (' ', ' ', ' ', ' ', ' ', ' ');");
+
+            final String expected = "b\ts\ti\tl\tf\td\n" +
+                    "32\t32\t32\t32\t32.0000\t32.0\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tab7")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
     private void testBindVariableInsert(
             int partitionBy,
             TimestampFunction timestampFunction,

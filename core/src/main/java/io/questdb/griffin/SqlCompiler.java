@@ -33,6 +33,7 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
+import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -1534,12 +1535,23 @@ public class SqlCompiler implements Closeable {
     ) throws SqlException {
 
         final int columnType = metadata.getColumnType(metadataColumnIndex);
+        final int position = function.getPosition();
 
+        boolean converted;
         if (function.isUndefined()) {
+            converted = false;
             function.assignType(columnType, bindVariableService);
+        } else {
+            Function function2 = applyTypeConversions(function, columnType, position);
+            converted = function2 != function;
+            if (converted) {
+                function.close();
+                function = function2;
+            }
         }
 
-        if (isAssignableFrom(columnType, function.getType())) {
+        int functionType = function.getType();
+        if (converted || isAssignableFrom(columnType, functionType)) {
             if (metadataColumnIndex == writerTimestampIndex) {
                 return;
             }
@@ -1551,12 +1563,119 @@ public class SqlCompiler implements Closeable {
         }
 
         throw SqlException.inconvertibleTypes(
-                function.getPosition(),
-                function.getType(),
+                position,
+                functionType,
                 model.getColumnValues().getQuick(0).getQuick(bottomUpColumnIndex).token,
                 metadata.getColumnType(metadataColumnIndex),
                 metadata.getColumnName(metadataColumnIndex)
         );
+    }
+
+    private static Function applyTypeConversions(Function function, int columnType, int position) {
+        if (function instanceof NullStrConstant) {
+            switch (columnType) {
+                case ColumnType.BYTE:
+                    return new ByteConstant(position, (byte) 0);
+                case ColumnType.CHAR:
+                    return new CharConstant(position, ' ');
+                case ColumnType.SHORT:
+                    return new ShortConstant(position, (short) 0);
+                case ColumnType.INT:
+                    return new IntConstant(position, 0);
+                case ColumnType.LONG:
+                    return new LongConstant(position, 0L);
+                case ColumnType.BOOLEAN:
+                    return new BooleanConstant(position, false);
+                case ColumnType.FLOAT:
+                    return new FloatConstant(position, 0F);
+                case ColumnType.DOUBLE:
+                    return new DoubleConstant(position, 0D);
+            }
+        } else {
+            int functionType = function.getType();
+            if (functionType != columnType) {
+                switch (functionType) {
+                    case ColumnType.DOUBLE:
+                        double doubleValue = function.getDouble(null);
+                        switch (columnType) {
+                            case ColumnType.FLOAT:
+                                return new FloatConstant(position, (float) doubleValue);
+                            case ColumnType.LONG:
+                                return new LongConstant(position, (long) doubleValue);
+                            case ColumnType.INT:
+                                return new IntConstant(position, (int) doubleValue);
+                            case ColumnType.SHORT:
+                                return new ShortConstant(position, (short) doubleValue);
+                            case ColumnType.CHAR:
+                                return new CharConstant(position, (char) doubleValue);
+                            case ColumnType.BYTE:
+                                return new ByteConstant(position, (byte) doubleValue);
+                        }
+                        break;
+                    case ColumnType.FLOAT:
+                        float floatValue = function.getFloat(null);
+                        switch (columnType) {
+                            case ColumnType.INT:
+                                return new IntConstant(position, (int) floatValue);
+                            case ColumnType.SHORT:
+                                return new ShortConstant(position, (short) floatValue);
+                            case ColumnType.CHAR:
+                                return new CharConstant(position, (char) floatValue);
+                            case ColumnType.BYTE:
+                                return new ByteConstant(position, (byte) floatValue);
+                        }
+                        break;
+                    case ColumnType.LONG:
+                        long longValue = function.getLong(null);
+                        switch (columnType) {
+                            case ColumnType.FLOAT:
+                                return new FloatConstant(position, (float) longValue);
+                            case ColumnType.INT:
+                                return new IntConstant(position, (int) longValue);
+                            case ColumnType.SHORT:
+                                return new ShortConstant(position, (short) longValue);
+                            case ColumnType.CHAR:
+                                return new CharConstant(position, (char) longValue);
+                            case ColumnType.BYTE:
+                                return new ByteConstant(position, (byte) longValue);
+                        }
+                        break;
+                    case ColumnType.INT:
+                        int intValue = function.getInt(null);
+                        switch (columnType) {
+                            case ColumnType.SHORT:
+                                return new ShortConstant(position, (short) intValue);
+                            case ColumnType.CHAR:
+                                return new CharConstant(position, (char) intValue);
+                            case ColumnType.BYTE:
+                                return new ByteConstant(position, (byte) intValue);
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                        short shortValue = function.getShort(null);
+                        switch (columnType) {
+                            case ColumnType.CHAR:
+                                return new CharConstant(position, (char) shortValue);
+                            case ColumnType.BYTE:
+                                return new ByteConstant(position, (byte) shortValue);
+                        }
+                        break;
+                    case ColumnType.CHAR:
+                        char charValue = function.getChar(null);
+                        switch (columnType) {
+                            case ColumnType.DOUBLE:
+                                return new DoubleConstant(position, charValue);
+                            case ColumnType.FLOAT:
+                                return new FloatConstant(position, charValue);
+                            case ColumnType.SHORT:
+                                return new ShortConstant(position, (short) charValue);
+                            case ColumnType.BYTE:
+                                return new ByteConstant(position, (byte) charValue);
+                        }
+                }
+            }
+        }
+        return function;
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {

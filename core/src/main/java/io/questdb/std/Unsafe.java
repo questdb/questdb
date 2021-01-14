@@ -100,11 +100,9 @@ public final class Unsafe {
 
     public static long getFieldOffset(Class<?> clazz, String name) {
         try {
-            Field f = clazz.getDeclaredField(name);
-//            f.setAccessible(true);
-            return UNSAFE.objectFieldOffset(f);
+            return UNSAFE.objectFieldOffset(clazz.getDeclaredField(name));
         } catch (NoSuchFieldException e) {
-            throw new RuntimeException(e);
+            throw new ExceptionInInitializerError(e);
         }
     }
 
