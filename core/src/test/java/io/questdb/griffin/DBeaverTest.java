@@ -151,9 +151,9 @@ public class DBeaverTest extends AbstractGriffinTest {
                     "SELECT c.oid,c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key \n" +
                             "FROM pg_catalog.pg_class c\n" +
                             "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass\n" +
-                            "WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c')",
+                            "WHERE c.relnamespace=2200 AND c.relkind not in ('i','I','c') order by relname",
                     null,
-                    false,
+                    true,
                     sqlExecutionContext,
                     false,
                     false
