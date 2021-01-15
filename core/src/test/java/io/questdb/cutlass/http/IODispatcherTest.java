@@ -27,7 +27,6 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessor;
@@ -42,12 +41,16 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
@@ -2519,53 +2522,12 @@ public class IODispatcherTest {
         );
     }
 
-    private static class QueryThread extends Thread {
-        private final String[][] requests;
-        private final int count;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
-        private final AtomicInteger errorCounter;
-
-        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
-            this.requests = requests;
-            this.count = count;
-            this.barrier = barrier;
-            this.latch = latch;
-            this.errorCounter = errorCounter;
-        }
-
-        @Override
-        public void run() {
-            final Rnd rnd = new Rnd();
-            try {
-                barrier.await();
-                for (int i = 0; i < count; i++) {
-                    int index = rnd.nextPositiveInt() % requests.length;
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            requests[index][0],
-                            requests[index][1],
-                            1,
-                            0,
-                            false
-                    );
-                }
-            } catch (Throwable e) {
-                e.printStackTrace();
-                errorCounter.incrementAndGet();
-            } finally {
-                latch.countDown();
-            }
-        }
-    }
     @Test
-    @Ignore
     public void testJsonQueryMultiThreaded() throws Exception {
 
         final StringSink sink = new StringSink();
-        final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
-        final int threadCount = 1;
-        final int requestsPerThread = 1_000_000;
+        final int threadCount = 3;
+        final int requestsPerThread = 10_000;
         final String[][] requests = {
                 {
                         "GET /exec?query=xyz%20where%20sym%20%3D%20%27UDEYY%27 HTTP/1.1\r\n" +
@@ -2677,11 +2639,6 @@ public class IODispatcherTest {
                                     public int getActiveConnectionLimit() {
                                         return threadCount * 2;
                                     }
-
-                                    @Override
-                                    public int getListenBacklog() {
-                                        return 1024;
-                                    }
                                 }
 
                         ),
@@ -2692,7 +2649,7 @@ public class IODispatcherTest {
 
             final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(cairoEngine, 1);
             try (SqlCompiler compiler = new SqlCompiler(cairoEngine)) {
-                compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30))", sqlExecutionContext);
+                compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", sqlExecutionContext);
 
                 final CyclicBarrier barrier = new CyclicBarrier(threadCount);
                 final CountDownLatch latch = new CountDownLatch(threadCount);
@@ -2710,11 +2667,51 @@ public class IODispatcherTest {
 
                 latch.await();
                 Assert.assertEquals(0, errorCount.get());
+            }
+        }
+    }
 
-//                try (RecordCursorFactory f = compiler.compile("select distinct sym from xyz", sqlExecutionContext).getRecordCursorFactory()) {
-//                    printer.print(f.getCursor(sqlExecutionContext), f.getMetadata(), true);
-//                    System.out.println(sink);
-//                }
+    private static class QueryThread extends Thread {
+        private final String[][] requests;
+        private final int count;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final AtomicInteger errorCounter;
+
+        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
+            this.requests = requests;
+            this.count = count;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.errorCounter = errorCounter;
+        }
+
+        @Override
+        public void run() {
+            final Rnd rnd = new Rnd();
+            try {
+                barrier.await();
+                for (int i = 0; i < count; i++) {
+                    int index = rnd.nextPositiveInt() % requests.length;
+                    try {
+                        sendAndReceive(
+                                NetworkFacadeImpl.INSTANCE,
+                                requests[index][0],
+                                requests[index][1],
+                                1,
+                                0,
+                                false
+                        );
+                    } catch (Throwable e) {
+                        System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                        throw e;
+                    }
+                }
+            } catch (Throwable e) {
+                e.printStackTrace();
+                errorCounter.incrementAndGet();
+            } finally {
+                latch.countDown();
             }
         }
     }
