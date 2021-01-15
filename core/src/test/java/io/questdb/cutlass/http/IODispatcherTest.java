@@ -2525,7 +2525,10 @@ public class IODispatcherTest {
     @Test
     public void testJsonQueryMultiThreaded() throws Exception {
 
-        final StringSink sink = new StringSink();
+        if (Os.type == Os.WINDOWS) {
+            return;
+        }
+
         final int threadCount = 3;
         final int requestsPerThread = 10_000;
         final String[][] requests = {
