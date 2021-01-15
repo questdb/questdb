@@ -53,8 +53,5 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
-    protected abstract RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    );
+    protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext);
 }

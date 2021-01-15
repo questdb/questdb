@@ -81,14 +81,14 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
+    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext sqlExecutionContext) {
         if (this.dataFrameCursor != dataFrameCursor) {
             close();
             this.dataFrameCursor = dataFrameCursor;
         }
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
-        this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
+        this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader(), sqlExecutionContext);
         this.next = nextFrame;
     }
 
