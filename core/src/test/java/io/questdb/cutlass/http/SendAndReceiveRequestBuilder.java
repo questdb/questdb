@@ -64,46 +64,9 @@ public class SendAndReceiveRequestBuilder {
     private int requestCount = 1;
     private int compareLength = -1;
 
-    public SendAndReceiveRequestBuilder withNetworkFacade(NetworkFacade nf) {
-        this.nf = nf;
-        return this;
-    }
-
-    public SendAndReceiveRequestBuilder withPauseBetweenSendAndReceive(long pauseBetweenSendAndReceive) {
-        this.pauseBetweenSendAndReceive = pauseBetweenSendAndReceive;
-        return this;
-    }
-
-    public SendAndReceiveRequestBuilder withPrintOnly(boolean printOnly) {
-        this.printOnly = printOnly;
-        return this;
-    }
-
-    public SendAndReceiveRequestBuilder withExpectDisconnect(boolean expectDisconnect) {
-        this.expectDisconnect = expectDisconnect;
-        return this;
-    }
-    
-    public SendAndReceiveRequestBuilder withRequestCount(int requestCount) {
-        this.requestCount = requestCount;
-        return this;
-    }
-
-    public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
-        this.compareLength = compareLength;
-        return this;
-    }
-
-    public void executeWithStandardHeaders(
-            String request,
-            String response
-    ) throws InterruptedException {
-        execute(request + RequestHeaders, ResponseHeaders + response);
-    }
-
     public void execute(
             String request,
-            String response         
+            String response
     ) throws InterruptedException {
         long fd = nf.socketTcp(true);
         try {
@@ -134,7 +97,7 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeExplicit(String request, long fd, byte[] expectedResponse, final int len, long ptr,  HttpClientStateListener listener) throws InterruptedException {
+    public void executeExplicit(String request, long fd, byte[] expectedResponse, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
@@ -194,6 +157,9 @@ public class SendAndReceiveRequestBuilder {
                 expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
                 actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
             }
+            if (actual.length() == 0) {
+                System.out.println("oopsie");
+            }
             Assert.assertEquals(expected, actual);
 
         } else {
@@ -210,5 +176,42 @@ public class SendAndReceiveRequestBuilder {
             LOG.error().$("timeout expired").$();
             Assert.fail();
         }
+    }
+
+    public void executeWithStandardHeaders(
+            String request,
+            String response
+    ) throws InterruptedException {
+        execute(request + RequestHeaders, ResponseHeaders + response);
+    }
+
+    public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
+        this.compareLength = compareLength;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withExpectDisconnect(boolean expectDisconnect) {
+        this.expectDisconnect = expectDisconnect;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withNetworkFacade(NetworkFacade nf) {
+        this.nf = nf;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withPauseBetweenSendAndReceive(long pauseBetweenSendAndReceive) {
+        this.pauseBetweenSendAndReceive = pauseBetweenSendAndReceive;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withPrintOnly(boolean printOnly) {
+        this.printOnly = printOnly;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withRequestCount(int requestCount) {
+        this.requestCount = requestCount;
+        return this;
     }
 }

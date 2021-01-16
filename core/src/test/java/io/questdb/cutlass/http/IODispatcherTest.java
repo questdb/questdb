@@ -2529,8 +2529,8 @@ public class IODispatcherTest {
             return;
         }
 
-        final int threadCount = 3;
-        final int requestsPerThread = 10_000;
+        final int threadCount = 4;
+        final int requestsPerThread = 100_000;
         final String[][] requests = {
                 {
                         "GET /exec?query=xyz%20where%20sym%20%3D%20%27UDEYY%27 HTTP/1.1\r\n" +

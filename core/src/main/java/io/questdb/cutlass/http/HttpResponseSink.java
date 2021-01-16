@@ -646,7 +646,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 resumeSend(FLUSH);
             } else {
                 resumeSend(END_CHUNK);
-                LOG.debug().$("end chunk sent").$();
+                LOG.debug().$("end chunk sent [fd=").$(fd).$(']').$();
             }
         }
 

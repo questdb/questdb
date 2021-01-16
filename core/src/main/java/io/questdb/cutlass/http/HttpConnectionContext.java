@@ -42,7 +42,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
     private final int recvBufferSize;
-    private final int sendBufferSize;
     private final HttpMultipartContentParser multipartContentParser;
     private final HttpHeaderParser multipartContentHeaderParser;
     private final HttpResponseSink responseSink;
@@ -75,7 +74,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.recvBufferSize = configuration.getRecvBufferSize();
-        this.sendBufferSize = configuration.getSendBufferSize();
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
         this.responseSink = new HttpResponseSink(configuration);
         this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
@@ -87,7 +85,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     @Override
     public void clear() {
-        LOG.debug().$("clear").$();
+        LOG.debug().$("clear [fd=").$(fd).$(']').$();
         totalBytesSent += responseSink.getTotalBytesSent();
         nCompletedRequests++;
         this.resumeProcessor = null;
@@ -418,106 +416,48 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         }
     }
 
-    private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
-        boolean keepGoing = true;
-        try {
-            final long fd = this.fd;
-            // this is address of where header ended in our receive buffer
-            // we need to being processing request content starting from this address
-            long headerEnd = recvBuffer;
-            int read = 0;
-            final boolean newRequest = headerParser.isIncomplete();
-            if (newRequest) {
-                while (headerParser.isIncomplete()) {
-                    // read headers
-                    read = nf.recv(fd, recvBuffer, recvBufferSize);
-                    LOG.debug().$("recv [fd=").$(fd).$(", count=").$(read).$(']').$();
-                    if (read < 0) {
-                        LOG.debug().$("done [fd=").$(fd).$(']').$();
-                        // peer disconnect
-                        dispatcher.disconnect(this);
-                        return false;
-                    }
-
-                    if (read == 0) {
-                        // client is not sending anything
-                        dispatcher.registerChannel(this, IOOperation.READ);
-                        return false;
-                    }
-
-                    dumpBuffer(recvBuffer, read);
-                    headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
-                }
-            }
-
-            final CharSequence url = headerParser.getUrl();
-            if (url == null) {
-                throw HttpException.instance("missing URL");
-            }
+    public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        if (pendingRetry) {
+            pendingRetry = false;
             HttpRequestProcessor processor = getHttpRequestProcessor(selector);
-
-            final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
-            final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
-
-            if (allowDeflateBeforeSend && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
-                responseSink.setDeflateBeforeSend(true);
-            }
-
             try {
-                if (multipartRequest && !multipartProcessor) {
-                    // bad request - multipart request for processor that doesn't expect multipart
-                    keepGoing = rejectRequest("Bad request. non-multipart GET expected.");
-                } else if (!multipartRequest && multipartProcessor) {
-                    // bad request - regular request for processor that expects multipart
-                    keepGoing = rejectRequest("Bad request. Multipart POST expected.");
-                } else if (multipartProcessor) {
-                    keepGoing = consumeMultipart(fd, processor, headerEnd, read, newRequest, rescheduleContext);
-                } else {
-
-                    // Do not expect any more bytes to be sent to us before
-                    // we respond back to client. We will disconnect the client when
-                    // they abuse protocol. In addition, we will not call processor
-                    // if client has disconnected before we had a chance to reply.
-                    read = nf.recv(fd, recvBuffer, 1);
-                    if (read != 0) {
-                        dumpBuffer(recvBuffer, read);
-                        LOG.info().$("disconnect after request [fd=").$(fd).$(']').$();
-                        dispatcher.disconnect(this);
-                        keepGoing = false;
+                LOG.info().$("retrying query [fd=").$(fd).$(']').$();
+                processor.onRequestRetry(this);
+                if (multipartParserState.multipartRetry) {
+                    if (continueConsumeMultipart(
+                            fd,
+                            multipartParserState.start,
+                            multipartParserState.buf,
+                            multipartParserState.bufRemaining,
+                            (HttpMultipartContentListener) processor,
+                            processor,
+                            retryRescheduleContext
+                    )) {
+                        LOG.info().$("success retried multipart import [fd=").$(fd).$(']').$();
+                        busyRcvLoop(selector, rescheduleContext);
                     } else {
-                        processor.onHeadersReady(this);
-                        LOG.debug().$("good [fd=").$(fd).$(']').$();
-                        processor.onRequestComplete(this);
-                        resumeProcessor = null;
-                        clear();
+                        LOG.info().$("retry success but import not finished [fd=").$(fd).$(']').$();
                     }
+                } else {
+                    busyRcvLoop(selector, rescheduleContext);
                 }
-            } catch (RetryOperationException e) {
+            } catch (RetryOperationException e2) {
                 pendingRetry = true;
-                scheduleRetry(processor, rescheduleContext);
-                keepGoing = false;
-            } catch (PeerDisconnectedException e) {
+                return false;
+            } catch (PeerDisconnectedException ignore) {
                 dispatcher.disconnect(this);
-                keepGoing = false;
-            } catch (ServerDisconnectException e) {
-                LOG.info().$("kicked out [fd=").$(fd).$(']').$();
-                dispatcher.disconnect(this);
-                keepGoing = false;
-            } catch (PeerIsSlowToReadException e) {
-                LOG.debug().$("peer is slow reader [two]").$();
-                // it is important to assign resume processor before we fire
-                // event off to dispatcher
+            } catch (PeerIsSlowToReadException e2) {
+                LOG.info().$("peer is slow on running the rerun [fd=").$(fd).$(", thread=")
+                        .$(Thread.currentThread().getId()).$(']').$();
                 processor.parkRequest(this);
                 resumeProcessor = processor;
                 dispatcher.registerChannel(this, IOOperation.WRITE);
-                keepGoing = false;
+            } catch (ServerDisconnectException e) {
+                LOG.info().$("kicked out [fd=").$(fd).$(']').$();
+                dispatcher.disconnect(this);
             }
-        } catch (HttpException e) {
-            LOG.error().$("http error [fd=").$(fd).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
-            dispatcher.disconnect(this);
-            keepGoing = false;
         }
-        return keepGoing;
+        return true;
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
@@ -557,57 +497,119 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         return false;
     }
 
-    public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
-        if (pendingRetry) {
-            pendingRetry = false;
-            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
-            try {
-                LOG.info().$("retrying query [fd=").$(fd).$(']').$();
-                processor.onRequestRetry(this);
-                if (multipartParserState.multipartRetry) {
-                    if (continueConsumeMultipart(
-                            fd,
-                            multipartParserState.start,
-                            multipartParserState.buf,
-                            multipartParserState.bufRemaining,
-                            (HttpMultipartContentListener) processor,
-                            processor,
-                            retryRescheduleContext
-                    )) {
-                        LOG.info().$("success retried multipart import [fd=").$(fd).$(']').$();
-                        keepGoing(selector, rescheduleContext);
-                    } else {
-                        LOG.info().$("retry success but import not finished [fd=").$(fd).$(']').$();
-                    }
-                } else {
-                    keepGoing(selector, rescheduleContext);
-                }
-            } catch (RetryOperationException e2) {
-                pendingRetry = true;
-                return false;
-            } catch (PeerDisconnectedException ignore) {
-                dispatcher.disconnect(this);
-            } catch (PeerIsSlowToReadException e2) {
-                LOG.info().$("peer is slow on running the rerun [fd=").$(fd).$(", thread=")
-                        .$(Thread.currentThread().getId()).$(']').$();
-                processor.parkRequest(this);
-                resumeProcessor = processor;
-                dispatcher.registerChannel(this, IOOperation.WRITE);
-            } catch (ServerDisconnectException e) {
-                LOG.info().$("kicked out [fd=").$(fd).$(']').$();
-                dispatcher.disconnect(this);
-            }
-        }
-        return true;
-    }
-
-    private void keepGoing(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+    @SuppressWarnings("StatementWithEmptyBody")
+    private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
         clear();
         if (serverKeepAlive) {
-            while (handleClientRecv(selector, rescheduleContext));
+            while (handleClientRecv(selector, rescheduleContext)) ;
         } else {
             dispatcher.disconnect(this);
         }
+    }
+
+    private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+        boolean busyRecv = true;
+        try {
+            final long fd = this.fd;
+            // this is address of where header ended in our receive buffer
+            // we need to being processing request content starting from this address
+            long headerEnd = recvBuffer;
+            int read = 0;
+            final boolean newRequest = headerParser.isIncomplete();
+            if (newRequest) {
+                while (headerParser.isIncomplete()) {
+                    // read headers
+                    read = nf.recv(fd, recvBuffer, recvBufferSize);
+                    LOG.debug().$("recv [fd=").$(fd).$(", count=").$(read).$(']').$();
+                    if (read < 0) {
+                        LOG.debug()
+                                .$("done [fd=").$(fd)
+                                .$(", errno=").$(nf.errno())
+                                .$(']').$();
+                        // peer disconnect
+                        dispatcher.disconnect(this);
+                        return false;
+                    }
+
+                    if (read == 0) {
+                        // client is not sending anything
+                        dispatcher.registerChannel(this, IOOperation.READ);
+                        return false;
+                    }
+
+                    dumpBuffer(recvBuffer, read);
+                    headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
+                }
+            }
+
+            final CharSequence url = headerParser.getUrl();
+            if (url == null) {
+                throw HttpException.instance("missing URL");
+            }
+            HttpRequestProcessor processor = getHttpRequestProcessor(selector);
+
+            final boolean multipartRequest = Chars.equalsNc("multipart/form-data", headerParser.getContentType());
+            final boolean multipartProcessor = processor instanceof HttpMultipartContentListener;
+
+            if (allowDeflateBeforeSend && Chars.contains(headerParser.getHeader("Accept-Encoding"), "gzip")) {
+                responseSink.setDeflateBeforeSend(true);
+            }
+
+            try {
+                if (multipartRequest && !multipartProcessor) {
+                    // bad request - multipart request for processor that doesn't expect multipart
+                    busyRecv = rejectRequest("Bad request. non-multipart GET expected.");
+                } else if (!multipartRequest && multipartProcessor) {
+                    // bad request - regular request for processor that expects multipart
+                    busyRecv = rejectRequest("Bad request. Multipart POST expected.");
+                } else if (multipartProcessor) {
+                    busyRecv = consumeMultipart(fd, processor, headerEnd, read, newRequest, rescheduleContext);
+                } else {
+
+                    // Do not expect any more bytes to be sent to us before
+                    // we respond back to client. We will disconnect the client when
+                    // they abuse protocol. In addition, we will not call processor
+                    // if client has disconnected before we had a chance to reply.
+                    read = nf.recv(fd, recvBuffer, 1);
+                    if (read != 0) {
+                        dumpBuffer(recvBuffer, read);
+                        LOG.info().$("disconnect after request [fd=").$(fd).$(']').$();
+                        dispatcher.disconnect(this);
+                        busyRecv = false;
+                    } else {
+                        processor.onHeadersReady(this);
+                        LOG.debug().$("good [fd=").$(fd).$(']').$();
+                        processor.onRequestComplete(this);
+                        resumeProcessor = null;
+                        clear();
+                    }
+                }
+            } catch (RetryOperationException e) {
+                pendingRetry = true;
+                scheduleRetry(processor, rescheduleContext);
+                busyRecv = false;
+            } catch (PeerDisconnectedException e) {
+                dispatcher.disconnect(this);
+                busyRecv = false;
+            } catch (ServerDisconnectException e) {
+                LOG.info().$("kicked out [fd=").$(fd).$(']').$();
+                dispatcher.disconnect(this);
+                busyRecv = false;
+            } catch (PeerIsSlowToReadException e) {
+                LOG.debug().$("peer is slow reader [two]").$();
+                // it is important to assign resume processor before we fire
+                // event off to dispatcher
+                processor.parkRequest(this);
+                resumeProcessor = processor;
+                dispatcher.registerChannel(this, IOOperation.WRITE);
+                busyRecv = false;
+            }
+        } catch (HttpException e) {
+            LOG.error().$("http error [fd=").$(fd).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
+            dispatcher.disconnect(this);
+            busyRecv = false;
+        }
+        return busyRecv;
     }
 
     @Override
