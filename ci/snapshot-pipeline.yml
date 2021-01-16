@@ -32,6 +32,7 @@ stages:
               /tmp/docker exec -t -u 0 ci-container sh -c "sudo sysctl -w net.ipv4.tcp_synack_retries=\"10\""
               /tmp/docker exec -t -u 0 ci-container sh -c "sudo sysctl -w net.ipv4.tcp_max_orphans=\"1600000\""
               /tmp/docker exec -t -u 0 ci-container sh -c "sudo sysctl -w net.ipv4.route.flush=1"
+              /tmp/docker exec -t -u 0 ci-container sh -c "sudo sysctl -w net.ipv4.tcp_syncookies=1"
 
               cd /tmp
               curl -q -O http://apache.mirror.anlx.net/maven/maven-3/"$MVN_VERSION"/binaries/"$MVN"-bin.tar.gz
