@@ -21,3 +21,9 @@ core/CMakeCache.txt
 **/.project
 **/.settings
 **/.classpath
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+*.code-workspace
+.history
+.ionide
