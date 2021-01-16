@@ -29,15 +29,16 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -92,7 +93,7 @@ public class TableWriter implements Closeable {
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
-    private final TimestampFormat partitionDirFmt;
+    private final DateFormat partitionDirFmt;
     private final AppendMemory ddlMem;
     private final int mkDirMode;
     private final int fileOperationRetryCount;
@@ -304,7 +305,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public static TimestampFormat selectPartitionDirFmt(int partitionBy) {
+    public static DateFormat selectPartitionDirFmt(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.DAY:
                 return fmtDay;
@@ -880,9 +881,9 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public boolean removePartition(Function function) {
+    public void removePartition(Function function, int posForError) throws SqlException {
         if (partitionBy == PartitionBy.NONE) {
-            return false;
+            throw SqlException.$(posForError, "table is not partitioned");
         }
 
         findAllPartitions(function);
@@ -890,21 +891,20 @@ public class TableWriter implements Closeable {
         int partitionCount = partitionListByTimestamp.size();
         int dropPartitionCount = partitionsToDrop.size();
         if (dropPartitionCount == 0) {
-            return false;
+            throw SqlException.$(posForError, "table is empty");
         } else if (dropPartitionCount == partitionCount) {
             truncate();
-            return true;
         } else if (droppingActivePartition) {
             LOG.error()
                     .$("cannot remove active partition [path=").$(path)
                     .$(", maxTimestamp=").$ts(maxTimestamp)
                     .$(']').$();
-            return false;
+            throw SqlException.$(posForError, "cannot remove active partition");
         } else {
             for (int i = 0; i < dropPartitionCount; i++) {
+                // todo: show something to user here if we could not remove all partitions
                 removePartition(partitionsToDrop.get(i));
             }
-            return true;
         }
     }
 
@@ -1359,6 +1359,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1428,27 +1429,6 @@ public class TableWriter implements Closeable {
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
     }
 
-    private long calculateMapOffsetAndMapReadWrite(FilesFacade ff, long fd, long lastValueOffset, int columnType, long requiredMapSize) {
-        if (columnType == ColumnType.STRING) {
-            long addr = ff.mmap(fd, Integer.BYTES, lastValueOffset, Files.MAP_RO);
-            int len = Unsafe.getUnsafe().getInt(addr);
-            ff.munmap(addr, Integer.BYTES);
-            if (len < 1) {
-                return ff.mmap(fd, requiredMapSize, lastValueOffset + Integer.BYTES, Files.MAP_RW);
-            }
-            return ff.mmap(fd, requiredMapSize, lastValueOffset + Integer.BYTES + len * Character.BYTES, Files.MAP_RW);
-        } else {
-            // BINARY
-            long addr = ff.mmap(fd, Long.BYTES, lastValueOffset, Files.MAP_RO);
-            long len = Unsafe.getUnsafe().getLong(addr);
-            ff.munmap(addr, Long.BYTES);
-            if (len < 1) {
-                return ff.mmap(fd, requiredMapSize, lastValueOffset + Long.BYTES, Files.MAP_RW);
-            }
-            return ff.mmap(fd, requiredMapSize, lastValueOffset + Long.BYTES + len, Files.MAP_RW);
-        }
-    }
-
     void cancelRow() {
 
         if ((masterRef & 1) == 0) {
@@ -1474,7 +1454,7 @@ public class TableWriter implements Closeable {
                 // open old partition
                 if (prevMaxTimestamp > Long.MIN_VALUE) {
                     try {
-                        txPendingPartitionSizes.jumpTo((txPartitionCount - 2) * 16);
+                        txPendingPartitionSizes.jumpTo((txPartitionCount - 2) * 16L);
                         openPartition(prevMaxTimestamp);
                         setAppendPosition(txPrevTransientRowCount, false);
                         txPartitionCount--;
@@ -1761,6 +1741,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
@@ -1799,6 +1780,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -2262,7 +2244,7 @@ public class TableWriter implements Closeable {
             if (len < 1) {
                 offset = lastValueOffset + Integer.BYTES;
             } else {
-                offset = lastValueOffset + Integer.BYTES + len * Character.BYTES;
+                offset = lastValueOffset + Integer.BYTES + len * 2L; // character bytes
             }
         } else {
             // BINARY
@@ -2436,8 +2418,8 @@ public class TableWriter implements Closeable {
             long addr = srcVar[bit] + offset;
             int len = Unsafe.getUnsafe().getInt(addr);
             if (len > 0) {
-                Unsafe.getUnsafe().copyMemory(addr, destVar + destVarOffset, len * Character.BYTES + Integer.BYTES);
-                destVarOffset += len * Character.BYTES + Integer.BYTES;
+                Unsafe.getUnsafe().copyMemory(addr, destVar + destVarOffset, (long) len * Character.BYTES + Integer.BYTES);
+                destVarOffset += (long) len * Character.BYTES + Integer.BYTES;
             } else {
                 Unsafe.getUnsafe().putInt(destVar + destVarOffset, len);
                 destVarOffset += Integer.BYTES;
@@ -3164,14 +3146,6 @@ public class TableWriter implements Closeable {
         // Transfer value of destination offset to the index start offset
         // This is where we need to begin indexing from. The index will contain all the values before the offset
         MergeStruct.setIndexStartOffset(mergeStruct, columnIndex, MergeStruct.getDestFixedAppendOffset(mergeStruct, columnIndex));
-
-        // supply negative FD so that AppendMemory does not assume ownership and close it prematurely
-//        ddlMem.of(ff, -MergeStruct.getIndexKeyFd(mergeStruct, columnIndex), ff.getPageSize());
-//        try {
-//            BitmapIndexWriter.initKeyMemory(ddlMem, metadata.getIndexValueBlockCapacity(columnIndex));
-//        } finally {
-//            Misc.free(ddlMem);
-//        }
     }
 
     private void oooMapDestColumn(
@@ -3917,6 +3891,7 @@ public class TableWriter implements Closeable {
                 ddlMem.putInt(timestampIndex);
             }
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -4128,6 +4103,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(partitionBy);
             ddlMem.putInt(timestampIndex);
             ddlMem.putInt(ColumnType.VERSION);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -4687,7 +4663,7 @@ public class TableWriter implements Closeable {
         long fd = openAppend(path.concat(name).put(".top").$());
         try {
             Unsafe.getUnsafe().putLong(tempMem8b, columnTop);
-            if (ff.append(fd, tempMem8b, 8) != 8) {
+            if (ff.append(fd, tempMem8b, Long.BYTES) != Long.BYTES) {
                 throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
             }
         } finally {
@@ -4958,10 +4934,10 @@ public class TableWriter implements Closeable {
             // try UTC timestamp first (micro)
             long l;
             try {
-                l = TimestampFormatUtils.parseTimestamp(value);
+                l = TimestampFormatUtils.parseUTCTimestamp(value);
             } catch (NumericException e) {
                 try {
-                    l = TimestampFormatUtils.parseDateTime(value);
+                    l = TimestampFormatUtils.parseTimestamp(value);
                 } catch (NumericException numericException) {
                     throw CairoException.instance(0).put("could not convert to timestamp [value=").put(value).put(']');
                 }

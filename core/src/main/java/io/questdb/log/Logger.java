@@ -30,8 +30,8 @@ import io.questdb.network.Net;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 
 import java.io.File;
@@ -63,6 +63,8 @@ class Logger implements LogRecord, Log {
     private final Sequence infoSeq;
     private final RingQueue<LogRecordSink> errorRing;
     private final Sequence errorSeq;
+    private final RingQueue<LogRecordSink> advisoryRing;
+    private final Sequence advisorySeq;
     private final ThreadLocalCursor tl = new ThreadLocalCursor();
     private final MicrosecondClock clock;
 
@@ -74,7 +76,9 @@ class Logger implements LogRecord, Log {
             RingQueue<LogRecordSink> infoRing,
             Sequence infoSeq,
             RingQueue<LogRecordSink> errorRing,
-            Sequence errorSeq
+            Sequence errorSeq,
+            RingQueue<LogRecordSink> advisoryRing,
+            Sequence advisorySeq
     ) {
         this.clock = clock;
         this.name = name;
@@ -84,6 +88,8 @@ class Logger implements LogRecord, Log {
         this.infoSeq = infoSeq;
         this.errorRing = errorRing;
         this.errorSeq = errorSeq;
+        this.advisoryRing = advisoryRing;
+        this.advisorySeq = advisorySeq;
     }
 
     @Override
@@ -110,16 +116,6 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord utf8(CharSequence sequence) {
-        if (sequence == null) {
-            sink().put("null");
-        } else {
-            sink().encodeUtf8(sequence);
-        }
-        return this;
-    }
-
-    @Override
     public LogRecord $(int x) {
         sink().put(x);
         return this;
@@ -127,7 +123,7 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord $(double x) {
-        sink().put(x, Numbers.MAX_SCALE);
+        sink().put(x);
         return this;
     }
 
@@ -138,14 +134,14 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(char c) {
-        sink().put(c);
+    public LogRecord $(boolean x) {
+        sink().put(x);
         return this;
     }
 
     @Override
-    public LogRecord $(boolean x) {
-        sink().put(x);
+    public LogRecord $(char c) {
+        sink().put(c);
         return this;
     }
 
@@ -192,6 +188,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $256(long a, long b, long c, long d) {
+        Numbers.appendLong256(a, b, c, d, sink());
+        return this;
+    }
+
+    @Override
     public boolean isEnabled() {
         return true;
     }
@@ -209,8 +211,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $256(long a, long b, long c, long d) {
-        Numbers.appendLong256(a, b, c, d, sink());
+    public LogRecord utf8(CharSequence sequence) {
+        if (sequence == null) {
+            sink().put("null");
+        } else {
+            sink().encodeUtf8(sequence);
+        }
         return this;
     }
 
@@ -230,12 +236,22 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord advisory() {
+        return xadvisory().ts().$(" A ").$(name);
+    }
+
+    @Override
     public boolean isDebugEnabled() {
         return debugSeq != null;
     }
 
     public LogRecord xerror() {
         return next(errorSeq, errorRing, LogLevel.LOG_LEVEL_ERROR);
+    }
+
+    @Override
+    public LogRecord xadvisory() {
+        return next(advisorySeq, advisoryRing, LogLevel.LOG_LEVEL_ADVISORY);
     }
 
     public LogRecord xinfo() {

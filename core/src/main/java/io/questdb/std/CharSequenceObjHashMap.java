@@ -36,7 +36,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         this(8);
     }
 
-    private CharSequenceObjHashMap(int initialCapacity) {
+    public CharSequenceObjHashMap(int initialCapacity) {
         this(initialCapacity, 0.5);
     }
 

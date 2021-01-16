@@ -26,7 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.mp.*;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.PriorityQueue;
@@ -188,8 +188,7 @@ public class WaitProcessor extends  SynchronizedJob implements RescheduleContext
                     nextRerun.add(retry);
                     return true;
                 }
-            }
-            else {
+            } else {
                 // All reruns are in the future.
                 return useful;
             }

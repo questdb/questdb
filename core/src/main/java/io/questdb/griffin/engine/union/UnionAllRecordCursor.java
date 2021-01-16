@@ -24,14 +24,11 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.Misc;
 
 class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
-    private final UnionRecord record = new UnionRecord();
+    private final DelegatingRecordImpl record = new DelegatingRecordImpl();
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
     private final NextMethod nextSlave = this::nextSlave;

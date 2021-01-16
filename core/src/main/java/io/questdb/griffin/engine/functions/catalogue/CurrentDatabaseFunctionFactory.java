@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.ObjList;
 
 public class CurrentDatabaseFunctionFactory implements FunctionFactory {
-    private final StrFunction INSTANCE = new StrConstant(0, "qdb");
+    private final static StrFunction INSTANCE = new StrConstant(0, "qdb");
 
     @Override
     public String getSignature() {

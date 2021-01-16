@@ -69,11 +69,7 @@ class ExpressionParser {
     private final SqlParser sqlParser;
     private final CharacterStore characterStore;
 
-    ExpressionParser(
-            ObjectPool<ExpressionNode> expressionNodePool,
-            SqlParser sqlParser,
-            CharacterStore characterStore
-    ) {
+    ExpressionParser(ObjectPool<ExpressionNode> expressionNodePool, SqlParser sqlParser, CharacterStore characterStore) {
         this.expressionNodePool = expressionNodePool;
         this.sqlParser = sqlParser;
         this.characterStore = characterStore;
@@ -90,7 +86,7 @@ class ExpressionParser {
     }
 
     private boolean isCount() {
-        return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && Chars.equals("count", opStack.peek(1).token);
+        return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
 
     private int onNode(ExpressionParserListener listener, ExpressionNode node, int argStackDepth) throws SqlException {
@@ -532,6 +528,23 @@ class ExpressionParser {
                         }
                     case 'N':
                     case 'n':
+                        if (SqlKeywords.isNotKeyword(tok)) {
+                            ExpressionNode nn = opStack.peek();
+                            if (nn != null && nn.type == ExpressionNode.LITERAL) {
+                                opStack.pop();
+
+                                node = expressionNodePool.next().of(
+                                        ExpressionNode.OPERATION,
+                                        GenericLexer.immutableOf(tok),
+                                        11,
+                                        position
+                                );
+                                node.paramCount = 1;
+                                opStack.push(node);
+                                opStack.push(nn);
+                                break;
+                            }
+                        }
                     case 't':
                     case 'T':
                     case 'f':
@@ -797,10 +810,10 @@ class ExpressionParser {
                                 // vanilla 'a.b', just concat tokens efficiently
                                 fsA.setHi(lexer.getTokenHi());
                             }
-                        } else if (prevBranch != BRANCH_DOT_DEREFERENCE){
+                        } else if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                             // If the token is a function token, then push it onto the stack.
                             opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(tok), Integer.MIN_VALUE, position));
-                        } else{
+                        } else {
                             argStackDepth++;
                             final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, ".", DOT_PRECEDENCE, position);
                             dotDereference.paramCount = 2;

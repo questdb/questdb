@@ -28,7 +28,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Sinkable;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 import java.util.Set;
 
@@ -100,6 +100,12 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
+    public CharSink put(double value) {
+        Numbers.append(this, value);
+        return this;
+    }
+
+    @Override
     public CharSink put(double value, int scale) {
         Numbers.append(this, value, scale);
         return this;
@@ -152,7 +158,7 @@ public abstract class AbstractCharSink implements CharSink {
 
     @Override
     public CharSink putISODateMillis(long value) {
-        io.questdb.std.time.DateFormatUtils.appendDateTime(this, value);
+        io.questdb.std.datetime.millitime.DateFormatUtils.appendDateTime(this, value);
         return this;
     }
 

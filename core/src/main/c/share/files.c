@@ -186,6 +186,52 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_truncate
     return JNI_FALSE;
 }
 
+#ifdef __APPLE__
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *e, jclass cl, jlong fd, jlong len) {
+    // F_ALLOCATECONTIG - try to allocate continuous space.
+    fstore_t flags = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, len};
+    int result = fcntl(fd, F_PREALLOCATE, &flags);
+    if (result == -1) {
+        // F_ALLOCATEALL - try to allocate non-continuous space.
+        flags.fst_flags = F_ALLOCATEALL;
+        result = fcntl(fd, F_PREALLOCATE, &flags);
+        if (result == -1) {
+            return JNI_FALSE;
+        }
+    }
+    return ftruncate(fd, len) == 0;
+}
+
+#else
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
+        (JNIEnv *e, jclass cl, jlong fd, jlong len) {
+    int rc = posix_fallocate(fd, 0, len);
+    if (rc == 0) {
+        return JNI_TRUE;
+    }
+    if (rc == EINVAL) {
+        // Some file systems (such as ZFS) do not support posix_fallocate
+        struct stat st;
+        rc = fstat((int) fd, &st);
+        if (rc != 0) {
+            return JNI_FALSE;
+        }
+        if (st.st_size < len) {
+            rc = ftruncate(fd, len);
+            if (rc != 0) {
+                return JNI_FALSE;
+            }
+        }
+        return JNI_TRUE;
+    }
+    return JNI_FALSE;
+}
+
+#endif
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlong addr, jlong len, jboolean async) {
     return msync((void *) addr, len, async ? MS_ASYNC : MS_SYNC);
 }

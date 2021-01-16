@@ -24,17 +24,19 @@
 
 package io.questdb.cairo;
 
+import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
-import io.questdb.std.microtime.MicrosecondClock;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface CairoConfiguration {
+
+    int getBindVariablePoolSize();
 
     int getSqlCopyBufferSize();
 
@@ -86,7 +88,7 @@ public interface CairoConfiguration {
     // null disables backups
     CharSequence getBackupRoot();
 
-    TimestampFormat getBackupDirTimestampFormat();
+    DateFormat getBackupDirTimestampFormat();
 
     CharSequence getBackupTempDirName();
 
@@ -185,8 +187,6 @@ public interface CairoConfiguration {
 
     DateLocale getDefaultDateLocale();
 
-    TimestampLocale getDefaultTimestampLocale();
-
     int getGroupByPoolCapacity();
 
     int getMaxSymbolNotEqualsCount();
@@ -200,6 +200,8 @@ public interface CairoConfiguration {
     long getAppendPageSize();
 
     int getTableBlockWriterQueueSize();
+
+    BuildInformation getBuildInformation();
 
     default boolean isOutOfOrderEnabled() {
         return false;

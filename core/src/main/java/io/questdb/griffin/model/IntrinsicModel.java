@@ -26,8 +26,8 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 import static io.questdb.griffin.SqlKeywords.isNullKeyword;
 

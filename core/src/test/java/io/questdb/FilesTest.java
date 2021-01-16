@@ -25,9 +25,9 @@
 package io.questdb;
 
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.DateFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -76,7 +76,7 @@ public class FilesTest {
     @Test
     public void testLastModified() throws IOException, NumericException {
         try (Path path = new Path()) {
-            assertLastModified(path, DateFormatUtils.parseDateTime("2015-10-17T10:00:00.000Z"));
+            assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
             assertLastModified(path, 122222212222L);
         }
     }
@@ -160,6 +160,45 @@ public class FilesTest {
                 Assert.assertEquals(3, Files.length(path));
                 Files.truncate(fd, 0);
                 Assert.assertEquals(0, Files.length(path));
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    @Test
+    public void testAllocate() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(5, Files.length(path));
+
+            long fd = Files.openRW(path);
+            try {
+                Files.allocate(fd, 10);
+                Assert.assertEquals(10, Files.length(path));
+                Files.allocate(fd, 120);
+                Assert.assertEquals(120, Files.length(path));
+            } finally {
+                Files.close(fd);
+            }
+        }
+    }
+
+    @Test
+    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
+        File temp = temporaryFolder.newFile();
+        TestUtils.writeStringToFile(temp, "abcde");
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.exists(path));
+            long fd = Files.openRW(path);
+            Assert.assertEquals(5, Files.length(path));
+
+            try {
+                long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
+                boolean success = Files.allocate(fd, tb10);
+                Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
             } finally {
                 Files.close(fd);
             }

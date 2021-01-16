@@ -27,9 +27,9 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormat;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -1427,52 +1427,6 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
 
-    private static long allocBlob() {
-        return Unsafe.malloc(blobLen);
-    }
-
-    private static void freeBlob(long blob) {
-        Unsafe.free(blob, blobLen);
-    }
-
-    private static void assertBin(Record r, Rnd exp, long blob, int index) {
-        if (exp.nextBoolean()) {
-            exp.nextChars(blob, blobLen / 2);
-            Assert.assertEquals(blobLen, r.getBinLen(index));
-            BinarySequence sq = r.getBin(index);
-            for (int l = 0; l < blobLen; l++) {
-                byte b = sq.byteAt(l);
-                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
-                if (result) {
-                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
-                }
-            }
-        } else {
-            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
-        }
-    }
-
-    private static void assertStrColumn(CharSequence expected, Record r, int index) {
-        TestUtils.assertEquals(expected, r.getStr(index));
-        TestUtils.assertEquals(expected, r.getStrB(index));
-        Assert.assertNotSame(r.getStr(index), r.getStrB(index));
-        Assert.assertEquals(expected.length(), r.getStrLen(index));
-    }
-
-    private static void assertNullStr(Record r, int index) {
-        Assert.assertNull(r.getStr(index));
-        Assert.assertNull(r.getStrB(index));
-        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
-    }
-
-    private static String padHexLong(long value) {
-        String s = Long.toHexString(value);
-        if (s.length() % 2 == 0) {
-            return s;
-        }
-        return "0" + s;
-    }
-
     @Test
     public void testCharAsString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -1584,7 +1538,7 @@ public class TableReaderTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+                    long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
                     try (TableWriter writer = new TableWriter(configuration, "w")) {
                         for (int i = 0; i < N * scale; i++) {
                             TableWriter.Row row = writer.newRow(timestampUs);
@@ -1719,6 +1673,43 @@ public class TableReaderTest extends AbstractCairoTest {
 
             Assert.assertTrue(stopLatch.await(30, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    @Test
+    public void testLong256WriterReOpen() throws Exception {
+        // we had a bug where size of LONG256 column was incorrectly defined
+        // this caused TableWriter to incorrectly calculate append position in constructor
+        // subsequent records would have been appended to far away from records from first writer instance
+        // and table reader would not be able to read data consistently
+        TestUtils.assertMemoryLeak(() -> {
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.LONG256)) {
+                CairoTestUtils.create(model);
+            }
+
+            try (TableWriter w = new TableWriter(configuration, "x")) {
+                TableWriter.Row r = w.newRow();
+                r.putLong256(0, 1, 2, 3, 4);
+                r.append();
+                w.commit();
+            }
+
+            try (TableWriter w = new TableWriter(configuration, "x")) {
+                TableWriter.Row r = w.newRow();
+                r.putLong256(0, 5, 6, 7, 8);
+                r.append();
+                w.commit();
+            }
+
+            try (TableReader r = new TableReader(configuration, "x")) {
+                sink.clear();
+                printer.print(r.getCursor(), r.getMetadata(), true);
+            }
+
+            TestUtils.assertEquals("a\n" +
+                    "0x04000000000000000300000000000000020000000000000001\n" +
+                    "0x08000000000000000700000000000000060000000000000005\n", sink);
         });
     }
 
@@ -1949,6 +1940,142 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadLong256Four() {
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1_000_000;
+        final Rnd rnd = new Rnd();
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
+                row.append();
+            }
+            writer.commit();
+        }
+
+        rnd.reset();
+        final StringSink sink = new StringSink();
+        try (TableReader reader = new TableReader(configuration, "w")) {
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                sink.clear();
+                record.getLong256(0, sink);
+                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
+                count++;
+            }
+            Assert.assertEquals(N, count);
+        }
+    }
+
+    @Test
+    public void testReadLong256One() {
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1_000_000;
+        final Rnd rnd = new Rnd();
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()));
+                row.append();
+            }
+            writer.commit();
+        }
+
+        rnd.reset();
+        final StringSink sink = new StringSink();
+        try (TableReader reader = new TableReader(configuration, "w")) {
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                sink.clear();
+                record.getLong256(0, sink);
+                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()), sink);
+                count++;
+            }
+            Assert.assertEquals(N, count);
+        }
+    }
+
+    @Test
+    public void testReadLong256Three() {
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1_000_000;
+        final Rnd rnd = new Rnd();
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
+                row.append();
+            }
+            writer.commit();
+        }
+
+        rnd.reset();
+        final StringSink sink = new StringSink();
+        try (TableReader reader = new TableReader(configuration, "w")) {
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                sink.clear();
+                record.getLong256(0, sink);
+                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
+                count++;
+            }
+            Assert.assertEquals(N, count);
+        }
+    }
+
+    @Test
+    public void testReadLong256Two() {
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1_000_000;
+        final Rnd rnd = new Rnd();
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
+                row.append();
+            }
+            writer.commit();
+        }
+
+        rnd.reset();
+        final StringSink sink = new StringSink();
+        try (TableReader reader = new TableReader(configuration, "w")) {
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                sink.clear();
+                record.getLong256(0, sink);
+                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
+                count++;
+            }
+            Assert.assertEquals(N, count);
+        }
+    }
+
+    @Test
     public void testReadNonPartitioned() throws Exception {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         TestUtils.assertMemoryLeak(this::testTableCursor);
@@ -2070,7 +2197,7 @@ public class TableReaderTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
 
             try (TableWriter writer = new TableWriter(configuration, tableName)) {
-                long timestamp = TimestampFormatUtils.parseTimestamp("2019-01-31T10:00:00.000001Z");
+                long timestamp = TimestampFormatUtils.parseUTCTimestamp("2019-01-31T10:00:00.000001Z");
                 long timestampStep = 500;
 
                 for (int i = 0; i < N; i++) {
@@ -2173,7 +2300,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -2242,142 +2369,6 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReadLong256One() {
-        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        final int N = 1_000_000;
-        final Rnd rnd = new Rnd();
-        long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "w")) {
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row row = writer.newRow(timestamp);
-                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()));
-                row.append();
-            }
-            writer.commit();
-        }
-
-        rnd.reset();
-        final StringSink sink = new StringSink();
-        try (TableReader reader = new TableReader(configuration, "w")) {
-            final RecordCursor cursor = reader.getCursor();
-            final Record record = cursor.getRecord();
-            int count = 0;
-            while (cursor.hasNext()) {
-                sink.clear();
-                record.getLong256(0, sink);
-                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()), sink);
-                count++;
-            }
-            Assert.assertEquals(N, count);
-        }
-    }
-
-    @Test
-    public void testReadLong256Two() {
-        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        final int N = 1_000_000;
-        final Rnd rnd = new Rnd();
-        long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "w")) {
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row row = writer.newRow(timestamp);
-                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
-                row.append();
-            }
-            writer.commit();
-        }
-
-        rnd.reset();
-        final StringSink sink = new StringSink();
-        try (TableReader reader = new TableReader(configuration, "w")) {
-            final RecordCursor cursor = reader.getCursor();
-            final Record record = cursor.getRecord();
-            int count = 0;
-            while (cursor.hasNext()) {
-                sink.clear();
-                record.getLong256(0, sink);
-                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
-                count++;
-            }
-            Assert.assertEquals(N, count);
-        }
-    }
-
-    @Test
-    public void testReadLong256Three() {
-        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        final int N = 1_000_000;
-        final Rnd rnd = new Rnd();
-        long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "w")) {
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row row = writer.newRow(timestamp);
-                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
-                row.append();
-            }
-            writer.commit();
-        }
-
-        rnd.reset();
-        final StringSink sink = new StringSink();
-        try (TableReader reader = new TableReader(configuration, "w")) {
-            final RecordCursor cursor = reader.getCursor();
-            final Record record = cursor.getRecord();
-            int count = 0;
-            while (cursor.hasNext()) {
-                sink.clear();
-                record.getLong256(0, sink);
-                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
-                count++;
-            }
-            Assert.assertEquals(N, count);
-        }
-    }
-
-    @Test
-    public void testReadLong256Four() {
-        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG256).timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        final int N = 1_000_000;
-        final Rnd rnd = new Rnd();
-        long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "w")) {
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row row = writer.newRow(timestamp);
-                row.putLong256(0, "0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()));
-                row.append();
-            }
-            writer.commit();
-        }
-
-        rnd.reset();
-        final StringSink sink = new StringSink();
-        try (TableReader reader = new TableReader(configuration, "w")) {
-            final RecordCursor cursor = reader.getCursor();
-            final Record record = cursor.getRecord();
-            int count = 0;
-            while (cursor.hasNext()) {
-                sink.clear();
-                record.getLong256(0, sink);
-                TestUtils.assertEquals("0x" + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()) + padHexLong(rnd.nextLong()), sink);
-                count++;
-            }
-            Assert.assertEquals(N, count);
-        }
-    }
-
-    @Test
     public void testRemoveFirstPartitionByMonth() throws Exception {
         testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Timestamps.addMonths(Timestamps.floorMM(current), 1));
     }
@@ -2427,7 +2418,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -2470,7 +2461,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                TimestampFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);
+                DateFormat fmt = TableWriter.selectPartitionDirFmt(PartitionBy.DAY);
                 assert fmt != null;
                 final long timestamp = fmt.parse("2017-12-14", null);
 
@@ -2549,7 +2540,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             int N = 1000;
-            long ts = TimestampFormatUtils.parseDateTime("2018-01-06T10:00:00.000Z");
+            long ts = TimestampFormatUtils.parseTimestamp("2018-01-06T10:00:00.000Z");
             final Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 sink.clear();
@@ -2637,146 +2628,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     // this should write metadata without column "b" but will ignore
                     // file delete failures
                     writer.removeColumn("b");
-
-                    // this must fail because we cannot delete foreign files
-                    try {
-                        writer.addColumn("b", ColumnType.STRING);
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot remove");
-                    }
-
-                    // now assert what reader sees
-                    Assert.assertTrue(reader.reload());
-                    Assert.assertEquals(N, reader.size());
-
-                    rnd.reset();
-                    cursor.toTop();
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(rnd.nextChars(10), record.getStr(0));
-                        // roll random generator to make sure it returns same values
-                        rnd.nextChars(15);
-                        counter++;
-                    }
-
-                    Assert.assertEquals(N * 2, counter);
-                }
-            }
-
-            Assert.assertTrue(ff.wasCalled());
-        });
-    }
-
-    @Test
-    public void testLong256WriterReOpen() throws Exception {
-        // we had a bug where size of LONG256 column was incorrectly defined
-        // this caused TableWriter to incorrectly calculate append position in constructor
-        // subsequent records would have been appended to far away from records from first writer instance
-        // and table reader would not be able to read data consistently
-        TestUtils.assertMemoryLeak(() -> {
-            // create table with two string columns
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.LONG256)) {
-                CairoTestUtils.create(model);
-            }
-
-            try (TableWriter w = new TableWriter(configuration, "x")) {
-                TableWriter.Row r = w.newRow();
-                r.putLong256(0, 1, 2, 3, 4);
-                r.append();
-                w.commit();
-            }
-
-            try (TableWriter w = new TableWriter(configuration, "x")) {
-                TableWriter.Row r = w.newRow();
-                r.putLong256(0, 5, 6, 7, 8);
-                r.append();
-                w.commit();
-            }
-
-            try (TableReader r = new TableReader(configuration, "x")) {
-                sink.clear();
-                printer.print(r.getCursor(), r.getMetadata(), true);
-            }
-
-            TestUtils.assertEquals("a\n" +
-                    "0x04000000000000000300000000000000020000000000000001\n" +
-                    "0x08000000000000000700000000000000060000000000000005\n", sink);
-        });
-    }
-
-    @Test
-    public void testUnsuccessfulFileRename() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
-            // create table with two string columns
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.STRING).col("b", ColumnType.STRING)) {
-                CairoTestUtils.create(model);
-            }
-
-            Rnd rnd = new Rnd();
-            final int N = 1000;
-            // make sure we forbid deleting column "b" files
-            TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 0;
-
-                @Override
-                public boolean remove(LPSZ name) {
-                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
-                        counter++;
-                        return false;
-                    }
-                    return super.remove(name);
-                }
-
-                @Override
-                public boolean rename(LPSZ name, LPSZ to) {
-                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
-                        counter++;
-                        return false;
-                    }
-                    return super.rename(name, to);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return counter > 0;
-                }
-            };
-
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            };
-
-            // populate table and delete column
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = writer.newRow();
-                    row.putStr(0, rnd.nextChars(10));
-                    row.putStr(1, rnd.nextChars(15));
-                    row.append();
-                }
-                writer.commit();
-
-                try (TableReader reader = new TableReader(configuration, "x")) {
-                    long counter = 0;
-
-                    rnd.reset();
-                    RecordCursor cursor = reader.getCursor();
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(rnd.nextChars(10), record.getStr(0));
-                        Assert.assertEquals(rnd.nextChars(15), record.getStr(1));
-                        counter++;
-                    }
-
-                    Assert.assertEquals(N, counter);
-
-                    // this should write metadata without column "b" but will ignore
-                    // file delete failures
-                    writer.renameColumn("b", "bb");
 
                     // this must fail because we cannot delete foreign files
                     try {
@@ -2912,6 +2763,109 @@ public class TableReaderTest extends AbstractCairoTest {
                         } else {
                             Assert.assertEquals(rnd.nextChars(15), record.getStr(1));
                         }
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N * 2, counter);
+                }
+            }
+
+            Assert.assertTrue(ff.wasCalled());
+        });
+    }
+
+    @Test
+    public void testUnsuccessfulFileRename() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.STRING).col("b", ColumnType.STRING)) {
+                CairoTestUtils.create(model);
+            }
+
+            Rnd rnd = new Rnd();
+            final int N = 1000;
+            // make sure we forbid deleting column "b" files
+            TestFilesFacade ff = new TestFilesFacade() {
+                int counter = 0;
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
+                        counter++;
+                        return false;
+                    }
+                    return super.remove(name);
+                }
+
+                @Override
+                public boolean rename(LPSZ name, LPSZ to) {
+                    if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
+                        counter++;
+                        return false;
+                    }
+                    return super.rename(name, to);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return counter > 0;
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            // populate table and delete column
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow();
+                    row.putStr(0, rnd.nextChars(10));
+                    row.putStr(1, rnd.nextChars(15));
+                    row.append();
+                }
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    long counter = 0;
+
+                    rnd.reset();
+                    RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(rnd.nextChars(10), record.getStr(0));
+                        Assert.assertEquals(rnd.nextChars(15), record.getStr(1));
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N, counter);
+
+                    // this should write metadata without column "b" but will ignore
+                    // file delete failures
+                    writer.renameColumn("b", "bb");
+
+                    // this must fail because we cannot delete foreign files
+                    try {
+                        writer.addColumn("b", ColumnType.STRING);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "Cannot remove");
+                    }
+
+                    // now assert what reader sees
+                    Assert.assertTrue(reader.reload());
+                    Assert.assertEquals(N, reader.size());
+
+                    rnd.reset();
+                    cursor.toTop();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(rnd.nextChars(10), record.getStr(0));
+                        // roll random generator to make sure it returns same values
+                        rnd.nextChars(15);
                         counter++;
                     }
 
@@ -3333,6 +3287,52 @@ public class TableReaderTest extends AbstractCairoTest {
         });
     }
 
+    private static long allocBlob() {
+        return Unsafe.malloc(blobLen);
+    }
+
+    private static void freeBlob(long blob) {
+        Unsafe.free(blob, blobLen);
+    }
+
+    private static void assertBin(Record r, Rnd exp, long blob, int index) {
+        if (exp.nextBoolean()) {
+            exp.nextChars(blob, blobLen / 2);
+            Assert.assertEquals(blobLen, r.getBinLen(index));
+            BinarySequence sq = r.getBin(index);
+            for (int l = 0; l < blobLen; l++) {
+                byte b = sq.byteAt(l);
+                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                if (result) {
+                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                }
+            }
+        } else {
+            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
+        }
+    }
+
+    private static void assertStrColumn(CharSequence expected, Record r, int index) {
+        TestUtils.assertEquals(expected, r.getStr(index));
+        TestUtils.assertEquals(expected, r.getStrB(index));
+        Assert.assertNotSame(r.getStr(index), r.getStrB(index));
+        Assert.assertEquals(expected.length(), r.getStrLen(index));
+    }
+
+    private static void assertNullStr(Record r, int index) {
+        Assert.assertNull(r.getStr(index));
+        Assert.assertNull(r.getStrB(index));
+        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
+    }
+
+    private static String padHexLong(long value) {
+        String s = Long.toHexString(value);
+        if (s.length() % 2 == 0) {
+            return s;
+        }
+        return "0" + s;
+    }
+
     private void appendTwoSymbols(TableWriter writer, Rnd rnd) {
         for (int i = 0; i < 1000; i++) {
             TableWriter.Row row = writer.newRow();
@@ -3612,7 +3612,7 @@ public class TableReaderTest extends AbstractCairoTest {
         try {
             TestUtils.assertMemoryLeak(() -> {
                 CairoTestUtils.createAllTable(configuration, partitionBy);
-                long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
                 CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
@@ -3645,7 +3645,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
-            long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
             long blob = allocBlob();
             try {
@@ -3842,7 +3842,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -3882,7 +3882,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(500, totalCount);
 
 
-                    TimestampFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                    DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
                     assert fmt != null;
                     Assert.assertFalse(
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
@@ -3913,7 +3913,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T10:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T10:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -3939,7 +3939,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
 
-                TimestampFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
                 assert fmt != null;
                 final long timestamp = fmt.parse(partitionNameToDelete, null);
 
@@ -3984,7 +3984,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;
@@ -4023,7 +4023,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(N * N_PARTITIONS, totalCount);
 
 
-                    TimestampFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                    DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
                     assert fmt != null;
                     Assert.assertTrue(
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
@@ -4073,7 +4073,7 @@ public class TableReaderTest extends AbstractCairoTest {
         try {
             TestUtils.assertMemoryLeak(() -> {
                 CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
-                long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
                 CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
@@ -4102,7 +4102,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private void testTableCursor(long inc) throws NumericException {
         Rnd rnd = new Rnd();
         int N = 100;
-        long ts = TimestampFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z") / 1000;
+        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z") / 1000;
         long blob = allocBlob();
         try {
             testAppend(rnd, configuration, ts, N, inc, blob, 0);

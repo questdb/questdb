@@ -29,29 +29,18 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
+class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
     private final Map map;
     private final RecordSink keyMapSink;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final int timestampIndex;
-    private final TimestampSampler timestampSampler;
-    private final SplitVirtualRecord record;
     private final Record mapRecord;
     private final RecordCursor mapCursor;
-    private final ObjList<Function> recordFunctions;
-    private RecordCursor base;
-    private Record baseRecord;
-    private long lastTimestamp;
-    private long nextTimestamp;
-    private SqlExecutionInterruptor interruptor;
 
     public SampleByFillValueRecordCursor(
             Map map,
@@ -62,41 +51,12 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler
     ) {
+        super(recordFunctions, timestampIndex, timestampSampler, groupByFunctions, placeholderFunctions);
         this.map = map;
-        this.groupByFunctions = groupByFunctions;
-        this.timestampIndex = timestampIndex;
         this.keyMapSink = keyMapSink;
-        this.timestampSampler = timestampSampler;
         this.mapRecord = map.getRecord();
-        this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         this.record.of(mapRecord);
-        assert recordFunctions.size() == placeholderFunctions.size();
-        final TimestampFunc timestampFunc = new TimestampFunc(0);
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            Function f = recordFunctions.getQuick(i);
-            if (f == null) {
-                recordFunctions.setQuick(i, timestampFunc);
-                placeholderFunctions.setQuick(i, timestampFunc);
-            }
-        }
         this.mapCursor = map.getCursor();
-        this.recordFunctions = recordFunctions;
-    }
-
-    @Override
-    public void close() {
-        base.close();
-        interruptor = null;
-    }
-
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return (SymbolTable) recordFunctions.getQuick(columnIndex);
     }
 
     @Override
@@ -134,7 +94,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
         int n = groupByFunctions.size();
         while (true) {
             interruptor.checkInterrupted();
-            final long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            final long timestamp = getBaseRecordTimestamp();
             if (lastTimestamp == timestamp) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
@@ -165,8 +125,8 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
                 // and build another map
-                GroupByUtils.toTop(groupByFunctions);
                 this.nextTimestamp = timestamp;
+                GroupByUtils.toTop(groupByFunctions);
             }
 
             refreshCursorAndRecord();
@@ -176,8 +136,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
 
     @Override
     public void toTop() {
-        GroupByUtils.toTop(recordFunctions);
-        this.base.toTop();
+        super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
             this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
@@ -199,21 +158,6 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
         }
     }
 
-    @Override
-    public long size() {
-        return -1;
-    }
-
-    @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) {
-        // factory guarantees that base cursor is not empty
-        this.base = base;
-        this.baseRecord = base.getRecord();
-        this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-        this.lastTimestamp = this.nextTimestamp;
-        interruptor = executionContext.getSqlExecutionInterruptor();
-    }
-
     private void refreshCursorAndRecord() {
         this.map.getCursor().hasNext();
         refreshRecord();
@@ -226,17 +170,5 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
             record.setActiveB();
         }
         return true;
-    }
-
-    private class TimestampFunc extends TimestampFunction implements Function {
-
-        public TimestampFunc(int position) {
-            super(position);
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return lastTimestamp;
-        }
     }
 }

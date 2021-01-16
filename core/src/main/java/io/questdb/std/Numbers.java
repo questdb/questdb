@@ -40,8 +40,9 @@ public final class Numbers {
     public final static int pow10max;
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final int MAX_SCALE = 19;
-    private static final int EXP_BIAS = 1023;
     public static final long SIGN_BIT_MASK = 0x8000000000000000L;
+    public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
+    private static final int EXP_BIAS = 1023;
     private static final long EXP_BIT_MASK = 0x7FF0000000000000L;
     private static final long SIGNIF_BIT_MASK = 0x000FFFFFFFFFFFFFL;
     private static final int[] SMALL_5_POW = new int[]{1, 5, 25, 125, 625, 3125, 15625, 78125, 390625, 1953125, 9765625, 48828125, 244140625, 1220703125};
@@ -428,6 +429,20 @@ public final class Numbers {
         appendHex(sink, a, false);
     }
 
+    public static int bswap(int value) {
+        return ((value >> 24) & 0xff) | ((value << 8) & 0xff0000) | ((value >> 8) & 0xff00) | ((value << 24) & 0xff000000);
+    }
+
+    public static short bswap(short value) {
+        return (short) ((((value >> 8) & 0xff) | (value << 8)) & 0xffff);
+    }
+
+    public static long bswap(long val) {
+        val = ((val << 8) & 0xFF00FF00FF00FF00L) | ((val >> 8) & 0x00FF00FF00FF00FFL);
+        val = ((val << 16) & 0xFFFF0000FFFF0000L) | ((val >> 16) & 0x0000FFFF0000FFFFL);
+        return (val << 32) | ((val >> 32) & 0xFFFFFFFFL);
+    }
+
     public static int ceilPow2(int value) {
         int i = value;
         if ((i != 0) && (i & (i - 1)) > 0) {
@@ -517,6 +532,45 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return r;
+    }
+
+    public static double intToDouble(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Double.NaN;
+    }
+
+    public static float intToFloat(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Float.NaN;
+    }
+
+    public static long intToLong(int value) {
+        if (value != Numbers.INT_NaN) {
+            return value;
+        }
+        return Numbers.LONG_NaN;
+    }
+
+    public static boolean isFinite(double d) {
+        return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
+    }
+
+    public static double longToDouble(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Double.NaN;
+    }
+
+    public static float longToFloat(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Float.NaN;
     }
 
     public static int msb(int value) {
@@ -749,6 +803,52 @@ public final class Numbers {
         return parseInt0(sequence, p, lim);
     }
 
+    public static long parseInt000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
+
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim || notDigit(sequence.charAt(i))) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+
+            if (notDigit(c)) {
+                break;
+            }
+
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        final int len = i - p;
+
+        if (len > 3 || val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+
+        while (i - p < 3) {
+            val *= 10;
+            i++;
+        }
+
+        return encodeLowHighInts(negative ? val : -val, len);
+    }
+
     public static int parseIntQuiet(CharSequence sequence) {
         try {
             if (sequence == null || Chars.equals("NaN", sequence)) {
@@ -955,6 +1055,13 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static short parseShort(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence, 0, sequence.length());
+    }
+
     public static short parseShort(CharSequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -1078,10 +1185,6 @@ public final class Numbers {
         long signMask = valueBits & Numbers.SIGN_BIT_MASK;
         double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
-    }
-
-    public static boolean isFinite(double d) {
-        return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
     }
 
     private static void appendLongHex4(CharSink sink, long value) {
@@ -1240,6 +1343,8 @@ public final class Numbers {
         sink.put(hexDigits[(int) ((value) & 0xf)]);
     }
 
+    //////////////////////
+
     private static void appendLongHexPad(CharSink sink, char hexDigit) {
         sink.put('0');
         sink.put(hexDigit);
@@ -1287,8 +1392,6 @@ public final class Numbers {
         sink.put((char) ('0' + (c %= 100) / 10));
         sink.put((char) ('0' + (c % 10)));
     }
-
-    //////////////////////
 
     private static void appendInt7(CharSink sink, int i) {
         int c;
@@ -2007,7 +2110,7 @@ public final class Numbers {
                         }
                     }
 
-                    lowDigitDifference = (b << 1) - tens;
+                    lowDigitDifference = ((long) b << 1) - tens;
                 } else {
                     long b = fractionBits * LONG_5_POW[B5] << B2;
                     long s = LONG_5_POW[S5] << S2;
@@ -2465,40 +2568,5 @@ public final class Numbers {
         longHexAppenderPad64[62] = a64;
         longHexAppenderPad64[63] = a64;
         longHexAppenderPad64[64] = a64;
-    }
-
-    public static double longToDouble(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Double.NaN;
-    }
-
-    public static float longToFloat(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Float.NaN;
-    }
-
-    public static double intToDouble(int value) {
-        if (value != Numbers.INT_NaN) {
-            return value;
-        }
-        return Double.NaN;
-    }
-
-    public static float intToFloat(int value) {
-        if (value != Numbers.INT_NaN) {
-            return value;
-        }
-        return Float.NaN;
-    }
-
-    public static long intToLong(int value) {
-        if (value != Numbers.INT_NaN) {
-            return value;
-        }
-        return Numbers.LONG_NaN;
     }
 }

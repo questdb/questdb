@@ -39,6 +39,6 @@ public class UserByIdCatalogueFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new StrConstant(position, "public");
+        return Constants.PUBLIC_CONSTANT;
     }
 }

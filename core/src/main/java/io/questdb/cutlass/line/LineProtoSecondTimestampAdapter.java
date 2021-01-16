@@ -26,7 +26,7 @@ package io.questdb.cutlass.line;
 
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 public class LineProtoSecondTimestampAdapter implements LineProtoTimestampAdapter {
     public static final LineProtoSecondTimestampAdapter INSTANCE = new LineProtoSecondTimestampAdapter();

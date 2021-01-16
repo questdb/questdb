@@ -58,6 +58,10 @@ public final class Chars {
         }
     }
 
+    public static boolean nonEmpty(final CharSequence value) {
+        return value != null && value.length() > 0;
+    }
+
     public static int compare(CharSequence l, CharSequence r) {
         if (l == r) {
             return 0;

@@ -44,10 +44,17 @@ import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -142,10 +149,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByPoolCapacity;
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
-    private final DateLocale dateLocale;
-    private final TimestampLocale timestampLocale;
+    private final int sqlBindVariablePoolSize;
+    private final DateLocale locale;
     private final String backupRoot;
-    private final TimestampFormat backupDirTimestampFormat;
+    private final DateFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
     private final int backupMkdirMode;
     private final int floatToStrCastScale;
@@ -171,6 +178,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlAnalyticRowIdMaxPages;
     private final int sqlAnalyticTreeKeyPageSize;
     private final int sqlAnalyticTreeKeyMaxPages;
+    private final String databaseRoot;
+    private final long maxRerunWaitCapMs;
+    private final double rerunExponentialWaitMultiplier;
+    private final int rerunInitialWaitQueueSize;
+    private final int rerunMaxProcessingQueueSize;
+    private final BuildInformation buildInformation;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -208,7 +221,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
     private MimeTypesCache mimeTypesCache;
-    private String databaseRoot;
     private String keepAliveHeader;
     private int httpBindIPv4Address;
     private int httpBindPort;
@@ -245,16 +257,17 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgMaxBlobSizeOnQuery;
     private int pgRecvBufferSize;
     private int pgSendBufferSize;
-    private DateLocale pgDefaultDateLocale;
-    private TimestampLocale pgDefaultTimestampLocale;
+    private DateLocale pgDefaultLocale;
     private int[] pgWorkerAffinity;
     private int pgWorkerCount;
     private boolean pgHaltOnError;
     private boolean pgDaemonPool;
-    private long maxRerunWaitCapMs;
-    private double rerunExponentialWaitMultiplier;
-    private int rerunInitialWaitQueueSize;
-    private int rerunMaxProcessingQueueSize;
+    private int pgInsertCacheBlockCount;
+    private int pgInsertCacheRowCount;
+    private int pgInsertPoolCapacity;
+    private int pgNamedStatementCacheCapacity;
+    private int pgNamesStatementPoolCapacity;
+    private int pgPendingWritersCacheCapacity;
     private int lineTcpNetActiveConnectionLimit;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
@@ -294,12 +307,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             String root,
             Properties properties,
             @Nullable Map<String, String> env,
-            Log log
+            Log log,
+            final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
         this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
+
+        final String databaseRoot = getString(properties, env, "cairo.root", "db");
+        if (new File(databaseRoot).isAbsolute()) {
+            this.databaseRoot = databaseRoot;
+        } else {
+            this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
+        }
+
         this.httpMinServerEnabled = getBoolean(properties, env, "http.min.enabled", true);
         if (httpMinServerEnabled) {
             this.httpMinWorkerAffinity = getAffinity(properties, env, "http.min.worker.affinity", httpWorkerCount);
@@ -360,13 +382,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
             }
 
-            final String databaseRoot = getString(properties, env, "cairo.root", "db");
-            if (new File(databaseRoot).isAbsolute()) {
-                this.databaseRoot = databaseRoot;
-            } else {
-                this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
-            }
-
             this.httpActiveConnectionLimit = getInt(properties, env, "http.net.active.connection.limit", 256);
             this.httpEventCapacity = getInt(properties, env, "http.net.event.capacity", 1024);
             this.httpIOQueueCapacity = getInt(properties, env, "http.net.io.queue.capacity", 1024);
@@ -407,12 +422,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             try (Path path = new Path().of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath()).$()) {
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
             }
-
-            this.maxRerunWaitCapMs = getLong(properties, env, "http.busy.retry.maximum.wait.before.retry", 1000);
-            this.rerunExponentialWaitMultiplier = getDouble(properties, env, "http.busy.retry.exponential.wait.multipier", 2.0);
-            this.rerunInitialWaitQueueSize = getIntSize(properties, env, "http.busy.retry.initialWaitQueueSize", 64);
-            this.rerunMaxProcessingQueueSize = getIntSize(properties, env, "http.busy.retry.maxProcessingQueueSize", 4096);
         }
+
+        this.maxRerunWaitCapMs = getLong(properties, env, "http.busy.retry.maximum.wait.before.retry", 1000);
+        this.rerunExponentialWaitMultiplier = getDouble(properties, env, "http.busy.retry.exponential.wait.multipier", 2.0);
+        this.rerunInitialWaitQueueSize = getIntSize(properties, env, "http.busy.retry.initialWaitQueueSize", 64);
+        this.rerunMaxProcessingQueueSize = getIntSize(properties, env, "http.busy.retry.maxProcessingQueueSize", 4096);
+
         this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
         if (pgEnabled) {
             pgNetActiveConnectionLimit = getInt(properties, env, "pg.net.active.connection.limit", 10);
@@ -441,19 +457,20 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.pgRecvBufferSize = getIntSize(properties, env, "pg.recv.buffer.size", 1024 * 1024);
             this.pgSendBufferSize = getIntSize(properties, env, "pg.send.buffer.size", 1024 * 1024);
             final String dateLocale = getString(properties, env, "pg.date.locale", "en");
-            this.pgDefaultDateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
-            if (this.pgDefaultDateLocale == null) {
+            this.pgDefaultLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
+            if (this.pgDefaultLocale == null) {
                 throw new ServerConfigurationException("pg.date.locale", dateLocale);
-            }
-            final String timestampLocale = getString(properties, env, "pg.timestamp.locale", "en");
-            this.pgDefaultTimestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
-            if (this.pgDefaultTimestampLocale == null) {
-                throw new ServerConfigurationException("pg.timestamp.locale", dateLocale);
             }
             this.pgWorkerCount = getInt(properties, env, "pg.worker.count", 0);
             this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
             this.pgHaltOnError = getBoolean(properties, env, "pg.halt.on.error", false);
             this.pgDaemonPool = getBoolean(properties, env, "pg.daemon.pool", true);
+            this.pgInsertCacheBlockCount = getInt(properties, env, "pg.insert.cache.block.count", 8);
+            this.pgInsertCacheRowCount = getInt(properties, env, "pg.insert.cache.row.count", 8);
+            this.pgInsertPoolCapacity = getInt(properties, env, "pg.insert.pool.capacity", 64);
+            this.pgNamedStatementCacheCapacity = getInt(properties, env, "pg.named.statement.cache.capacity", 32);
+            this.pgNamesStatementPoolCapacity = getInt(properties, env, "pg.named.statement.pool.capacity", 32);
+            this.pgPendingWritersCacheCapacity = getInt(properties, env, "pg.pending.writers.cache.capacity", 16);
         }
 
         this.commitMode = getCommitMode(properties, env, "cairo.commit.mode");
@@ -522,26 +539,20 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sqlGroupByMapCapacity = getInt(properties, env, "cairo.sql.groupby.map.capacity", 1024);
         this.sqlGroupByPoolCapacity = getInt(properties, env, "cairo.sql.groupby.pool.capacity", 1024);
         this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, "cairo.sql.max.symbol.not.equals.count", 100);
+        this.sqlBindVariablePoolSize = getInt(properties, env, "cairo.sql.bind.variable.pool.size", 8);
         final String sqlCopyFormatsFile = getString(properties, env, "cairo.sql.copy.formats.file", "/text_loader.json");
         final String dateLocale = getString(properties, env, "cairo.date.locale", "en");
-        this.dateLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
-        if (this.dateLocale == null) {
+        this.locale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
+        if (this.locale == null) {
             throw new ServerConfigurationException("cairo.date.locale", dateLocale);
-        }
-
-        final String timestampLocale = getString(properties, env, "cairo.timestamp.locale", "en");
-        this.timestampLocale = TimestampLocaleFactory.INSTANCE.getLocale(timestampLocale);
-        if (this.timestampLocale == null) {
-            throw new ServerConfigurationException("cairo.timestamp.locale", timestampLocale);
         }
 
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                TimestampLocaleFactory.INSTANCE,
-                this.dateLocale,
-                this.timestampLocale);
+                this.locale
+        );
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
             inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
@@ -597,8 +608,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpNetRcvBufSize = getIntSize(properties, env, "line.tcp.net.recv.buf.size", -1);
             this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 64);
             this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.tcp.timestamp");
-            this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 2048);
-            this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 2048);
+            this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 4096);
+            this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 4096);
             if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
                 throw new IllegalArgumentException(
                         "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
@@ -616,6 +627,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
         }
+
+        this.buildInformation = buildInformation;
     }
 
     @Override
@@ -782,9 +795,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         return value;
     }
 
-    private TimestampFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env, String key, final String defaultPattern) {
+    private DateFormat getTimestampFormat(Properties properties, @Nullable Map<String, String> env, String key, final String defaultPattern) {
         final String pattern = overrideWithEnv(properties, env, key);
-        DateFormatCompiler compiler = new DateFormatCompiler();
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         if (null != pattern) {
             return compiler.compile(pattern);
         }
@@ -1104,12 +1117,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public DateLocale getDefaultDateLocale() {
-            return dateLocale;
-        }
-
-        @Override
-        public TimestampLocale getDefaultTimestampLocale() {
-            return timestampLocale;
+            return locale;
         }
     }
 
@@ -1274,6 +1282,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
+        public int getBindVariablePoolSize() {
+            return sqlBindVariablePoolSize;
+        }
+
+        @Override
         public int getSqlCopyBufferSize() {
             return sqlCopyBufferSize;
         }
@@ -1394,7 +1407,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public TimestampFormat getBackupDirTimestampFormat() {
+        public DateFormat getBackupDirTimestampFormat() {
             return backupDirTimestampFormat;
         }
 
@@ -1625,12 +1638,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public DateLocale getDefaultDateLocale() {
-            return dateLocale;
-        }
-
-        @Override
-        public TimestampLocale getDefaultTimestampLocale() {
-            return timestampLocale;
+            return locale;
         }
 
         @Override
@@ -1666,6 +1674,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTableBlockWriterQueueSize() {
             return tableBlockWriterQueueSize;
+        }
+
+        @Override
+        public BuildInformation getBuildInformation() {
+            return buildInformation;
         }
     }
 
@@ -2141,11 +2154,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean getDumpNetworkTraffic() {
-            return false;
-        }
-
-        @Override
         public int getFactoryCacheColumnCount() {
             return pgFactoryCacheColumnCount;
         }
@@ -2166,13 +2174,43 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getInsertCacheBlockCount() {
+            return pgInsertCacheBlockCount;
+        }
+
+        @Override
+        public int getInsertCacheRowCount() {
+            return pgInsertCacheRowCount;
+        }
+
+        @Override
+        public int getInsertPoolCapacity() {
+            return pgInsertPoolCapacity;
+        }
+
+        @Override
         public int getMaxBlobSizeOnQuery() {
             return pgMaxBlobSizeOnQuery;
         }
 
         @Override
+        public int getNamedStatementCacheCapacity() {
+            return pgNamedStatementCacheCapacity;
+        }
+
+        @Override
+        public int getNamesStatementPoolCapacity() {
+            return pgNamesStatementPoolCapacity;
+        }
+
+        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getPendingWritersCacheSize() {
+            return pgPendingWritersCacheCapacity;
         }
 
         @Override
@@ -2192,12 +2230,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public DateLocale getDefaultDateLocale() {
-            return pgDefaultDateLocale;
-        }
-
-        @Override
-        public TimestampLocale getDefaultTimestampLocale() {
-            return pgDefaultTimestampLocale;
+            return pgDefaultLocale;
         }
 
         @Override

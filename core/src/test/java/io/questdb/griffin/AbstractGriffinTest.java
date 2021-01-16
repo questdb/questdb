@@ -30,7 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -41,7 +41,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
-    protected static final BindVariableService bindVariableService = new BindVariableService();
+    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private static final LongList rows = new LongList();
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
@@ -356,19 +356,19 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected static void assertTimestampColumnValues(RecordCursorFactory factory) {
-        assertTimestampColumnValues(factory, sqlExecutionContext);
-    }
-
     protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) {
         int index = factory.getMetadata().getTimestampIndex();
         long timestamp = Long.MIN_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
+            long c = 0;
             while (cursor.hasNext()) {
                 long ts = record.getTimestamp(index);
-                Assert.assertTrue(timestamp <= ts);
+                if (timestamp > ts) {
+                    Assert.fail("record #" + c);
+                }
                 timestamp = ts;
+                c++;
             }
         }
     }

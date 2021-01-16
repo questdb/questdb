@@ -26,7 +26,7 @@ package io.questdb.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.time.Dates;
+import io.questdb.std.datetime.millitime.Dates;
 import org.junit.Assert;
 import org.junit.Test;
 

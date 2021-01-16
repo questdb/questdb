@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.udp;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;

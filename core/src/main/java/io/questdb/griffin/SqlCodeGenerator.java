@@ -47,7 +47,7 @@ import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -167,11 +167,11 @@ public class SqlCodeGenerator implements Mutable {
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
         int columnIndex;
-        if (isSingleColumnFunction(ast, "sum")) {
+        if (ast.type == FUNCTION && ast.paramCount == 1 && SqlKeywords.isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
-        } else if (ast.type == FUNCTION && ast.paramCount == 0 && Chars.equals(ast.token, "count")) {
+        } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
             // count() is a no-arg function
             tempVecConstructorArgIndexes.add(-1);
             return countConstructors.get(ColumnType.pow2SizeOf(tempKeyIndexesInBase.getQuick(0)));
@@ -244,6 +244,10 @@ public class SqlCodeGenerator implements Mutable {
             }
         }
         return true;
+    }
+
+    private RecordMetadata calculateSetMetadata(RecordMetadata masterMetadata) {
+        return GenericRecordMetadata.removeTimestamp(masterMetadata);
     }
 
     @Nullable
@@ -1233,7 +1237,6 @@ public class SqlCodeGenerator implements Mutable {
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
             // we require timestamp
-            // todo: this looks like generic code
             final int timestampIndex = getTimestampIndex(model, factory);
             if (timestampIndex == -1) {
                 Misc.free(factory);
@@ -1721,6 +1724,7 @@ public class SqlCodeGenerator implements Mutable {
         if (!timestampSet && executionContext.isTimestampRequired()) {
             selectMetadata.add(BaseRecordMetadata.copyOf(metadata, timestampIndex));
             selectMetadata.setTimestampIndex(selectMetadata.getColumnCount() - 1);
+            columnCrossIndex.add(timestampIndex);
         }
 
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
@@ -2037,8 +2041,8 @@ public class SqlCodeGenerator implements Mutable {
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn column = columns.getQuick(i);
-                ExpressionNode node = column.getAst();
-                if (timestampColumn != null && node.type == ExpressionNode.LITERAL && Chars.equals(timestampColumn, node.token)) {
+                final ExpressionNode node = column.getAst();
+                if (node.type == ExpressionNode.LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
                     virtualMetadata.setTimestampIndex(i);
                 }
 
@@ -2047,8 +2051,11 @@ public class SqlCodeGenerator implements Mutable {
                         metadata,
                         executionContext
                 );
+                // define "undefined" functions as string
+                if (function.isUndefined()) {
+                    function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+                }
                 functions.add(function);
-
 
                 if (function instanceof SymbolFunction) {
                     virtualMetadata.add(
@@ -2072,6 +2079,37 @@ public class SqlCodeGenerator implements Mutable {
                 }
             }
 
+            // if timestamp was required and present in the base model but
+            // not selected, we will need to add it
+            if (
+                    executionContext.isTimestampRequired()
+                            && timestampColumn != null
+                            && virtualMetadata.getTimestampIndex() == -1
+            ) {
+                final Function timestampFunction = FunctionParser.createColumn(
+                        0, timestampColumn, metadata
+                );
+                functions.add(timestampFunction);
+
+                // here the base timestamp column name can name-clash with one of the
+                // functions, so we have to use bottomUpColumns to lookup alias we should
+                // be using. Bottom up column should have our timestamp because optimiser puts it there
+
+                for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                    QueryColumn qc = model.getBottomUpColumns().getQuick(i);
+                    if (qc.getAst().type == LITERAL && Chars.equals(timestampColumn, qc.getAst().token)) {
+                        virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
+                        virtualMetadata.add(
+                                new TableColumnMetadata(
+                                        Chars.toString(qc.getAlias()),
+                                        timestampFunction.getType(),
+                                        timestampFunction.getMetadata()
+                                )
+                        );
+                        break;
+                    }
+                }
+            }
             return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
         } catch (SqlException | CairoException e) {
             factory.close();
@@ -2515,11 +2553,12 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
-    private RecordMetadata calculateSetMetadata(RecordMetadata masterMetadata) {
-        return GenericRecordMetadata.removeTimestamp(masterMetadata);
-    }
-
-    private RecordCursorFactory generateUnionAllFactory(QueryModel model, RecordCursorFactory masterFactory, SqlExecutionContext executionContext, RecordCursorFactory slaveFactory) throws SqlException {
+    private RecordCursorFactory generateUnionAllFactory(
+            QueryModel model,
+            RecordCursorFactory masterFactory,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory slaveFactory
+    ) throws SqlException {
         validateJoinColumnTypes(model, masterFactory, slaveFactory);
         final RecordCursorFactory unionAllFactory = new UnionAllRecordCursorFactory(
                 calculateSetMetadata(masterFactory.getMetadata()),

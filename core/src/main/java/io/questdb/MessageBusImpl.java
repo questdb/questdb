@@ -24,8 +24,6 @@
 
 package io.questdb;
 
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
 import io.questdb.mp.MCSequence;
@@ -34,6 +32,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.VectorAggregateTask;
+import org.jetbrains.annotations.NotNull;
 
 public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnIndexerTask> indexerQueue;

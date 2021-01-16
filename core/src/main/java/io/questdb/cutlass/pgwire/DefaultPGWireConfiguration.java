@@ -28,10 +28,8 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.TimestampLocale;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.DateLocale;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 
 public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
@@ -151,8 +149,32 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public TimestampLocale getDefaultTimestampLocale() {
-        return TimestampFormatUtils.enLocale;
+    public int getInsertCacheBlockCount() {
+        return 8;
     }
 
+    @Override
+    public int getInsertCacheRowCount() {
+        return 8;
+    }
+
+    @Override
+    public int getInsertPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getNamedStatementCacheCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getNamesStatementPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getPendingWritersCacheSize() {
+        return 16;
+    }
 }

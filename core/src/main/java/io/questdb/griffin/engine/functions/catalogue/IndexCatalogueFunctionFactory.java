@@ -24,28 +24,24 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
 
-public class IndexCatalogueFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_index()";
+public class IndexCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private final static RecordMetadata METADATA;
+
+    public IndexCatalogueFunctionFactory() {
+        super("pg_catalog.pg_index()", METADATA);
     }
 
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(
-                position,
-                new GenericRecordCursorFactory(
-                        IndexCatalogueCursor.METADATA,
-                        new IndexCatalogueCursor(),
-                        false
-                )
-        );
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("indkey", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("indrelid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("indexrelid", ColumnType.INT, null));
+        metadata.add(new TableColumnMetadata("indisprimary", ColumnType.BOOLEAN, null));
+        METADATA = metadata;
     }
 }

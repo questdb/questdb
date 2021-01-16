@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.std.Rnd;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -96,7 +96,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
 
                         // now add some more rows
 
-                        timestamp = TimestampFormatUtils.parseDateTime("1975-01-01T00:00:00.000Z");
+                        timestamp = TimestampFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
                         for (int i = 0; i < N; i++) {
                             TableWriter.Row row = w.newRow(timestamp);
                             row.putInt(0, rnd.nextInt());

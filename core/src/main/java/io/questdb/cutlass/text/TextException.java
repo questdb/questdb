@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
@@ -64,7 +63,7 @@ public class TextException extends Exception implements Sinkable, FlyweightMessa
     }
 
     public TextException put(double c) {
-        message.put(c, Numbers.MAX_SCALE);
+        message.put(c);
         return this;
     }
 

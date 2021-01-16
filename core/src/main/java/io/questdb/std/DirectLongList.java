@@ -34,8 +34,6 @@ public class DirectLongList implements Mutable, Closeable {
 
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
 
-    private final int pow2;
-    private final int onePow2;
     long pos;
     long start;
     long limit;
@@ -43,39 +41,39 @@ public class DirectLongList implements Mutable, Closeable {
     private long capacity;
 
     public DirectLongList(long capacity) {
-        this.pow2 = 3;
-        this.address = Unsafe.malloc(this.capacity = ((capacity << 3) + Misc.CACHE_LINE_SIZE));
-        this.start = this.pos = address + (address & (Misc.CACHE_LINE_SIZE - 1));
-        this.limit = pos + ((capacity - 1) << 3);
-        this.onePow2 = (1 << 3);
+        this.capacity = (capacity * Long.BYTES);
+        this.address = Unsafe.malloc(this.capacity);
+        this.start = this.pos = address;
+        this.limit = pos + this.capacity;
     }
 
     public void add(long x) {
         ensureCapacity();
+        assert pos < limit;
         Unsafe.getUnsafe().putLong(pos, x);
-        pos += 8;
+        pos += Long.BYTES;
     }
 
     public final void add(DirectLongList that) {
-        int count = (int) (that.pos - that.start);
-        if (limit - pos < count) {
-            extend((int) (this.limit - this.start + count) >> 1);
+        long thatCapacity = that.limit - that.pos;
+        if (limit - pos < thatCapacity) {
+            extend(this.capacity + thatCapacity - (limit - pos));
         }
-        Unsafe.getUnsafe().copyMemory(that.start, this.pos, count);
-        this.pos += count;
+        Unsafe.getUnsafe().copyMemory(that.start, this.pos, thatCapacity);
+        this.pos += thatCapacity;
     }
 
-    public int binarySearch(long v) {
-        int low = 0;
-        int high = (int) ((pos - start) >> 3) - 1;
+    public long binarySearch(long v) {
+        long low = 0;
+        long high = ((pos - start) >> 3) - 1;
 
         while (low <= high) {
 
             if (high - low < 65) {
-                return scanSearch(v);
+                return scanSearch(v, low, high);
             }
 
-            int mid = (low + high) >>> 1;
+            long mid = (low + high) >>> 1;
             long midVal = Unsafe.getUnsafe().getLong(start + (mid << 3));
 
             if (midVal < v)
@@ -109,9 +107,8 @@ public class DirectLongList implements Mutable, Closeable {
         return Unsafe.getUnsafe().getLong(start + (p << 3));
     }
 
-    public int scanSearch(long v) {
-        int sz = size();
-        for (int i = 0; i < sz; i++) {
+    public long scanSearch(long v, long low, long high) {
+        for (long i = low; i < high; i++) {
             long f = get(i);
             if (f == v) {
                 return i;
@@ -120,7 +117,7 @@ public class DirectLongList implements Mutable, Closeable {
                 return -(i + 1);
             }
         }
-        return -(sz + 1);
+        return -(high + 1);
     }
 
     public void set(long p, long v) {
@@ -128,25 +125,12 @@ public class DirectLongList implements Mutable, Closeable {
         Unsafe.getUnsafe().putLong(start + (p << 3), v);
     }
 
-    public void setCapacity(long capacity) {
-        if (capacity << pow2 > limit - start) {
-            extend(capacity);
-        }
-    }
-
     public void setPos(long p) {
-        pos = start + (p << pow2);
+        pos = start + p * Long.BYTES;
     }
 
-    public int size() {
-        return (int) ((pos - start) >> pow2);
-    }
-
-    public DirectLongList subset(int lo, int hi) {
-        DirectLongList that = new DirectLongList(hi - lo);
-        Unsafe.getUnsafe().copyMemory(start + (lo << 3), that.start, (hi - lo) << 3);
-        that.pos += (hi - lo) << 3;
-        return that;
+    public long size() {
+        return (int) ((pos - start) / Long.BYTES);
     }
 
     @Override
@@ -164,23 +148,25 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     public void zero(long v) {
-        Unsafe.getUnsafe().setMemory(start, limit - start + onePow2, (byte) v);
+        Unsafe.getUnsafe().setMemory(start, pos - start, (byte) v);
     }
 
     void ensureCapacity() {
-        if (this.pos > limit) {
-            extend((int) ((limit - start + onePow2) >> (pow2 - 1)));
+        if (this.pos < limit) {
+            return;
         }
+        extend(this.capacity * 2);
     }
 
+    // desired capacity in bytes (not count of LONG values)
     private void extend(long capacity) {
         final long oldCapacity = this.capacity;
-        long address = Unsafe.realloc(this.address, oldCapacity, this.capacity = ((capacity << pow2) + Misc.CACHE_LINE_SIZE));
-        long start = address + (address & (Misc.CACHE_LINE_SIZE - 1));
-        this.pos = this.pos - this.start + start;
-        this.limit = start + ((capacity - 1) << pow2);
+        this.capacity = capacity;
+        long address = Unsafe.realloc(this.address, oldCapacity, capacity);
+        this.pos = address + (this.pos - this.start);
         this.address = address;
-        this.start = start;
-        LOG.info().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+        this.start = address;
+        this.limit = address + capacity;
+        LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
     }
 }

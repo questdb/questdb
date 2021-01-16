@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -38,7 +39,7 @@ import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -126,26 +127,38 @@ public class SqlCompiler implements Closeable {
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);
 
-        keywordBasedExecutors.put("truncate", this::truncateTables);
-        keywordBasedExecutors.put("TRUNCATE", this::truncateTables);
-        keywordBasedExecutors.put("alter", this::alterTable);
-        keywordBasedExecutors.put("ALTER", this::alterTable);
-        keywordBasedExecutors.put("repair", this::repairTables);
-        keywordBasedExecutors.put("REPAIR", this::repairTables);
-        keywordBasedExecutors.put("set", this::compileSet);
-        keywordBasedExecutors.put("SET", this::compileSet);
-        keywordBasedExecutors.put("begin", this::compileSet);
-        keywordBasedExecutors.put("BEGIN", this::compileSet);
-        keywordBasedExecutors.put("commit", this::compileSet);
-        keywordBasedExecutors.put("COMMIT", this::compileSet);
-        keywordBasedExecutors.put("rollback", this::compileSet);
-        keywordBasedExecutors.put("ROLLBACK", this::compileSet);
-        keywordBasedExecutors.put("drop", this::dropTable);
-        keywordBasedExecutors.put("DROP", this::dropTable);
-        keywordBasedExecutors.put("backup", this::sqlBackup);
-        keywordBasedExecutors.put("BACKUP", this::sqlBackup);
-        keywordBasedExecutors.put("show", this::sqlShow);
-        keywordBasedExecutors.put("SHOW", this::sqlShow);
+        // For each 'this::method' reference java compiles a class
+        // We need to minimize repetition of this syntax as each site generates garbage
+        final KeywordBasedExecutor compileSet = this::compileSet;
+        final KeywordBasedExecutor truncateTables = this::truncateTables;
+        final KeywordBasedExecutor alterTable = this::alterTable;
+        final KeywordBasedExecutor repairTables = this::repairTables;
+        final KeywordBasedExecutor dropTable = this::dropTable;
+        final KeywordBasedExecutor sqlBackup = this::sqlBackup;
+        final KeywordBasedExecutor sqlShow = this::sqlShow;
+
+        keywordBasedExecutors.put("truncate", truncateTables);
+        keywordBasedExecutors.put("TRUNCATE", truncateTables);
+        keywordBasedExecutors.put("alter", alterTable);
+        keywordBasedExecutors.put("ALTER", alterTable);
+        keywordBasedExecutors.put("repair", repairTables);
+        keywordBasedExecutors.put("REPAIR", repairTables);
+        keywordBasedExecutors.put("set", compileSet);
+        keywordBasedExecutors.put("SET", compileSet);
+        keywordBasedExecutors.put("begin", compileSet);
+        keywordBasedExecutors.put("BEGIN", compileSet);
+        keywordBasedExecutors.put("commit", compileSet);
+        keywordBasedExecutors.put("COMMIT", compileSet);
+        keywordBasedExecutors.put("rollback", compileSet);
+        keywordBasedExecutors.put("ROLLBACK", compileSet);
+        keywordBasedExecutors.put("discard", compileSet);
+        keywordBasedExecutors.put("DISCARD", compileSet);
+        keywordBasedExecutors.put("drop", dropTable);
+        keywordBasedExecutors.put("DROP", dropTable);
+        keywordBasedExecutors.put("backup", sqlBackup);
+        keywordBasedExecutors.put("BACKUP", sqlBackup);
+        keywordBasedExecutors.put("show", sqlShow);
+        keywordBasedExecutors.put("SHOW", sqlShow);
 
         configureLexer(lexer);
 
@@ -1020,7 +1033,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private void alterTableDropPartition(TableWriter writer) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'list' or 'where'");
+        final int pos = lexer.lastTokenPosition();
+        final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
             alterTableDropPartitionByList(writer);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
@@ -1031,7 +1045,7 @@ public class SqlCompiler implements Closeable {
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && function.getType() == ColumnType.BOOLEAN) {
-                    writer.removePartition(function);
+                    writer.removePartition(function, pos);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
@@ -1374,18 +1388,20 @@ public class SqlCompiler implements Closeable {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
+        if (engine.getStatus(
+                executionContext.getCairoSecurityContext(),
+                path,
+                name.token
+        ) != TableUtils.TABLE_DOES_NOT_EXIST) {
+            if (createTableModel.isIgnoreIfExists()) {
+                return compiledQuery.ofCreateTable();
+            }
+            throw SqlException.$(name.position, "table already exists");
+        }
 
         if (engine.lock(executionContext.getCairoSecurityContext(), name.token)) {
             TableWriter writer = null;
-
             try {
-                if (engine.getStatus(
-                        executionContext.getCairoSecurityContext(),
-                        path,
-                        name.token
-                ) != TableUtils.TABLE_DOES_NOT_EXIST) {
-                    throw SqlException.$(name.position, "table already exists");
-                }
 
                 try {
                     if (createTableModel.getQueryModel() == null) {
@@ -1505,22 +1521,30 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
-    private boolean functionIsTimestamp(
+    private void validateAndConsume(
             InsertModel model,
             ObjList<Function> valueFunctions,
             RecordMetadata metadata,
             int writerTimestampIndex,
             int bottomUpColumnIndex,
             int metadataColumnIndex,
-            Function function
+            Function function,
+            BindVariableService bindVariableService
     ) throws SqlException {
-        if (isAssignableFrom(metadata.getColumnType(metadataColumnIndex), function.getType())) {
+
+        final int columnType = metadata.getColumnType(metadataColumnIndex);
+
+        if (function.isUndefined()) {
+            function.assignType(columnType, bindVariableService);
+        }
+
+        if (isAssignableFrom(columnType, function.getType())) {
             if (metadataColumnIndex == writerTimestampIndex) {
-                return true;
+                return;
             }
             valueFunctions.add(function);
             listColumnFilter.add(metadataColumnIndex + 1);
-            return false;
+            return;
         }
 
         throw SqlException.inconvertibleTypes(
@@ -1555,14 +1579,27 @@ public class SqlCompiler implements Closeable {
                 valueFunctions = new ObjList<>(columnSetSize);
                 for (int i = 0; i < columnSetSize; i++) {
                     int index = metadata.getColumnIndexQuiet(columnSet.get(i));
-                    if (index < 0) {
-                        // todo: write test that used invalid column in insert statement
-                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
-                    }
+                    if (index > -1) {
+                        final ExpressionNode node = model.getColumnValues().getQuick(i);
 
-                    final Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), GenericRecordMetadata.EMPTY, executionContext);
-                    if (functionIsTimestamp(model, valueFunctions, metadata, writerTimestampIndex, i, index, function)) {
-                        timestampFunction = function;
+                        final Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
+                        validateAndConsume(
+                                model,
+                                valueFunctions,
+                                metadata,
+                                writerTimestampIndex,
+                                i,
+                                index,
+                                function,
+                                executionContext.getBindVariableService()
+                        );
+
+                        if (writerTimestampIndex == index) {
+                            timestampFunction = function;
+                        }
+
+                    } else {
+                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
                     }
                 }
             } else {
@@ -1573,17 +1610,23 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(model.getEndOfValuesPosition(), "not enough values [expected=").put(columnCount).put(", actual=").put(values.size()).put(']');
                 }
                 valueFunctions = new ObjList<>(columnCount);
+
                 for (int i = 0; i < columnCount; i++) {
-                    Function function = functionParser.parseFunction(values.getQuick(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                    if (functionIsTimestamp(
+                    final ExpressionNode node = values.getQuick(i);
+
+                    Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                    validateAndConsume(
                             model,
                             valueFunctions,
                             metadata,
                             writerTimestampIndex,
                             i,
                             i,
-                            function
-                    )) {
+                            function,
+                            executionContext.getBindVariableService()
+                    );
+
+                    if (writerTimestampIndex == i) {
                         timestampFunction = function;
                     }
                 }
@@ -1772,7 +1815,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void setupBackupRenamePath() {
-        TimestampFormat format = configuration.getBackupDirTimestampFormat();
+        DateFormat format = configuration.getBackupDirTimestampFormat();
         long epochMicros = configuration.getMicrosecondClock().getTicks();
         int n = 0;
         // There is a race here, two threads could try and create the same renamePath, only one will succeed the other will throw
@@ -1781,7 +1824,7 @@ public class SqlCompiler implements Closeable {
         int plen = renamePath.length();
         do {
             renamePath.trimTo(plen);
-            format.format(epochMicros, configuration.getDefaultTimestampLocale(), null, renamePath);
+            format.format(epochMicros, configuration.getDefaultDateLocale(), null, renamePath);
             if (n > 0) {
                 renamePath.put('.').put(n);
             }
@@ -1848,6 +1891,10 @@ public class SqlCompiler implements Closeable {
 
             if (isStandardConformingStringsKeyword(tok)) {
                 return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
+            }
+
+            if (isSearchPath(tok)) {
+                return compiledQuery.of(new ShowSearchPathCursorFactory());
             }
         }
 

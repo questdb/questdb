@@ -95,17 +95,17 @@ public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory 
         private long long2;
         private long long3;
 
-        private Func newInstance(int position, Function arg, CharSequence hexLong256, boolean isNegated) throws NumericException {
-            decode(hexLong256, 2, hexLong256.length());
-            return new Func(position, arg, long0, long1, long2, long3, isNegated);
-        }
-
         @Override
-        protected void onDecoded(long l0, long l1, long l2, long l3) {
+        public void onDecoded(long l0, long l1, long l2, long l3) {
             long0 = l0;
             long1 = l1;
             long2 = l2;
             long3 = l3;
+        }
+
+        private Func newInstance(int position, Function arg, CharSequence hexLong256, boolean isNegated) throws NumericException {
+            decode(hexLong256, 2, hexLong256.length(), this);
+            return new Func(position, arg, long0, long1, long2, long3, isNegated);
         }
 
     }

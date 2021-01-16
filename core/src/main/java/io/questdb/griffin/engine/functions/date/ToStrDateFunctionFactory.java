@@ -36,11 +36,11 @@ import io.questdb.griffin.engine.functions.constants.NullStrConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.time.DateFormat;
-import io.questdb.std.time.DateFormatCompiler;
-import io.questdb.std.time.DateLocale;
 import org.jetbrains.annotations.Nullable;
 
 public class ToStrDateFunctionFactory implements FunctionFactory {
@@ -85,11 +85,11 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         final StringSink sink1;
         final StringSink sink2;
 
-        public ToCharDateVCFFunc(int position, Function arg, DateFormat format, DateLocale dateLocale) {
+        public ToCharDateVCFFunc(int position, Function arg, DateFormat format, DateLocale locale) {
             super(position);
             this.arg = arg;
             this.format = format;
-            locale = dateLocale;
+            this.locale = locale;
             sink1 = new StringSink();
             sink2 = new StringSink();
         }

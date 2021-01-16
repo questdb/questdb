@@ -24,25 +24,43 @@
 
 package io.questdb.cairo;
 
+import io.questdb.BuildInformation;
+import io.questdb.BuildInformationHolder;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.*;
-import io.questdb.std.microtime.*;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.DateLocale;
-import io.questdb.std.time.MillisecondClock;
-import io.questdb.std.time.MillisecondClockImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final CharSequence root;
+
     private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
+
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
+
+    private final BuildInformation buildInformation = new BuildInformationHolder();
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
+    }
+
+    @Override
+    public int getBindVariablePoolSize() {
+        return 8;
     }
 
     @Override
@@ -166,7 +184,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public TimestampFormat getBackupDirTimestampFormat() {
+    public DateFormat getBackupDirTimestampFormat() {
         return null;
     }
 
@@ -403,11 +421,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public TimestampLocale getDefaultTimestampLocale() {
-        return TimestampFormatUtils.enLocale;
-    }
-
-    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
     }
@@ -440,5 +453,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getTableBlockWriterQueueSize() {
         return 4;
+    }
+
+    @Override
+    public BuildInformation getBuildInformation() {
+        return buildInformation;
     }
 }

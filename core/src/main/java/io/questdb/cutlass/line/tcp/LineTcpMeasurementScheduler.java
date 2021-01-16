@@ -37,9 +37,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.std.time.MillisecondClock;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -133,6 +134,25 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
+    @NotNull
+    private TableUpdateDetails assignTableToThread(LineTcpMeasurementEvent event, int keyIndex) {
+        TableUpdateDetails tableUpdateDetails;
+        String tableName = Chars.toString(event.getTableName());
+        calcThreadLoad();
+        int leastLoad = Integer.MAX_VALUE;
+        int threadId = 0;
+        for (int n = 0; n < loadByThread.length; n++) {
+            if (loadByThread[n] < leastLoad) {
+                leastLoad = loadByThread[n];
+                threadId = n;
+            }
+        }
+        tableUpdateDetails = new TableUpdateDetails(tableName, threadId);
+        tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
+        LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
+        return tableUpdateDetails;
+    }
+
     private void calcThreadLoad() {
         Arrays.fill(loadByThread, 0);
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
@@ -142,30 +162,17 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    void commitNewEvent(LineTcpMeasurementEvent event, boolean complete) {
+    void commitNewEvent(LineTcpMeasurementEvent event, boolean success) {
         assert isOpen() && nextEventCursor != -1 && queue.get(nextEventCursor) == event;
 
-        TableUpdateDetails tableUpdateDetails;
-        if (complete) {
-            int keyIndex = tableUpdateDetailsByTableName.keyIndex(event.getTableName());
-            if (keyIndex > -1) {
-                String tableName = Chars.toString(event.getTableName());
-                calcThreadLoad();
-                int leastLoad = Integer.MAX_VALUE;
-                int threadId = 0;
-                for (int n = 0; n < loadByThread.length; n++) {
-                    if (loadByThread[n] < leastLoad) {
-                        leastLoad = loadByThread[n];
-                        threadId = n;
-                    }
-                }
-                tableUpdateDetails = new TableUpdateDetails(tableName, threadId);
-                tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
-                LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
-            } else {
+        final TableUpdateDetails tableUpdateDetails;
+        if (success) {
+            final int keyIndex = tableUpdateDetailsByTableName.keyIndex(event.getTableName());
+            if (keyIndex < 0) {
                 tableUpdateDetails = tableUpdateDetailsByTableName.valueAt(keyIndex);
+            } else {
+                tableUpdateDetails = assignTableToThread(event, keyIndex);
             }
-
             event.threadId = tableUpdateDetails.threadId;
         } else {
             tableUpdateDetails = null;
@@ -295,8 +302,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (null == event) {
                 return;
             }
-            LOG.info().$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances).$(", table=").$(tableNameToMove).$(", fromThreadId=").$(fromThreadId).$(", toThreadId=")
-                    .$(toThreadId).$(']').$();
+
+            LOG.info()
+                    .$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances)
+                    .$(", table=").$(tableNameToMove)
+                    .$(", fromThreadId=").$(fromThreadId)
+                    .$(", toThreadId=").$(toThreadId)
+                    .$(']').$();
+
             commitRebalanceEvent(event, fromThreadId, toThreadId, tableNameToMove);
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNameToMove);
             stats.threadId = toThreadId;
@@ -436,27 +449,25 @@ class LineTcpMeasurementScheduler implements Closeable {
             return cache.get(addresses.getQuick(2 * i + 1));
         }
 
-        boolean isComplete() {
-            return errorPosition == -1;
-        }
-
         boolean isRebalanceEvent() {
             return threadId == REBALANCE_EVENT_ID;
+        }
+
+        boolean isSuccess() {
+            return errorPosition == -1;
         }
 
         long parseLine(long bytesPtr, long hi) {
             clear();
             long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
             if (recvBufLineNext != -1) {
-                if (isComplete() && firstFieldIndex == -1) {
+                if (isSuccess() && firstFieldIndex == -1) {
                     errorPosition = (int) (recvBufLineNext - bytesPtr);
                     errorCode = LineProtoParser.ERROR_EMPTY;
                 }
 
-                if (isComplete()) {
-                    if (timestampAddress == 0) {
-                        timestamp = clock.getTicks();
-                    }
+                if (isSuccess() && timestampAddress == 0) {
+                    timestamp = clock.getTicks();
                 }
             }
             return recvBufLineNext;
@@ -540,7 +551,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 }
                 busy = true;
-                LineTcpMeasurementEvent event = queue.get(cursor);
+                final LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
                 if (event.threadId == id) {
                     processNextEvent(event);
@@ -552,41 +563,51 @@ class LineTcpMeasurementScheduler implements Closeable {
                         eventProcessed = true;
                     }
                 }
+
+                // by not releasing cursor we force the sequence to return us the same value over and over
+                // until cursor value is released
                 if (eventProcessed) {
                     sequence.done(cursor);
                 }
             }
         }
 
-        private void handleEventException(LineTcpMeasurementEvent event, Parser parser, CairoException ex) {
-            LOG.error()
-                    .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
-                    .$(", table=").$(event.getTableName())
-                    .$(", ex=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
-                    .$(']').$();
-            Misc.free(parser);
-            parserCache.remove(event.getTableName());
-        }
-
         private void processNextEvent(LineTcpMeasurementEvent event) {
-            Parser parser = parserCache.get(event.getTableName());
+            final int index = parserCache.keyIndex(event.getTableName());
+            Parser parser = null;
             try {
-                if (null != parser) {
+                if (index < 0) {
+                    parser = parserCache.valueAt(index);
                     parser.processEvent(event);
                 } else {
                     parser = new Parser();
                     parser.processFirstEvent(engine, securityContext, event);
                     LOG.info().$("created parser [jobName=").$(jobName).$(" table=").$(event.getTableName()).$(']').$();
-                    parserCache.put(Chars.toString(event.getTableName()), parser);
+                    parserCache.putAt(index, Chars.toString(event.getTableName()), parser);
                 }
             } catch (CairoException ex) {
-                handleEventException(event, parser, ex);
+                LOG.error()
+                        .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
+                        .$(", table=").$(event.getTableName())
+                        .$(", ex=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .$(']').$();
+
+                Misc.free(parser);
+
+                if (index < 0) {
+                    parserCache.removeAt(index);
+                }
             }
         }
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
             if (event.rebalanceToThreadId == id) {
+                // This thread is now a declared owner of the table, but it can only become actual
+                // owner when "old" owner is fully done. This is a volatile variable on the event, used by both threads
+                // to handover the table. The starting point is "false" and the "old" owner thread will eventually set this
+                // to "true". In the mean time current thread will not be processing the queue until the handover is
+                // complete
                 if (event.rebalanceReleasedByFromThread) {
                     LOG.info().$("rebalance cycle, new thread ready [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
                     return true;
@@ -596,11 +617,13 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             if (event.rebalanceFromThreadId == id) {
-                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
-                Parser parser = parserCache.get(event.rebalanceTableName);
-                parserCache.remove(event.rebalanceTableName);
-                parser.close();
-                event.rebalanceReleasedByFromThread = true;
+                final int index = parserCache.keyIndex(event.rebalanceTableName);
+                if (index < 0) {
+                    LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
+                    Misc.free(parserCache.valueAt(index));
+                    parserCache.removeAt(index);
+                    event.rebalanceReleasedByFromThread = true;
+                }
             }
 
             return true;
@@ -645,12 +668,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
                 Row row = null;
                 try {
-                    long timestamp = event.getTimestamp();
-                    row = writer.newRow(timestamp);
+                    row = writer.newRow(event.getTimestamp());
                     for (int i = 0; i < nMeasurementValues; i++) {
-                        int columnType = colTypes.getQuick(i);
-                        int columnIndex = colIndexMappings.getQuick(i);
-                        CairoLineProtoParserSupport.writers.getQuick(columnType).write(row, columnIndex, event.getValue(i));
+                        final int columnType = colTypes.getQuick(i);
+                        final int columnIndex = colIndexMappings.getQuick(i);
+                        final CharSequence value = event.getValue(i);
+                        CairoLineProtoParserSupport.putValue(row, columnType, columnIndex, value, LOG);
                     }
                     row.append();
                 } catch (NumericException | BadCastException ex) {
@@ -728,7 +751,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     } else {
                         colType = CairoLineProtoParserSupport.getValueType(event.getValue(n));
                     }
-                    colTypes.set(n, colType);
+                    colTypes.setQuick(n, colType);
                 }
             }
 

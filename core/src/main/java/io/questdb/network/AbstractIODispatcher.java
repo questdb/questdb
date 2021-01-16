@@ -28,7 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.LongMatrix;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -239,7 +239,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     protected void logSuccess(IODispatcherConfiguration configuration) {
-        LOG.info()
+        LOG.advisory()
                 .$("listening on ")
                 .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
                 .$(" [fd=").$(serverFd).$(']').$();

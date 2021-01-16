@@ -250,11 +250,29 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         }, 9);
     }
 
+    @Test
+    public void testRenameColumn() throws Exception {
+        final String expected = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n"+
+                "str1:STRING\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n";
+        assertThat(expected, (w) -> w.renameColumn("str", "str1"), 11);
+    }
+
     private void assertThat(String expected, ColumnManipulator manipulator, int columnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
+                int tableId;
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
+                    tableId = metadata.getId();
                     try (TableWriter writer = new TableWriter(configuration, "all")) {
                         manipulator.restructure(writer);
                     }
@@ -282,6 +300,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     } finally {
                         TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
                     }
+                }
+
+                // Check that table has same tableId.
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                    Assert.assertEquals(tableId, metadata.getId());
                 }
             }
         });

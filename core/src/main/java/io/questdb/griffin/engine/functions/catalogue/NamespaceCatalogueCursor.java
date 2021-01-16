@@ -33,9 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 
 class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
-    private static final String[] namespaces = {"pg_catalog", "public"};
-    private static final int[] oids = {PgOIDs.PG_CATALOG_OID, PgOIDs.PG_PUBLIC_OID};
-    private static final int rowCount = namespaces.length;
+    private static final int rowCount = Constants.NAMESPACES.length;
     private final NamespaceCatalogueRecord record = new NamespaceCatalogueRecord();
     private int row = -1;
 
@@ -67,12 +65,12 @@ class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
     private class NamespaceCatalogueRecord implements Record {
         @Override
         public int getInt(int col) {
-            return oids[row];
+            return Constants.NAMESPACE_OIDS[row];
         }
 
         @Override
         public CharSequence getStr(int col) {
-            return namespaces[row];
+            return Constants.NAMESPACES[row];
         }
 
         @Override

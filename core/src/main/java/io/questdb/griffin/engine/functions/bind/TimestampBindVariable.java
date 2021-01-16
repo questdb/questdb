@@ -27,13 +27,19 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 
-class TimestampBindVariable extends TimestampFunction implements ScalarFunction {
+class TimestampBindVariable extends TimestampFunction implements ScalarFunction, Mutable {
     long value;
 
-    public TimestampBindVariable(long value) {
+    public TimestampBindVariable() {
         super(0);
-        this.value = value;
+    }
+
+    @Override
+    public void clear() {
+        this.value = Numbers.LONG_NaN;
     }
 
     @Override

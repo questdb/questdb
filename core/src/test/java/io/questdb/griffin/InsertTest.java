@@ -26,17 +26,14 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.WriterOutOfDateException;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.TestBinarySequence;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Rnd;
-import io.questdb.std.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -52,42 +49,136 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertAllByDay() throws Exception {
         testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
-            @Override
-            public long getTimestamp() {
-                return last = last + 100000L;
-            }
-        });
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L;
+                    }
+                },
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertAllByDayUndefined() throws Exception {
+        testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L;
+                    }
+                },
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertAllByDayUndefinedNoColumnSet() throws Exception {
+        testBindVariableInsert(PartitionBy.DAY, new TimestampFunction() {
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L;
+                    }
+                },
+                false,
+                false
+        );
     }
 
     @Test
     public void testInsertAllByMonth() throws Exception {
         testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
-            @Override
-            public long getTimestamp() {
-                return last = last + 100000L * 30;
-            }
-        });
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L * 30;
+                    }
+                },
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertAllByMonthUndefined() throws Exception {
+        testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L * 30;
+                    }
+                },
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertAllByMonthUndefinedNoColumnSet() throws Exception {
+        testBindVariableInsert(PartitionBy.MONTH, new TimestampFunction() {
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L * 30;
+                    }
+                },
+                false,
+                false
+        );
     }
 
     @Test
     public void testInsertAllByNone() throws Exception {
-        testBindVariableInsert(PartitionBy.NONE, () -> 0);
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, true, true);
+    }
+
+    @Test
+    public void testInsertAllByNoneUndefined() throws Exception {
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, false, true);
+    }
+
+    @Test
+    public void testInsertAllByNoneUndefinedNoColumnSet() throws Exception {
+        testBindVariableInsert(PartitionBy.NONE, () -> 0, false, false);
     }
 
     @Test
     public void testInsertAllByYear() throws Exception {
         testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
-            private long last = TimestampFormatUtils.parseDateTime("2019-03-10T00:00:00.000000Z");
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
 
-            @Override
-            public long getTimestamp() {
-                return last = last + 100000L * 30 * 12;
-            }
-        });
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L * 30 * 12;
+                    }
+                },
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInsertAllByYearUndefined() throws Exception {
+        testBindVariableInsert(PartitionBy.YEAR, new TimestampFunction() {
+                    private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
+
+                    @Override
+                    public long getTimestamp() {
+                        return last = last + 100000L * 30 * 12;
+                    }
+                },
+                false,
+                true
+        );
     }
 
     @Test
@@ -104,7 +195,7 @@ public class InsertTest extends AbstractGriffinTest {
                 method.commit();
             }
 
-            BindVariableService bindVariableService = new BindVariableService();
+            BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService, null, -1, null);
 
@@ -506,7 +597,9 @@ public class InsertTest extends AbstractGriffinTest {
 
     private void testBindVariableInsert(
             int partitionBy,
-            TimestampFunction timestampFunction
+            TimestampFunction timestampFunction,
+            boolean initBindVariables,
+            boolean columnSet
     ) throws Exception {
         assertMemoryLeak(() -> {
             CairoTestUtils.createAllTableWithNewTypes(configuration, partitionBy);
@@ -516,55 +609,75 @@ public class InsertTest extends AbstractGriffinTest {
             bs.of(blob);
             Rnd rnd = new Rnd();
 
-            // this is type declaration to have query compile correctly
-            bindVariableService.setInt(0, 0);
-            bindVariableService.setShort(1, (short) 10);
-            bindVariableService.setByte(2, (byte) 91);
-            bindVariableService.setDouble(3, 9.2);
-            bindVariableService.setFloat(4, 5.6f);
-            bindVariableService.setLong(5, 99901);
-            bindVariableService.setStr(6, "hello kitty");
-            bindVariableService.setStr(7, "sym?");
-            bindVariableService.setBoolean(8, true);
-            bindVariableService.setBin(9, bs);
-            bindVariableService.setDate(10, 1234L);
-            bindVariableService.setLong256(11, 1, 2, 3, 4);
-            bindVariableService.setChar(12, 'A');
-            bindVariableService.setTimestamp(13, timestampFunction.getTimestamp());
+            if (initBindVariables) {
+                // this is type declaration to have query compile correctly
+                bindVariableService.setInt(0, 0);
+                bindVariableService.setShort(1, (short) 10);
+                bindVariableService.setByte(2, (byte) 91);
+                bindVariableService.setDouble(3, 9.2);
+                bindVariableService.setFloat(4, 5.6f);
+                bindVariableService.setLong(5, 99901);
+                bindVariableService.setStr(6, "hello kitty");
+                bindVariableService.setStr(7, "sym?");
+                bindVariableService.setBoolean(8, true);
+                bindVariableService.setBin(9, bs);
+                bindVariableService.setDate(10, 1234L);
+                bindVariableService.setLong256(11, 1, 2, 3, 4);
+                bindVariableService.setChar(12, 'A');
+                bindVariableService.setTimestamp(13, timestampFunction.getTimestamp());
+            }
 
-            final CompiledQuery cq = compiler.compile(
-                    "insert into all2 (" +
-                            "int, " +
-                            "short, " +
-                            "byte, " +
-                            "double, " +
-                            "float, " +
-                            "long, " +
-                            "str, " +
-                            "sym, " +
-                            "bool, " +
-                            "bin, " +
-                            "date, " +
-                            "long256, " +
-                            "chr, " +
-                            "timestamp" +
-                            ") values (" +
-                            "$1, " +
-                            "$2, " +
-                            "$3, " +
-                            "$4, " +
-                            "$5, " +
-                            "$6, " +
-                            "$7, " +
-                            "$8, " +
-                            "$9, " +
-                            "$10, " +
-                            "$11, " +
-                            "$12, " +
-                            "$13, " +
-                            "$14)",
-                    sqlExecutionContext
-            );
+            final String sql;
+            if (columnSet) {
+                sql = "insert into all2 (" +
+                        "int, " +
+                        "short, " +
+                        "byte, " +
+                        "double, " +
+                        "float, " +
+                        "long, " +
+                        "str, " +
+                        "sym, " +
+                        "bool, " +
+                        "bin, " +
+                        "date, " +
+                        "long256, " +
+                        "chr, " +
+                        "timestamp" +
+                        ") values (" +
+                        "$1, " +
+                        "$2, " +
+                        "$3, " +
+                        "$4, " +
+                        "$5, " +
+                        "$6, " +
+                        "$7, " +
+                        "$8, " +
+                        "$9, " +
+                        "$10, " +
+                        "$11, " +
+                        "$12, " +
+                        "$13, " +
+                        "$14)";
+            } else {
+                sql = "insert into all2 values (" +
+                        "$1, " +
+                        "$2, " +
+                        "$3, " +
+                        "$4, " +
+                        "$5, " +
+                        "$6, " +
+                        "$7, " +
+                        "$8, " +
+                        "$9, " +
+                        "$10, " +
+                        "$11, " +
+                        "$12, " +
+                        "$13, " +
+                        "$14)";
+            }
+
+            final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
 
             Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
             InsertStatement insert = cq.getInsertStatement();
@@ -617,7 +730,6 @@ public class InsertTest extends AbstractGriffinTest {
                     Assert.assertEquals(rnd.nextLong(), long256.getLong2());
                     Assert.assertEquals(rnd.nextLong(), long256.getLong3());
                     Assert.assertEquals(rnd.nextChar(), record.getChar(12));
-//                        Assert.assertEquals(0, record.getTimestamp(13));
                 }
             }
         });

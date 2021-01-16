@@ -47,24 +47,25 @@ class LatestByAllRecordCursor extends AbstractRecordListCursor {
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
-        map.clear();
         DataFrame frame;
-        while ((frame = this.dataFrameCursor.next()) != null) {
-            final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+        try {
+            while ((frame = this.dataFrameCursor.next()) != null) {
+                final int partitionIndex = frame.getPartitionIndex();
+                final long rowLo = frame.getRowLo();
+                final long rowHi = frame.getRowHi() - 1;
 
-            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
-                recordA.setRecordIndex(row);
-                MapKey key = map.withKey();
-                key.put(recordA, recordSink);
-                if (key.create()) {
-                    rows.add(Rows.toRowID(partitionIndex, row));
+                recordA.jumpTo(frame.getPartitionIndex(), rowHi);
+                for (long row = rowHi; row >= rowLo; row--) {
+                    recordA.setRecordIndex(row);
+                    MapKey key = map.withKey();
+                    key.put(recordA, recordSink);
+                    if (key.create()) {
+                        rows.add(Rows.toRowID(partitionIndex, row));
+                    }
                 }
             }
+        } finally {
+            map.clear();
         }
-
-        map.clear();
     }
 }

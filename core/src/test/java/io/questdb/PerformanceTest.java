@@ -31,7 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import io.questdb.std.time.DateFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
@@ -66,7 +66,7 @@ public class PerformanceTest extends AbstractCairoTest {
                     t = System.nanoTime();
                 }
                 w.truncate();
-                long timestamp = DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z");
+                long timestamp = DateFormatUtils.parseUTCDate("2013-10-05T10:00:00.000Z");
                 Rnd r = new Rnd();
                 int n = symbols.length - 1;
                 for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {

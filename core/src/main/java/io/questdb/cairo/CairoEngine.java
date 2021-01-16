@@ -29,12 +29,13 @@ import io.questdb.MessageBusImpl;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -44,7 +45,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.ColumnType.SYMBOL;
 
-public class CairoEngine implements Closeable {
+public class CairoEngine implements Closeable, WriterSource {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
 
     private final WriterPool writerPool;
@@ -76,9 +77,9 @@ public class CairoEngine implements Closeable {
             tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
-                if (!ff.truncate(tableIndexFd, Files.PAGE_SIZE)) {
+                if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
                     ff.close(tableIndexFd);
-                    throw CairoException.instance(ff.errno()).put("Could not truncate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
+                    throw CairoException.instance(ff.errno()).put("Could not allocate [file=").put(path).put(", actual=").put(fileSize).put(", desired=").put(this.tableIndexMemSize).put(']');
                 }
             }
 
@@ -217,6 +218,7 @@ public class CairoEngine implements Closeable {
         return telemetrySubSeq;
     }
 
+    @Override
     public TableWriter getWriter(
             CairoSecurityContext securityContext,
             CharSequence tableName

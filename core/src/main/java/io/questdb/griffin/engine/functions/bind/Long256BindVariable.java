@@ -29,20 +29,25 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
-class Long256BindVariable extends Long256Function implements ScalarFunction {
+class Long256BindVariable extends Long256Function implements ScalarFunction, Mutable {
     final Long256Impl value = new Long256Impl();
 
-    public Long256BindVariable(Long256 value) {
+    public Long256BindVariable() {
         super(0);
-        this.value.copyFrom(value);
     }
 
-    public Long256BindVariable(long l0, long l1, long l2, long l3) {
-        super(0);
-        this.value.setAll(l0, l1, l2, l3);
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        final long a = value.getLong0();
+        final long b = value.getLong1();
+        final long c = value.getLong2();
+        final long d = value.getLong3();
+
+        Numbers.appendLong256(a, b, c, d, sink);
     }
 
     @Override
@@ -55,13 +60,16 @@ class Long256BindVariable extends Long256Function implements ScalarFunction {
         return value;
     }
 
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        final long a = value.getLong0();
-        final long b = value.getLong1();
-        final long c = value.getLong2();
-        final long d = value.getLong3();
+    public void setValue(long l0, long l1, long l2, long l3) {
+        this.value.setAll(l0, l1, l2, l3);
+    }
 
-        Numbers.appendLong256(a, b, c, d, sink);
+    public void setValue(Long256 value) {
+        this.value.copyFrom(value);
+    }
+
+    @Override
+    public void clear() {
+        value.copyFrom(Long256Impl.NULL_LONG256);
     }
 }

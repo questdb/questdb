@@ -32,10 +32,16 @@ import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.*;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
@@ -43,8 +49,8 @@ import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.MillisecondClock;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -52,7 +58,7 @@ import org.junit.Test;
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
-    public void testAmbiguousFunctionInvocation() {
+    public void testAmbiguousFunctionInvocation() throws SqlException {
         functions.add(new FunctionFactory() {
             @Override
             public String getSignature() {
@@ -61,7 +67,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
             @Override
             public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                return null;
+                return new DoubleFunction(position) {
+                    @Override
+                    public double getDouble(Record rec) {
+                        return 123.123;
+                    }
+                };
             }
         });
         functions.add(new FunctionFactory() {
@@ -78,7 +89,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BYTE, null));
         metadata.add(new TableColumnMetadata("c", ColumnType.SHORT, null));
-        assertFail(2, "ambiguous function call: +(BYTE,SHORT)", "a + c", metadata);
+        FunctionParser functionParser = createFunctionParser();
+        Function f = parseFunction("a + c", metadata, functionParser);
+        Assert.assertEquals(123.123, f.getDouble(null), 0.0001);
     }
 
     @Test
@@ -912,7 +925,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public MillisecondClock getMillisecondClock() {
                         return () -> {
                             try {
-                                return DateFormatUtils.parseDateTime("2018-03-04T21:40:00.000Z");
+                                return DateFormatUtils.parseUTCDate("2018-03-04T21:40:00.000Z");
                             } catch (NumericException e) {
                                 Assert.fail();
                             }
@@ -1106,6 +1119,193 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testUndefinedBindVariableAmbiguouslyMatched() throws SqlException {
+        bindVariableService.clear();
+        functions.add(new EqIntFunctionFactory());
+        functions.add(new EqDoubleFunctionFactory());
+        functions.add(new EqLongFunctionFactory());
+        try (Function f = parseFunction("$2 = $1", null, createFunctionParser())) {
+            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
+        }
+        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
+        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineByte() throws SqlException {
+        assertBindVariableTypes(
+                "min($1)",
+                new MinByteGroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.MinByteGroupByFunction",
+                ColumnType.BYTE
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineChar() throws SqlException {
+        assertBindVariableTypes(
+                "min($1)",
+                new MinCharGroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunction",
+                ColumnType.CHAR
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineDate() throws SqlException {
+        assertBindVariableTypes(
+                "min($1)",
+                new MinDateGroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunction",
+                ColumnType.DATE
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineTimestamp() throws SqlException {
+        assertBindVariableTypes(
+                "min($1)",
+                new MinTimestampGroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction",
+                ColumnType.TIMESTAMP
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineFloat() throws SqlException {
+        assertBindVariableTypes(
+                "min($1)",
+                new MinFloatGroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunction",
+                ColumnType.FLOAT
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineBinary() throws SqlException {
+        assertBindVariableTypes(
+                "to_char($1)",
+                new ToCharBinFunctionFactory(),
+                "io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory.ToCharBinFunc",
+                ColumnType.BINARY
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineStr() throws SqlException {
+        assertBindVariableTypes(
+                "length($1)",
+                new LengthStrFunctionFactory(),
+                "io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory.LengthStrVFunc",
+                ColumnType.STRING
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineCursor() {
+        bindVariableService.clear();
+        functions.add(new CursorDereferenceFunctionFactory());
+        try (Function ignored = parseFunction("($1).n", null, createFunctionParser())) {
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(1, e.getPosition());
+        }
+   }
+
+    @Test
+    public void testUndefinedBindVariableDefineVarArg() throws SqlException {
+        // bind variable is sparse
+        assertBindVariableTypes(
+                "case $1 when 'A' then $3 else $4 end",
+                new SwitchFunctionFactory(),
+                "io.questdb.griffin.engine.functions.conditional.StrCaseFunction",
+                ColumnType.STRING,
+                -1, // not defined
+                ColumnType.STRING,
+                ColumnType.STRING
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineSymbol() throws SqlException {
+        assertBindVariableTypes(
+                "length($1)",
+                new LengthSymbolFunctionFactory(),
+                "io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory.LengthSymbolVFunc",
+                ColumnType.STRING
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineLong256() throws SqlException {
+        assertBindVariableTypes(
+                "count($1)",
+                new CountLong256GroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunction",
+                ColumnType.LONG256
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineBoolean() throws SqlException {
+        assertBindVariableTypes(
+                "not($1)",
+                new NotFunctionFactory(),
+                "io.questdb.griffin.engine.functions.bool.NotFunctionFactory.Func",
+                ColumnType.BOOLEAN
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineInt() throws SqlException {
+        assertBindVariableTypes(
+                "$2 = $1",
+                new EqIntFunctionFactory(),
+                "io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory.Func",
+                ColumnType.INT,
+                ColumnType.INT
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableDefineShort() throws SqlException {
+        assertBindVariableTypes(
+                "abs($1)",
+                new AbsShortFunctionFactory(),
+                "io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory.AbsFunction",
+                ColumnType.SHORT
+        );
+    }
+
+    @Test
+    public void testUndefinedBindVariableExactlyMatched() throws SqlException {
+        bindVariableService.clear();
+        functions.add(new EqIntFunctionFactory());
+        functions.add(new EqDoubleFunctionFactory());
+        functions.add(new EqLongFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.LONG, null));
+        try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
+            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory.Func", f.getClass().getCanonicalName());
+        }
+        Assert.assertEquals(ColumnType.LONG, bindVariableService.getFunction(0).getType());
+    }
+
+    @Test
+    public void testUndefinedBindVariableFuzzyMatched() throws SqlException {
+        bindVariableService.clear();
+        functions.add(new EqIntFunctionFactory());
+        functions.add(new EqDoubleFunctionFactory());
+        functions.add(new EqLongFunctionFactory());
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.FLOAT, null));
+        try (Function f = parseFunction("a = $1", metadata, createFunctionParser())) {
+            TestUtils.assertContains("io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory.Func", f.getClass().getCanonicalName());
+        }
+        Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
+    }
+
+    @Test
     public void testVarArgFunction() throws SqlException {
         functions.add(new InStrFunctionFactory());
 
@@ -1143,6 +1343,29 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Function function = parseFunction("a in ()", metadata, functionParser);
         Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
         Assert.assertFalse(function.getBool(record));
+    }
+
+    private void assertBindVariableTypes(
+            String expr,
+            FunctionFactory factory,
+            CharSequence expectedFunctionClass,
+            int... expectedTypes
+    ) throws SqlException {
+        bindVariableService.clear();
+        functions.add(factory);
+        try (Function f = parseFunction(expr, null, createFunctionParser())) {
+            TestUtils.assertContains(expectedFunctionClass, f.getClass().getCanonicalName());
+        }
+
+        for (int i = 0, n = expectedTypes.length; i < n; i++) {
+            final int expected = expectedTypes[i];
+            if (expected > -1) {
+                final int actual = bindVariableService.getFunction(i).getType();
+                if (expected != actual) {
+                    Assert.fail("type mismatch [expected=" + ColumnType.nameOf(expected) + ", actual=" + ColumnType.nameOf(actual) + ", i=" + i + "]");
+                }
+            }
+        }
     }
 
     private void assertCastToDouble(double expected, int type1, int type2, Record record) throws SqlException {

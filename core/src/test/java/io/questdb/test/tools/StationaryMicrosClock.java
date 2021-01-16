@@ -24,7 +24,7 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.std.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 public class StationaryMicrosClock implements MicrosecondClock {
     public static final StationaryMicrosClock INSTANCE = new StationaryMicrosClock();

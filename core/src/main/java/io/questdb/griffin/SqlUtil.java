@@ -67,33 +67,6 @@ public class SqlUtil {
         return null;
     }
 
-    public static boolean isNotBindVariable(CharSequence token) {
-        int len = token.length();
-        if (len < 1) {
-            return true;
-        }
-
-        final char first = token.charAt(0);
-        if (first == ':') {
-            return false;
-        }
-
-        if (first == '?' && len == 1) {
-            return false;
-        }
-
-        if (first == '$') {
-            try {
-                Numbers.parseInt(token, 1, len);
-                return false;
-            } catch (NumericException e) {
-                return true;
-            }
-        }
-
-        return true;
-    }
-
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
         return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
     }

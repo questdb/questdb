@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -32,7 +33,7 @@ import org.junit.Test;
 public class StrBindVariableTest {
     @Test
     public void testNull() {
-        StrBindVariable variable = new StrBindVariable(null);
+        StrBindVariable variable = new StrBindVariable(Numbers.MAX_SCALE);
         Assert.assertNull(variable.getStr(null));
         Assert.assertNull(variable.getStrB(null));
         Assert.assertEquals(-1, variable.getStrLen(null));
@@ -45,7 +46,8 @@ public class StrBindVariableTest {
     @Test
     public void testSimple() {
         String expected = "xyz";
-        StrBindVariable variable = new StrBindVariable(expected);
+        StrBindVariable variable = new StrBindVariable(Numbers.MAX_SCALE);
+        variable.setValue(expected);
         TestUtils.assertEquals(expected, variable.getStr(null));
         TestUtils.assertEquals(expected, variable.getStrB(null));
         Assert.assertEquals(expected.length(), variable.getStrLen(null));

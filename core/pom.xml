@@ -37,7 +37,7 @@
         <argLine>-Xmx512m --add-exports java.base/jdk.internal.math=ALL-UNNAMED -Dfile.encoding=UTF-8</argLine>
     </properties>
 
-    <version>5.0.5-SNAPSHOT</version>
+    <version>5.0.6-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -60,6 +60,8 @@
 
     <scm>
         <url>scm:git:https://github.com/questdb/questdb.git</url>
+        <connection>scm:git:https://github.com/questdb/questdb.git</connection>
+        <tag>HEAD</tag>
     </scm>
 
     <distributionManagement>
@@ -106,6 +108,9 @@
                             <mainClass>io.questdb.ServerMain</mainClass>
                             <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
                         </manifest>
+                        <manifestEntries>
+                            <Build-Commit-Hash>${buildNumber}</Build-Commit-Hash>
+                        </manifestEntries>
                     </archive>
                 </configuration>
             </plugin>
@@ -154,6 +159,24 @@
                 <artifactId>maven-deploy-plugin</artifactId>
                 <configuration>
                     <skip>true</skip>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>buildnumber-maven-plugin</artifactId>
+                <version>1.4</version>
+                <executions>
+                    <execution>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>create</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <doCheck>false</doCheck>
+                    <doUpdate>false</doUpdate>
                 </configuration>
             </plugin>
         </plugins>

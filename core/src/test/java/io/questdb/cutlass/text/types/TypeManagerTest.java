@@ -31,13 +31,11 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.Misc;
-import io.questdb.std.microtime.TimestampFormatFactory;
-import io.questdb.std.microtime.TimestampFormatUtils;
-import io.questdb.std.microtime.TimestampLocaleFactory;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.time.DateFormatFactory;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.DateLocaleFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -208,9 +206,7 @@ public class TypeManagerTest {
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
                 new TimestampFormatFactory(),
-                TimestampLocaleFactory.INSTANCE,
-                DateFormatUtils.enLocale,
-                TimestampFormatUtils.enLocale
+                DateFormatUtils.enLocale
         );
 
         inputFormatConfiguration.parseConfiguration(jsonLexer, fileResource);

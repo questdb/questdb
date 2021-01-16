@@ -32,19 +32,21 @@
 
 ## What is QuestDB
 
-QuestDB is an open source database designed to make time series lightning fast
-and easy.
+QuestDB is a high performance open source SQL database for time series data.
 
-It uses a column-oriented approach, vectorized execution, SIMD instructions, and
-a whole array of low-latency techniques. The whole code base is built from
-scratch and without dependencies, in the name of performance. We are 100% free
-from garbage collection.
+It uses a column-oriented approach, heavy parallelized vectorized execution,
+SIMD instructions and a whole array of low-latency techniques. The whole code
+base is built from scratch, without dependencies and 100% free from garbage
+collection. 
 
-QuestDB implements SQL, and augments it for time-series. It exposes a Postgres
-wire protocol, a high-performance REST API, and even supports ingestion with
-InfluxDB line protocol. It supports both relational and time-series joins, which
-makes it easy to correlate data over time. Writes are durably committed to disk,
-meaning that the data is safe - yet instantly accessible.
+QuestDB implements SQL and augments it for time-series with native extensions. 
+It exposes a PostgreSQL wire protocol, high-performance REST API and supports 
+ingestion with InfluxDB Line Protocol. QuestDB uses a relational model with 
+maintenance-free schemas. Relational and time-series joins make it easy to 
+correlate data over time. Writes are durably committed to disk, meaning that
+the data is safe - yet instantly accessible.
+
+[QuestDB's documentation](https://questdb.io/docs/introduction/)
 
 ## Live demo
 
@@ -259,11 +261,13 @@ Thanks to these wonderful people
     <td align="center"><a href="https://tutswiki.com/"><img src="https://avatars1.githubusercontent.com/u/424822?v=4" width="100px;" alt=""/><br /><sub><b>chankeypathak</b></sub></a><br /><a href="#blog-chankeypathak" title="Blogposts">📝</a></td>
     <td align="center"><a href="https://github.com/upsidedownsmile"><img src="https://avatars0.githubusercontent.com/u/26444088?v=4" width="100px;" alt=""/><br /><sub><b>upsidedownsmile</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=upsidedownsmile" title="Code">💻</a></td>
   </tr>
+  <tr>
+    <td align="center"><a href="https://github.com/Nagriar"><img src="https://avatars0.githubusercontent.com/u/2361099?v=4" width="100px;" alt=""/><br /><sub><b>Nagriar</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=Nagriar" title="Code">💻</a></td>
+  </tr>
 </table>
 
-<!-- markdownlint-restore -->
+<!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
-
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the

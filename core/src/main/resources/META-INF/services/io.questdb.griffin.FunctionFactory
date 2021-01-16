@@ -22,31 +22,6 @@
 #
 ################################################################################
 
-
-################################################################################
-#     ___                  _   ____  ____
-#    / _ \ _   _  ___  ___| |_|  _ \| __ )
-#   | | | | | | |/ _ \/ __| __| | | |  _ \
-#   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-#    \__\_\\__,_|\___||___/\__|____/|____/
-#
-#  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2020 QuestDB
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#  http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-#
-################################################################################
-
 io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory
 io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory
@@ -130,6 +105,7 @@ io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory
 
 #  like
 io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory
+io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory
 io.questdb.griffin.engine.functions.regex.LikeCharFunctionFactory
 
 # 'to_char'
@@ -472,7 +448,7 @@ io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.AttributeCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.GetExprCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedClassCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.IndexCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedTypeCatalogueFunctionFactory
@@ -485,6 +461,16 @@ io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.NullIfIFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory
 
 # concat()
 io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
@@ -511,3 +497,6 @@ io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory
 
 # analytic functions
 io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
+
+# metadata functions
+io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory

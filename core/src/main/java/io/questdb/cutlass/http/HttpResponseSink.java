@@ -28,13 +28,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.StdoutSink;
-import io.questdb.std.time.DateFormatUtils;
-import io.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
 
@@ -338,7 +338,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             int n = nf.send(fd, flushBuf + sent, flushBufSize - sent);
             if (n < 0) {
                 // disconnected
-                LOG.info().$("disconnected [errno=").$(nf.errno()).$(']').$();
+                LOG.error()
+                        .$("disconnected [errno=").$(nf.errno())
+                        .$(", fd=").$(fd)
+                        .$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
             }
             if (n == 0) {

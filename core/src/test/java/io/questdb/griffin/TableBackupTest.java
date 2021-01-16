@@ -28,13 +28,13 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
-import io.questdb.std.microtime.DateFormatCompiler;
-import io.questdb.std.microtime.TimestampFormat;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -115,13 +115,13 @@ public class TableBackupTest {
             }
 
             @Override
-            public TimestampFormat getBackupDirTimestampFormat() {
-                return new DateFormatCompiler().compile("ddMMMyyyy");
+            public DateFormat getBackupDirTimestampFormat() {
+                return new TimestampFormatCompiler().compile("ddMMMyyyy");
             }
         };
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);
-        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService(), null, -1, null);
+        mainSqlExecutionContext = new SqlExecutionContextImpl(mainEngine, 1).with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableServiceImpl(mainConfiguration), null, -1, null);
     }
 
     @After
@@ -502,7 +502,7 @@ public class TableBackupTest {
                 final CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString());
                 engine = new CairoEngine(backupConfiguration);
                 sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE,
-                        new BindVariableService(),
+                        new BindVariableServiceImpl(backupConfiguration),
                         null,
                         -1,
                         null);
@@ -522,9 +522,9 @@ public class TableBackupTest {
     }
 
     private void setFinalBackupPath(int n) {
-        TimestampFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
+        DateFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
         finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR);
-        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultTimestampLocale(), null, finalBackupPath);
+        timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultDateLocale(), null, finalBackupPath);
         if (n > 0) {
             finalBackupPath.put('.');
             finalBackupPath.put(n);

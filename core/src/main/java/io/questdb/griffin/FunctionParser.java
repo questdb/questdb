@@ -26,12 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.bind.BindVariableService;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -61,6 +57,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final CairoConfiguration configuration;
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private final FunctionFactoryCache functionFactoryCache;
+    private final IntList undefinedVariables = new IntList();
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -70,10 +67,53 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         this.functionFactoryCache = functionFactoryCache;
     }
 
+    @NotNull
+    public static ScalarFunction createColumn(int position, CharSequence name, RecordMetadata metadata) throws SqlException {
+        final int index = metadata.getColumnIndexQuiet(name);
+
+        if (index == -1) {
+            throw SqlException.invalidColumn(position, name);
+        }
+
+        switch (metadata.getColumnType(index)) {
+            case ColumnType.BOOLEAN:
+                return new BooleanColumn(position, index);
+            case ColumnType.BYTE:
+                return new ByteColumn(position, index);
+            case ColumnType.SHORT:
+                return new ShortColumn(position, index);
+            case ColumnType.CHAR:
+                return new CharColumn(position, index);
+            case ColumnType.INT:
+                return new IntColumn(position, index);
+            case ColumnType.LONG:
+                return new LongColumn(position, index);
+            case ColumnType.FLOAT:
+                return new FloatColumn(position, index);
+            case ColumnType.DOUBLE:
+                return new DoubleColumn(position, index);
+            case ColumnType.STRING:
+                return new StrColumn(position, index);
+            case ColumnType.SYMBOL:
+                return new SymbolColumn(position, index, metadata.isSymbolTableStatic(index));
+            case ColumnType.BINARY:
+                return new BinColumn(position, index);
+            case ColumnType.DATE:
+                return new DateColumn(position, index);
+            case ColumnType.TIMESTAMP:
+                return new TimestampColumn(position, index);
+            case ColumnType.RECORD:
+                return new RecordColumn(position, index, metadata.getMetadata(index));
+            default:
+                return new Long256Column(position, index);
+        }
+    }
+
     public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
-            throw SqlException.position(node.position).put("no bind variable defined at index ").put(variableIndex);
+            // bind variable is undefined
+            return new IndexedParameterLinkFunction(variableIndex, -1, node.position);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), node.position);
     }
@@ -100,6 +140,22 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     public boolean isGroupBy(CharSequence token) {
         return functionFactoryCache.isGroupBy(token);
+    }
+
+    public boolean isValidNoArgFunction(ExpressionNode node) {
+        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
+        if (overload == null) {
+            return false;
+        }
+
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            FunctionFactoryDescriptor ffd = overload.getQuick(i);
+            if (ffd.getSigArgCount() == 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -169,9 +225,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (argCount == 0) {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
+                    stack.push(createColumn(node));
+                    break;
+                case ExpressionNode.BIND_VARIABLE:
                     if (Chars.startsWith(node.token, ':')) {
                         stack.push(createNamedParameter(node));
-                    } else if (Chars.startsWith(node.token, '$')) {
+                    } else {
                         // get variable index from token
                         try {
                             final int variableIndex = Numbers.parseInt(node.token, 1, node.token.length());
@@ -183,9 +242,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                             // not a number - must be a column
                             stack.push(createColumn(node));
                         }
-                    } else {
-                        // lookup column
-                        stack.push(createColumn(node));
                     }
                     break;
                 case ExpressionNode.MEMBER_ACCESS:
@@ -212,9 +268,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
+    private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
         SqlException ex = SqlException.position(node.position);
-        ex.put(message);
+        ex.put("unknown function name");
         ex.put(": ");
         ex.put(node.token);
         ex.put('(');
@@ -237,7 +293,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         ex.put(". expected args: ");
         ex.put('(');
         if (descriptor != null) {
-            for (int i = 0, n = descriptor.getSigCount(); i < n; i++) {
+            for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                 if (i > 0) {
                     ex.put(',');
                 }
@@ -303,44 +359,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function createColumn(ExpressionNode node) throws SqlException {
-        final int index = metadata.getColumnIndexQuiet(node.token);
-
-        if (index == -1) {
-            throw SqlException.invalidColumn(node.position, node.token);
-        }
-
-        switch (metadata.getColumnType(index)) {
-            case ColumnType.BOOLEAN:
-                return new BooleanColumn(node.position, index);
-            case ColumnType.BYTE:
-                return new ByteColumn(node.position, index);
-            case ColumnType.SHORT:
-                return new ShortColumn(node.position, index);
-            case ColumnType.CHAR:
-                return new CharColumn(node.position, index);
-            case ColumnType.INT:
-                return new IntColumn(node.position, index);
-            case ColumnType.LONG:
-                return new LongColumn(node.position, index);
-            case ColumnType.FLOAT:
-                return new FloatColumn(node.position, index);
-            case ColumnType.DOUBLE:
-                return new DoubleColumn(node.position, index);
-            case ColumnType.STRING:
-                return new StrColumn(node.position, index);
-            case ColumnType.SYMBOL:
-                return new SymbolColumn(node.position, index, metadata.isSymbolTableStatic(index));
-            case ColumnType.BINARY:
-                return new BinColumn(node.position, index);
-            case ColumnType.DATE:
-                return new DateColumn(node.position, index);
-            case ColumnType.TIMESTAMP:
-                return new TimestampColumn(node.position, index);
-            case ColumnType.RECORD:
-                return new RecordColumn(node.position, index, metadata.getMetadata(index));
-            default:
-                return new Long256Column(node.position, index);
-        }
+        return createColumn(node.position, node.token, metadata);
     }
 
     private Function createConstant(ExpressionNode node) throws SqlException {
@@ -415,15 +434,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return new CursorFunction(node.position, sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
     }
 
-    private Function createFunction(
-            ExpressionNode node,
-            @Transient ObjList<Function> args
-    ) throws SqlException {
-        ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
+    private Function createFunction(ExpressionNode node, @Transient ObjList<Function> args) throws SqlException {
+        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         boolean isNegated = functionFactoryCache.isNegated(node.token);
         boolean isFlipped = functionFactoryCache.isFlipped(node.token);
         if (overload == null) {
-            throw invalidFunction("unknown function name", node, args);
+            throw invalidFunction(node, args);
         }
 
         final int argCount;
@@ -437,14 +453,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         FunctionFactoryDescriptor candidateDescriptor = null;
         boolean candidateSigVarArgConst = false;
         int candidateSigArgCount = 0;
-
-        int fuzzyMatchCount = 0;
+        int candidateSigArgTypeSum = -1;
         int bestMatch = MATCH_NO_MATCH;
+
+        undefinedVariables.clear();
+
+        // find all undefined args for the purpose of setting
+        // their types when we find suitable candidate function
+        for (int i = 0; i < argCount; i++) {
+            if (args.getQuick(i).isUndefined()) {
+                undefinedVariables.add(i);
+            }
+        }
 
         for (int i = 0, n = overload.size(); i < n; i++) {
             final FunctionFactoryDescriptor descriptor = overload.getQuick(i);
             final FunctionFactory factory = descriptor.getFactory();
-            int sigArgCount = descriptor.getSigCount();
+            int sigArgCount = descriptor.getSigArgCount();
 
             final boolean sigVarArg;
             final boolean sigVarArgConst;
@@ -478,24 +503,27 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     match = MATCH_EXACT_MATCH;
                 }
 
+                int sigArgTypeSum = 0;
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
+                    final boolean undefined = arg.isUndefined();
                     final int sigArgTypeMask = descriptor.getArgTypeMask(k);
 
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
-                        candidateDescriptor = descriptor;
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }
 
-                    if ((FunctionFactoryDescriptor.isArray(sigArgTypeMask) && (arg instanceof ScalarFunction)) ||
-                            (!FunctionFactoryDescriptor.isArray(sigArgTypeMask) && !(arg instanceof ScalarFunction))) {
-                        candidateDescriptor = descriptor;
+                    final boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                    final boolean isScalar = arg instanceof ScalarFunction;
+                    if ((isArray && isScalar) || (!isArray && !isScalar)) {
                         match = MATCH_NO_MATCH; // no match
                         break;
                     }
 
                     final int sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+
+                    sigArgTypeSum += ColumnType.widthPrecedenceOf(sigArgType);
 
                     if (sigArgType == arg.getType()) {
                         switch (match) {
@@ -512,19 +540,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         continue;
                     }
 
-                    final boolean overloadPossible = (
-                            (arg.getType() >= ColumnType.BYTE)
-                                    && (arg.getType() <= ColumnType.DOUBLE)
-                                    && (sigArgType >= ColumnType.BYTE)
-                                    && (sigArgType <= ColumnType.DOUBLE)
-                                    && (arg.getType() < sigArgType)
-                    ) || ((
-                            (arg.getType() == ColumnType.DOUBLE)
-                                    && arg.isConstant()
-                                    && Double.isNaN(arg.getDouble(null))
-                                    && ((sigArgType == ColumnType.LONG) || (sigArgType == ColumnType.INT))
-                    ) && (!(arg instanceof TypeConstant) || (arg.getType() != sigArgType)))
-                            || (arg.getType() == ColumnType.CHAR && sigArgType == ColumnType.STRING);
+                    final int argType = arg.getType();
+                    final boolean overloadPossible =
+                            argType >= ColumnType.BYTE &&
+                                    sigArgType >= ColumnType.BYTE &&
+                                    sigArgType <= ColumnType.DOUBLE &&
+                                    argType < sigArgType ||
+                                    argType == ColumnType.DOUBLE &&
+                                            arg.isConstant() &&
+                                            Double.isNaN(arg.getDouble(null)) &&
+                                            (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT) ||
+                                    argType == ColumnType.CHAR &&
+                                            sigArgType == ColumnType.STRING
+                                    || undefined;
+
 
                     // can we use overload mechanism?
 
@@ -541,7 +570,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         }
                     } else {
                         // types mismatch
-                        candidateDescriptor = descriptor;
                         match = MATCH_NO_MATCH;
                         break;
                     }
@@ -556,29 +584,25 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     // special case - if signature enforces constant vararg we
                     // have to ensure all args are indeed constant
 
-                    candidate = factory;
-                    candidateDescriptor = descriptor;
-                    candidateSigArgCount = sigArgCount;
-                    candidateSigVarArgConst = sigVarArgConst;
 
                     if (match != MATCH_EXACT_MATCH) {
-                        if (match == MATCH_FUZZY_MATCH) {
-                            fuzzyMatchCount++;
-                        } else {
-                            fuzzyMatchCount = 0;
+                        if (candidateSigArgTypeSum < sigArgTypeSum || bestMatch < match) {
+                            candidate = factory;
+                            candidateDescriptor = descriptor;
+                            candidateSigArgCount = sigArgCount;
+                            candidateSigVarArgConst = sigVarArgConst;
+                            candidateSigArgTypeSum = sigArgTypeSum;
                         }
                         bestMatch = match;
                     } else {
-                        fuzzyMatchCount = 0;
+                        candidate = factory;
+                        candidateDescriptor = descriptor;
+                        candidateSigArgCount = sigArgCount;
+                        candidateSigVarArgConst = sigVarArgConst;
                         break;
                     }
                 }
             }
-        }
-
-        if (fuzzyMatchCount > 1) {
-            // ambiguous invocation target
-            throw invalidFunction("ambiguous function call", node, args);
         }
 
         if (candidate == null) {
@@ -605,6 +629,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 } else if (sigArgType == ColumnType.INT) {
                     args.setQuick(k, new IntConstant(arg.getPosition(), Numbers.INT_NaN));
                 }
+            }
+        }
+
+        // it is possible that we have more undefined variables than
+        // args in the descriptor, in case of vararg for example
+        for (int i = 0, n = undefinedVariables.size(); i < n; i++) {
+            final int pos = undefinedVariables.getQuick(i);
+            if (pos < candidateSigArgCount) {
+                final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
+                args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
+            } else {
+                args.getQuick(pos).assignType(ColumnType.VAR_ARG, sqlExecutionContext.getBindVariableService());
             }
         }
 

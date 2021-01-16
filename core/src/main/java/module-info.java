@@ -73,8 +73,9 @@ open module io.questdb {
     exports io.questdb.griffin.engine.analytic;
 
     exports io.questdb.std;
-    exports io.questdb.std.microtime;
-    exports io.questdb.std.time;
+    exports io.questdb.std.datetime;
+    exports io.questdb.std.datetime.microtime;
+    exports io.questdb.std.datetime.millitime;
     exports io.questdb.std.str;
     exports io.questdb.std.ex;
     exports io.questdb.network;
@@ -149,8 +150,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
 //                    #like
-            io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeCharFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory,
 //                    # '!~',
             io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory,
@@ -465,7 +467,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.AttributeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.GetExprCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedClassCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IndexCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.InformationSchemaFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedTypeCatalogueFunctionFactory,
@@ -482,6 +484,15 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.NullIfIFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()
@@ -499,6 +510,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory,
 
             // analytic functions
-            io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
+            io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
+
+            // metadata functions
+            io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory
             ;
 }
