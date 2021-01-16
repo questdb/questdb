@@ -334,7 +334,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         } else {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
-            throw EntryUnavailableException.INSTANCE.put("Cannot lock [table=").put(tableName).put(']');
+            throw EntryUnavailableException.INSTANCE;
         }
     }
 
