@@ -48,16 +48,6 @@ public class LogFactoryTest {
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
-    private static void assertEnabled(LogRecord r) {
-        Assert.assertTrue(r.isEnabled());
-        r.$();
-    }
-
-    private static void assertDisabled(LogRecord r) {
-        Assert.assertFalse(r.isEnabled());
-        r.$();
-    }
-
     @Test(expected = LogError.class)
     public void testBadWriter() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-bad-writer.conf");
@@ -439,11 +429,13 @@ public class LogFactoryTest {
         File conf = temp.newFile();
         File out = temp.newFile();
 
+        out.mkdirs();
+
         TestUtils.writeStringToFile(conf, "writers=file\n" +
                 "recordLength=4096\n" +
                 "queueDepth=1024\n" +
                 "w.file.class=io.questdb.log.LogFileWriter\n" +
-                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", new String(new char[]{Files.SEPARATOR})) + "\n" +
                 "w.file.level=INFO,ERROR\n" +
                 "w.file.bufferSize=4M"
         );
@@ -486,6 +478,16 @@ public class LogFactoryTest {
             assertDisabled(logger1.info());
             assertDisabled(logger1.error());
         }
+    }
+
+    private static void assertEnabled(LogRecord r) {
+        Assert.assertTrue(r.isEnabled());
+        r.$();
+    }
+
+    private static void assertDisabled(LogRecord r) {
+        Assert.assertFalse(r.isEnabled());
+        r.$();
     }
 
     private void assertFileLength(String file) {
