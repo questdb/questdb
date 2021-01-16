@@ -182,7 +182,7 @@ public class BinarySearchTest extends AbstractCairoTest {
         testMem256Find(3, 20, 100, BinarySearch.SCAN_UP);
     }
 
-    private void testColumnFindForward(int repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
+    private void testColumnFindForward(long repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
         try (Path path = new Path()) {
             path.of(root).concat("binsearch.d").$();
             try (AppendMemory appendMem = new AppendMemory(FilesFacadeImpl.INSTANCE, path, 4096)) {
@@ -210,8 +210,8 @@ public class BinarySearchTest extends AbstractCairoTest {
         }
     }
 
-    private void testMem256Find(int repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
-        long size = distinctValueCount * repeatCount * 16;
+    private void testMem256Find(long repeatCount, long searchValue, int distinctValueCount, int scanDirection) {
+        long size = distinctValueCount * repeatCount * 16L;
         long mem = Unsafe.malloc(size);
         try {
             for (int i = 0; i < distinctValueCount; i++) {
@@ -221,7 +221,7 @@ public class BinarySearchTest extends AbstractCairoTest {
             }
 
             long max = distinctValueCount * repeatCount - 1;
-            long index = TableWriter.searchIndex(mem, searchValue, 0, max, scanDirection);
+            long index = TableWriter.oooSearchIndex(mem, searchValue, 0, max, scanDirection);
             if (searchValue > distinctValueCount - 1) {
                 Assert.assertEquals(max, index);
             } else {
