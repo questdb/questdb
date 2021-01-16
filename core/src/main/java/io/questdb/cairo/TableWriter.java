@@ -3106,6 +3106,7 @@ public class TableWriter implements Closeable {
                                 ff.close(timestampFd);
                                 timestampFd = 0;
                             }
+                            System.out.println("exit checks: " + ((t2 = System.nanoTime()) - t1));
                             // rename after we closed all FDs associated with source partition
                             path.trimTo(plen).$();
                             other.of(path).put("x-").put(txn).$();
@@ -3124,6 +3125,7 @@ public class TableWriter implements Closeable {
                                         .put("could not rename [from=").put(path)
                                         .put(", to=").put(other).put(']');
                             }
+                            System.out.println("final rename: " + ((t1 = System.nanoTime()) - t2));
                         }
                         System.out.println("other: " + ((t2 = System.nanoTime()) - t1));
                     } finally {
@@ -4718,13 +4720,14 @@ public class TableWriter implements Closeable {
         final long tgtDataAddr = tmpShuffleData.addressOf(0);
 
         long offset = 0;
+        tmpShuffleIndex.checkLimits(indexRowCount * Long.BYTES);
         for (long l = 0; l < indexRowCount; l++) {
-            long row = getTimestampIndexRow(timestampIndex, l);
-            long o1 = indexMem.getLong(row * Long.BYTES);
-            long o2 = row + 1 < indexRowCount ? indexMem.getLong((row + 1) * Long.BYTES) : dataSize;
-            long len = o2 - o1;
+            final long row = getTimestampIndexRow(timestampIndex, l);
+            final long o1 = indexMem.getLong(row * Long.BYTES);
+            final long o2 = row + 1 < indexRowCount ? indexMem.getLong((row + 1) * Long.BYTES) : dataSize;
+            final long len = o2 - o1;
             Unsafe.getUnsafe().copyMemory(srcDataAddr + o1, tgtDataAddr + offset, len);
-            tmpShuffleIndex.putLong(l * Long.BYTES, offset);
+            tmpShuffleIndex.putLongUnsafe(l * Long.BYTES, offset);
             offset += len;
         }
 

@@ -184,6 +184,10 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
 
     public void putLong(long offset, long value) {
         checkLimits(offset, Long.BYTES);
+        putLongUnsafe(offset, value);
+    }
+
+    public void putLongUnsafe(long offset, long value) {
         Unsafe.getUnsafe().putLong(baseAddress + offset, value);
     }
 

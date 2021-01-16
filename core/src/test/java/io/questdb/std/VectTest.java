@@ -209,7 +209,7 @@ public class VectTest {
     private void assertIndexAsc(int count, long indexAddr) {
         long v = Unsafe.getUnsafe().getLong(indexAddr);
         for (int i = 1; i < count; i++) {
-            long next = Unsafe.getUnsafe().getLong(indexAddr + i * 2 * Long.BYTES);
+            long next = Unsafe.getUnsafe().getLong(indexAddr + i * 2L * Long.BYTES);
             if (next < v) {
                 System.out.println("wtf?: " + next + " < " + v);
             }
@@ -219,7 +219,7 @@ public class VectTest {
     }
 
     private long seedAndSort(int count) {
-        final long indexAddr = Unsafe.malloc(count * 2 * Long.BYTES);
+        final long indexAddr = Unsafe.malloc(count * 2L * Long.BYTES);
         seedMem(count, indexAddr);
         Vect.sortLongIndexAscInPlace(indexAddr, count);
         return indexAddr;
@@ -228,8 +228,8 @@ public class VectTest {
     private void seedMem(int count, long p) {
         for (int i = 0; i < count; i++) {
             final long z = rnd.nextPositiveLong();
-            Unsafe.getUnsafe().putLong(p + i * 2 * Long.BYTES, z);
-            Unsafe.getUnsafe().putLong(p + i * 2 * Long.BYTES + 8, i);
+            Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES, z);
+            Unsafe.getUnsafe().putLong(p + i * 2L * Long.BYTES + 8, i);
         }
     }
 

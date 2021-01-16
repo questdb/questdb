@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.str.Path;
 
 public final class BitmapIndexUtils {
-    static final int KEY_ENTRY_SIZE = 32;
+    static final long KEY_ENTRY_SIZE = 32;
     static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;
     static final int KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET = 16;
     static final int KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET = 8;
