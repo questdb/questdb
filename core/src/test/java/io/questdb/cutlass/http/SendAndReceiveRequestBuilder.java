@@ -68,7 +68,8 @@ public class SendAndReceiveRequestBuilder {
             String request,
             String response
     ) throws InterruptedException {
-        long fd = nf.socketTcp(true);
+        final long fd = nf.socketTcp(true);
+        nf.configureNoLinger(fd);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             try {
