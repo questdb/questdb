@@ -427,15 +427,13 @@ public class LogFactoryTest {
     @Test
     public void testSetProperties() throws Exception {
         File conf = temp.newFile();
-        File out = temp.newFile();
-
-        out.mkdirs();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
 
         TestUtils.writeStringToFile(conf, "writers=file\n" +
                 "recordLength=4096\n" +
                 "queueDepth=1024\n" +
                 "w.file.class=io.questdb.log.LogFileWriter\n" +
-                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", new String(new char[]{Files.SEPARATOR})) + "\n" +
+                "w.file.location=" + out.getAbsolutePath() + "\n" +
                 "w.file.level=INFO,ERROR\n" +
                 "w.file.bufferSize=4M"
         );
