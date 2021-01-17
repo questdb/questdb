@@ -433,7 +433,7 @@ public class LogFactoryTest {
                 "recordLength=4096\n" +
                 "queueDepth=1024\n" +
                 "w.file.class=io.questdb.log.LogFileWriter\n" +
-                "w.file.location=" + out.getAbsolutePath() + "\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
                 "w.file.level=INFO,ERROR\n" +
                 "w.file.bufferSize=4M"
         );
