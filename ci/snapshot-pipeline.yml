@@ -8,6 +8,8 @@ pr: none
 variables:
   MVN_VERSION: "3.6.3"
   MVN: "apache-maven-$(MVN_VERSION)"
+  NODE_VERSION: "12"
+  NVM_VERSION: "0.37.2"
 
 stages:
   - stage: BuildSnapshotMaster
@@ -26,18 +28,17 @@ stages:
             lfs: false
             submodules: false
           - bash: |
-
               /tmp/docker exec -t -u 0 ci-container sh -c "yum -y install git"
 
               cd /tmp
-              curl -q -O http://apache.mirror.anlx.net/maven/maven-3/"$MVN_VERSION"/binaries/"$MVN"-bin.tar.gz
+              curl -q -O https://mirrors.ukfast.co.uk/sites/ftp.apache.org/maven/maven-3/"$MVN_VERSION"/binaries/"$MVN"-bin.tar.gz
               tar xf "$MVN"-bin.tar.gz
 
               cd "$HOME"
-              curl -q https://raw.githubusercontent.com/nvm-sh/nvm/v0.36.0/install.sh | bash &>/dev/null
+              curl -q https://raw.githubusercontent.com/nvm-sh/nvm/v"$NVM_VERSION"/install.sh | bash &>/dev/null
               export NVM_DIR="$HOME/.nvm"
               [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              nvm install --no-progress 12
+              nvm install --no-progress "$NODE_VERSION"
 
               cd "$(Build.SourcesDirectory)"/core
               /tmp/"$MVN"/bin/mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
