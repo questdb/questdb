@@ -139,12 +139,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             new WorkerPoolAwareConfiguration() {
                                 @Override
                                 public int[] getWorkerAffinity() {
-                                    return new int[]{-1, -1, -1, -1};
+                                    return new int[]{0, 2, 4, 6, 8, 10, 12, 14};
                                 }
 
                                 @Override
                                 public int getWorkerCount() {
-                                    return 4;
+                                    return 8;
                                 }
 
                                 @Override
