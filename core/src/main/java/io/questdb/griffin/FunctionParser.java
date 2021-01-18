@@ -109,21 +109,55 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
+    public Function createBindVariable(int position, CharSequence name) throws SqlException {
+        if (name != null && name.length() > 0) {
+            switch (name.charAt(0)) {
+                case ':':
+                    return createNamedParameter(position, name);
+                case '$':
+                    return parseIndexedParameter(position, name);
+                default:
+                    return new StrConstant(position, name);
+            }
+        }
+        return new NullStrConstant(position);
+    }
+
+    public Function createBindVariable0(int position, CharSequence name) throws SqlException {
+        if (name.charAt(0) != ':') {
+            return parseIndexedParameter(position, name);
+        }
+        return createNamedParameter(position, name);
+    }
+
+    private Function parseIndexedParameter(int position, CharSequence name) throws SqlException {
+        // get variable index from token
+        try {
+            final int variableIndex = Numbers.parseInt(name, 1, name.length());
+            if (variableIndex < 1) {
+                throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
+            }
+            return createIndexParameter(variableIndex - 1, position);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid bind variable index [value=").put(name).put(']');
+        }
+    }
+
+    public Function createIndexParameter(int variableIndex, int position) throws SqlException {
         Function function = getBindVariableService().getFunction(variableIndex);
         if (function == null) {
             // bind variable is undefined
-            return new IndexedParameterLinkFunction(variableIndex, -1, node.position);
+            return new IndexedParameterLinkFunction(variableIndex, -1, position);
         }
-        return new IndexedParameterLinkFunction(variableIndex, function.getType(), node.position);
+        return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
     }
 
-    public Function createNamedParameter(ExpressionNode node) throws SqlException {
-        Function function = getBindVariableService().getFunction(node.token);
+    public Function createNamedParameter(int position, CharSequence name) throws SqlException {
+        Function function = getBindVariableService().getFunction(name);
         if (function == null) {
-            throw SqlException.position(node.position).put("undefined bind variable: ").put(node.token);
+            throw SqlException.position(position).put("undefined bind variable: ").put(name);
         }
-        return new NamedParameterLinkFunction(Chars.toString(node.token), function.getType(), node.position);
+        return new NamedParameterLinkFunction(Chars.toString(name), function.getType(), position);
     }
 
     public int getFunctionCount() {
@@ -225,30 +259,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (argCount == 0) {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
-                    stack.push(createColumn(node));
+                    stack.push(createColumn(node.position, node.token));
                     break;
                 case ExpressionNode.BIND_VARIABLE:
-                    if (Chars.startsWith(node.token, ':')) {
-                        stack.push(createNamedParameter(node));
-                    } else {
-                        // get variable index from token
-                        try {
-                            final int variableIndex = Numbers.parseInt(node.token, 1, node.token.length());
-                            if (variableIndex < 1) {
-                                throw SqlException.$(node.position, "invalid bind variable index [value=").put(variableIndex).put(']');
-                            }
-                            stack.push(createIndexParameter(variableIndex - 1, node));
-                        } catch (NumericException e) {
-                            // not a number - must be a column
-                            stack.push(createColumn(node));
-                        }
-                    }
+                    stack.push(createBindVariable0(node.position, node.token));
                     break;
                 case ExpressionNode.MEMBER_ACCESS:
                     stack.push(new StrConstant(node.position, node.token));
                     break;
                 case ExpressionNode.CONSTANT:
-                    stack.push(createConstant(node));
+                    stack.push(createConstant(node.position, node.token));
                     break;
                 case ExpressionNode.QUERY:
                     stack.push(createCursorFunction(node));
@@ -358,63 +378,62 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return function;
     }
 
-    private Function createColumn(ExpressionNode node) throws SqlException {
-        return createColumn(node.position, node.token, metadata);
+    private Function createColumn(int position, CharSequence columnName) throws SqlException {
+        return createColumn(position, columnName, metadata);
     }
 
-    private Function createConstant(ExpressionNode node) throws SqlException {
+    private Function createConstant(int position, final CharSequence tok) throws SqlException {
 
-        final int len = node.token.length();
-        final CharSequence tok = node.token;
+        final int len = tok.length();
 
         if (isNullKeyword(tok)) {
-            return new NullStrConstant(node.position);
+            return new NullStrConstant(position);
         }
 
         if (Chars.isQuoted(tok)) {
             if (len == 3) {
                 // this is 'x' - char
-                return new CharConstant(node.position, tok.charAt(1));
+                return new CharConstant(position, tok.charAt(1));
             }
 
             if (len == 2) {
                 // empty
-                return new CharConstant(node.position, (char) 0);
+                return new CharConstant(position, (char) 0);
             }
-            return new StrConstant(node.position, tok);
+            return new StrConstant(position, tok);
         }
 
         // special case E'str'
         // we treat it like normal string for now
         if (len > 2 && tok.charAt(0) == 'E' && tok.charAt(1) == '\'') {
-            return new StrConstant(node.position, Chars.toString(tok, 2, len - 1));
+            return new StrConstant(position, Chars.toString(tok, 2, len - 1));
         }
 
         if (SqlKeywords.isTrueKeyword(tok)) {
-            return new BooleanConstant(node.position, true);
+            return new BooleanConstant(position, true);
         }
 
         if (SqlKeywords.isFalseKeyword(tok)) {
-            return new BooleanConstant(node.position, false);
+            return new BooleanConstant(position, false);
         }
 
         try {
-            return new IntConstant(node.position, Numbers.parseInt(tok));
+            return new IntConstant(position, Numbers.parseInt(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new LongConstant(node.position, Numbers.parseLong(tok));
+            return new LongConstant(position, Numbers.parseLong(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new DoubleConstant(node.position, Numbers.parseDouble(tok));
+            return new DoubleConstant(position, Numbers.parseDouble(tok));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new FloatConstant(node.position, Numbers.parseFloat(tok));
+            return new FloatConstant(position, Numbers.parseFloat(tok));
         } catch (NumericException ignore) {
         }
 
@@ -426,7 +445,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return Constants.getTypeConstant(columnType);
         }
 
-        throw SqlException.position(node.position).put("invalid constant: ").put(tok);
+        throw SqlException.position(position).put("invalid constant: ").put(tok);
     }
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
