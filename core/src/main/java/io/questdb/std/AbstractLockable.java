@@ -22,22 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.std;
 
-import io.questdb.MessageBus;
-import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.tasks.VectorAggregateTask;
+public abstract class AbstractLockable {
+    private static final long TARGET_SEQUENCE_OFFSET;
+    @SuppressWarnings({"FieldCanBeLocal", "unused"})
+    // to "lock" the entry thread must successfully CAS targetSequence form "srcSequence" value
+    // to "srcSequence+1". Executing thread must not be changing value of "srcSequence"
+    private int tgtSequence;
+    private int srcSequence;
 
-public class GroupByJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
-
-    public GroupByJob(MessageBus messageBus) {
-        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSequence());
+    public boolean tryLock() {
+        return Unsafe.cas(this, TARGET_SEQUENCE_OFFSET, srcSequence, srcSequence + 1);
     }
 
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        final VectorAggregateEntry entry = queue.get(cursor).entry;
-        subSeq.done(cursor);
-        return entry.run(workerId);
+    protected void of(int initialSequence) {
+        this.tgtSequence = initialSequence;
+        this.srcSequence = initialSequence;
+    }
+
+    static {
+        TARGET_SEQUENCE_OFFSET = Unsafe.getFieldOffset(AbstractLockable.class, "tgtSequence");
     }
 }

@@ -99,7 +99,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         engine = new CairoEngine(configuration);
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1)
+                engine, 1, engine.getMessageBus())
                 .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,

@@ -26,9 +26,12 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
+import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.OutOfOrderInsertTask;
 import io.questdb.tasks.VectorAggregateTask;
 
 public interface MessageBus {
@@ -39,6 +42,8 @@ public interface MessageBus {
     Sequence getIndexerSubSequence();
 
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
+
+    SPSequence getOutOfOrderInsertPubSeq();
 
     Sequence getVectorAggregatePubSequence();
 
@@ -55,6 +60,10 @@ public interface MessageBus {
     default Sequence getTableBlockWriterSubSequence() {
         return null;
     }
+
+    RingQueue<OutOfOrderInsertTask> getOutOfOrderInsertQueue();
+
+    MCSequence getOutOfOrderInsertSubSeq();
 
     CairoConfiguration getConfiguration();
 }

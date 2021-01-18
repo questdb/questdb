@@ -35,6 +35,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.OutOfOrderInsertTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2479,6 +2480,21 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         @Override
         public Sequence getVectorAggregateSubSequence() {
+            return null;
+        }
+
+        @Override
+        public SPSequence getOutOfOrderInsertPubSeq() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<OutOfOrderInsertTask> getOutOfOrderInsertQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getOutOfOrderInsertSubSeq() {
             return null;
         }
     }

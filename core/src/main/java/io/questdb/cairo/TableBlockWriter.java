@@ -28,7 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
+import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
@@ -117,9 +117,8 @@ public class TableBlockWriter implements Closeable {
             partitionBlockWriters.getQuick(n).startCommitAppendedBlock();
         }
         completePendingConcurrentTasks(false);
-        long nTotalRowsAdded = 0;
         for (int n = 0; n < nextPartitionBlockWriterIndex; n++) {
-            nTotalRowsAdded += partitionBlockWriters.getQuick(n).completeCommitAppendedBlock();
+            partitionBlockWriters.getQuick(n).completeCommitAppendedBlock();
         }
         writer.commitBlock(firstTimestamp);
         LOG.info().$("committed new block [table=").$(writer.getName()).$(']').$();
@@ -396,33 +395,20 @@ public class TableBlockWriter implements Closeable {
         private TableBlockWriterTask task;
     }
 
-    public static class TableBlockWriterJob implements Job {
-        private final RingQueue<TableBlockWriterTaskHolder> queue;
-        private final Sequence subSeq;
-
+    public static class TableBlockWriterJob extends AbstractQueueConsumerJob<TableBlockWriterTaskHolder> {
         public TableBlockWriterJob(MessageBus messageBus) {
-            this.queue = messageBus.getTableBlockWriterQueue();
-            this.subSeq = messageBus.getTableBlockWriterSubSequence();
+            super(messageBus.getTableBlockWriterQueue(), messageBus.getTableBlockWriterSubSequence());
         }
 
         @Override
-        public boolean run(int workerId) {
-            boolean useful = false;
-            while (true) {
-                long cursor = subSeq.next();
-                if (cursor >= 0) {
-                    try {
-                        final TableBlockWriterTaskHolder holder = queue.get(cursor);
-                        useful |= holder.task.run();
-                        holder.task = null;
-                    } finally {
-                        subSeq.done(cursor);
-                    }
-                }
-
-                if (cursor == -1) {
-                    return useful;
-                }
+        protected boolean doRun(int workerId, long cursor) {
+            try {
+                final TableBlockWriterTaskHolder holder = queue.get(cursor);
+                boolean useful = holder.task.run();
+                holder.task = null;
+                return useful;
+            } finally {
+                subSeq.done(cursor);
             }
         }
     }
@@ -570,7 +556,7 @@ public class TableBlockWriter implements Closeable {
             columnTops.clear();
         }
 
-        private long completeCommitAppendedBlock() {
+        private void completeCommitAppendedBlock() {
             long nRowsAdded = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 long nColRowsAdded = partitionStruct.getColumnNRowsAdded(columnIndex);
@@ -582,7 +568,6 @@ public class TableBlockWriter implements Closeable {
             long blockLastTimestamp = Math.min(timestampHi, lastTimestamp);
             LOG.info().$("committing ").$(nRowsAdded).$(" rows to partition at ").$(path).$(" [firstTimestamp=").$ts(timestampLo).$(", lastTimestamp=").$ts(timestampHi).$(']').$();
             writer.startAppendedBlock(timestampLo, blockLastTimestamp, nRowsAdded, columnTops);
-            return nRowsAdded;
         }
 
         private void completeUpdateSymbolCache(int columnIndex, long colNRowsAdded) {
@@ -787,7 +772,7 @@ public class TableBlockWriter implements Closeable {
                 // so null will evaluate to just VirtualMemory.STRING_LENGTH_BYTES
                 // but for positive length values we need to subtract 2
                 // how do we do that? Lets use inverted sign bit
-                final long sz = (VirtualMemory.STRING_LENGTH_BYTES + Character.BYTES * (strLen + 1) - bit);
+                final long sz = (VirtualMemory.STRING_LENGTH_BYTES + 2L * (strLen + 1) - bit);
                 columnDataAddress += sz;
                 offset += sz;
             }

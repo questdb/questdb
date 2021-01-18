@@ -26,11 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.OutOfOrderInsertTask;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -47,6 +45,10 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableBlockWriterPubSeq;
     private final MCSequence tableBlockWriterSubSeq;
 
+    private final RingQueue<OutOfOrderInsertTask> outOfOrderInsertQueue;
+    private final SPSequence outOfOrderInsertPubSeq;
+    private final MCSequence outOfOrderInsertSubSeq;
+
     private final CairoConfiguration configuration;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
@@ -55,18 +57,37 @@ public class MessageBusImpl implements MessageBus {
         this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
         this.indexerPubSeq = new MPSequence(indexerQueue.getCapacity());
         this.indexerSubSeq = new MCSequence(indexerQueue.getCapacity());
+        indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
 
         this.vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, 1024);
         this.vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCapacity());
         this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
-
-        indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
 
         this.tableBlockWriterQueue = new RingQueue<>(TableBlockWriterTaskHolder::new, configuration.getTableBlockWriterQueueSize());
         this.tableBlockWriterPubSeq = new MPSequence(tableBlockWriterQueue.getCapacity());
         this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
         tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
+
+        this.outOfOrderInsertQueue = new RingQueue<>(OutOfOrderInsertTask::new, 1024);
+        this.outOfOrderInsertPubSeq = new SPSequence(this.outOfOrderInsertQueue.getCapacity());
+        this.outOfOrderInsertSubSeq = new MCSequence(this.outOfOrderInsertQueue.getCapacity());
+        outOfOrderInsertPubSeq.then(outOfOrderInsertSubSeq).then(outOfOrderInsertPubSeq);
+    }
+
+    @Override
+    public SPSequence getOutOfOrderInsertPubSeq() {
+        return outOfOrderInsertPubSeq;
+    }
+
+    @Override
+    public RingQueue<OutOfOrderInsertTask> getOutOfOrderInsertQueue() {
+        return outOfOrderInsertQueue;
+    }
+
+    @Override
+    public MCSequence getOutOfOrderInsertSubSeq() {
+        return outOfOrderInsertSubSeq;
     }
 
     @Override

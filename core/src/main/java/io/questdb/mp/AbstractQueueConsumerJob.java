@@ -22,22 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.mp;
 
-import io.questdb.MessageBus;
-import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.tasks.VectorAggregateTask;
+public abstract class AbstractQueueConsumerJob<T> implements Job {
+    protected final RingQueue<T> queue;
+    protected final Sequence subSeq;
 
-public class GroupByJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
-
-    public GroupByJob(MessageBus messageBus) {
-        super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSequence());
+    public AbstractQueueConsumerJob(RingQueue<T> queue, Sequence subSeq) {
+        this.queue = queue;
+        this.subSeq = subSeq;
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor) {
-        final VectorAggregateEntry entry = queue.get(cursor).entry;
-        subSeq.done(cursor);
-        return entry.run(workerId);
+    public boolean run(int workerId) {
+        final long cursor = subSeq.next();
+        return cursor > -1 && doRun(workerId, cursor);
     }
+
+    protected abstract boolean doRun(int workerId, long cursor);
 }

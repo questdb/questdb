@@ -24,20 +24,24 @@
 
 package io.questdb.griffin;
 
+import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.OutOfOrderInsertJob;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -70,15 +74,113 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         SharedRandom.RANDOM.set(new Rnd());
     }
 
+    private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+
     @Test
-    public void testPartitionedDataAppendOOData() throws Exception {
+    public void testBench() throws Exception {
         assertMemoryLeak(() -> {
+
                     // create table with roughly 2AM data
                     compiler.compile(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
                                     " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " round(rnd_double(0)*100, 3) amt," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                    " rnd_boolean() b," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) ik," +
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(10000000000,1000000L) ts," +
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
+                                    " from long_sequence(1000000)" +
+                                    "), index(sym) timestamp (ts) partition by DAY",
+                            sqlExecutionContext
+                    );
+
+                    // create table with 1AM data
+
+                    compiler.compile(
+                            "create table 1am as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " round(rnd_double(0)*100, 3) amt," +
+                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                    " rnd_boolean() b," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_double(2) d," +
+                                    " rnd_float(2) e," +
+                                    " rnd_short(10,1024) f," +
+                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                    " rnd_symbol(4,4,4,2) ik," +
+                                    " rnd_long() j," +
+                                    " timestamp_sequence(3000000000l,100000000L) ts," + // mid partition for "x"
+                                    " rnd_byte(2,50) l," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
+                                    " rnd_char() t" +
+                                    " from long_sequence(1000000)" +
+                                    ")",
+                            sqlExecutionContext
+                    );
+
+                    engine.releaseAllReaders();
+
+                    WorkerPool pool = new WorkerPool(
+                            new WorkerPoolAwareConfiguration() {
+                                @Override
+                                public int[] getWorkerAffinity() {
+                                    return new int[]{-1, -1, -1, -1};
+                                }
+
+                                @Override
+                                public int getWorkerCount() {
+                                    return 4;
+                                }
+
+                                @Override
+                                public boolean haltOnError() {
+                                    return false;
+                                }
+
+                                @Override
+                                public boolean isEnabled() {
+                                    return true;
+                                }
+                            }
+                    );
+
+                    pool.assign(new OutOfOrderInsertJob(engine.getMessageBus()));
+
+                    pool.start(LOG);
+
+                    try {
+                        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+                    } finally {
+                        pool.halt();
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testPartitionedDataAppendOOData() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table with roughly 2AM data
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
                                     " round(rnd_double(0)*100, 3) amt," +
                                     " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                                     " rnd_boolean() b," +
@@ -392,11 +494,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-                    assertOutOfOrderDataConsistency(
-                            "create table y as (x union all middle)",
-                            "insert into x select * from middle",
-                            "/oo/testPartitionedDataMergeData.txt"
-                    );
+            assertOutOfOrderDataConsistency(
+                    "create table y as (x union all middle)",
+                    "insert into x select * from middle",
+                    "/oo/testPartitionedDataMergeData.txt"
+            );
             assertIndexResultAgainstFile("/oo/testPartitionedDataMergeData_Index.txt");
                 }
         );
@@ -862,70 +964,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     assertSqlResultAgainstFile("x", "/oo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt");
 
                     assertIndexConsistency();
-                }
-        );
-    }
-
-    @Test
-    public void testBench() throws Exception {
-        assertMemoryLeak(() -> {
-
-                    // create table with roughly 2AM data
-                    compiler.compile(
-                            "create table x as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " rnd_symbol('msft','ibm', 'googl') sym," +
-                                    " round(rnd_double(0)*100, 3) amt," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                    " rnd_boolean() b," +
-                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) ik," +
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(10000000000,1000000L) ts," +
-                                    " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n," +
-                                    " rnd_char() t" +
-                                    " from long_sequence(1000000)" +
-                                    "), index(sym) timestamp (ts) partition by DAY",
-                            sqlExecutionContext
-                    );
-
-                    // create table with 1AM data
-
-                    compiler.compile(
-                            "create table 1am as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " rnd_symbol('msft','ibm', 'googl') sym," +
-                                    " round(rnd_double(0)*100, 3) amt," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                    " rnd_boolean() b," +
-                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) ik," +
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(3000000000l,100000000L) ts," + // mid partition for "x"
-                                    " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n," +
-                                    " rnd_char() t" +
-                                    " from long_sequence(1000000)" +
-                                    ")",
-                            sqlExecutionContext
-                    );
-
-                    engine.releaseAllReaders();
-
-                    compiler.compile("insert into x select * from 1am", sqlExecutionContext);
                 }
         );
     }

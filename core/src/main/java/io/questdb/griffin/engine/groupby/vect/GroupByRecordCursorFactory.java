@@ -144,7 +144,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             long columnOffsets
     ) {
         for (int i = start; i < end; i++) {
-            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * Integer.BYTES));
+            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
         }
     }
 
