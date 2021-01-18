@@ -76,6 +76,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         dateToTimestampAdapterPool.clear();
         writer = Misc.free(writer);
         columnErrorCounts.clear();
+        timestampAdapter = null;
         _size = 0;
     }
 
@@ -309,6 +310,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
         if (timestampIndex != -1 && types.getQuick(timestampIndex).getType() == ColumnType.TIMESTAMP) {
             timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
+        } else {
+            timestampAdapter = null;
         }
     }
 
