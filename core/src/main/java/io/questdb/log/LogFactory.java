@@ -56,6 +56,7 @@ public class LogFactory implements Closeable {
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
+    static boolean envEnabled = true;
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -309,11 +310,14 @@ public class LogFactory implements Closeable {
     }
 
     private static String getProperty(final Properties properties, String key) {
-        final String envValue = System.getenv("QDB_LOG_" + key.replace('.', '_').toUpperCase());
-        if (envValue == null) {
-            return properties.getProperty(key);
+        if (envEnabled) {
+            final String envValue = System.getenv("QDB_LOG_" + key.replace('.', '_').toUpperCase());
+            if (envValue == null) {
+                return properties.getProperty(key);
+            }
+            return envValue;
         }
-        return envValue;
+        return properties.getProperty(key);
     }
 
     @SuppressWarnings("rawtypes")
