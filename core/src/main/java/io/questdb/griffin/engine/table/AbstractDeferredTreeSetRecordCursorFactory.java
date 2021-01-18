@@ -86,7 +86,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             SqlExecutionContext executionContext
     ) {
         if (deferredSymbols != null && deferredSymbols.size() > 0) {
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolMapReader(columnIndex);
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = deferredSymbols.size(); i < n; ) {
                 CharSequence symbol = deferredSymbols.get(i);
                 int symbolKey = symbolTable.keyOf(symbol);

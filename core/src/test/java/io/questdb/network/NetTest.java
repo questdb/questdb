@@ -24,6 +24,16 @@
 
 package io.questdb.network;
 
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSequenceZ;
+import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Ignore;
+import org.junit.Test;
+
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -31,17 +41,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
-
-import org.junit.Assert;
-import org.junit.Ignore;
-import org.junit.Test;
-
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSequenceZ;
-import io.questdb.std.str.NativeLPSZ;
-import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 
 public class NetTest {
     @Test
@@ -227,7 +226,7 @@ public class NetTest {
         Assert.assertEquals(msgLen, Net.recv(serverFd, serverBuf, msgLen));
         lpsz.of(serverBuf);
         Assert.assertEquals(msg, lpsz.toString());
-        Unsafe.free(serverBuf, charSink.length());
+        Unsafe.free(serverBuf, msgLen);
         Net.close(serverFd);
 
         Net.close(acceptFd);

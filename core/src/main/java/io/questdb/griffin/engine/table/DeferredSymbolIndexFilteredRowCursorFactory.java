@@ -26,25 +26,29 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
-public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
+public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;
     private final int columnIndex;
-    private final String symbol;
+    private final Function symbolFunction;
     private int symbolKey = SymbolTable.VALUE_NOT_FOUND;
 
     public DeferredSymbolIndexFilteredRowCursorFactory(
             int columnIndex,
-            String symbol,
+            Function symbolFunction,
             Function filter,
             boolean cachedIndexReaderCursor,
             int indexDirection,
             IntList columnIndexes
     ) {
         this.columnIndex = columnIndex;
-        this.symbol = symbol;
+        this.symbolFunction = symbolFunction;
         this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection, columnIndexes);
     }
 
@@ -57,8 +61,9 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFac
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
-        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+        symbolFunction.init(tableReader, sqlExecutionContext);
+        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbolFunction.getStr(null));
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             this.cursor.of(symbolKey);
             this.cursor.prepare(tableReader);
@@ -68,5 +73,10 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFac
     @Override
     public boolean isEntity() {
         return false;
+    }
+
+    @Override
+    public Function getFunction() {
+        return symbolFunction;
     }
 }

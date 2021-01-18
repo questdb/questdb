@@ -85,7 +85,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) {
-        StaticSymbolTable symbolTable = dataFrameCursor.getSymbolMapReader(columnIndex);
+        StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         IntObjHashMap<RowCursorFactory> targetFactories;
         if (factories == factoriesA) {
             targetFactories = factoriesB;
@@ -114,9 +114,9 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
                             // we cannot reliably tell that one of them could be using cursor that
                             // belongs to index reader
                             if (filter == null) {
-                                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, false, BitmapIndexReader.DIR_FORWARD);
+                                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, false, BitmapIndexReader.DIR_FORWARD, null);
                             } else {
-                                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, false, BitmapIndexReader.DIR_FORWARD, columnIndexes);
+                                rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, false, BitmapIndexReader.DIR_FORWARD, columnIndexes, null);
                             }
                         }
 

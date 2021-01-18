@@ -85,7 +85,7 @@ public class SqlCodeGenerator implements Mutable {
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
-    private final ObjList<CharSequence> symbolValueList = new ObjList<>();
+    private final ObjList<Function> symbolValueList = new ObjList<>();
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final GenericRecordMetadata tempMetadata = new GenericRecordMetadata();
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
@@ -2398,15 +2398,26 @@ public class SqlCodeGenerator implements Mutable {
 
                             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                 if (f == null) {
-                                    rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true, indexDirection);
+                                    rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex,
+                                            functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(0), symbol),
+                                            true,
+                                            indexDirection
+                                    );
                                 } else {
-                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), f, true, indexDirection, columnIndexes);
+                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
+                                            keyColumnIndex,
+                                            functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(0), symbol),
+                                            f,
+                                            true,
+                                            indexDirection,
+                                            columnIndexes
+                                    );
                                 }
                             } else {
                                 if (f == null) {
-                                    rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection);
+                                    rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection, null);
                                 } else {
-                                    rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection, columnIndexes);
+                                    rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, f, true, indexDirection, columnIndexes, null);
                                 }
                             }
                             return new DataFrameRecordCursorFactory(myMeta, dfcFactory, rcf, orderByKeyColumn, f, false, columnIndexes, columnSizes);
@@ -2415,16 +2426,11 @@ public class SqlCodeGenerator implements Mutable {
                         symbolValueList.clear();
 
                         for (int i = 0, n = intrinsicModel.keyValues.size(); i < n; i++) {
-                            symbolValueList.add(intrinsicModel.keyValues.get(i));
+                            symbolValueList.add(functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(i), intrinsicModel.keyValues.get(i)));
                         }
 
                         if (orderByKeyColumn) {
                             myMeta.setTimestampIndex(-1);
-                            if (model.getOrderByDirectionAdvice().getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING) {
-                                symbolValueList.sort(Chars.CHAR_SEQUENCE_COMPARATOR);
-                            } else {
-                                symbolValueList.sort(Chars.CHAR_SEQUENCE_COMPARATOR_DESC);
-                            }
                         }
 
                         return new FilterOnValuesRecordCursorFactory(
@@ -2436,14 +2442,18 @@ public class SqlCodeGenerator implements Mutable {
                                 f,
                                 model.getOrderByAdviceMnemonic(),
                                 orderByKeyColumn,
+                                model.getOrderByDirectionAdvice().getQuick(0),
                                 indexDirection,
                                 columnIndexes
                         );
 
-                    } else if (intrinsicModel.keyExcludedValues.size() > 0 && reader.getSymbolMapReader(keyColumnIndex).size() < configuration.getMaxSymbolNotEqualsCount()) {
+                    } else if (
+                            intrinsicModel.keyExcludedValues.size() > 0
+                                    && reader.getSymbolMapReader(keyColumnIndex).size() < configuration.getMaxSymbolNotEqualsCount()
+                    ) {
                         symbolValueList.clear();
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
-                            symbolValueList.add(intrinsicModel.keyExcludedValues.get(i));
+                            symbolValueList.add(functionParser.createBindVariable(intrinsicModel.keyExcludedValuePositions.getQuick(i), intrinsicModel.keyExcludedValues.get(i)));
                         }
                         Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
                         if (f != null && f.isConstant()) {

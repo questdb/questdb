@@ -38,8 +38,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final int columnIndex;
     private final Function filter;
     private final ObjList<RowCursorFactory> cursorFactories;
-    private final ObjList<CharSequence> keyExcludedValues = new ObjList<>();
+    private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private final ObjList<CharSequence> includedValues = new ObjList<>();
+    private final ObjList<CharSequence> excludedValues = new ObjList<>();
     private final boolean followedOrderByAdvice;
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
@@ -48,7 +49,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     public FilterOnExcludedValuesRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
-            @NotNull @Transient ObjList<CharSequence> keyValues,
+            @NotNull @Transient ObjList<Function> keyValues,
             int columnIndex,
             @Nullable Function filter,
             int orderByMnemonic,
@@ -61,7 +62,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
         final int nKeyValues = keyValues.size();
-        this.keyExcludedValues.addAll(keyValues);
+        this.keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
         cursorFactories = new ObjList<>(nKeyValues);
@@ -78,7 +79,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     public void close() {
         Misc.free(filter);
         Misc.free(includedValues);
-        Misc.free(keyExcludedValues);
+        Misc.free(keyExcludedValueFunctions);
     }
 
     @Override
@@ -92,16 +93,20 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     public void recalculateIncludedValues(TableReader tableReader) {
+        excludedValues.clear();
+        for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
+            excludedValues.add(Chars.toString(keyExcludedValueFunctions.getQuick(i).getStr(null)));
+        }
         final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
         for (int i = 0; i < symbolMapReader.size(); i++) {
             final CharSequence symbol = symbolMapReader.valueOf(i);
-            if (keyExcludedValues.indexOf(symbol) < 0 && includedValues.indexOf(symbol) < 0) {
+            if (excludedValues.indexOf(symbol) < 0 && includedValues.indexOf(symbol) < 0) {
                 final RowCursorFactory rowCursorFactory;
                 int symbolKey = symbolMapReader.keyOf(symbol);
                 if (filter == null) {
-                    rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0, indexDirection);
+                    rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0, indexDirection, null);
                 } else {
-                    rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0, indexDirection, columnIndexes);
+                    rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0, indexDirection, columnIndexes, null);
                 }
                 includedValues.add(Chars.toString(symbol));
                 cursorFactories.add(rowCursorFactory);
@@ -110,14 +115,12 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) {
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         try (TableReader reader = dataFrameCursor.getTableReader()) {
             if (reader.getSymbolMapReader(columnIndex).size() > maxSymbolNotEqualsCount) {
                 throw ReaderOutOfDateException.INSTANCE;
             }
+            Function.init(keyExcludedValueFunctions, reader, executionContext);
         }
         this.recalculateIncludedValues(dataFrameCursor.getTableReader());
         this.cursor.of(dataFrameCursor, executionContext);

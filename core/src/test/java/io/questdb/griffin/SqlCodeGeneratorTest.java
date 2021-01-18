@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
@@ -163,40 +165,75 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNonAggFunctionWithAggFunctionSampleBy() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "day\tisin\tlast\n" +
-                        "1\tcc\t0.7544827361952741\n",
-                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
-                "create table xetra as (" +
-                        "select" +
-                        " rnd_symbol('aa', 'bb', 'cc') isin," +
-                        " rnd_double() start_price," +
-                        " timestamp_sequence(0, 1000000) ts" +
-                        " from long_sequence(10000)" +
-                        ") timestamp(ts)",
-                null,
-                false
-        ));
+    public void testBindVariableInIndexLookup() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
+            compiler.compile("create table src as (select rnd_symbol(15000, 4,4,0) sym, timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(5000000))", sqlExecutionContext);
+            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src", sqlExecutionContext);
+            try (
+                    RecordCursorFactory factory = compiler.compile("select distinct deviceName from alcatel_traffic_tmp", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory lookupFactory = compiler.compile("select * from alcatel_traffic_tmp where deviceName = $1", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record deviceNameRecord = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        CharSequence device = deviceNameRecord.getStr(0);
+
+                        bindVariableService.clear();
+                        bindVariableService.setStr(0, device);
+                        try (RecordCursor lookupCursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                            Record lookupRecord = lookupCursor.getRecord();
+                            final boolean hasNext = lookupCursor.hasNext();
+                            Assert.assertTrue(hasNext);
+                            do {
+                                TestUtils.assertEquals(device, lookupRecord.getSym(0));
+                                TestUtils.assertEquals(device, lookupRecord.getSym(2));
+                            } while (lookupCursor.hasNext());
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test
-    public void testNonAggFunctionWithAggFunctionSampleBySubQuery() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "day\tisin\tlast\n" +
-                        "1\tcc\t0.7544827361952741\n",
-//                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
-                "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d)",
-                "create table xetra as (" +
-                        "select" +
-                        " rnd_symbol('aa', 'bb', 'cc') isin," +
-                        " rnd_double() start_price," +
-                        " timestamp_sequence(0, 1000000) ts" +
-                        " from long_sequence(10000)" +
-                        ") timestamp(ts)",
-                null,
-                false
-        ));
+    public void testBindVariableInIndexLookupList() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
+            compiler.compile("create table src as (select rnd_symbol(15000, 4,4,0) sym, timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(500))", sqlExecutionContext);
+            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src", sqlExecutionContext);
+            try (
+                    RecordCursorFactory lookupFactory = compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($1,$2)", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                bindVariableService.setStr(0, "FKBW");
+                bindVariableService.setStr(1, "SHRI");
+
+
+                sink.clear();
+                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, lookupFactory.getMetadata(), true);
+                    TestUtils.assertEquals(
+                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
+                                    "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n" +
+                                    "SHRI\t1970-01-01T00:00:02.900000Z\tSHRI\t\t0.007781200348629724\t0.007781200348629724\n",
+                            sink
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
+            try {
+                compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($n1)", sqlExecutionContext).getRecordCursorFactory();
+            } catch (SqlException e) {
+                Assert.assertEquals(51, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
+            }
+        });
     }
 
     @Test
@@ -217,76 +254,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             true,
                             true,
                             true
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testBindVariableWithLike() throws Exception {
-        testBindVariableWithLike0("like");
-    }
-
-    @Test
-    public void testBindVariableWithILike() throws Exception {
-        testBindVariableWithLike0("ilike");
-    }
-
-    private void testBindVariableWithLike0(String keyword) throws Exception {
-        assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
-                bindVariableService.clear();
-                try (RecordCursorFactory factory = compiler.compile("xy where v " +keyword+ " $1", sqlExecutionContext).getRecordCursorFactory()) {
-
-                    bindVariableService.setStr(0, "MBE%");
-                    assertCursor("v\n" +
-                                    "MBEZGHW\n",
-                            factory,
-                            true,
-                            true,
-                            false
-                    );
-
-                    bindVariableService.setStr(0, "Z%");
-                    assertCursor("v\n" +
-                                    "ZSQLDGLOG\n" +
-                                    "ZLUOG\n" +
-                                    "ZLCBDMIG\n" +
-                                    "ZJYYFLSVI\n" +
-                                    "ZWEVQTQO\n" +
-                                    "ZSFXUNYQ\n",
-                            factory,
-                            true,
-                            true,
-                            false
-                    );
-
-                    assertCursor("v\n" +
-                                    "ZSQLDGLOG\n" +
-                                    "ZLUOG\n" +
-                                    "ZLCBDMIG\n" +
-                                    "ZJYYFLSVI\n" +
-                                    "ZWEVQTQO\n" +
-                                    "ZSFXUNYQ\n",
-                            factory,
-                            true,
-                            true,
-                            false
-                    );
-
-
-                    bindVariableService.setStr(0, null);
-                    assertCursor("v\n",
-                            factory,
-                            true,
-                            true,
-                            false
                     );
                 }
             }
@@ -365,6 +332,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testBindVariableWithILike() throws Exception {
+        testBindVariableWithLike0("ilike");
+    }
+
+    @Test
+    public void testBindVariableWithLike() throws Exception {
+        testBindVariableWithLike0("like");
     }
 
     @Test
@@ -505,6 +482,44 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000000l) t from long_sequence(100)) timestamp(t)) partition by DAY",
                 "t",
                 true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCreateTableIfNotExists() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 10; i++) {
+                compiler.compile("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
+            }
+        });
+
+        assertQuery(
+                "a\n" +
+                        "-1148479920\n" +
+                        "315515118\n" +
+                        "1548800833\n" +
+                        "-727724771\n" +
+                        "73575701\n" +
+                        "-948263339\n" +
+                        "1326447242\n" +
+                        "592859671\n" +
+                        "1868723706\n" +
+                        "-847531048\n" +
+                        "-1191262516\n" +
+                        "-2041844972\n" +
+                        "-1436881714\n" +
+                        "-1575378703\n" +
+                        "806715481\n" +
+                        "1545253512\n" +
+                        "1569490116\n" +
+                        "1573662097\n" +
+                        "-409854405\n" +
+                        "339631474\n" +
+                        "1530831067\n",
+                "y",
+                null,
                 true,
                 true
         );
@@ -2542,77 +2557,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByTimestampInclusion() throws Exception {
-        assertQuery("ts\tmarket_type\tavg\n" +
-                        "1970-01-01T00:00:00.000000Z\taaa\t0.49992728629932576\n" +
-                        "1970-01-01T00:00:00.000000Z\tbbb\t0.500285563758478\n" +
-                        "1970-01-01T00:00:01.000000Z\taaa\t0.500040169925671\n" +
-                        "1970-01-01T00:00:01.000000Z\tbbb\t0.5008686113849173\n" +
-                        "1970-01-01T00:00:02.000000Z\taaa\t0.49977074601999855\n" +
-                        "1970-01-01T00:00:02.000000Z\tbbb\t0.4999258418217269\n" +
-                        "1970-01-01T00:00:03.000000Z\taaa\t0.5003595019568708\n" +
-                        "1970-01-01T00:00:03.000000Z\tbbb\t0.5002857992170555\n" +
-                        "1970-01-01T00:00:04.000000Z\tbbb\t0.4997116251279621\n" +
-                        "1970-01-01T00:00:04.000000Z\taaa\t0.5006208473770267\n" +
-                        "1970-01-01T00:00:05.000000Z\tbbb\t0.49988619432529985\n" +
-                        "1970-01-01T00:00:05.000000Z\taaa\t0.5002852550150528\n" +
-                        "1970-01-01T00:00:06.000000Z\taaa\t0.4998229395659802\n" +
-                        "1970-01-01T00:00:06.000000Z\tbbb\t0.4997012831335711\n" +
-                        "1970-01-01T00:00:07.000000Z\tbbb\t0.49945806525231845\n" +
-                        "1970-01-01T00:00:07.000000Z\taaa\t0.4995901449794158\n" +
-                        "1970-01-01T00:00:08.000000Z\taaa\t0.5002616949495469\n" +
-                        "1970-01-01T00:00:08.000000Z\tbbb\t0.5005399447758458\n" +
-                        "1970-01-01T00:00:09.000000Z\taaa\t0.5003054203632804\n" +
-                        "1970-01-01T00:00:09.000000Z\tbbb\t0.500094369884023\n",
-                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
-                "create table market_updates as (select rnd_symbol('aaa','bbb') market_type, rnd_double() bid_price, timestamp_sequence(0,1) ts from long_sequence(10000000)" +
-                        ") timestamp(ts)",
-                "ts",
-                false,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testCreateTableIfNotExists() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < 10; i++) {
-                compiler.compile("create table if not exists y as (select rnd_int() a from long_sequence(21))", sqlExecutionContext);
-            }
-        });
-
-        assertQuery(
-                "a\n" +
-                        "-1148479920\n" +
-                        "315515118\n" +
-                        "1548800833\n" +
-                        "-727724771\n" +
-                        "73575701\n" +
-                        "-948263339\n" +
-                        "1326447242\n" +
-                        "592859671\n" +
-                        "1868723706\n" +
-                        "-847531048\n" +
-                        "-1191262516\n" +
-                        "-2041844972\n" +
-                        "-1436881714\n" +
-                        "-1575378703\n" +
-                        "806715481\n" +
-                        "1545253512\n" +
-                        "1569490116\n" +
-                        "1573662097\n" +
-                        "-409854405\n" +
-                        "339631474\n" +
-                        "1530831067\n",
-                "y",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testLatestByNonExistingColumn() throws Exception {
         assertFailure(
                 "select * from x latest by y",
@@ -2974,6 +2918,39 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByTimestampInclusion() throws Exception {
+        assertQuery("ts\tmarket_type\tavg\n" +
+                        "1970-01-01T00:00:00.000000Z\taaa\t0.49992728629932576\n" +
+                        "1970-01-01T00:00:00.000000Z\tbbb\t0.500285563758478\n" +
+                        "1970-01-01T00:00:01.000000Z\taaa\t0.500040169925671\n" +
+                        "1970-01-01T00:00:01.000000Z\tbbb\t0.5008686113849173\n" +
+                        "1970-01-01T00:00:02.000000Z\taaa\t0.49977074601999855\n" +
+                        "1970-01-01T00:00:02.000000Z\tbbb\t0.4999258418217269\n" +
+                        "1970-01-01T00:00:03.000000Z\taaa\t0.5003595019568708\n" +
+                        "1970-01-01T00:00:03.000000Z\tbbb\t0.5002857992170555\n" +
+                        "1970-01-01T00:00:04.000000Z\tbbb\t0.4997116251279621\n" +
+                        "1970-01-01T00:00:04.000000Z\taaa\t0.5006208473770267\n" +
+                        "1970-01-01T00:00:05.000000Z\tbbb\t0.49988619432529985\n" +
+                        "1970-01-01T00:00:05.000000Z\taaa\t0.5002852550150528\n" +
+                        "1970-01-01T00:00:06.000000Z\taaa\t0.4998229395659802\n" +
+                        "1970-01-01T00:00:06.000000Z\tbbb\t0.4997012831335711\n" +
+                        "1970-01-01T00:00:07.000000Z\tbbb\t0.49945806525231845\n" +
+                        "1970-01-01T00:00:07.000000Z\taaa\t0.4995901449794158\n" +
+                        "1970-01-01T00:00:08.000000Z\taaa\t0.5002616949495469\n" +
+                        "1970-01-01T00:00:08.000000Z\tbbb\t0.5005399447758458\n" +
+                        "1970-01-01T00:00:09.000000Z\taaa\t0.5003054203632804\n" +
+                        "1970-01-01T00:00:09.000000Z\tbbb\t0.500094369884023\n",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
+                "create table market_updates as (select rnd_symbol('aaa','bbb') market_type, rnd_double() bid_price, timestamp_sequence(0,1) ts from long_sequence(10000000)" +
+                        ") timestamp(ts)",
+                "ts",
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLongCursor() throws Exception {
         assertQuery("x\n" +
                         "1\n" +
@@ -3170,6 +3147,43 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testNonAggFunctionWithAggFunctionSampleBy() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "day\tisin\tlast\n" +
+                        "1\tcc\t0.7544827361952741\n",
+                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "create table xetra as (" +
+                        "select" +
+                        " rnd_symbol('aa', 'bb', 'cc') isin," +
+                        " rnd_double() start_price," +
+                        " timestamp_sequence(0, 1000000) ts" +
+                        " from long_sequence(10000)" +
+                        ") timestamp(ts)",
+                null,
+                false
+        ));
+    }
+
+    @Test
+    public void testNonAggFunctionWithAggFunctionSampleBySubQuery() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "day\tisin\tlast\n" +
+                        "1\tcc\t0.7544827361952741\n",
+//                "select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d",
+                "select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d)",
+                "create table xetra as (" +
+                        "select" +
+                        " rnd_symbol('aa', 'bb', 'cc') isin," +
+                        " rnd_double() start_price," +
+                        " timestamp_sequence(0, 1000000) ts" +
+                        " from long_sequence(10000)" +
+                        ") timestamp(ts)",
+                null,
+                false
+        ));
     }
 
     @Test
@@ -4701,76 +4715,76 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampCrossReference() throws Exception {
-            compiler.compile("create table x (val double, t timestamp)", sqlExecutionContext);
-            compiler.compile("create table y (timestamp timestamp, d double)", sqlExecutionContext);
-            compiler.compile("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)", sqlExecutionContext);
+        compiler.compile("create table x (val double, t timestamp)", sqlExecutionContext);
+        compiler.compile("create table y (timestamp timestamp, d double)", sqlExecutionContext);
+        compiler.compile("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)", sqlExecutionContext);
 
-            // to shut up memory leak check
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
+        // to shut up memory leak check
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
 
-            assertQuery(
-                    "time\tvisMiles\n" +
-                            "2018-01-31T23:00:00.000000Z\t0.26625499503275796\n" +
-                            "2018-01-31T23:00:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:00:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:01:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:01:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:01:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:02:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:02:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:02:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:03:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:03:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:03:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:04:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:04:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:04:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:05:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:05:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:05:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:06:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:06:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:06:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:07:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:07:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:07:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:08:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:08:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:08:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:09:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:09:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:09:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:10:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:10:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:10:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:11:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:11:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:11:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:12:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:12:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:12:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:13:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:13:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:13:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:14:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:14:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:14:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:15:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:15:20.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:15:40.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:16:00.000000Z\t0.2647050470565634\n" +
-                            "2018-01-31T23:16:20.000000Z\t0.2647050470565634\n",
-                    "SELECT\n" +
-                            "    t as \"time\",\n" +
-                            "    avg(d) as visMiles\n" +
-                            "FROM ((x timestamp(t)) WHERE t BETWEEN '2018-01-31T23:00:00Z' AND '2018-02-28T22:59:59Z')\n" +
-                            "ASOF JOIN (y timestamp(timestamp))\n" +
-                            "SAMPLE BY 20s",
-                    "insert into x select rnd_double(), timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 10000) from long_sequence(100000)",
-                    "time",
-                    false
-            );
+        assertQuery(
+                "time\tvisMiles\n" +
+                        "2018-01-31T23:00:00.000000Z\t0.26625499503275796\n" +
+                        "2018-01-31T23:00:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:00:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:01:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:01:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:01:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:02:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:02:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:02:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:03:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:03:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:03:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:04:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:04:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:04:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:05:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:05:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:05:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:06:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:06:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:06:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:07:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:07:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:07:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:08:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:08:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:08:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:09:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:09:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:09:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:10:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:10:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:10:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:11:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:11:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:11:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:12:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:12:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:12:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:13:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:13:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:13:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:14:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:14:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:14:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:15:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:15:20.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:15:40.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:16:00.000000Z\t0.2647050470565634\n" +
+                        "2018-01-31T23:16:20.000000Z\t0.2647050470565634\n",
+                "SELECT\n" +
+                        "    t as \"time\",\n" +
+                        "    avg(d) as visMiles\n" +
+                        "FROM ((x timestamp(t)) WHERE t BETWEEN '2018-01-31T23:00:00Z' AND '2018-02-28T22:59:59Z')\n" +
+                        "ASOF JOIN (y timestamp(timestamp))\n" +
+                        "SAMPLE BY 20s",
+                "insert into x select rnd_double(), timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 10000) from long_sequence(100000)",
+                "time",
+                false
+        );
     }
 
     @Test
@@ -4784,23 +4798,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 false
         );
     }
-
-    //NOTE Kahan should fail this  - Neumaier should pass
-    //    @Test
-//    public void testSumDoubleColumnWithNeumaierMethodVectorised1() throws Exception {
-//        String ddl = "create table x (ds double) partition by NONE";
-//        compiler.compile(ddl, sqlExecutionContext);
-//
-//        double tenTo100 = Math.pow(10, 100);
-//        executeInsertStatement(tenTo100);
-//        executeInsertStatement(1.0);
-//        executeInsertStatement(1.0);
-//        executeInsertStatement(-tenTo100);
-//
-//        try (TableReader r = new TableReader(configuration, "x")) {
-//            Assert.assertEquals(2, r.sumDouble(0), 0.0000001);
-//        }
-//    }
 
     @Test
     public void testVectorAggregateOnSparsePartitions() throws Exception {
@@ -4829,6 +4826,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             Assert.assertEquals(53.20159680986086, r.avgDouble(0), 0.00001);
         }
     }
+
+    //NOTE Kahan should fail this  - Neumaier should pass
+    //    @Test
+//    public void testSumDoubleColumnWithNeumaierMethodVectorised1() throws Exception {
+//        String ddl = "create table x (ds double) partition by NONE";
+//        compiler.compile(ddl, sqlExecutionContext);
+//
+//        double tenTo100 = Math.pow(10, 100);
+//        executeInsertStatement(tenTo100);
+//        executeInsertStatement(1.0);
+//        executeInsertStatement(1.0);
+//        executeInsertStatement(-tenTo100);
+//
+//        try (TableReader r = new TableReader(configuration, "x")) {
+//            Assert.assertEquals(2, r.sumDouble(0), 0.0000001);
+//        }
+//    }
 
     @Test
     public void testVectorSumAvgDoubleRndColumnWithNulls() throws Exception {
@@ -5008,5 +5022,65 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     private void executeInsertStatement(double d) throws SqlException {
         String ddl = "insert into x (ds) values (" + d + ")";
         executeInsert(ddl);
+    }
+
+    private void testBindVariableWithLike0(String keyword) throws Exception {
+        assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
+                bindVariableService.clear();
+                try (RecordCursorFactory factory = compiler.compile("xy where v " + keyword + " $1", sqlExecutionContext).getRecordCursorFactory()) {
+
+                    bindVariableService.setStr(0, "MBE%");
+                    assertCursor("v\n" +
+                                    "MBEZGHW\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+                    bindVariableService.setStr(0, "Z%");
+                    assertCursor("v\n" +
+                                    "ZSQLDGLOG\n" +
+                                    "ZLUOG\n" +
+                                    "ZLCBDMIG\n" +
+                                    "ZJYYFLSVI\n" +
+                                    "ZWEVQTQO\n" +
+                                    "ZSFXUNYQ\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+                    assertCursor("v\n" +
+                                    "ZSQLDGLOG\n" +
+                                    "ZLUOG\n" +
+                                    "ZLCBDMIG\n" +
+                                    "ZJYYFLSVI\n" +
+                                    "ZWEVQTQO\n" +
+                                    "ZSFXUNYQ\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+
+
+                    bindVariableService.setStr(0, null);
+                    assertCursor("v\n",
+                            factory,
+                            true,
+                            true,
+                            false
+                    );
+                }
+            }
+        });
     }
 }

@@ -28,14 +28,15 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public class HeapRowCursorFactory implements RowCursorFactory {
-    private final ObjList<RowCursorFactory> cursorFactories;
+    private final ObjList<? extends RowCursorFactory> cursorFactories;
     private final ObjList<RowCursor> cursors;
     private final HeapRowCursor cursor;
 
-    public HeapRowCursorFactory(ObjList<RowCursorFactory> cursorFactories) {
+    public HeapRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories) {
         this.cursorFactories = cursorFactories;
         this.cursors = new ObjList<>();
         this.cursor = new HeapRowCursor();
@@ -56,7 +57,7 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
-        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+        RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
     }
 }

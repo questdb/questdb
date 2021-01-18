@@ -48,16 +48,6 @@ public class LogFactoryTest {
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
-    private static void assertEnabled(LogRecord r) {
-        Assert.assertTrue(r.isEnabled());
-        r.$();
-    }
-
-    private static void assertDisabled(LogRecord r) {
-        Assert.assertFalse(r.isEnabled());
-        r.$();
-    }
-
     @Test(expected = LogError.class)
     public void testBadWriter() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-bad-writer.conf");
@@ -437,7 +427,7 @@ public class LogFactoryTest {
     @Test
     public void testSetProperties() throws Exception {
         File conf = temp.newFile();
-        File out = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
 
         TestUtils.writeStringToFile(conf, "writers=file\n" +
                 "recordLength=4096\n" +
@@ -448,24 +438,29 @@ public class LogFactoryTest {
                 "w.file.bufferSize=4M"
         );
 
-        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        LogFactory.envEnabled = false;
+        try {
+            System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
 
-        try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            try (LogFactory factory = new LogFactory()) {
+                LogFactory.configureFromSystemProperties(factory);
 
-            Log log = factory.create("xyz");
+                Log log = factory.create("xyz");
 
-            log.xinfo().$("hello").$();
+                log.xinfo().$("hello").$();
 
-            Assert.assertEquals(1, factory.getJobs().size());
-            Assert.assertTrue(factory.getJobs().get(0) instanceof LogFileWriter);
+                Assert.assertEquals(1, factory.getJobs().size());
+                Assert.assertTrue(factory.getJobs().get(0) instanceof LogFileWriter);
 
-            LogFileWriter w = (LogFileWriter) factory.getJobs().get(0);
+                LogFileWriter w = (LogFileWriter) factory.getJobs().get(0);
 
-            Assert.assertEquals(4 * 1024 * 1024, w.getBufSize());
+                Assert.assertEquals(4 * 1024 * 1024, w.getBufSize());
 
-            Assert.assertEquals(1024, factory.getQueueDepth());
-            Assert.assertEquals(4096, factory.getRecordLength());
+                Assert.assertEquals(1024, factory.getQueueDepth());
+                Assert.assertEquals(4096, factory.getRecordLength());
+            }
+        } finally {
+            LogFactory.envEnabled = true;
         }
     }
 
@@ -486,6 +481,16 @@ public class LogFactoryTest {
             assertDisabled(logger1.info());
             assertDisabled(logger1.error());
         }
+    }
+
+    private static void assertEnabled(LogRecord r) {
+        Assert.assertTrue(r.isEnabled());
+        r.$();
+    }
+
+    private static void assertDisabled(LogRecord r) {
+        Assert.assertFalse(r.isEnabled());
+        r.$();
     }
 
     private void assertFileLength(String file) {

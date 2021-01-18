@@ -5,20 +5,30 @@ pr:
     include:
       - master
 
-pool:
-  vmImage: "ubuntu-latest"
-
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
   ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt).zip"
 
 stages:
   - stage: RunTestsBranches
-    displayName: "Run tests (branches)"
+    displayName: "Running tests"
     jobs:
-      - job: RunOnLinux
-        displayName: "Run tests on Linux"
-        timeoutInMinutes: 20
+      - job: RunOn
+        displayName: "on"
+        strategy:
+          matrix:
+            linux:
+              imageName: "ubuntu-latest"
+              os: Linux
+            mac:
+              imageName: "macos-latest"
+              os: macOS
+            windows:
+              imageName: "windows-latest"
+              os: Windows
+        pool:
+          vmImage: $(imageName)
+        timeoutInMinutes: 30
         steps:
           - checkout: self
             fetchDepth: 1

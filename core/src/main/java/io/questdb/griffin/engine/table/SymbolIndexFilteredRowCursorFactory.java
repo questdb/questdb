@@ -28,11 +28,12 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
-public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
+public class SymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;
+    private final Function symbolFunction;
 
     public SymbolIndexFilteredRowCursorFactory(
             int columnIndex,
@@ -40,7 +41,8 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
             Function filter,
             boolean cachedIndexReaderCursor,
             int indexDirection,
-            IntList columnIndexes
+            IntList columnIndexes,
+            Function symbolFunction
     ) {
         this.cursor = new SymbolIndexFilteredRowCursor(
                 columnIndex,
@@ -50,6 +52,7 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
                 indexDirection,
                 columnIndexes
         );
+        this.symbolFunction = symbolFunction;
     }
 
     @Override
@@ -58,12 +61,17 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
         this.cursor.prepare(tableReader);
     }
 
     @Override
     public boolean isEntity() {
         return false;
+    }
+
+    @Override
+    public Function getFunction() {
+        return symbolFunction;
     }
 }
