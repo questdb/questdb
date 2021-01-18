@@ -227,6 +227,11 @@ public class TextLoader implements Closeable, Mutable {
                 textMetadataParser.getColumnNames(),
                 textMetadataParser.getColumnTypes()
         );
+        LOG.info()
+                .$("parseStructure [textWriterObj=")
+                .$(",table=").$(textWriter.getTableName())
+                .$(",timestampAdapter=").$(textWriter.hasTimestampAdapter() ? "yes" : "null")
+                .$(']').$();
         textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
         textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
         state = LOAD_DATA;

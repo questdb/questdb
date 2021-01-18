@@ -76,6 +76,9 @@ public class CairoTextWriter implements Closeable, Mutable {
         dateToTimestampAdapterPool.clear();
         writer = Misc.free(writer);
         columnErrorCounts.clear();
+        timestampIndexCol = null;
+        timestampIndex = -1;
+        timestampAdapter = null;
         _size = 0;
     }
 
@@ -121,6 +124,10 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public long getWrittenLineCount() {
         return writer == null ? 0 : writer.size() - _size;
+    }
+
+    public boolean hasTimestampAdapter() {
+        return timestampAdapter != null;
     }
 
     public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
@@ -309,6 +316,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
         if (timestampIndex != -1 && types.getQuick(timestampIndex).getType() == ColumnType.TIMESTAMP) {
             timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
+        } else {
+            timestampAdapter = null;
         }
     }
 
