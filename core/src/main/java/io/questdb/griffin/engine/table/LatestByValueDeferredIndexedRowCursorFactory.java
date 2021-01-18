@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlExecutionContext;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
     private final int columnIndex;
@@ -39,6 +40,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
     private int symbolKey;
 
+    // todo: make symbol function to allow use with bind variables
     public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, String symbol, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
         this.symbol = symbol;
@@ -63,7 +65,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {

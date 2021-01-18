@@ -323,7 +323,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                         engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Cannot lock");
+                        TestUtils.assertContains(e.getMessage(), "table busy");
                     }
                 }
             }

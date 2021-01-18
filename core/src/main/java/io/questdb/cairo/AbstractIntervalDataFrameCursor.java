@@ -94,7 +94,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
-    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+    public SymbolMapReader getSymbolTable(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);
     }
 
