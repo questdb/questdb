@@ -33,7 +33,7 @@ public class LogLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testPositive() throws SqlException {
-        call(2L).andAssert(1, 0.0000000001);
+        call(2L).andAssert(0, 0.0000000001);
     }
 
     @Test
