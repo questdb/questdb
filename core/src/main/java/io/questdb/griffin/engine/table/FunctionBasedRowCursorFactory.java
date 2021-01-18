@@ -22,29 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.TableReader;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RowCursorFactory;
 
-import java.io.Closeable;
-
-public interface DataFrameCursor extends Closeable, SymbolTableSource  {
-
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
-
-    boolean reload();
-
-    @Nullable DataFrame next();
-
-    @Override
-    void close();
-
-    void toTop();
-
-    long size();
-
-    SymbolMapReader getSymbolTable(int columnIndex);
+public interface FunctionBasedRowCursorFactory extends RowCursorFactory {
+    Function getFunction();
 }

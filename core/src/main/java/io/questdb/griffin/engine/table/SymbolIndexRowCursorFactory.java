@@ -26,25 +26,28 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
 
-public class SymbolIndexRowCursorFactory implements RowCursorFactory {
+public class SymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final int columnIndex;
     private final int symbolKey;
     private final boolean cachedIndexReaderCursor;
     private final int indexDirection;
+    private final Function symbolFunction;
 
     public SymbolIndexRowCursorFactory(
             int columnIndex,
             int symbolKey,
             boolean cachedIndexReaderCursor,
-            int indexDirection
+            int indexDirection,
+            Function symbolFunction
     ) {
         this.columnIndex = columnIndex;
         this.symbolKey = TableUtils.toIndexKey(symbolKey);
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         this.indexDirection = indexDirection;
+        this.symbolFunction = symbolFunction;
     }
 
     @Override
@@ -57,5 +60,10 @@ public class SymbolIndexRowCursorFactory implements RowCursorFactory {
     @Override
     public boolean isEntity() {
         return false;
+    }
+
+    @Override
+    public Function getFunction() {
+        return symbolFunction;
     }
 }

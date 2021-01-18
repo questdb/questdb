@@ -27,21 +27,19 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlExecutionContext;
 
-public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
+public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final int columnIndex;
     private final boolean cachedIndexReaderCursor;
-    private final String symbol;
+    private final Function symbol;
     private int symbolKey;
     private final int indexDirection;
 
     public DeferredSymbolIndexRowCursorFactory(
             int columnIndex,
-            String symbol,
+            Function symbol,
             boolean cachedIndexReaderCursor,
             int indexDirection
     ) {
@@ -50,6 +48,11 @@ public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
         this.symbol = symbol;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         this.indexDirection = indexDirection;
+    }
+
+    @Override
+    public Function getFunction() {
+        return symbol;
     }
 
     @Override
@@ -64,8 +67,9 @@ public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
-        int symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+        symbol.init(tableReader, sqlExecutionContext);
+        int symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol.getSymbol(null));
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             this.symbolKey = TableUtils.toIndexKey(symbolKey);
         }

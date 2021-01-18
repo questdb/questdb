@@ -2459,6 +2459,7 @@ nodejs code:
                         connection.prepareStatement("insert into xyz values (101)").execute();
                         connection.prepareStatement("insert into xyz values (102)").execute();
                         connection.prepareStatement("insert into xyz values (103)").execute();
+                        connection.rollback();
 
                         sink.clear();
                         try (

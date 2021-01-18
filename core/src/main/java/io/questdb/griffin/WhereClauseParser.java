@@ -94,7 +94,7 @@ final class WhereClauseParser implements Mutable {
             return true;
         }
 
-        if (a.type == ExpressionNode.LITERAL && b.type == ExpressionNode.CONSTANT) {
+        if (a.type == ExpressionNode.LITERAL && (b.type == ExpressionNode.CONSTANT || b.type == ExpressionNode.BIND_VARIABLE)) {
             if (isTimestamp(a)) {
                 model.intersectIntervals(b.token, 1, b.token.length() - 1, b.position);
                 node.intrinsicValue = IntrinsicModel.TRUE;
@@ -383,7 +383,7 @@ final class WhereClauseParser implements Mutable {
             // collect and analyze values of indexed field
             // if any of values is not an indexed constant - bail out
             if (i == 1) {
-                if (node.rhs == null || node.rhs.type != ExpressionNode.CONSTANT) {
+                if (node.rhs == null || (node.rhs.type != ExpressionNode.CONSTANT && node.rhs.type != ExpressionNode.BIND_VARIABLE)) {
                     return false;
                 }
                 if (tempKeys.add(unquote(node.rhs.token))) {
@@ -392,7 +392,7 @@ final class WhereClauseParser implements Mutable {
             } else {
                 for (i--; i > -1; i--) {
                     ExpressionNode c = node.args.getQuick(i);
-                    if (c.type != ExpressionNode.CONSTANT) {
+                    if (c.type != ExpressionNode.CONSTANT && c.type != ExpressionNode.BIND_VARIABLE) {
                         return false;
                     }
 
