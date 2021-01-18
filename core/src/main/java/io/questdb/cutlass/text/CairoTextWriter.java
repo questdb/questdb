@@ -126,10 +126,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         return writer == null ? 0 : writer.size() - _size;
     }
 
-    public boolean hasTimestampAdapter() {
-        return timestampAdapter != null;
-    }
-
     public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
         this.tableName = name;
         this.overwrite = overwrite;
