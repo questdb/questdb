@@ -27,6 +27,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <version>5.0.6-SNAPSHOT</version>
+    <dependencies>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.12</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-parent</artifactId>
     <packaging>pom</packaging>
