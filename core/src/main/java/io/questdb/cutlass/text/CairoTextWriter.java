@@ -76,8 +76,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         dateToTimestampAdapterPool.clear();
         writer = Misc.free(writer);
         columnErrorCounts.clear();
-        timestampIndexCol = null;
-        timestampIndex = -1;
         timestampAdapter = null;
         _size = 0;
     }
