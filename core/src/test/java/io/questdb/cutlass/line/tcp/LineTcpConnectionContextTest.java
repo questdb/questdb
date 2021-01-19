@@ -35,6 +35,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -936,7 +937,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         nWriterThreads = 3;
         int nTables = 12;
         int nIterations = 20_000;
-        double[] loadFactors = {10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60};
+        double[] loadFactors = { 10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60 };
         testThreading(nTables, nIterations, loadFactors);
 
         int maxLoad = Integer.MIN_VALUE;
@@ -984,8 +985,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private void addTable() {
         try (
                 TableModel model = new TableModel(configuration, "weather",
-                        PartitionBy.NONE).col("location", ColumnType.SYMBOL).col("temperature", ColumnType.DOUBLE).timestamp()
-        ) {
+                        PartitionBy.NONE).col("location", ColumnType.SYMBOL).col("temperature", ColumnType.DOUBLE).timestamp()) {
             CairoTestUtils.create(model);
         }
     }
@@ -1074,11 +1074,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
         scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool, null) {
             @Override
-            void commitNewEvent(LineTcpMeasurementEvent event, boolean success) {
+            boolean tryCommitNewEvent(NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                super.commitNewEvent(event, success);
+                return super.tryCommitNewEvent(protoParser, charSink);
             }
         };
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
@@ -1196,7 +1196,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 }
                 do {
                     handleContextIO();
-//                    Assert.assertFalse(disconnected);
+                    // Assert.assertFalse(disconnected);
                 } while (recvBuffer.length() > 0);
             }
             waitForIOCompletion();

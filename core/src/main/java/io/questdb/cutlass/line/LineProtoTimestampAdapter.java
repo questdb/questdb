@@ -26,7 +26,8 @@ package io.questdb.cutlass.line;
 
 import io.questdb.std.NumericException;
 
-@FunctionalInterface
 public interface LineProtoTimestampAdapter {
     long getMicros(CharSequence value) throws NumericException;
+
+    long getMicros(long lineProtoTimestamp);
 }

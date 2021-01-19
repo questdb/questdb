@@ -34,4 +34,9 @@ public class LineProtoMicroTimestampAdapter implements LineProtoTimestampAdapter
     public long getMicros(CharSequence value) throws NumericException {
         return Numbers.parseLong(value);
     }
+
+    @Override
+    public long getMicros(long lineProtoTimestamp) {
+        return lineProtoTimestamp;
+    }
 }

@@ -24,51 +24,82 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.MessageBus;
-import io.questdb.Telemetry;
-import io.questdb.cairo.*;
-import io.questdb.cairo.TableWriter.Row;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cutlass.line.*;
-import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Path;
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.concurrent.locks.ReentrantLock;
+
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-import java.util.Arrays;
+import io.questdb.MessageBus;
+import io.questdb.cairo.AppendMemory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriter.Row;
+import io.questdb.cutlass.line.CachedCharSequence;
+import io.questdb.cutlass.line.CharSequenceCache;
+import io.questdb.cutlass.line.LineProtoParser;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.TruncatedLineProtoLexer;
+import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.Job;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.FloatingDirectCharSink;
+import io.questdb.std.str.Path;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
-    private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is
-    // not able to populate it for some reason, the event needs to be committed to the
-    // queue incomplete
     private static final IntHashSet ALLOWED_LONG_CONVERSIONS = new IntHashSet();
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
     private final MillisecondClock milliClock;
     private final RingQueue<LineTcpMeasurementEvent> queue;
+    private final ReentrantLock tableUpdateDetailsLock = new ReentrantLock(true);
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsByTableName;
     private final int[] loadByThread;
     private final int nUpdatesPerLoadRebalance;
     private final double maxLoadRatio;
     private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
-    private final SqlExecutionContext sqlExecutionContext;
     private Sequence pubSeq;
     private long nextEventCursor = -1;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
+
+    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final Path path = new Path();
+    private final AppendMemory mem = new AppendMemory();
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -82,7 +113,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.milliClock = cairoConfiguration.getMillisecondClock();
         // Worker count is set to 1 because we do not use this execution context
         // in worker threads.
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, messageBus);
         tableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         loadByThread = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
@@ -91,11 +121,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                 () -> new LineTcpMeasurementEvent(
                         maxMeasurementSize,
                         lineConfiguration.getMicrosecondClock(),
-                        lineConfiguration.getTimestampAdapter()
-                ),
-                queueSize
-        );
-        pubSeq = new SPSequence(queueSize);
+                        lineConfiguration.getTimestampAdapter()),
+                queueSize);
+        pubSeq = new MPSequence(queueSize);
 
         int nWriterThreads = writerWorkerPool.getWorkerCount();
         if (nWriterThreads > 1) {
@@ -131,13 +159,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             for (int n = 0; n < queue.getCapacity(); n++) {
                 queue.get(n).close();
             }
+            path.close();
+            mem.close();
         }
     }
 
     @NotNull
-    private TableUpdateDetails assignTableToThread(LineTcpMeasurementEvent event, int keyIndex) {
+    private TableUpdateDetails assignTableToThread(String tableName, int keyIndex, TableWriter writer) {
         TableUpdateDetails tableUpdateDetails;
-        String tableName = Chars.toString(event.getTableName());
         calcThreadLoad();
         int leastLoad = Integer.MAX_VALUE;
         int threadId = 0;
@@ -147,7 +176,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 threadId = n;
             }
         }
-        tableUpdateDetails = new TableUpdateDetails(tableName, threadId);
+        tableUpdateDetails = new TableUpdateDetails(tableName, threadId, writer);
         tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
         LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         return tableUpdateDetails;
@@ -162,33 +191,63 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    void commitNewEvent(LineTcpMeasurementEvent event, boolean success) {
-        assert isOpen() && nextEventCursor != -1 && queue.get(nextEventCursor) == event;
-
-        final TableUpdateDetails tableUpdateDetails;
-        if (success) {
-            final int keyIndex = tableUpdateDetailsByTableName.keyIndex(event.getTableName());
-            if (keyIndex < 0) {
-                tableUpdateDetails = tableUpdateDetailsByTableName.valueAt(keyIndex);
-            } else {
-                tableUpdateDetails = assignTableToThread(event, keyIndex);
-            }
-            event.threadId = tableUpdateDetails.threadId;
-        } else {
-            tableUpdateDetails = null;
-            event.threadId = INCOMPLETE_EVENT_ID;
+    boolean tryCommitNewEvent(NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
+        TableUpdateDetails tableUpdateDetails;
+        try {
+            tableUpdateDetails = getTableUpdateDetails(protoParser);
+        } catch (EntryUnavailableException ex) {
+            // Table writer is locked
+            LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            return false;
+        } catch (CairoException ex) {
+            // Table could not be created
+            LOG.info().$("could not create table [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+            return true;
         }
-        pubSeq.done(nextEventCursor);
-        nextEventCursor = -1;
+        if (null != tableUpdateDetails) {
+            LineTcpMeasurementEvent event = getNewEvent();
+            if (null != event) {
+                try {
+                    event.createMeasurementEvent(tableUpdateDetails, protoParser, charSink);
+                    return true;
+                } finally {
+                    pubSeq.done(nextEventCursor);
+                    nextEventCursor = -1;
+                    if (tableUpdateDetails.nUpdates++ > nUpdatesPerLoadRebalance) {
+                        loadRebalance();
+                    }
+                }
+            }
+        }
+        return false;
+    }
 
-        if (null != tableUpdateDetails && tableUpdateDetails.nUpdates++ > nUpdatesPerLoadRebalance) {
-            loadRebalance();
+    private TableUpdateDetails getTableUpdateDetails(NewLineProtoParser protoParser) {
+        tableUpdateDetailsLock.lock();
+        final int keyIndex;
+        try {
+            keyIndex = tableUpdateDetailsByTableName.keyIndex(protoParser.getMeasurementName());
+            if (keyIndex < 0) {
+                return tableUpdateDetailsByTableName.valueAt(keyIndex);
+            }
+
+            // Original table name is transient
+            String tableName = protoParser.getMeasurementName().toString();
+            int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
+            if (status != TableUtils.TABLE_EXISTS) {
+                engine.createTable(securityContext, mem, path, tableStructureAdapter.of(tableName, protoParser));
+            }
+            TableWriter writer = engine.getWriter(securityContext, tableName);
+
+            return assignTableToThread(tableName, keyIndex, writer);
+        } finally {
+            tableUpdateDetailsLock.unlock();
         }
     }
 
-    void commitRebalanceEvent(LineTcpMeasurementEvent event, int fromThreadId, int toThreadId, String tableName) {
+    void commitRebalanceEvent(LineTcpMeasurementEvent event, int fromThreadId, int toThreadId, TableUpdateDetails tableUpdateDetails) {
         assert isOpen() && nextEventCursor != -1 && queue.get(nextEventCursor) == event;
-        event.createRebalanceEvent(fromThreadId, toThreadId, tableName);
+        event.createRebalanceEvent(fromThreadId, toThreadId, tableUpdateDetails);
         pubSeq.done(nextEventCursor);
         nextEventCursor = -1;
     }
@@ -233,7 +292,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         int fromThreadId = -1;
         int toThreadId = -1;
-        String tableNameToMove = null;
+        TableUpdateDetails tableToMove = null;
         int maxLoad = Integer.MAX_VALUE;
         while (true) {
             int highestLoad = Integer.MIN_VALUE;
@@ -288,7 +347,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
             fromThreadId = highestLoadedThreadId;
             toThreadId = lowestLoadedThreadId;
-            tableNameToMove = leastLoadedTableName;
+            tableToMove = tableUpdateDetailsByTableName.get(leastLoadedTableName);
             break;
         }
 
@@ -297,7 +356,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             stats.nUpdates = 0;
         }
 
-        if (null != tableNameToMove) {
+        if (null != tableToMove) {
             LineTcpMeasurementEvent event = getNewEvent();
             if (null == event) {
                 return;
@@ -305,18 +364,164 @@ class LineTcpMeasurementScheduler implements Closeable {
 
             LOG.info()
                     .$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances)
-                    .$(", table=").$(tableNameToMove)
+                    .$(", table=").$(tableToMove.tableName)
                     .$(", fromThreadId=").$(fromThreadId)
                     .$(", toThreadId=").$(toThreadId)
                     .$(']').$();
 
-            commitRebalanceEvent(event, fromThreadId, toThreadId, tableNameToMove);
-            TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNameToMove);
-            stats.threadId = toThreadId;
+            commitRebalanceEvent(event, fromThreadId, toThreadId, tableToMove);
+            tableToMove.threadId = toThreadId;
         }
     }
 
-    static class LineTcpMeasurementEvent implements Closeable {
+    private interface EntityValueEventComitter {
+        long put(LineTcpMeasurementEvent event, ProtoEntity entity, long bufPos, FloatingDirectCharSink charSink);
+    }
+
+    private static EntityValueEventComitter[] ENTITY_VALUE_COMMITERS = new EntityValueEventComitter[NewLineProtoParser.N_ENTITY_TYPES];
+    private static EntityValueEventComitter STRING_ENTITY_VALUE_COMMITER = (event, entity, bufPos, charSink) -> {
+        int l = entity.getValue().length();
+        Unsafe.getUnsafe().putInt(bufPos, l);
+        bufPos += Integer.BYTES;
+        long hi = bufPos + 2 * l;
+        charSink.of(bufPos, hi);
+        Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), charSink);
+        return hi;
+    };
+    static {
+        ENTITY_VALUE_COMMITERS[NewLineProtoParser.ENTITY_TYPE_TAG] = STRING_ENTITY_VALUE_COMMITER;
+        ENTITY_VALUE_COMMITERS[NewLineProtoParser.ENTITY_TYPE_FLOAT] = (event, entity, bufPos, charSink) -> {
+            Unsafe.getUnsafe().putDouble(bufPos, entity.getFloatValue());
+            bufPos += Double.BYTES;
+            return bufPos;
+        };
+        ENTITY_VALUE_COMMITERS[NewLineProtoParser.ENTITY_TYPE_INTEGER] = (event, entity, bufPos, charSink) -> {
+            Unsafe.getUnsafe().putLong(bufPos, entity.getIntegerValue());
+            bufPos += Long.BYTES;
+            return bufPos;
+        };
+        ENTITY_VALUE_COMMITERS[NewLineProtoParser.ENTITY_TYPE_STRING] = STRING_ENTITY_VALUE_COMMITER;
+        ENTITY_VALUE_COMMITERS[NewLineProtoParser.ENTITY_TYPE_BOOLEAN] = (event, entity, bufPos, charSink) -> {
+            Unsafe.getUnsafe().putByte(bufPos, (byte) (entity.getBooleanValue() ? 1 : 0));
+            bufPos += Byte.BYTES;
+            return bufPos;
+        };
+        ENTITY_VALUE_COMMITERS[NewLineProtoParser.ENTITY_TYPE_LONG256] = STRING_ENTITY_VALUE_COMMITER;
+    }
+    private static int[] DEFAULT_COLUMN_TYPES = new int[NewLineProtoParser.N_ENTITY_TYPES];
+    static {
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_FLOAT] = ColumnType.DOUBLE;
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_INTEGER] = ColumnType.LONG;
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
+        DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
+    }
+
+    private interface EntityValueRowWriter {
+        long write(long bufPos, byte entityType, Row row, int columnIndex, FloatingDirectCharSink charSink);
+    }
+
+    private static final EntityValueRowWriter SYMBOL_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink) -> {
+        if (entityType != NewLineProtoParser.ENTITY_TYPE_TAG) {
+            throw CairoException.instance(0).put("expected a line protocol tag [entityType=").put(entityType).put(']');
+        }
+        int len = Unsafe.getUnsafe().getInt(bufPos);
+        bufPos += Integer.BYTES;
+        long hi = bufPos + 2 * len;
+        charSink.asCharSequence(bufPos, hi);
+        row.putSym(columnIndex, charSink);
+        return hi;
+    };
+
+    private static final EntityValueRowWriter INTEGER_TO_LONG_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink) -> {
+        if (entityType != NewLineProtoParser.ENTITY_TYPE_INTEGER) {
+            throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
+        }
+        long v = Unsafe.getUnsafe().getLong(bufPos);
+        bufPos += Long.BYTES;
+        row.putLong(columnIndex, v);
+        return bufPos;
+    };
+
+    private static final EntityValueRowWriter INTEGER_TO_SHORT_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink) -> {
+        if (entityType != NewLineProtoParser.ENTITY_TYPE_INTEGER) {
+            throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
+        }
+        long v = Unsafe.getUnsafe().getLong(bufPos);
+        bufPos += Long.BYTES;
+        if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
+            throw CairoException.instance(0).put("line protocol integer is out of short bounds [columnIndex=").put(columnIndex).put(", v=").put(v).put(']');
+        }
+        row.putShort(columnIndex, (short) v);
+        return bufPos;
+    };
+
+    private static final EntityValueRowWriter INTEGER_TO_TIMESTAMP_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink) -> {
+        if (entityType != NewLineProtoParser.ENTITY_TYPE_INTEGER) {
+            throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
+        }
+        long v = Unsafe.getUnsafe().getLong(bufPos);
+        bufPos += Long.BYTES;
+        row.putTimestamp(columnIndex, v);
+        return bufPos;
+    };
+
+    private static final EntityValueRowWriter FLOAT_TO_DOUBLE_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink) -> {
+        if (entityType != NewLineProtoParser.ENTITY_TYPE_FLOAT) {
+            throw CairoException.instance(0).put("expected a line protocol float [entityType=").put(entityType).put(']');
+        }
+        double v = Unsafe.getUnsafe().getDouble(bufPos);
+        bufPos += Double.BYTES;
+        row.putDouble(columnIndex, v);
+        return bufPos;
+    };
+
+    private static final EntityValueRowWriter LONG256_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink) -> {
+        if (entityType != NewLineProtoParser.ENTITY_TYPE_LONG256) {
+            throw CairoException.instance(0).put("expected a line protocol long256 [entityType=").put(entityType).put(']');
+        }
+        int len = Unsafe.getUnsafe().getInt(bufPos);
+        bufPos += Integer.BYTES;
+        long hi = bufPos + 2 * len;
+        charSink.asCharSequence(bufPos, hi);
+        row.putLong256(columnIndex, charSink);
+        return hi;
+    };
+
+    private static final EntityValueRowWriter resolveRowWriter(int columnType, byte entityType) {
+        switch (entityType) {
+            case NewLineProtoParser.ENTITY_TYPE_TAG:
+                if (columnType == ColumnType.SYMBOL) {
+                    return SYMBOL_ENTITY_VALUE_WRITER;
+                }
+                break;
+            case NewLineProtoParser.ENTITY_TYPE_INTEGER:
+                if (columnType == ColumnType.LONG) {
+                    return INTEGER_TO_LONG_ENTITY_VALUE_WRITER;
+                }
+                if (columnType == ColumnType.TIMESTAMP) {
+                    return INTEGER_TO_TIMESTAMP_ENTITY_VALUE_WRITER;
+                }
+                if (columnType == ColumnType.SHORT) {
+                    return INTEGER_TO_SHORT_ENTITY_VALUE_WRITER;
+                }
+                break;
+            case NewLineProtoParser.ENTITY_TYPE_FLOAT:
+                if (columnType == ColumnType.DOUBLE) {
+                    return FLOAT_TO_DOUBLE_ENTITY_VALUE_WRITER;
+                }
+                break;
+            case NewLineProtoParser.ENTITY_TYPE_LONG256:
+                if (columnType == ColumnType.LONG256) {
+                    return LONG256_ENTITY_VALUE_WRITER;
+                }
+                break;
+        }
+        throw CairoException.instance(0).put("line prototol entity type cannot be mapped to column type [entityType=").put(entityType).put(", columnType=").put(columnType).put(']');
+    }
+
+    class LineTcpMeasurementEvent implements Closeable {
         private final CharSequenceCache cache;
         private final MicrosecondClock clock;
         private final LineProtoTimestampAdapter timestampAdapter;
@@ -330,12 +535,17 @@ class LineTcpMeasurementScheduler implements Closeable {
         private int threadId;
         private long timestamp;
 
+        private TableUpdateDetails tableUpdateDetails;
+        private long bufLo;
+        private long bufSize;
+
         private int rebalanceFromThreadId;
         private int rebalanceToThreadId;
-        private String rebalanceTableName;
         private volatile boolean rebalanceReleasedByFromThread;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
+            bufSize = (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
+            bufLo = Unsafe.malloc(bufSize);
             lexer = new TruncatedLineProtoLexer(maxMeasurementSize);
             cache = lexer.getCharSequenceCache();
             this.clock = clock;
@@ -388,6 +598,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         public void close() {
             lexer.close();
             lexer = null;
+            Unsafe.free(bufLo, bufSize);
+            bufLo = 0;
         }
 
         private void clear() {
@@ -398,13 +610,121 @@ class LineTcpMeasurementScheduler implements Closeable {
             errorPosition = -1;
         }
 
-        void createRebalanceEvent(int fromThreadId, int toThreadId, String tableName) {
+        void createRebalanceEvent(int fromThreadId, int toThreadId, TableUpdateDetails tableUpdateDetails) {
             clear();
             threadId = REBALANCE_EVENT_ID;
             rebalanceFromThreadId = fromThreadId;
             rebalanceToThreadId = toThreadId;
-            rebalanceTableName = tableName;
+            this.tableUpdateDetails = tableUpdateDetails;
             rebalanceReleasedByFromThread = false;
+        }
+
+        void createMeasurementEvent(TableUpdateDetails tableUpdateDetails, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
+            threadId = Integer.MAX_VALUE;
+            this.tableUpdateDetails = tableUpdateDetails;
+            long timestamp = protoParser.getTimestamp();
+            if (timestamp != NewLineProtoParser.NULL_TIMESTAMP) {
+                timestamp = timestampAdapter.getMicros(timestamp);
+            }
+            long bufPos = bufLo;
+            Unsafe.getUnsafe().putLong(bufPos, timestamp);
+            bufPos += Long.BYTES;
+            int nEntities = protoParser.getnEntities();
+            Unsafe.getUnsafe().putInt(bufPos, nEntities);
+            bufPos += Integer.BYTES;
+            for (int nEntity = 0; nEntity < nEntities; nEntity++) {
+                assert bufPos < (bufLo + bufSize + 6);
+                ProtoEntity entity = protoParser.getEntity(nEntity);
+                Integer colIndex = tableUpdateDetails.columnIndexByName.get(entity.getName());
+                if (null == colIndex) {
+                    int colNameLen = entity.getName().length();
+                    Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
+                    bufPos += Integer.BYTES;
+                    Unsafe.getUnsafe().copyMemory(entity.getName().getLo(), bufPos, colNameLen);
+                    bufPos += colNameLen;
+                } else {
+                    Unsafe.getUnsafe().putInt(bufPos, colIndex);
+                    bufPos += Integer.BYTES;
+                }
+                byte entityType = entity.getType();
+                Unsafe.getUnsafe().putByte(bufPos, entity.getType());
+                bufPos += Byte.BYTES;
+                bufPos = ENTITY_VALUE_COMMITERS[entityType].put(this, entity, bufPos, charSink);
+            }
+            threadId = tableUpdateDetails.threadId;
+        }
+
+        void processMeasurementEvent(WriterJob job) {
+            Row row = null;
+            try {
+                long bufPos = bufLo;
+                long timestamp = Unsafe.getUnsafe().getLong(bufPos);
+                bufPos += Long.BYTES;
+                if (timestamp == NewLineProtoParser.NULL_TIMESTAMP) {
+                    timestamp = clock.getTicks();
+                }
+                row = tableUpdateDetails.writer.newRow(timestamp);
+                int nEntities = Unsafe.getUnsafe().getInt(bufPos);
+                bufPos += Integer.BYTES;
+                long firstEntityBufPos = bufPos;
+                for (int nEntity = 0; nEntity < nEntities; nEntity++) {
+                    int colIndex = Unsafe.getUnsafe().getInt(bufPos);
+                    bufPos += Integer.BYTES;
+                    byte entityType;
+                    EntityValueRowWriter valueWriter;
+                    if (colIndex >= 0) {
+                        valueWriter = tableUpdateDetails.valueWriters.get(colIndex);
+                        entityType = Unsafe.getUnsafe().getByte(bufPos);
+                        bufPos += Byte.BYTES;
+                    } else {
+                        int colNameLen = -1 * colIndex;
+                        long nameLo = bufPos; // UTF8 encoded
+                        long nameHi = bufPos + colNameLen;
+                        job.charSink.clear();
+                        Chars.utf8Decode(nameLo, nameHi, job.charSink);
+                        bufPos = nameHi;
+                        entityType = Unsafe.getUnsafe().getByte(bufPos);
+                        bufPos += Byte.BYTES;
+                        colIndex = tableUpdateDetails.writer.getMetadata().getColumnIndexQuiet(job.charSink);
+                        if (colIndex < 0) {
+                            // Cannot create a column with an open row, writer will commit when a column is created
+                            row.cancel();
+                            row = null;
+                            int columnType = DEFAULT_COLUMN_TYPES[entityType];
+                            if (TableUtils.isValidColumnName(job.charSink)) {
+                                colIndex = tableUpdateDetails.writer.getMetadata().getColumnCount();
+                                tableUpdateDetails.writer.addColumn(job.charSink, columnType);
+                                tableUpdateDetails.valueWriters.ensureCapacity(colIndex + 1);
+                            } else {
+                                throw CairoException.instance(0).put("invalid column name [table=").put(tableUpdateDetails.writer.getName())
+                                        .put(", columnName=").put(job.charSink).put(']');
+                            }
+                            // Reset to begining of entities
+                            bufPos = firstEntityBufPos;
+                            nEntity = -1;
+                            row = tableUpdateDetails.writer.newRow(timestamp);
+                            continue;
+                        }
+                        valueWriter = tableUpdateDetails.valueWriters.size() > colIndex ? tableUpdateDetails.valueWriters.get(colIndex) : null;
+                        if (null == valueWriter) {
+                            int columnType = tableUpdateDetails.writer.getMetadata().getColumnType(colIndex);
+                            valueWriter = resolveRowWriter(columnType, entityType);
+                            tableUpdateDetails.valueWriters.extendAndSet(colIndex, valueWriter);
+                            CharSequence colName = job.byteSink.of(nameLo, nameHi); // colName in UTF8, it will be copied by the
+                                                                                    // tableUpdateDetails.columnIndexByName map
+                            tableUpdateDetails.columnIndexByName.put(colName, Integer.valueOf(colIndex));
+                        }
+                    }
+                    bufPos = valueWriter.write(bufPos, entityType, row, colIndex, job.floatingCharSink);
+                }
+                row.append();
+                tableUpdateDetails.handleRowAppended();
+            } catch (CairoException ex) {
+                LOG.error().$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.tableName).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
+                if (row != null) {
+                    row.cancel();
+                }
+            }
         }
 
         int getErrorCode() {
@@ -474,29 +794,69 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    private static class TableUpdateDetails {
+    private class TableUpdateDetails implements Closeable {
         private final String tableName;
         private int threadId;
         private int nUpdates; // Number of updates since the last load rebalance
+        private TableWriter writer;
+        private int nUncommitted = 0;
+        private final ConcurrentHashMap<Integer> columnIndexByName = new ConcurrentHashMap<>();
+        private final ObjList<EntityValueRowWriter> valueWriters = new ObjList<>();
+        private boolean assignedToJob = false;
 
-        private TableUpdateDetails(String tableName, int threadId) {
+        private TableUpdateDetails(String tableName, int threadId, TableWriter writer) {
             super();
             this.tableName = tableName;
             this.threadId = threadId;
+            this.writer = writer;
+        }
+
+        private void handleRowAppended() {
+            nUncommitted++;
+            if (nUncommitted >= maxUncommittedRows) {
+                writer.commit();
+                nUncommitted = 0;
+            }
+        }
+
+        private void handleMaintenance() {
+            if (nUncommitted == 0) {
+                return;
+            }
+            writer.commit();
+            nUncommitted = 0;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (null != writer) {
+                columnIndexByName.clear();
+                Misc.freeObjList(valueWriters);
+                valueWriters.clear();
+                writer.close();
+                writer = null;
+            }
         }
     }
 
     private class WriterJob implements Job {
         private final int id;
         private final Sequence sequence;
-        private final CharSequenceObjHashMap<Parser> parserCache = new CharSequenceObjHashMap<>();
         private final AppendMemory appendMemory = new AppendMemory();
         private final Path path = new Path();
         private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
         private final String jobName;
         private long lastMaintenanceJobMillis = 0;
 
-        private WriterJob(int id, Sequence sequence) {
+        private final DirectCharSink charSink = new DirectCharSink(64);
+        private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
+        private final DirectByteCharSequence byteSink = new DirectByteCharSequence();
+        private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
+
+        private WriterJob(
+                int id,
+                Sequence sequence
+        ) {
             super();
             this.id = id;
             this.sequence = sequence;
@@ -519,13 +879,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
 
-            ObjList<CharSequence> tableNames = parserCache.keys();
-            for (int n = 0; n < tableNames.size(); n++) {
-                parserCache.get(tableNames.get(n)).close();
-            }
-            parserCache.clear();
             appendMemory.close();
             path.close();
+            charSink.close();
+            floatingCharSink.close();
+            Misc.freeObjList(assignedTables);
+            assignedTables.clear();
         }
 
         private void doMaintenance(boolean busy) {
@@ -535,9 +894,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             lastMaintenanceJobMillis = millis;
-            ObjList<CharSequence> tableNames = parserCache.keys();
-            for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-                parserCache.get(tableNames.get(n)).doMaintenance();
+            for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+                assignedTables.getQuick(n).handleMaintenance();
             }
         }
 
@@ -554,7 +912,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 final LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
                 if (event.threadId == id) {
-                    processNextEvent(event);
+                    if (!event.tableUpdateDetails.assignedToJob) {
+                        assignedTables.add(event.tableUpdateDetails);
+                        event.tableUpdateDetails.assignedToJob = true;
+                    }
+                    event.processMeasurementEvent(this);
                     eventProcessed = true;
                 } else {
                     if (event.isRebalanceEvent()) {
@@ -568,35 +930,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 // until cursor value is released
                 if (eventProcessed) {
                     sequence.done(cursor);
-                }
-            }
-        }
-
-        private void processNextEvent(LineTcpMeasurementEvent event) {
-            final int index = parserCache.keyIndex(event.getTableName());
-            Parser parser = null;
-            try {
-                if (index < 0) {
-                    parser = parserCache.valueAt(index);
-                    parser.processEvent(event);
-                } else {
-                    parser = new Parser();
-                    parser.processFirstEvent(engine, securityContext, event);
-                    LOG.info().$("created parser [jobName=").$(jobName).$(" table=").$(event.getTableName()).$(']').$();
-                    parserCache.putAt(index, Chars.toString(event.getTableName()), parser);
-                }
-            } catch (CairoException ex) {
-                LOG.error()
-                        .$("could not create parser, measurement will be skipped [jobName=").$(jobName)
-                        .$(", table=").$(event.getTableName())
-                        .$(", ex=").$(ex.getFlyweightMessage())
-                        .$(", errno=").$(ex.getErrno())
-                        .$(']').$();
-
-                Misc.free(parser);
-
-                if (index < 0) {
-                    parserCache.removeAt(index);
+                    // } else {
+                    // return false;
                 }
             }
         }
@@ -609,7 +944,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 // to "true". In the mean time current thread will not be processing the queue until the handover is
                 // complete
                 if (event.rebalanceReleasedByFromThread) {
-                    LOG.info().$("rebalance cycle, new thread ready [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
+                    LOG.info().$("rebalance cycle, new thread ready [threadId=").$(id).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$();
                     return true;
                 }
 
@@ -617,262 +952,95 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
 
             if (event.rebalanceFromThreadId == id) {
-                final int index = parserCache.keyIndex(event.rebalanceTableName);
-                if (index < 0) {
-                    LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.rebalanceTableName).$(']').$();
-                    Misc.free(parserCache.valueAt(index));
-                    parserCache.removeAt(index);
-                    event.rebalanceReleasedByFromThread = true;
+                for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+                    if (assignedTables.get(n) == event.tableUpdateDetails) {
+                        assignedTables.remove(n);
+                        break;
+                    }
                 }
+                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$();
+                event.tableUpdateDetails.assignedToJob = false;
+                event.rebalanceReleasedByFromThread = true;
             }
 
             return true;
         }
+    }
 
-        private class Parser implements Closeable {
-            private final IntList colTypes = new IntList();
-            private final IntList colIndexMappings = new IntList();
-            private TableWriter writer;
-            private int nUncommitted = 0;
+    private class TableStructureAdapter implements TableStructure {
+        private String tableName;
+        private NewLineProtoParser protoParser;
 
-            private transient int nMeasurementValues;
-            private transient boolean error;
-
-            @Override
-            public void close() {
-                if (null != writer) {
-                    doMaintenance();
-                    LOG.info().$("closed parser [jobName=").$(jobName).$(" name=").$(writer.getName()).$(']').$();
-                    writer.close();
-                    writer = null;
-                }
-            }
-
-            private int addColumn(LineTcpMeasurementEvent event, RecordMetadata metadata, int n, int colType) {
-                final int colIndex = metadata.getColumnCount();
-                CharSequence columnName = event.getName(n);
-                if (TableUtils.isValidColumnName(columnName)) {
-                    writer.addColumn(columnName, colType);
-                } else {
-                    LOG.error().$("invalid column name [table=").$(writer.getName())
-                            .$(", columnName=").$(columnName)
-                            .$(']').$();
-                    error = true;
-                }
-                return colIndex;
-            }
-
-            private void addRow(LineTcpMeasurementEvent event) {
-                if (error) {
-                    return;
-                }
-                Row row = null;
-                try {
-                    row = writer.newRow(event.getTimestamp());
-                    for (int i = 0; i < nMeasurementValues; i++) {
-                        final int columnType = colTypes.getQuick(i);
-                        final int columnIndex = colIndexMappings.getQuick(i);
-                        final CharSequence value = event.getValue(i);
-                        CairoLineProtoParserSupport.putValue(row, columnType, columnIndex, value, LOG);
-                    }
-                    row.append();
-                } catch (NumericException | BadCastException ex) {
-                    // These exceptions are logged elsewhere
-                    if (null != row) {
-                        row.cancel();
-                    }
-                    return;
-                } catch (CairoException ex) {
-                    LOG.error()
-                            .$("could not insert measurement [jobName=").$(jobName)
-                            .$(", table=").$(event.getTableName())
-                            .$(", ex=").$(ex.getFlyweightMessage())
-                            .$(", errno=").$(ex.getErrno())
-                            .$(']').$();
-                    if (null != row) {
-                        row.cancel();
-                    }
-                    return;
-                }
-                nUncommitted++;
-                if (nUncommitted > maxUncommittedRows) {
-                    commit();
-                }
-            }
-
-            private void commit() {
-                writer.commit();
-                nUncommitted = 0;
-            }
-
-            void doMaintenance() {
-                if (nUncommitted == 0) {
-                    return;
-                }
-                commit();
-            }
-
-            private int getColumnType(int i) {
-                return colTypes.getQuick(i);
-            }
-
-            private void parseNames(LineTcpMeasurementEvent event) {
-                RecordMetadata metadata = writer.getMetadata();
-                for (int n = 0; n < nMeasurementValues; n++) {
-                    int colIndex = metadata.getColumnIndexQuiet(event.getName(n));
-                    final int colType = colTypes.getQuick(n);
-                    if (colIndex == -1) {
-                        colIndex = addColumn(event, metadata, n, colType);
-                    } else {
-                        final int tableColType = metadata.getColumnType(colIndex);
-                        if (tableColType != colType) {
-                            if (colType == ColumnType.LONG && ALLOWED_LONG_CONVERSIONS.contains(tableColType)) {
-                                colTypes.setQuick(n, tableColType);
-                            } else {
-                                LOG.error().$("mismatched column and value types [table=").$(writer.getName())
-                                        .$(", column=").$(metadata.getColumnName(colIndex))
-                                        .$(", columnType=").$(ColumnType.nameOf(metadata.getColumnType(colIndex)))
-                                        .$(", valueType=").$(ColumnType.nameOf(colTypes.getQuick(n)))
-                                        .$(']').$();
-                                error = true;
-                                return;
-                            }
-                        }
-                    }
-                    colIndexMappings.set(n, colIndex);
-                }
-            }
-
-            private void parseTypes(LineTcpMeasurementEvent event) {
-                for (int n = 0; n < nMeasurementValues; n++) {
-                    int colType;
-                    if (n < event.getFirstFieldIndex()) {
-                        colType = ColumnType.SYMBOL;
-                    } else {
-                        colType = CairoLineProtoParserSupport.getValueType(event.getValue(n));
-                    }
-                    colTypes.setQuick(n, colType);
-                }
-            }
-
-            private void preprocessEvent(LineTcpMeasurementEvent event) {
-                error = false;
-                nMeasurementValues = event.getNValues();
-                colTypes.ensureCapacity(nMeasurementValues);
-                colIndexMappings.ensureCapacity(nMeasurementValues);
-                parseTypes(event);
-            }
-
-            private void processEvent(LineTcpMeasurementEvent event) {
-                assert event.getTableName().equals(writer.getName());
-                preprocessEvent(event);
-                parseNames(event);
-                addRow(event);
-            }
-
-            private void processFirstEvent(CairoEngine engine, CairoSecurityContext securityContext, LineTcpMeasurementEvent event) {
-                sqlExecutionContext.storeTelemetry(Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
-                assert null == writer;
-                int status = engine.getStatus(securityContext, path, event.getTableName(), 0, event.getTableName().length());
-                if (status == TableUtils.TABLE_EXISTS) {
-                    writer = engine.getWriter(securityContext, event.getTableName());
-                    processEvent(event);
-                    return;
-                }
-
-                preprocessEvent(event);
-                engine.createTable(
-                        securityContext,
-                        appendMemory,
-                        path,
-                        tableStructureAdapter.of(event, this));
-                int nValues = event.getNValues();
-                for (int n = 0; n < nValues; n++) {
-                    colIndexMappings.set(n, n);
-                }
-                writer = engine.getWriter(securityContext, event.getTableName());
-                addRow(event);
-            }
+        @Override
+        public int getColumnCount() {
+            return protoParser.getnEntities() + 1;
         }
 
-        private class TableStructureAdapter implements TableStructure {
-            private LineTcpMeasurementEvent event;
-            private Parser parser;
-            private int columnCount;
-            private int timestampIndex;
-
-            @Override
-            public int getColumnCount() {
-                return columnCount;
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            assert columnIndex <= getColumnCount();
+            if (columnIndex == getTimestampIndex()) {
+                return "timestamp";
             }
-
-            @Override
-            public CharSequence getColumnName(int columnIndex) {
-                if (columnIndex == getTimestampIndex()) {
-                    return "timestamp";
-                }
-                CharSequence colName = event.getName(columnIndex);
-                if (TableUtils.isValidColumnName(colName)) {
-                    return colName;
-                }
-                throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
+            CharSequence colName = protoParser.getEntity(columnIndex).getName().toString();
+            if (TableUtils.isValidColumnName(colName)) {
+                return colName;
             }
+            throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
+        }
 
-            @Override
-            public int getColumnType(int columnIndex) {
-                if (columnIndex == getTimestampIndex()) {
-                    return ColumnType.TIMESTAMP;
-                }
-                return parser.getColumnType(columnIndex);
+        @Override
+        public int getColumnType(int columnIndex) {
+            if (columnIndex == getTimestampIndex()) {
+                return ColumnType.TIMESTAMP;
             }
+            return DEFAULT_COLUMN_TYPES[protoParser.getEntity(columnIndex).getType()];
+        }
 
-            @Override
-            public int getIndexBlockCapacity(int columnIndex) {
-                return 0;
-            }
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return 0;
+        }
 
-            @Override
-            public boolean isIndexed(int columnIndex) {
-                return false;
-            }
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return false;
+        }
 
-            @Override
-            public boolean isSequential(int columnIndex) {
-                return false;
-            }
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return false;
+        }
 
-            @Override
-            public int getPartitionBy() {
-                return PartitionBy.NONE;
-            }
+        @Override
+        public int getPartitionBy() {
+            return PartitionBy.DAY;
+        }
 
-            @Override
-            public boolean getSymbolCacheFlag(int columnIndex) {
-                return cairoConfiguration.getDefaultSymbolCacheFlag();
-            }
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            return cairoConfiguration.getDefaultSymbolCacheFlag();
+        }
 
-            @Override
-            public int getSymbolCapacity(int columnIndex) {
-                return cairoConfiguration.getDefaultSymbolCapacity();
-            }
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            return cairoConfiguration.getDefaultSymbolCapacity();
+        }
 
-            @Override
-            public CharSequence getTableName() {
-                return event.getTableName();
-            }
+        @Override
+        public CharSequence getTableName() {
+            return tableName;
+        }
 
-            @Override
-            public int getTimestampIndex() {
-                return timestampIndex;
-            }
+        @Override
+        public int getTimestampIndex() {
+            return protoParser.getnEntities();
+        }
 
-            TableStructureAdapter of(LineTcpMeasurementEvent event, Parser parser) {
-                this.event = event;
-                this.parser = parser;
-                this.timestampIndex = event.getNValues();
-                this.columnCount = timestampIndex + 1;
-                return this;
-            }
+        TableStructureAdapter of(String tableName, NewLineProtoParser protoParser) {
+            this.tableName = tableName;
+            this.protoParser = protoParser;
+            return this;
         }
     }
 
