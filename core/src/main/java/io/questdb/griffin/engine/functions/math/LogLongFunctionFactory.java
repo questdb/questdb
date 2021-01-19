@@ -50,7 +50,7 @@ public class LogLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return value != Numbers.LONG_NaN ? (long) Math.log(value) : Double.NaN;
+            return value != Numbers.LONG_NaN ? (long) Math.log(value) : (long) Double.NaN;
             return (long) Math.log(value);
         }
     }
