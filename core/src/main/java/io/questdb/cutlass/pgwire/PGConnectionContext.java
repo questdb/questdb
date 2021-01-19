@@ -311,7 +311,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool
+            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool,
+            int operation
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, BadProtocolException {
 
         this.typesAndSelectCache = selectAndTypesCache;
@@ -325,7 +326,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         // however the opposite  is a little tricky. If buffer is non-empty
         // we still may need to read from socket if contents of this buffer
         // is incomplete and cannot be parsed
-        if (recvBufferReadOffset == recvBufferWriteOffset) {
+        if (operation == IOOperation.READ) {
             recv();
         }
 
@@ -348,12 +349,21 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 if (readOffsetBeforeParse < recvBufferWriteOffset) {
                     // may be content was incomplete?
                     recv();
+
+                    parse(
+                            recvBuffer + recvBufferReadOffset,
+                            (int) (recvBufferWriteOffset - recvBufferReadOffset),
+                            compiler
+                    );
+
                     // still nothing? oh well
                     if (readOffsetBeforeParse == recvBufferReadOffset) {
+                        LOG.debug().$("no bueno 1 [recvBufferWriteOffset=").$(recvBufferWriteOffset).$(']').$();
                         return;
                     }
                     // at this point we have some contact and parse did do something
                 } else {
+                    LOG.debug().$("no bueno 2 [recvBufferWriteOffset=").$(recvBufferWriteOffset).$(']').$();
                     return;
                 }
             }
@@ -372,11 +382,18 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     // nothing changed?
                     if (readOffsetBeforeParse == recvBufferReadOffset) {
                         // shift to start
+                        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
+                        LOG.debug()
+                                .$("shift [offset=").$(readOffsetBeforeParse)
+                                .$(", len=").$(len)
+                                .$(']').$();
+
                         Unsafe.getUnsafe().copyMemory(
                                 recvBuffer + readOffsetBeforeParse,
                                 recvBuffer,
-                                recvBufferWriteOffset - readOffsetBeforeParse);
-                        recvBufferWriteOffset = recvBufferWriteOffset - readOffsetBeforeParse;
+                                len
+                        );
+                        recvBufferWriteOffset = len;
                         recvBufferReadOffset = 0;
                         // read more
                         return;
@@ -1185,8 +1202,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         final byte type = Unsafe.getUnsafe().getByte(address);
-        LOG.debug().$("received msg [type=").$((char) type).$(']').$();
         final int msgLen = getIntUnsafe(address + 1);
+        LOG.debug()
+                .$("received msg [type=").$((char) type)
+                .$(", len=").$(msgLen)
+                .$(']').$();
         if (msgLen < 1) {
             LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(']').$();
             throw BadProtocolException.INSTANCE;
@@ -1197,6 +1217,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             // When this happens we need to shift our receive buffer left
             // to fit this message. Outer function will do that if we
             // just exit.
+            LOG.debug()
+                    .$("not enough data in buffer [expected=").$(msgLen)
+                    .$(", have=").$(len)
+                    .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
+                    .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
+                    .$(']').$();
             return;
         }
         // we have enough to read entire message
@@ -1827,6 +1853,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         assertTrue(remaining > 0, "undersized receive buffer or someone is abusing protocol");
 
         int n = doReceive(remaining);
+        LOG.debug().$("recv [n=").$(n).$(']').$();
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
         }

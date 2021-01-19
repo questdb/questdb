@@ -33,7 +33,8 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -42,6 +43,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.postgresql.PGResultSetMetaData;
@@ -58,10 +60,6 @@ import java.util.Arrays;
 import java.util.GregorianCalendar;
 import java.util.Properties;
 import java.util.TimeZone;
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.std.Numbers.hexDigits;
 import static org.junit.Assert.assertTrue;
@@ -82,25 +80,29 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 }
                 connection.setAutoCommit(false);
                 try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
-                    for (int i = 0; i < 10_000; i++) {
+                    for (int i = 0; i < 50_000; i++) {
+                        batchInsert.clearParameters();
                         batchInsert.setLong(1, 0L);
                         batchInsert.setInt(2, 1);
                         batchInsert.addBatch();
+
+                        batchInsert.clearParameters();
                         batchInsert.setLong(1, 1L);
                         batchInsert.setInt(2, 2);
                         batchInsert.addBatch();
+
+                        batchInsert.clearParameters();
                         batchInsert.setLong(1, 2L);
                         batchInsert.setInt(2, 3);
                         batchInsert.addBatch();
-                        batchInsert.clearParameters();
-                        batchInsert.executeLargeBatch();
                     }
+                    batchInsert.executeBatch();
                     connection.commit();
                 }
 
                 StringSink sink = new StringSink();
                 String expected = "count[BIGINT]\n" +
-                        "30000\n";
+                        "150000\n";
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
                 assertResultSet(expected, sink, rs);
@@ -130,7 +132,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                     batchInsert.setInt(2, 3);
                     batchInsert.addBatch();
                     batchInsert.clearParameters();
-                    batchInsert.executeBatch();
+                    int[] a = batchInsert.executeBatch();
+                    Assert.assertEquals(3, a.length);
+                    Assert.assertEquals(1, a[0]);
+                    Assert.assertEquals(1, a[1]);
+                    Assert.assertEquals(1, a[2]);
                 }
 
                 StringSink sink = new StringSink();
@@ -143,6 +149,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 assertResultSet(expected, sink, rs);
             }
         });
+    }
+
+    @Before
+    public void setUp3() {
+        SharedRandom.RANDOM.set(new Rnd());
     }
 
     @Test
@@ -199,7 +210,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">5800000004";
         assertHexScript(
                 getFragmentedSendFacade(),
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
         );
@@ -224,7 +234,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                         "<!!";
         assertHexScript(
                 getFragmentedSendFacade(),
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 new DefaultPGWireConfiguration()
         );
@@ -233,7 +242,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
     @Test
     public void testBadPasswordLength() throws Exception {
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 ">0000000804d2162f\n" +
                         "<4e\n" +
@@ -364,61 +372,44 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 Statement statement4 = connection.createStatement();
                 ResultSet rs4 = statement4.executeQuery("select * from anothertab");
                 assertResultSet(expected, sink, rs4);
-
             }
         });
     }
 
     @Test
     public void testBlobOverLimit() throws Exception {
+        PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+            @Override
+            public int getMaxBlobSizeOnQuery() {
+                return 150;
+            }
+        };
+
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration() {
-                            @Override
-                            public int getMaxBlobSizeOnQuery() {
-                                return 150;
-                            }
-                        },
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (
+                    final PGWireServer ignored = createPGServer(configuration);
+                    final Connection connection = getConnection(false, true)
+            ) {
                 Statement statement = connection.createStatement();
-
-                try {
-                    statement.executeQuery(
-                            "select " +
-                                    "rnd_str(4,4,4) s, " +
-                                    "rnd_int(0, 256, 4) i, " +
-                                    "rnd_double(4) d, " +
-                                    "timestamp_sequence(0,10000) t, " +
-                                    "rnd_float(4) f, " +
-                                    "rnd_short() _short, " +
-                                    "rnd_long(0, 10000000, 5) l, " +
-                                    "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
-                                    "rnd_byte(0,127) bb, " +
-                                    "rnd_boolean() b, " +
-                                    "rnd_symbol(4,4,4,2), " +
-                                    "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                                    "rnd_bin(1024,2048,2) " +
-                                    "from long_sequence(50)");
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    Assert.assertEquals("blob is too large [blobSize=1903, max=150, columnIndex=12]", e.getServerErrorMessage().getMessage());
-                }
-
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
+                statement.executeQuery(
+                        "select " +
+                                "rnd_str(4,4,4) s, " +
+                                "rnd_int(0, 256, 4) i, " +
+                                "rnd_double(4) d, " +
+                                "timestamp_sequence(0,10000) t, " +
+                                "rnd_float(4) f, " +
+                                "rnd_short() _short, " +
+                                "rnd_long(0, 10000000, 5) l, " +
+                                "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
+                                "rnd_byte(0,127) bb, " +
+                                "rnd_boolean() b, " +
+                                "rnd_symbol(4,4,4,2), " +
+                                "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
+                                "rnd_bin(1024,2048,2) " +
+                                "from long_sequence(50)");
+                Assert.fail();
+            } catch (PSQLException e) {
+                TestUtils.assertContains(e.getServerErrorMessage().getMessage(), "blob is too large");
             }
         });
     }
@@ -426,7 +417,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
     @Test
     public void testBrokenUtf8QueryInParseMessage() throws Exception {
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 ">0000000804d2162f\n" +
                         "<4e\n" +
@@ -473,10 +463,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">4800000004\n" +
                 "<31000000043200000004540000004400037800000040010001000000140004ffffffff0000243100000040010002000000170004ffffffff0000243200000040010003000000140004ffffffff0000440000001e0003000000013100000001330000000a35303030303030303030440000001e0003000000013200000001330000000a35303030303030303030430000000d53454c454354203200\n";
 
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -500,10 +491,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">430000000953535f310050000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
                 "<330000000431000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
                 ">5800000004";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -527,10 +519,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">430000000950535f31005300000004\n" +
                 "<33000000045a0000000549\n" +
                 ">5800000004";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -559,10 +552,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">430000000953535f31005300000004\n" +
                 "<33000000045a0000000549\n" +
                 ">5800000004";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -587,10 +581,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">430000000953535f31005300000004\n" +
                 "<33000000045a0000000549\n" +
                 ">5800000004";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -613,10 +608,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
                 ">430000000953535fac005300000004\n" +
                 "<!!";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
+        assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                getHexPgWireConfig());
+                getHexPgWireConfig()
+        );
     }
 
     @Test
@@ -640,7 +636,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">430000000953535f32005300000004\n" +
                 "<!!";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -666,30 +661,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">430000000951535f31005300000004\n" +
                 "<!!";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
 
     @Test
     @Ignore
-    public void testCopyIn() throws SQLException, BrokenBarrierException, InterruptedException {
-        final CountDownLatch haltLatch = new CountDownLatch(1);
-        final AtomicBoolean running = new AtomicBoolean(true);
-        try {
-            startBasicServer(
-                    NetworkFacadeImpl.INSTANCE,
-                    new DefaultPGWireConfiguration(),
-                    haltLatch,
-                    running
-            );
-
-            Properties properties = new Properties();
-            properties.setProperty("user", "admin");
-            properties.setProperty("password", "quest");
-
-            final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
-
+    public void testCopyIn() throws SQLException {
+        try (
+                final PGWireServer ignored = createPGServer(2);
+                final Connection connection = getConnection(false, true)
+        ) {
             PreparedStatement stmt = connection.prepareStatement("create table tab (a int, b int)");
             stmt.execute();
 
@@ -703,9 +685,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
             byte[] bytes = text.getBytes();
             copyIn.writeToCopy(bytes, 0, bytes.length);
             copyIn.endCopy();
-        } finally {
-            running.set(false);
-            haltLatch.await();
         }
     }
 
@@ -748,7 +727,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 "<4300000008534554005a0000000549";
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
         );
@@ -766,6 +744,11 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testExtendedModeTransaction() throws Exception {
+        assertTransaction(false);
     }
 
     @Test
@@ -799,7 +782,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 "<31000000043200000004540000002f00027800000040010001000000140004ffffffff0000243100000040010002000000170004ffffffff000044000000100002000000013100000001334400000010000200000001320000000133430000000d53454c454354203200\n";
 
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -839,7 +821,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
         assertHexScript(
                 getFragmentedSendFacade(),
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 new DefaultPGWireConfiguration()
         );
@@ -992,7 +973,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">5800000004\n";
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
         );
@@ -1052,7 +1032,6 @@ nodejs code:
                 ">5800000004\n";
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
         );
@@ -1085,7 +1064,6 @@ nodejs code:
                 "<!!";
 
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -1101,7 +1079,6 @@ nodejs code:
                 "<!!";
 
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -1120,7 +1097,6 @@ nodejs code:
                 "<31000000043200000004540000004400037800000040010001000000140004ffffffff0000243100000040010002000000170004ffffffff0000243200000040010003000000140004ffffffff0000440000001e0003000000013100000001330000000a35303030303030303030440000001e0003000000013200000001330000000a35303030303030303030430000000d53454c454354203200\n";
 
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -1139,7 +1115,6 @@ nodejs code:
                 "<31000000043200000004540000002f00027800000040010001000000140004ffffffff0000243100000040010002000000170004ffffffff000044000000100002000000013100000001334400000010000200000001320000000133430000000d53454c454354203200\n";
 
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -1200,28 +1175,17 @@ nodejs code:
                     "1,2,3\n" +
                     "1,2,3\n";
 
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration() {
-                            @Override
-                            public int getSendBufferSize() {
-                                return 512;
-                            }
-                        },
-                        haltLatch,
-                        running
-                );
+            final PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
+                @Override
+                public int getSendBufferSize() {
+                    return 512;
+                }
+            };
 
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-                properties.setProperty("sslmode", "disable");
-                properties.setProperty("binaryTransfer", "false");
-
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (
+                    final PGWireServer ignored = createPGServer(configuration);
+                    final Connection connection = getConnection(false, false)
+            ) {
                 PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(50)");
                 Statement statement1 = connection.createStatement();
 
@@ -1234,10 +1198,6 @@ nodejs code:
                     assertResultSet(expected, sink, rs);
                     rs.close();
                 }
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -1313,22 +1273,7 @@ nodejs code:
                 ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
                 "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
                 ">5800000004\n";
-        NetworkFacade nf = new NetworkFacadeImpl() {
-            boolean good = false;
-
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                if (good) {
-                    good = false;
-                    return super.send(fd, buffer, bufferLen);
-                }
-
-                good = true;
-                return 0;
-            }
-        };
-
-        assertHexScript(NetworkFacadeImpl.INSTANCE, nf, script, new DefaultPGWireConfiguration() {
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration() {
             @Override
             public int getSendBufferSize() {
                 return 512;
@@ -1349,27 +1294,16 @@ nodejs code:
     @Test
     public void testLoginBadPassword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
+            try (PGWireServer ignored = createPGServer(1)) {
                 Properties properties = new Properties();
                 properties.setProperty("user", "admin");
                 properties.setProperty("password", "dunno");
                 try {
-                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
                 }
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -1377,27 +1311,16 @@ nodejs code:
     @Test
     public void testLoginBadUsername() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
+            try (PGWireServer ignored = createPGServer(1)) {
                 Properties properties = new Properties();
                 properties.setProperty("user", "joe");
                 properties.setProperty("password", "quest");
                 try {
-                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "invalid username/password");
                 }
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
@@ -1405,7 +1328,6 @@ nodejs code:
     @Test
     public void testMalformedInitPropertyName() throws Exception {
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 ">0000004c00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<!!",
@@ -1416,7 +1338,6 @@ nodejs code:
     @Test
     public void testMalformedInitPropertyValue() throws Exception {
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 ">0000001e00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<!!",
@@ -1525,7 +1446,6 @@ nodejs code:
                 "<33000000045a0000000549\n" +
                 ">5800000004";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -1543,7 +1463,6 @@ nodejs code:
                 ">500000000800000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
                 "<310000000432000000046e000000046e0000000449000000045a0000000549";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -1561,7 +1480,6 @@ nodejs code:
                 ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000200000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
                 "<!!";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -1575,7 +1493,6 @@ nodejs code:
                 ">5000000022005345542065787472615f666c6f61745f646967697473203d203308899889988998\n" +
                 "<!!";
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
@@ -1591,7 +1508,6 @@ nodejs code:
                 ">5000000022555345542065787472615f666c6f61745f646967697473203d2033555555425555550c5555555555555555455555550955555555015355555504\n" +
                 "<!!";
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
@@ -1612,7 +1528,6 @@ nodejs code:
                 "<!!";
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
         );
@@ -1631,7 +1546,6 @@ nodejs code:
                 ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000260000001700000014000002bc000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a0420000012c0000001600010001000100010001000000000000000000000001000100010001000100000000000000010000000000000016000000040000000400000008000000000000007b0000000440adc28f000000083fe22c27a63736ce00000002005b00000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
                 "<!!";
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
@@ -1652,7 +1566,6 @@ nodejs code:
                 ">50000000740073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bc000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a0420000012c0000001600010001000100010001000000000000000000000001000100010001000100000000000000010000000000000016000000040000000400000008000000000000007b0000000440adc28f000000083fe22c27a63736ce00000002005b00000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
                 "<!!";
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig()
@@ -1687,141 +1600,60 @@ nodejs code:
 
     @Test
     public void testPreparedStatementHex() throws Exception {
-        assertPreparedStatementHex(NetworkFacadeImpl.INSTANCE, getHexPgWireConfig());
-    }
-
-    @Test
-    public void testPreparedStatementHexSendFlowControl() throws Exception {
-
-        NetworkFacade nf = new NetworkFacadeImpl() {
-            boolean good = false;
-
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                if (good) {
-                    good = false;
-                    return super.send(fd, buffer, bufferLen);
-                }
-
-                good = true;
-                return 0;
-            }
-        };
-
-        PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-
-            @Override
-            public int getIdleSendCountBeforeGivingUp() {
-                return 0;
-            }
-
-            @Override
-            public String getDefaultPassword() {
-                return "oh";
-            }
-
-            @Override
-            public String getDefaultUsername() {
-                return "xyz";
-            }
-        };
-        assertPreparedStatementHex(nf, configuration);
-    }
-
-    @Test
-    public void testPreparedStatementHexSendFlowControl2() throws Exception {
-
-        // the objective of this setup is to exercise send retry behaviour
-
-        NetworkFacade nf = new NetworkFacadeImpl() {
-            final int counterBreak = 2;
-            int counter = 0;
-
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                if (counter++ % counterBreak == 0) {
-                    return super.send(fd, buffer, bufferLen);
-                }
-                return 0;
-            }
-        };
-
-        PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-
-            @Override
-            public int getIdleSendCountBeforeGivingUp() {
-                return 1;
-            }
-
-            @Override
-            public String getDefaultPassword() {
-                return "oh";
-            }
-
-            @Override
-            public String getDefaultUsername() {
-                return "xyz";
-            }
-        };
-
-        assertPreparedStatementHex(nf, configuration);
-    }
-
-    @Test
-    public void testPreparedStatementHexSendFlowControl3() throws Exception {
-
-        // the objective of this setup is to exercise send retry behaviour
-
-        NetworkFacade nf = new NetworkFacadeImpl() {
-            final int counterBreak = 3; // another branch of retry logic
-            int counter = 0;
-
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                if (counter++ % counterBreak == 0) {
-                    return super.send(fd, buffer, bufferLen);
-                }
-                return 0;
-            }
-        };
-
-        PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-
-            @Override
-            public int getIdleSendCountBeforeGivingUp() {
-                return 1;
-            }
-
-            @Override
-            public String getDefaultPassword() {
-                return "oh";
-            }
-
-            @Override
-            public String getDefaultUsername() {
-                return "xyz";
-            }
-        };
-
-        assertPreparedStatementHex(nf, configuration);
+        assertHexScript(NetworkFacadeImpl.INSTANCE, ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+                "<520000000800000003\n" +
+                ">70000000076f6800\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
+                "<310000000432000000044300000008534554005a0000000549\n" +
+                ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
+                "<310000000432000000044300000008534554005a0000000549\n" +
+                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">500000002d535f310073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000f00535f310000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
+                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
+                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
+                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
+                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
+                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
+                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
+                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
+                ">5800000004", getHexPgWireConfig());
     }
 
     @Test
     public void testPreparedStatementParamBadByte() throws Exception {
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<520000000800000003\n" +
@@ -1841,7 +1673,6 @@ nodejs code:
     public void testPreparedStatementParamBadInt() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<520000000800000003\n" +
                         ">700000000a717565737400\n" +
@@ -1860,7 +1691,6 @@ nodejs code:
     public void testPreparedStatementParamBadLong() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<520000000800000003\n" +
                         ">700000000a717565737400\n" +
@@ -1878,7 +1708,6 @@ nodejs code:
     @Test
     public void testPreparedStatementParamValueLengthOverflow() throws Exception {
         assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                         "<520000000800000003\n" +
@@ -2035,6 +1864,55 @@ nodejs code:
     }
 
     @Test
+    public void testRollbackDataOnStaleTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(2)) {
+                try (final Connection connection = getConnection(false, true)) {
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("create table xyz(a int)").execute();
+                    connection.prepareStatement("insert into xyz values (100)").execute();
+                    connection.prepareStatement("insert into xyz values (101)").execute();
+                    connection.prepareStatement("insert into xyz values (102)").execute();
+                    connection.prepareStatement("insert into xyz values (103)").execute();
+
+                    sink.clear();
+                    try (
+                            PreparedStatement ps = connection.prepareStatement("xyz");
+                            ResultSet rs = ps.executeQuery()
+                    ) {
+                        assertResultSet(
+                                "a[INTEGER]\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                // we need to let server process disconnect and release writer
+                Thread.sleep(2000);
+
+                try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz")) {
+                    w.commit();
+                }
+
+                try (final Connection connection = getConnection(false, true)) {
+                    sink.clear();
+                    try (
+                            PreparedStatement ps = connection.prepareStatement("xyz");
+                            ResultSet rs = ps.executeQuery()
+                    ) {
+                        assertResultSet(
+                                "a[INTEGER]\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRustBindVariableHex() throws Exception {
         //hex for close message 43 00000009 53 535f31 00
         String script = ">0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000\n" +
@@ -2071,7 +1949,6 @@ nodejs code:
                 "<33000000045a0000000549\n" +
                 ">5800000004\n";
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -2307,7 +2184,6 @@ nodejs code:
                 ">5800000004";
 
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -2418,7 +2294,6 @@ nodejs code:
                 ">5800000004";
 
         assertHexScript(NetworkFacadeImpl.INSTANCE,
-                NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
     }
@@ -2480,36 +2355,7 @@ nodejs code:
 
     @Test
     public void testSimpleModeTransaction() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(true, true)
-            ) {
-                connection.setAutoCommit(false);
-                connection.prepareStatement("create table xyz(a int)").execute();
-                connection.prepareStatement("insert into xyz values (100)").execute();
-                connection.prepareStatement("insert into xyz values (101)").execute();
-                connection.prepareStatement("insert into xyz values (102)").execute();
-                connection.prepareStatement("insert into xyz values (103)").execute();
-                connection.commit();
-
-                sink.clear();
-                try (
-                        PreparedStatement ps = connection.prepareStatement("xyz");
-                        ResultSet rs = ps.executeQuery()
-                ) {
-                    assertResultSet(
-                            "a[INTEGER]\n" +
-                                    "100\n" +
-                                    "101\n" +
-                                    "102\n" +
-                                    "103\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
+        assertTransaction(true);
     }
 
     @Test
@@ -2721,83 +2567,19 @@ nodejs code:
     }
 
     private void assertHexScript(String script) throws Exception {
-        assertHexScript(NetworkFacadeImpl.INSTANCE, NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration());
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration());
     }
 
     private void assertHexScript(
             NetworkFacade clientNf,
-            NetworkFacade serverNf,
             String script,
-            PGWireConfiguration PGWireConfiguration
+            PGWireConfiguration configuration
     ) throws Exception {
         assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(
-                        serverNf,
-                        PGWireConfiguration,
-                        haltLatch,
-                        running
-                );
-                NetUtils.playScript(clientNf, script, "127.0.0.1", 9120);
-            } finally {
-                running.set(false);
-                haltLatch.await();
+            try (PGWireServer ignored = createPGServer(configuration)) {
+                NetUtils.playScript(clientNf, script, "127.0.0.1", 8812);
             }
         });
-    }
-
-    private void assertPreparedStatementHex(NetworkFacade nf, PGWireConfiguration configuration) throws Exception {
-        assertHexScript(NetworkFacadeImpl.INSTANCE, nf, ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
-                "<520000000800000003\n" +
-                ">70000000076f6800\n" +
-                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
-                ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
-                "<310000000432000000044300000008534554005a0000000549\n" +
-                ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
-                "<310000000432000000044300000008534554005a0000000549\n" +
-                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">500000002a0073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">500000002d535f310073656c65637420312c322c332066726f6d206c6f6e675f73657175656e6365283129000000420000000f00535f310000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000004200033100000040010001000000170004ffffffff00003200000040010002000000170004ffffffff00003300000040010003000000170004ffffffff000044000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
-                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
-                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
-                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
-                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">420000000f00535f3100000000000000450000000900000000005300000004\n" +
-                "<320000000444000000150003000000013100000001320000000133430000000d53454c4543542031005a0000000549\n" +
-                ">50000000260073656c65637420312066726f6d206c6f6e675f73657175656e6365283229000000420000000c000000000000000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000001a00013100000040010001000000170004ffffffff0000440000000b00010000000131440000000b00010000000131430000000d53454c4543542032005a0000000549\n" +
-                ">5800000004", configuration);
     }
 
     private void assertResultSet(String expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
@@ -2908,6 +2690,49 @@ nodejs code:
         TestUtils.assertEquals(expected, sink);
     }
 
+    private void assertTransaction(boolean simple) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(simple, true)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table xyz(a int)").execute();
+                connection.prepareStatement("insert into xyz values (100)").execute();
+                connection.prepareStatement("insert into xyz values (101)").execute();
+                connection.prepareStatement("insert into xyz values (102)").execute();
+                connection.prepareStatement("insert into xyz values (103)").execute();
+                connection.commit();
+
+                sink.clear();
+                try (
+                        PreparedStatement ps = connection.prepareStatement("xyz");
+                        ResultSet rs = ps.executeQuery()
+                ) {
+                    assertResultSet(
+                            "a[INTEGER]\n" +
+                                    "100\n" +
+                                    "101\n" +
+                                    "102\n" +
+                                    "103\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    private PGWireServer createPGServer(PGWireConfiguration configuration) {
+        return PGWireServer.create(
+                configuration,
+                null,
+                LOG,
+                engine,
+                compiler.getFunctionFactoryCache()
+        );
+    }
+
     private PGWireServer createPGServer(int workerCount) {
 
         final int[] affinity = new int[workerCount];
@@ -2930,13 +2755,7 @@ nodejs code:
             }
         };
 
-        return PGWireServer.create(
-                conf,
-                null,
-                LOG,
-                engine,
-                compiler.getFunctionFactoryCache()
-        );
+        return createPGServer(conf);
     }
 
     private void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
@@ -2996,56 +2815,6 @@ nodejs code:
                 return "xyz";
             }
         };
-    }
-
-    private void startBasicServer(
-            NetworkFacade nf,
-            PGWireConfiguration configuration,
-            CountDownLatch haltLatch,
-            AtomicBoolean running
-    ) throws BrokenBarrierException, InterruptedException {
-        final CyclicBarrier barrier = new CyclicBarrier(2);
-        new Thread(() -> {
-            long fd = Net.socketTcp(true);
-            try {
-                Assert.assertEquals(0, nf.setReusePort(fd));
-                nf.configureNoLinger(fd);
-
-                assertTrue(nf.bindTcp(fd, 0, 9120));
-                nf.listen(fd, 128);
-
-                LOG.info().$("listening [fd=").$(fd).$(']').$();
-
-                try (PGJobContext PGJobContext = new PGJobContext(configuration, engine, engine.getMessageBus(), null)) {
-                    SharedRandom.RANDOM.set(new Rnd());
-                    try {
-                        barrier.await();
-                    } catch (InterruptedException | BrokenBarrierException e) {
-                        e.printStackTrace();
-                    }
-                    final long clientFd = Net.accept(fd);
-                    nf.configureNonBlocking(clientFd);
-                    try (PGConnectionContext context = new PGConnectionContext(engine, configuration, null, 1)) {
-                        context.of(clientFd, null);
-                        LOG.info().$("connected [clientFd=").$(clientFd).$(']').$();
-                        while (running.get()) {
-                            try {
-                                PGJobContext.handleClientOperation(context);
-                            } catch (PeerDisconnectedException | BadProtocolException e) {
-                                break;
-                            } catch (PeerIsSlowToReadException | PeerIsSlowToWriteException ignored) {
-                            }
-                        }
-                        nf.close(clientFd);
-                    }
-                }
-            } finally {
-                nf.close(fd);
-                haltLatch.countDown();
-                LOG.info().$("done").$();
-            }
-        }).start();
-        barrier.await();
     }
 
     private void testAllTypesSelect(boolean simple) throws Exception {
@@ -3521,20 +3290,10 @@ nodejs code:
 
     private void testQuery(String s, String s2) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final CountDownLatch haltLatch = new CountDownLatch(1);
-            final AtomicBoolean running = new AtomicBoolean(true);
-            try {
-                startBasicServer(NetworkFacadeImpl.INSTANCE,
-                        new DefaultPGWireConfiguration(),
-                        haltLatch,
-                        running
-                );
-
-                Properties properties = new Properties();
-                properties.setProperty("user", "admin");
-                properties.setProperty("password", "quest");
-
-                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/qdb", properties);
+            try (
+                    final PGWireServer ignore = createPGServer(2);
+                    final Connection connection = getConnection(false, true)
+            ) {
                 Statement statement = connection.createStatement();
                 ResultSet rs = statement.executeQuery(
                         "select " +
@@ -3623,10 +3382,6 @@ nodejs code:
                 StringSink sink = new StringSink();
                 // dump metadata
                 assertResultSet(expected, sink, rs);
-                connection.close();
-            } finally {
-                running.set(false);
-                haltLatch.await();
             }
         });
     }
