@@ -89,7 +89,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " round(rnd_double(0)*100, 3) amt," +
                                     " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                                     " rnd_boolean() b," +
-                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+//                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                                     " rnd_double(2) d," +
                                     " rnd_float(2) e," +
                                     " rnd_short(10,1024) f," +
@@ -98,8 +98,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_sequence(10000000000,1000000L) ts," +
                                     " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n," +
+//                                    " rnd_bin(10, 20, 2) m," +
+//                                    " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000000)" +
                                     "), index(sym) timestamp (ts) partition by DAY",
@@ -116,7 +116,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " round(rnd_double(0)*100, 3) amt," +
                                     " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                                     " rnd_boolean() b," +
-                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+//                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                                     " rnd_double(2) d," +
                                     " rnd_float(2) e," +
                                     " rnd_short(10,1024) f," +
@@ -125,8 +125,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_sequence(3000000000l,100000000L) ts," + // mid partition for "x"
                                     " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n," +
+//                                    " rnd_bin(10, 20, 2) m," +
+//                                    " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000000)" +
                                     ")",
@@ -139,12 +139,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             new WorkerPoolAwareConfiguration() {
                                 @Override
                                 public int[] getWorkerAffinity() {
-                                    return new int[]{0, 2, 4, 6, 8, 10, 12, 14};
+                                    return new int[]{0, 2, 4, 6};
                                 }
 
                                 @Override
                                 public int getWorkerCount() {
-                                    return 8;
+                                    return 4;
                                 }
 
                                 @Override

@@ -26,6 +26,7 @@
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
+#include <sys/mman.h>
 
 typedef struct {
     uint64_t c8[256];
@@ -280,6 +281,7 @@ typedef struct {
 template<class T>
 inline void re_shuffle_internal(T *src, T *dest, index_t *index, int64_t count) {
     for (int64_t i = 0; i < count; i++) {
+        _mm_prefetch(index + 64, _MM_HINT_T0);
         dest[i] = src[index[i].i];
     }
 }
@@ -296,6 +298,7 @@ inline void re_shuffle(jlong src, jlong dest, jlong index, jlong count) {
 
 template<class T>
 inline void merge_shuffle_internal(T *src1, T *src2, T *dest, index_t *index, int64_t count) {
+
     T *sources[] = {src2, src1};
     for (long i = 0; i < count; i++) {
         const auto r = reinterpret_cast<uint64_t>(index[i].i);
@@ -475,7 +478,7 @@ Java_io_questdb_std_Vect_mergeShuffle8Bit(JNIEnv *env, jclass cl, jlong src1, jl
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle16Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
-                                          jlong count) {
+                                           jlong count) {
     merge_shuffle<int16_t>(src1, src2, dest, index, count);
 }
 

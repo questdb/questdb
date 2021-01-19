@@ -425,6 +425,11 @@ public class ContiguousVirtualMemory implements BigMem, Mutable {
         appendAddress = baseAddress + offset;
     }
 
+    public long resize(long size) {
+        checkAndExtend(baseAddress + size);
+        return baseAddress;
+    }
+
     /**
      * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
      * no memory write takes place.

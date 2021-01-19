@@ -1636,21 +1636,27 @@ public class TableWriter implements Closeable {
         final AppendMemory secondary;
         final ContiguousVirtualMemory oooPrimary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
         final ContiguousVirtualMemory oooSecondary;
+        final ContiguousVirtualMemory oooPrimary2 = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+        final ContiguousVirtualMemory oooSecondary2;
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 secondary = new AppendMemory();
                 oooSecondary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
+                oooSecondary2 = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
                 break;
             default:
                 secondary = null;
                 oooSecondary = null;
+                oooSecondary2 = null;
                 break;
         }
         columns.add(primary);
         columns.add(secondary);
         oooColumns.add(oooPrimary);
         oooColumns.add(oooSecondary);
+        oooColumns2.add(oooPrimary2);
+        oooColumns2.add(oooSecondary2);
         configureNullSetters(nullSetters, type, primary, secondary);
         configureNullSetters(oooNullSetters, type, oooPrimary, oooSecondary);
         if (indexFlag) {
@@ -2243,6 +2249,71 @@ public class TableWriter implements Closeable {
         return indexHi;
     }
 
+    private LongList oooComputePartitions(long mergedTimestamps, long indexMax, long ooTimestampMin, long ooTimestampHi) {
+        // split out of order data into blocks for each partition
+        final long hh = timestampCeilMethod.ceil(ooTimestampHi);
+
+        // indexLo and indexHi formula is as follows:
+        // indexLo = indexHigh[k-1] + 1;
+        // indexHi = indexHigh[k]
+        LongList result = new LongList();
+        result.add(-1);  // indexLo for first block
+        result.add(0);  // unused
+
+        long lo = 0;
+        long x1 = ooTimestampMin;
+        while (lo < indexMax) {
+            x1 = timestampCeilMethod.ceil(x1);
+            long hi = oooSearchIndex(
+                    mergedTimestamps,
+                    timestampCeilMethod.ceil(x1),
+                    lo,
+                    indexMax - 1,
+                    BinarySearch.SCAN_DOWN
+            );
+            result.add(hi);
+            result.add(x1);
+            lo = hi + 1;
+            x1 = getTimestampIndexValue(mergedTimestamps, hi + 1);
+        }
+
+        result.add(indexMax - 1);  // indexHi for last block
+        result.add(hh);  // partitionTimestampHi for last block
+
+        return result;
+    }
+
+    private long[] oooComputePartitionsParallel(long mergedTimestamps, long indexMax, long ooTimestampMin, long ooTimestampHi) {
+        // split out of order data into blocks for each partition
+        long hh = timestampCeilMethod.ceil(ooTimestampHi);
+        int intervalCount = (int) timestampIntervalCountMethod.getIntervalCount(timestampFloorMethod.floor(ooTimestampMin), hh + 1);
+
+        // indexLo and indexHi formula is as follows:
+        // indexLo = indexHigh[k-1] + 1;
+        // indexHi = indexHigh[k]
+        long[] indexHigh = new long[intervalCount * 2 + 2];
+        indexHigh[0] = -1; // indexLo for first block
+        indexHigh[1] = 0;  // unused
+
+        long x1 = ooTimestampMin;
+        for (int k = 1; k < intervalCount; k++) {
+            x1 = timestampCeilMethod.ceil(x1);
+            indexHigh[k * 2] = oooSearchIndex(
+                    mergedTimestamps,
+                    x1,
+                    0,
+                    indexMax - 1,
+                    BinarySearch.SCAN_DOWN
+            );
+            indexHigh[k * 2 + 1] = x1;
+            x1++;
+        }
+
+        indexHigh[(intervalCount) * 2] = indexMax - 1; // indexHi for last block
+        indexHigh[(intervalCount) * 2 + 1] = hh; // partitionTimestampHi for last block
+        return indexHigh;
+    }
+
     private void oooConfigureFixColumnForMerge(
             long[] mergeStruct,
             int fixColumnStructOffset,
@@ -2704,30 +2775,28 @@ public class TableWriter implements Closeable {
             // out of order "lo" and "hi" (indexLo, indexHi)
 
             final long indexMax = mergeRowCount;
-            final long ooTimestampMin = getTimestampIndexValue(mergedTimestamps, 0);
-            final long ooTimestampMax = getTimestampIndexValue(mergedTimestamps, indexMax - 1);
-
-            final LongList partitions = oooComputePartitions(mergedTimestamps, indexMax, ooTimestampMin, ooTimestampMax);
+            final long oooTimestampMin = getTimestampIndexValue(mergedTimestamps, 0);
+            final long oooTimestampMax = getTimestampIndexValue(mergedTimestamps, indexMax - 1);
+            final LongList oooPartitions = oooComputePartitions(mergedTimestamps, indexMax, oooTimestampMin, oooTimestampMax);
 
             System.out.println("search: " + ((t1 = System.nanoTime()) - t2));
 
-
             LOG.debug()
-                    .$("before loop [ooTimestampMin=").microTime(ooTimestampMin)
-                    .$(", ooTimestampMax=").microTime(ooTimestampMax)
+                    .$("before loop [oooTimestampMin=").microTime(oooTimestampMin)
+                    .$(", oooTimestampMax=").microTime(oooTimestampMax)
                     .$(", ceilOfMaxTimestamp=").microTime(ceilOfMaxTimestamp)
                     .$(']').$();
 
             final long floorMinTimestamp = timestampFloorMethod.floor(minTimestamp);
             final long floorMaxTimestamp = timestampFloorMethod.floor(maxTimestamp);
 
-            for (int i = 1, n = partitions.size()/2; i < n; i++) {
+            for (int i = 1, n = oooPartitions.size() / 2; i < n; i++) {
                 // find "current" partition boundary in the out of order data
                 // once we know the boundary we can move on to calculating another one
                 // indexHi is index inclusive of value
-                final long indexLo = partitions.getQuick(i * 2 - 2) + 1;
-                final long indexHi = partitions.getQuick(i * 2);
-                final long partitionTimestampHi = partitions.getQuick(i * 2 + 1);
+                final long indexLo = oooPartitions.getQuick(i * 2 - 2) + 1;
+                final long indexHi = oooPartitions.getQuick(i * 2);
+                final long partitionTimestampHi = oooPartitions.getQuick(i * 2 + 1);
                 final long ooTimestampLo = getTimestampIndexValue(mergedTimestamps, indexLo);
 
                 path.trimTo(rootLen);
@@ -2774,10 +2843,11 @@ public class TableWriter implements Closeable {
                         if (partitionTimestampHi == ceilOfMaxTimestamp) {
                             dataTimestampHi = this.maxTimestamp;
                             dataIndexMax = transientRowCountBeforeOutOfOrder;
+                            // negative fd indicates descriptor reuse
                             timestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
                             LOG.debug().$("reused FDs").$();
+                            timestampSearchColumn.of(ff, -timestampFd, path, dataIndexMax * Long.BYTES);
                         } else {
-
                             dataIndexMax = readPartitionSize(ff, path, tempMem8b);
                             // out of order data is going into archive partition
                             // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
@@ -2790,20 +2860,10 @@ public class TableWriter implements Closeable {
                             if (timestampFd == -1) {
                                 throw CairoException.instance(ff.errno()).put("could not open `").put(path).put('`');
                             }
-
-                            // read bottom of file
-                            if (ff.read(timestampFd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
-                                throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
-                            }
-                            dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
+                            timestampSearchColumn.of(ff, timestampFd, path, dataIndexMax * Long.BYTES);
+                            dataTimestampHi = timestampSearchColumn.getLong((dataIndexMax - 1) * Long.BYTES);
                         }
-
-                        // read the top value
-                        if (ff.read(Math.abs(timestampFd), tempMem8b, Long.BYTES, 0) != Long.BYTES) {
-                            throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
-                        }
-
-                        dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
+                        dataTimestampLo = timestampSearchColumn.getLong(0);
 
                         LOG.debug()
                                 .$("read data top [dataTimestampLo=").microTime(dataTimestampLo)
@@ -2832,15 +2892,12 @@ public class TableWriter implements Closeable {
                         long suffixLo = -1;
                         long suffixHi = -1;
 
-                        // this is an overloaded function, page size is derived from the file size
-                        timestampSearchColumn.of(ff, Math.abs(timestampFd), path, dataIndexMax * Long.BYTES);
-
                         try {
                             if (ooTimestampLo < dataTimestampLo) {
 
                                 prefixType = OO_BLOCK_OO;
                                 prefixLo = indexLo;
-                                if (dataTimestampLo < ooTimestampMax) {
+                                if (dataTimestampLo < oooTimestampMax) {
 
                                     //            +-----+
                                     //            | OOO |
@@ -2862,14 +2919,14 @@ public class TableWriter implements Closeable {
                                     prefixHi = indexHi;
                                 }
 
-                                if (ooTimestampMax >= dataTimestampLo) {
+                                if (oooTimestampMax >= dataTimestampLo) {
 
                                     //
                                     //  +------+  | OOO |
                                     //  | data |  +-----+
                                     //  |      |
 
-                                    if (ooTimestampMax < dataTimestampHi) {
+                                    if (oooTimestampMax < dataTimestampHi) {
 
                                         // |      | |     |
                                         // |      | | OOO |
@@ -2879,13 +2936,13 @@ public class TableWriter implements Closeable {
 
                                         mergeType = OO_BLOCK_MERGE;
                                         mergeOOOHi = indexHi;
-                                        mergeDataHi = BinarySearch.find(timestampSearchColumn, ooTimestampMax, 0, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
+                                        mergeDataHi = BinarySearch.find(timestampSearchColumn, oooTimestampMax, 0, dataIndexMax - 1, BinarySearch.SCAN_DOWN);
 
                                         suffixLo = mergeDataHi + 1;
                                         suffixType = OO_BLOCK_DATA;
                                         suffixHi = dataIndexMax - 1;
 
-                                    } else if (ooTimestampMax > dataTimestampHi) {
+                                    } else if (oooTimestampMax > dataTimestampHi) {
 
                                         // |      | |     |
                                         // |      | | OOO |
@@ -2972,7 +3029,7 @@ public class TableWriter implements Closeable {
                                         mergeDataLo = prefixHi + 1;
                                         mergeOOOLo = indexLo;
 
-                                        if (ooTimestampMax < dataTimestampHi) {
+                                        if (oooTimestampMax < dataTimestampHi) {
 
                                             //
                                             // |      | +-----+
@@ -2981,7 +3038,7 @@ public class TableWriter implements Closeable {
                                             // +------+
 
                                             mergeOOOHi = indexHi;
-                                            mergeDataHi = BinarySearch.find(timestampSearchColumn, ooTimestampMax - 1, mergeDataLo, dataIndexMax - 1, BinarySearch.SCAN_DOWN) + 1;
+                                            mergeDataHi = BinarySearch.find(timestampSearchColumn, oooTimestampMax - 1, mergeDataLo, dataIndexMax - 1, BinarySearch.SCAN_DOWN) + 1;
 
                                             if (mergeDataLo < mergeDataHi) {
                                                 mergeType = OO_BLOCK_MERGE;
@@ -2996,7 +3053,7 @@ public class TableWriter implements Closeable {
                                             suffixType = OO_BLOCK_DATA;
                                             suffixLo = mergeDataHi + 1;
                                             suffixHi = dataIndexMax - 1;
-                                        } else if (ooTimestampMax > dataTimestampHi) {
+                                        } else if (oooTimestampMax > dataTimestampHi) {
 
                                             //
                                             // |      | +-----+
@@ -3205,7 +3262,7 @@ public class TableWriter implements Closeable {
                     if (indexHi + 1 >= indexMax) {
                         // no more out of order data and we just pre-pended data to existing
                         // partitions
-                        minTimestamp = ooTimestampMin;
+                        minTimestamp = oooTimestampMin;
                         // when we exit here we need to rollback transientRowCount we've been incrementing
                         // while adding out-of-order data
                         transientRowCount = transientRowCountBeforeOutOfOrder;
@@ -3217,7 +3274,7 @@ public class TableWriter implements Closeable {
                     // data in existing partition.
                     // When partition is new, the data timestamp is MIN_LONG
                     maxTimestamp = Math.max(getTimestampIndexValue(mergedTimestamps, indexHi), dataTimestampHi);
-                    minTimestamp = Math.min(minTimestamp, ooTimestampMin);
+                    minTimestamp = Math.min(minTimestamp, oooTimestampMin);
                     break;
                 }
             }
@@ -3242,71 +3299,6 @@ public class TableWriter implements Closeable {
         row.activeNullSetters = nullSetters;
         timestampSetter = prevTimestampSetter;
         transientRowCountBeforeOutOfOrder = 0;
-    }
-
-    private long[]  oooComputePartitionsParallel(long mergedTimestamps, long indexMax, long ooTimestampMin, long ooTimestampHi) {
-        // split out of order data into blocks for each partition
-        long hh = timestampCeilMethod.ceil(ooTimestampHi);
-        int intervalCount = (int) timestampIntervalCountMethod.getIntervalCount(timestampFloorMethod.floor(ooTimestampMin), hh + 1);
-
-        // indexLo and indexHi formula is as follows:
-        // indexLo = indexHigh[k-1] + 1;
-        // indexHi = indexHigh[k]
-        long[] indexHigh = new long[intervalCount * 2 + 2];
-        indexHigh[0] = -1; // indexLo for first block
-        indexHigh[1] = 0;  // unused
-
-        long x1 = ooTimestampMin;
-        for (int k = 1; k < intervalCount; k++) {
-            x1 = timestampCeilMethod.ceil(x1);
-            indexHigh[k * 2] = oooSearchIndex(
-                    mergedTimestamps,
-                    x1,
-                    0,
-                    indexMax - 1,
-                    BinarySearch.SCAN_DOWN
-            );
-            indexHigh[k * 2 + 1] = x1;
-            x1++;
-        }
-
-        indexHigh[(intervalCount) * 2] = indexMax - 1; // indexHi for last block
-        indexHigh[(intervalCount) * 2 + 1] = hh; // partitionTimestampHi for last block
-        return indexHigh;
-    }
-
-    private LongList oooComputePartitions(long mergedTimestamps, long indexMax, long ooTimestampMin, long ooTimestampHi) {
-        // split out of order data into blocks for each partition
-        final long hh = timestampCeilMethod.ceil(ooTimestampHi);
-
-        // indexLo and indexHi formula is as follows:
-        // indexLo = indexHigh[k-1] + 1;
-        // indexHi = indexHigh[k]
-        LongList result = new LongList();
-        result.add(-1);  // indexLo for first block
-        result.add(0);  // unused
-
-        long lo = 0;
-        long x1 = ooTimestampMin;
-        while (lo < indexMax){
-            x1 = timestampCeilMethod.ceil(x1);
-            long hi = oooSearchIndex(
-                    mergedTimestamps,
-                    timestampCeilMethod.ceil(x1),
-                    lo,
-                    indexMax - 1,
-                    BinarySearch.SCAN_DOWN
-            );
-            result.add(hi);
-            result.add(x1);
-            lo = hi + 1;
-            x1 = getTimestampIndexValue(mergedTimestamps, hi + 1);
-        }
-
-        result.add(indexMax-1);  // indexHi for last block
-        result.add(hh);  // partitionTimestampHi for last block
-
-        return result;
     }
 
     private void oooMergeCopy(
@@ -3474,13 +3466,10 @@ public class TableWriter implements Closeable {
             long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
             long addr = srcVar[bit] + offset;
             int len = Unsafe.getUnsafe().getInt(addr);
-            if (len > 0) {
-                Unsafe.getUnsafe().copyMemory(addr, destVar + destVarOffset, (long) len * Character.BYTES + Integer.BYTES);
-                destVarOffset += (long) len * Character.BYTES + Integer.BYTES;
-            } else {
-                Unsafe.getUnsafe().putInt(destVar + destVarOffset, len);
-                destVarOffset += Integer.BYTES;
-            }
+            Unsafe.getUnsafe().putInt(destVar + destVarOffset, len);
+            len = Math.max(0, len);
+            Unsafe.getUnsafe().copyMemory(addr + 4, destVar + destVarOffset + 4, (long) len * Character.BYTES);
+            destVarOffset += (long) len * Character.BYTES + Integer.BYTES;
         }
     }
 
@@ -4014,8 +4003,6 @@ public class TableWriter implements Closeable {
                 oooSortFixColumn(i, mergedTimestamps, mergeRowCount, 1, SHUFFLE_16);
                 break;
             default:
-//                    case ColumnType.BOOLEAN:
-//                    case ColumnType.BYTE:
                 oooSortFixColumn(i, mergedTimestamps, mergeRowCount, 0, SHUFFLE_8);
                 break;
         }
@@ -4028,14 +4015,16 @@ public class TableWriter implements Closeable {
             final int shl,
             final OutOfOrderNativeSortMethod shuffleFunc
     ) {
-        final ContiguousVirtualMemory mem = oooColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+        final int columnOffset = getPrimaryColumnIndex(columnIndex);
+        final ContiguousVirtualMemory mem = oooColumns.getQuick(columnOffset);
+        final ContiguousVirtualMemory mem2 = oooColumns2.getQuick(columnOffset);
         final long src = mem.addressOf(0);
         final long srcSize = mem.getAllocatedSize();
-        final long tgtSize = valueCount << shl;
-        final long tgtDataAddr = Unsafe.malloc(tgtSize);
+        final long tgtDataAddr = mem2.resize(valueCount << shl);
+        final long tgtDataSize = mem2.getAllocatedSize();
         shuffleFunc.shuffle(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
-        mem.replacePage(tgtDataAddr, tgtSize);
-        Unsafe.free(src, srcSize);
+        mem.replacePage(tgtDataAddr, tgtDataSize);
+        mem2.replacePage(src, srcSize);
     }
 
     private void oooSortParallel(long mergedTimestamps, int timestampIndex) {
@@ -4106,8 +4095,6 @@ public class TableWriter implements Closeable {
                                 );
                                 break;
                             default:
-//                    case ColumnType.BOOLEAN:
-//                    case ColumnType.BYTE:
                                 task.of(
                                         oooLatch,
                                         i,
@@ -4152,22 +4139,23 @@ public class TableWriter implements Closeable {
             OutOfOrderNativeSortMethod nativeSortMethod
     ) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
-        final int secondaryIndex = getSecondaryColumnIndex(columnIndex);
+        final int secondaryIndex = primaryIndex + 1;
         final ContiguousVirtualMemory dataMem = oooColumns.getQuick(primaryIndex);
         final ContiguousVirtualMemory indexMem = oooColumns.getQuick(secondaryIndex);
+        final ContiguousVirtualMemory dataMem2 = oooColumns2.getQuick(primaryIndex);
+        final ContiguousVirtualMemory indexMem2 = oooColumns2.getQuick(secondaryIndex);
         final long dataSize = dataMem.getAppendOffset();
-
-        indexMem.putLong(valueCount * Long.BYTES, dataSize);
-
         // ensure we have enough memory allocated
-
         final long srcDataAddr = dataMem.addressOf(0);
         final long srcDataSize = dataMem.getAllocatedSize();
         final long srcIndxAddr = indexMem.addressOf(0);
         final long srcIndxSize = indexMem.getAllocatedSize();
-        final long tgtDataAddr = Unsafe.malloc(dataSize);
-        final long tgtIndxAddr = Unsafe.malloc(valueCount * Long.BYTES);
-
+        final long tgtDataAddr = dataMem2.resize(dataSize);
+        final long tgtDataSize = dataMem2.getAllocatedSize();
+        final long tgtIndxAddr = indexMem2.resize(valueCount * Long.BYTES);
+        final long tgtIndxSize = indexMem2.getAllocatedSize();
+        // add max offset so that we do not have conditionals inside loop
+        indexMem.putLong(valueCount * Long.BYTES, dataSize);
         long offset = 0;
         for (long l = 0; l < valueCount; l++) {
             final long row = getTimestampIndexRow(mergedTimestampsAddr, l);
@@ -4178,15 +4166,12 @@ public class TableWriter implements Closeable {
             Unsafe.getUnsafe().putLong(tgtIndxAddr + l * Long.BYTES, offset);
             offset += len;
         }
-
-        dataMem.replacePage(tgtDataAddr, dataSize);
-        indexMem.replacePage(tgtIndxAddr, valueCount * Long.BYTES);
-
+        dataMem.replacePage(tgtDataAddr, tgtDataSize);
+        indexMem.replacePage(tgtIndxAddr, tgtIndxSize);
+        dataMem2.replacePage(srcDataAddr, srcDataSize);
+        indexMem2.replacePage(srcIndxAddr, srcIndxSize);
         dataMem.jumpTo(offset);
         indexMem.jumpTo(valueCount * Long.BYTES);
-
-        Unsafe.free(srcDataAddr, srcDataSize);
-        Unsafe.free(srcIndxAddr, srcIndxSize);
     }
 
     private void oooUpdateIndexes(long[] mergeStruct) {
