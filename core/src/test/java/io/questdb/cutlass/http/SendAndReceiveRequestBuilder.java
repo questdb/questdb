@@ -31,6 +31,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 import java.nio.charset.StandardCharsets;
@@ -80,21 +81,25 @@ public class SendAndReceiveRequestBuilder {
                 }
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
 
-                byte[] expectedResponse = response.getBytes();
-                final int len = Math.max(expectedResponse.length, request.length()) * 2;
-                long ptr = Unsafe.malloc(len);
-                try {
-                    for (int j = 0; j < requestCount; j++) {
-                        executeExplicit(request, fd, expectedResponse, len, ptr, null);
-                    }
-                } finally {
-                    Unsafe.free(ptr, len);
-                }
+                executeWithSocket(request, response, fd, sockAddr);
             } finally {
                 nf.freeSockAddr(sockAddr);
             }
         } finally {
             nf.close(fd);
+        }
+    }
+
+    private void executeWithSocket(String request, String response, long fd, long sockAddr) throws InterruptedException {
+        byte[] expectedResponse = response.getBytes();
+        final int len = Math.max(expectedResponse.length, request.length()) * 2;
+        long ptr = Unsafe.malloc(len);
+        try {
+            for (int j = 0; j < requestCount; j++) {
+                executeExplicit(request, fd, expectedResponse, len, ptr, null);
+            }
+        } finally {
+            Unsafe.free(ptr, len);
         }
     }
 
@@ -161,7 +166,7 @@ public class SendAndReceiveRequestBuilder {
             if (actual.length() == 0) {
                 System.out.println("oopsie");
             }
-            Assert.assertEquals(expected, actual);
+            TestUtils.assertEquals(expected, actual);
 
         } else {
             System.out.println("actual");
@@ -184,6 +189,40 @@ public class SendAndReceiveRequestBuilder {
             String response
     ) throws InterruptedException {
         execute(request + RequestHeaders, ResponseHeaders + response);
+    }
+
+    public void executeMany(RequestAction action) throws InterruptedException {
+        final long fd = nf.socketTcp(true);
+        nf.configureNoLinger(fd);
+        try {
+            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            Assert.assertTrue(fd > -1);
+            long ret = nf.connect(fd, sockAddr);
+            if (ret != 0) {
+                Assert.fail("could not connect: " + nf.errno());
+            }
+            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+
+            try {
+                RequestExecutor executor = new RequestExecutor() {
+                    @Override
+                    public void executeWithStandardHeaders(String request, String response) throws InterruptedException {
+                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd, sockAddr);
+                    }
+
+                    @Override
+                    public void execute(String request, String response) throws InterruptedException {
+                        executeWithSocket(request, response, fd, sockAddr);
+                    }
+                };
+
+                action.run(executor);
+            } finally {
+                nf.freeSockAddr(sockAddr);
+            }
+        } finally {
+            nf.close(fd);
+        }
     }
 
     public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
@@ -214,5 +253,22 @@ public class SendAndReceiveRequestBuilder {
     public SendAndReceiveRequestBuilder withRequestCount(int requestCount) {
         this.requestCount = requestCount;
         return this;
+    }
+
+    @FunctionalInterface
+    public interface RequestAction {
+        void run(RequestExecutor executor) throws InterruptedException;
+    }
+
+    public interface RequestExecutor {
+        void executeWithStandardHeaders(
+                String request,
+                String response
+        ) throws InterruptedException;
+
+        void execute(
+                String request,
+                String response
+        ) throws InterruptedException;
     }
 }

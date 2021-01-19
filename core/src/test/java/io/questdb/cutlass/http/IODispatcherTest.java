@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.cutlass.http.processors.StaticContentProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.SqlCompiler;
@@ -4394,6 +4395,7 @@ public class IODispatcherTest {
                     }
                 });
 
+                QueryCache.configure(httpConfiguration);
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
