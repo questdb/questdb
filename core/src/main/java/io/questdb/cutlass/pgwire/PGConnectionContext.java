@@ -322,90 +322,62 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             doSend(bufferRemainingOffset, bufferRemainingSize);
         }
 
-        // If we have empty buffer we need to try to read something from socket
-        // however the opposite  is a little tricky. If buffer is non-empty
-        // we still may need to read from socket if contents of this buffer
-        // is incomplete and cannot be parsed
-        if (operation == IOOperation.READ) {
-            recv();
-        }
-
         try {
-            long readOffsetBeforeParse = recvBufferReadOffset;
-
-            // Parse will update the value of recvBufferOffset upon completion of
-            // logical block. We cannot count on return value because 'parse' may try to
-            // respond to client and fail with exception. When it does fail we would have
-            // to retry 'send' but not parse the same input again
-            parse(
-                    recvBuffer + recvBufferReadOffset,
-                    (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                    compiler
-            );
-
-            // nothing changed?
-            if (readOffsetBeforeParse == recvBufferReadOffset) {
-                // how come we have something in buffer and parse didn't do anything?
-                if (readOffsetBeforeParse < recvBufferWriteOffset) {
-                    // may be content was incomplete?
-                    recv();
-
-                    parse(
-                            recvBuffer + recvBufferReadOffset,
-                            (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                            compiler
-                    );
-
-                    // still nothing? oh well
-                    if (readOffsetBeforeParse == recvBufferReadOffset) {
-                        LOG.debug().$("no bueno 1 [recvBufferWriteOffset=").$(recvBufferWriteOffset).$(']').$();
-                        return;
+            boolean keepReceiving = true;
+            OUTER:
+            do {
+                if (operation == IOOperation.READ) {
+                    if (recv() == 0) {
+                        keepReceiving = false;
                     }
-                    // at this point we have some contact and parse did do something
-                } else {
-                    LOG.debug().$("no bueno 2 [recvBufferWriteOffset=").$(recvBufferWriteOffset).$(']').$();
-                    return;
                 }
-            }
 
-            // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
-            if (recvBufferWriteOffset - recvBufferReadOffset > 0) {
-                // did we not parse input fully?
-                do {
-                    readOffsetBeforeParse = recvBufferReadOffset;
-                    parse(
-                            recvBuffer + recvBufferReadOffset,
-                            (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                            compiler
-                    );
+                // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
+                if (keepReceiving) {
+                    do {
+                        // Parse will update the value of recvBufferOffset upon completion of
+                        // logical block. We cannot count on return value because 'parse' may try to
+                        // respond to client and fail with exception. When it does fail we would have
+                        // to retry 'send' but not parse the same input again
 
-                    // nothing changed?
-                    if (readOffsetBeforeParse == recvBufferReadOffset) {
-                        // shift to start
-                        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
-                        LOG.debug()
-                                .$("shift [offset=").$(readOffsetBeforeParse)
-                                .$(", len=").$(len)
-                                .$(']').$();
-
-                        Unsafe.getUnsafe().copyMemory(
-                                recvBuffer + readOffsetBeforeParse,
-                                recvBuffer,
-                                len
+                        long readOffsetBeforeParse = recvBufferReadOffset;
+                        parse(
+                                recvBuffer + recvBufferReadOffset,
+                                (int) (recvBufferWriteOffset - recvBufferReadOffset),
+                                compiler
                         );
-                        recvBufferWriteOffset = len;
-                        recvBufferReadOffset = 0;
-                        // read more
-                        return;
-                    }
-                } while (recvBufferReadOffset < recvBufferWriteOffset);
-            }
-            clearRecvBuffer();
+
+                        // nothing changed?
+                        if (readOffsetBeforeParse == recvBufferReadOffset) {
+                            // shift to start
+                            shiftReceiveBuffer(readOffsetBeforeParse);
+                            continue OUTER;
+                        }
+                    } while (recvBufferReadOffset < recvBufferWriteOffset);
+                    clearRecvBuffer();
+                }
+            } while (keepReceiving);
         } catch (SqlException e) {
             reportError(e.getPosition(), e.getFlyweightMessage());
         } catch (CairoException e) {
             reportError(-1, e.getFlyweightMessage());
         }
+    }
+
+    private void shiftReceiveBuffer(long readOffsetBeforeParse) {
+        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
+        LOG.debug()
+                .$("shift [offset=").$(readOffsetBeforeParse)
+                .$(", len=").$(len)
+                .$(']').$();
+
+        Unsafe.getUnsafe().copyMemory(
+                recvBuffer + readOffsetBeforeParse,
+                recvBuffer,
+                len
+        );
+        recvBufferWriteOffset = len;
+        recvBufferReadOffset = 0;
     }
 
     public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
@@ -1847,7 +1819,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
+    int recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
         assertTrue(remaining > 0, "undersized receive buffer or someone is abusing protocol");
@@ -1880,6 +1852,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         }
         recvBufferWriteOffset += n;
+        return n;
     }
 
     private void reportError(int position, CharSequence flyweightMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {

@@ -69,7 +69,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
 
     @Test
-    public void largeBatchInsertMethod() throws Exception {
+    public void testLargeBatchInsertMethod() throws Exception {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer ignored = createPGServer(4);
