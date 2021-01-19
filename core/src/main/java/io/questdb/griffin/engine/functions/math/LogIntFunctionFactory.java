@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LogIntFunctionFactory implements FunctionFactory {
