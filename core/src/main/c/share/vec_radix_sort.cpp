@@ -26,6 +26,7 @@
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
+#include <sys/mman.h>
 
 typedef struct {
     uint64_t c8[256];
