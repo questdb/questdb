@@ -65,7 +65,7 @@ public class SqrtIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int value = arg.getInt(rec);
-            return (int) Math.sqrt(value);
+            return value != Numbers.INT_NaN ? (int) Math.sqrt(value) : Double.NaN;
         }
     }
 }

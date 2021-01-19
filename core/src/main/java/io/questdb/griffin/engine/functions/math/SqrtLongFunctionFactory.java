@@ -51,7 +51,7 @@ public class SqrtLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             long value = arg.getLong(rec);
-            return (long) Math.sqrt(value);
+            return value != Numbers.LONG_NaN ? (long) Math.sqrt(value) : Double.NaN;
         }
     }
 }

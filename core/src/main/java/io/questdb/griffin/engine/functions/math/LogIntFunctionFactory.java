@@ -65,7 +65,7 @@ public class LogIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int value = arg.getInt(rec);
-            return (int) Math.log(value);
+            return value != Numbers.INT_NaN ? (int) Math.log(value) : Double.NaN;
         }
     }
 }
