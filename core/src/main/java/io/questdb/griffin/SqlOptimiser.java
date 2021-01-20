@@ -1471,12 +1471,6 @@ class SqlOptimiser {
             ExpressionNode bbo = b.bNodes.getQuick(i);
 
             for (int k = 0, z = a.aNames.size(); k < z; k++) {
-
-                // don't seem to be adding indexes outside of main loop
-//                if (deletedContexts.contains(k)) {
-//                    continue;
-//                }
-
                 final CharSequence aan = a.aNames.getQuick(k);
                 final int aai = a.aIndexes.getQuick(k);
                 final ExpressionNode aao = a.aNodes.getQuick(k);
