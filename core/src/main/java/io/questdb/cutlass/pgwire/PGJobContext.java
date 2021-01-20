@@ -61,11 +61,11 @@ public class PGJobContext implements Closeable {
         Misc.free(selectAndTypesCache);
     }
 
-    public void handleClientOperation(PGConnectionContext context)
+    public void handleClientOperation(PGConnectionContext context, int operation)
             throws PeerIsSlowToWriteException,
             PeerIsSlowToReadException,
             PeerDisconnectedException,
             BadProtocolException {
-        context.handleClientOperation(compiler, selectAndTypesCache, selectAndTypesPool);
+        context.handleClientOperation(compiler, selectAndTypesCache, selectAndTypesPool, operation);
     }
 }

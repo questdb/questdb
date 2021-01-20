@@ -46,7 +46,7 @@ public class BuildFunctionFactory implements FunctionFactory {
     public Function newInstance(final ObjList<Function> args,
                                 final int position,
                                 final CairoConfiguration configuration,
-                                final SqlExecutionContext sqlExecutionContext) throws SqlException {
+                                final SqlExecutionContext sqlExecutionContext) {
 
         if (instance == null) {
             instance = createInstance(configuration);
@@ -58,13 +58,12 @@ public class BuildFunctionFactory implements FunctionFactory {
     private StrFunction createInstance(final CairoConfiguration configuration) {
         final BuildInformation buildInformation = configuration.getBuildInformation();
 
-        final CharSequence information = new StringBuilder("Build Information: QuestDB ")
-                .append(buildInformation.getQuestDbVersion())
-                .append(", JDK ")
-                .append(buildInformation.getJdkVersion())
-                .append(", Commit Hash ")
-                .append(buildInformation.getCommitHash())
-                .toString();
+        final CharSequence information = "Build Information: QuestDB " +
+                buildInformation.getQuestDbVersion() +
+                ", JDK " +
+                buildInformation.getJdkVersion() +
+                ", Commit Hash " +
+                buildInformation.getCommitHash();
 
         return new StrConstant(0, information);
     }
