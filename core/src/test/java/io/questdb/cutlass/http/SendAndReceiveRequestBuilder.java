@@ -35,6 +35,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.BrokenBarrierException;
 
 public class SendAndReceiveRequestBuilder {
     public final static String RequestHeaders = "Host: localhost:9000\r\n" +
@@ -189,7 +190,7 @@ public class SendAndReceiveRequestBuilder {
         execute(request + RequestHeaders, ResponseHeaders + response);
     }
 
-    public void executeMany(RequestAction action) throws InterruptedException {
+    public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
         final long fd = nf.socketTcp(true);
         nf.configureNoLinger(fd);
         try {
@@ -255,7 +256,7 @@ public class SendAndReceiveRequestBuilder {
 
     @FunctionalInterface
     public interface RequestAction {
-        void run(RequestExecutor executor) throws InterruptedException;
+        void run(RequestExecutor executor) throws InterruptedException, BrokenBarrierException;
     }
 
     public interface RequestExecutor {

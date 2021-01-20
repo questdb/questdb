@@ -2462,13 +2462,8 @@ public class IODispatcherTest {
 
     @Test
     public void testJsonQueryMultiThreaded() throws Exception {
-
-        if (Os.type == Os.WINDOWS) {
-            return;
-        }
-
         final int threadCount = 4;
-        final int requestsPerThread = 100_000;
+        final int requestsPerThread = 5000;
         final String[][] requests = {
                 {
                         "GET /exec?query=xyz%20where%20sym%20%3D%20%27UDEYY%27 HTTP/1.1\r\n" +
@@ -2631,23 +2626,18 @@ public class IODispatcherTest {
         public void run() {
             final Rnd rnd = new Rnd();
             try {
-                barrier.await();
-                for (int i = 0; i < count; i++) {
-                    int index = rnd.nextPositiveInt() % requests.length;
-                    try {
-                        sendAndReceive(
-                                NetworkFacadeImpl.INSTANCE,
-                                requests[index][0],
-                                requests[index][1],
-                                1,
-                                0,
-                                false
-                        );
-                    } catch (Throwable e) {
-                        System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
-                        throw e;
+                new SendAndReceiveRequestBuilder().executeMany(requester -> {
+                    barrier.await();
+                    for (int i = 0; i < count; i++) {
+                        int index = rnd.nextPositiveInt() % requests.length;
+                        try {
+                            requester.execute(requests[index][0], requests[index][1]);
+                        } catch (Throwable e) {
+                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            throw e;
+                        }
                     }
-                }
+                });
             } catch (Throwable e) {
                 e.printStackTrace();
                 errorCounter.incrementAndGet();
