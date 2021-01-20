@@ -43,7 +43,9 @@ import io.questdb.network.IODispatchers;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
 
 public class LineTcpServer implements Closeable {
@@ -61,37 +63,43 @@ public class LineTcpServer implements Closeable {
         this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
                 lineConfiguration.getNetDispatcherConfiguration(),
-                contextFactory
-        );
+                contextFactory);
         workerPool.assign(dispatcher);
         scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, workerPool, messageBus);
-        workerPool.assign(new Job() {
-            // Context blocked on LineTcpMeasurementScheduler queue
-            private ThreadLocal<LineTcpConnectionContext> refBusyContext = new ThreadLocal<>();
-            private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
+        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
+            workerPool.assign(i, new Job() {
+                // Context blocked on LineTcpMeasurementScheduler queue
+                private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
+                private int busyContextIndex = 0;
+                private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
 
-            private void onRequest(int operation, LineTcpConnectionContext context) {
-                assert refBusyContext.get() == null;
-                if (handleIO(context)) {
-                    refBusyContext.set(context);
-                }
-            }
-
-            @Override
-            public boolean run(int workerId) {
-                LineTcpConnectionContext busyContext = refBusyContext.get();
-                if (null == busyContext) {
-                    return dispatcher.processIOQueue(onRequest);
+                private void onRequest(int operation, LineTcpConnectionContext context) {
+                    if (handleIO(context)) {
+                        busyContexts.add(context);
+                    }
                 }
 
-                if (!handleIO(busyContext)) {
-                    refBusyContext.set(null);
-                    return true;
-                }
+                @Override
+                public boolean run(int workerId) {
+                    boolean busy = false;
+                    while (busyContexts.size() > 0) {
+                        int i = busyContextIndex % busyContexts.size();
+                        LineTcpConnectionContext busyContext = busyContexts.getQuick(i);
+                        if (handleIO(busyContext)) {
+                            busyContextIndex++;
+                            busy = true;
+                            break;
+                        }
+                        busyContexts.remove(i);
+                    }
 
-                return false;
-            }
-        });
+                    if (dispatcher.processIOQueue(onRequest)) {
+                        return true;
+                    }
+                    return busy;
+                }
+            });
+        }
 
         final Closeable cleaner = contextFactory::closeContextPool;
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
@@ -118,21 +126,18 @@ public class LineTcpServer implements Closeable {
                 workerPool,
                 local,
                 bus,
-                functionFactory
-        ) -> new LineTcpServer(
-                lineConfiguration,
-                cairoEngine,
-                workerPool,
-                bus
-        );
+                functionFactory) -> new LineTcpServer(
+                        lineConfiguration,
+                        cairoEngine,
+                        workerPool,
+                        bus);
         return WorkerPoolAwareConfiguration.create(
                 lineConfiguration.getWorkerPoolConfiguration(),
                 sharedWorkerPool,
                 log,
                 cairoEngine,
                 factory,
-                null
-        );
+                null);
     }
 
     @Override
@@ -162,7 +167,7 @@ public class LineTcpServer implements Closeable {
     }
 
     private class LineTcpConnectionContextFactory implements IOContextFactory<LineTcpConnectionContext>, Closeable, EagerThreadSetup {
-        private final io.questdb.std.ThreadLocal<WeakObjectPool<LineTcpConnectionContext>> contextPool;
+        private final ThreadLocal<WeakObjectPool<LineTcpConnectionContext>> contextPool;
         private boolean closed = false;
 
         public LineTcpConnectionContextFactory(LineTcpReceiverConfiguration configuration) {
@@ -174,7 +179,7 @@ public class LineTcpServer implements Closeable {
                 factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler);
             }
 
-            this.contextPool = new io.questdb.std.ThreadLocal<>(() -> new WeakObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
+            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override
