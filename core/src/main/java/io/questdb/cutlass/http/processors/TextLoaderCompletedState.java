@@ -69,11 +69,19 @@ public class TextLoaderCompletedState {
         return textLoader.getTableName();
     }
 
+    public CharSequence getTimestampCol() {
+        return textLoader.getTimestampCol();
+    }
+
     public long getWrittenLineCount() {
         return writtenLineCount;
     }
 
     public boolean isForceHeaders() {
         return textLoader.isForceHeaders();
+    }
+
+    public int getWarnings() {
+        return textLoader.getWarnings();
     }
 }

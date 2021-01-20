@@ -134,6 +134,10 @@ public final class TestUtils {
     }
 
     public static void assertEquals(CharSequence expected, CharSequence actual) {
+        assertEquals(null, expected, actual);
+    }
+
+    public static void assertEquals(String message, CharSequence expected, CharSequence actual) {
         if (expected == null && actual == null) {
             return;
         }
@@ -152,7 +156,7 @@ public final class TestUtils {
         Assert.assertEquals(expected.length(), actual.length());
         for (int i = 0; i < expected.length(); i++) {
             if (expected.charAt(i) != actual.charAt(i)) {
-                Assert.assertEquals(expected, actual);
+                Assert.assertEquals(message, expected, actual);
             }
         }
     }

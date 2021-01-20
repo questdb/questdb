@@ -68,7 +68,7 @@ public class EqSymStrFunctionFactory extends AbstractBooleanFunctionFactory impl
             if (constValue == null) {
                 return new NullCheckFunc(position, varFunc, isNegated);
             }
-            return new ConstCheckFunc(position, varFunc, constValue, isNegated);
+            return new ConstCheckFunc(position, func, constValue, isNegated);
         }
     }
 
@@ -94,11 +94,13 @@ public class EqSymStrFunctionFactory extends AbstractBooleanFunctionFactory impl
     }
 
     private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final static int NO_SYMBOL_TABLE= SymbolTable.VALUE_NOT_FOUND - 1;
         private final boolean isNegated;
-        private final Function arg;
+        private final SymbolFunction arg;
         private final CharSequence constant;
+        private int valueIndex = NO_SYMBOL_TABLE;
 
-        public ConstCheckFunc(int position, Function arg, CharSequence constant, boolean isNegated) {
+        public ConstCheckFunc(int position, SymbolFunction arg, CharSequence constant, boolean isNegated) {
             super(position);
             this.arg = arg;
             this.constant = constant;
@@ -112,7 +114,26 @@ public class EqSymStrFunctionFactory extends AbstractBooleanFunctionFactory impl
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != Chars.equalsNc(constant, arg.getSymbol(rec));
+            return valueIndex == NO_SYMBOL_TABLE ?
+                    isNegated != Chars.equalsNc(constant, arg.getSymbol(rec))
+                    : isNegated != (valueIndex != SymbolTable.VALUE_NOT_FOUND && arg.getInt(rec) == valueIndex)
+                    ;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            arg.init(symbolTableSource, executionContext);
+            if (arg.getStaticSymbolTable() != null) {
+                valueIndex = arg.getStaticSymbolTable().keyOf(constant);
+            } else {
+                valueIndex = NO_SYMBOL_TABLE;
+            }
+        }
+
+        @Override
+        public boolean isConstant() {
+            // This is called before init, and there is no way to find out if symbol exists beforehand
+            return false;
         }
     }
 

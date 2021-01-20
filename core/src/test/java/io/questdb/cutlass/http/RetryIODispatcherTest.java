@@ -110,10 +110,11 @@ public class RetryIODispatcherTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "05d7\r\n" +
+            "064a\r\n" +
             "+---------------------------------------------------------------------------------------------------------------+\r\n" +
             "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
             "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+            "|      Timestamp  |                                              NONE  |                 |         |            |\r\n" +
             "+---------------------------------------------------------------------------------------------------------------+\r\n" +
             "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
             "|  Rows imported  |                                                24  |                 |         |            |\r\n" +

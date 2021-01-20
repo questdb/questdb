@@ -70,6 +70,30 @@ public class IODispatcherTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
+            "Server: questDB/1.0\r\n" +
+            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "Content-Type: text/plain; charset=utf-8\r\n" +
+            "\r\n" +
+            "064a\r\n" +
+            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+            "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+            "|      Timestamp  |                                              NONE  |                 |         |            |\r\n" +
+            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+            "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
+            "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
+            "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
+            "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
+            "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
+            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "\r\n" +
+            "00\r\n" +
+            "\r\n";
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -663,29 +687,7 @@ public class IODispatcherTest {
     @Test
     public void testImportColumnMismatch() throws Exception {
         testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                ValidImportResponse
                 ,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
@@ -859,10 +861,11 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0398\r\n" +
+                        "040b\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
                         "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+                        "|      Timestamp  |                                              NONE  |                 |         |            |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|   Rows handled  |                                                 0  |                 |         |            |\r\n" +
                         "|  Rows imported  |                                                 0  |                 |         |            |\r\n" +
@@ -1022,32 +1025,10 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportMultipleOnSameConnection() throws Exception {
+    public void testImportMultipleOnSameConnection()
+            throws Exception {
         testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-                ,
+                ValidImportResponse,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -1109,29 +1090,7 @@ public class IODispatcherTest {
     @Test
     public void testImportMultipleOnSameConnectionFragmented() throws Exception {
         testImport(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n",
+                ValidImportResponse,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -1304,29 +1263,7 @@ public class IODispatcherTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--";
 
-                String expectedResponse = "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/plain; charset=utf-8\r\n" +
-                        "\r\n" +
-                        "05d7\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-                        "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-                        "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-                        "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-                        "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n";
+                String expectedResponse = ValidImportResponse;
 
 
                 NetworkFacade nf = new NetworkFacadeImpl() {
@@ -3600,7 +3537,6 @@ public class IODispatcherTest {
                             Assert.assertEquals(0, nf.connect(fd, sockAddr));
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
 
-                            byte[] expectedResponse1 = expectedResponse.getBytes();
                             long bufLen = request.length();
                             long ptr = Unsafe.malloc(bufLen);
                             try {
@@ -3609,7 +3545,7 @@ public class IODispatcherTest {
                                         .withPauseBetweenSendAndReceive(0)
                                         .withPrintOnly(false)
                                         .withExpectDisconnect(true)
-                                        .executeExplicit(request, fd, expectedResponse1, 200, ptr, clientStateListener);
+                                        .executeExplicit(request, fd, expectedResponse, 200, ptr, clientStateListener);
                             } finally {
                                 Unsafe.free(ptr, bufLen);
                             }

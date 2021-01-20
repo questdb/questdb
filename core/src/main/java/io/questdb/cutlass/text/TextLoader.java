@@ -152,6 +152,14 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getTableName();
     }
 
+    public CharSequence getTimestampCol() {
+        return textWriter.getTimestampCol();
+    }
+
+    public int getWarnings() {
+        return textWriter.getWarnings();
+    }
+
     public long getWrittenLineCount() {
         return textWriter.getWrittenLineCount();
     }
