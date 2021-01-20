@@ -42,7 +42,7 @@ public class NullIfIFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new NullIfIFunction(position, args.getQuick(0), args.getQuick(1).getInt(null));
     }
 
