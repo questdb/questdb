@@ -151,7 +151,7 @@ public class LineTcpServer implements Closeable {
                 case NEEDS_WRITE:
                     context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     return false;
-                case NEEDS_CPU:
+                case QUEUE_FULL:
                     return true;
                 case NEEDS_DISCONNECT:
                     context.getDispatcher().disconnect(context);

@@ -1220,7 +1220,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             case NEEDS_WRITE:
                 context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                 break;
-            case NEEDS_CPU:
+            case QUEUE_FULL:
                 break;
             case NEEDS_DISCONNECT:
                 context.getDispatcher().disconnect(context);

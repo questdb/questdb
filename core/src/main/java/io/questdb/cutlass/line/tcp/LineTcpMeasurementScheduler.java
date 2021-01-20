@@ -79,6 +79,9 @@ import io.questdb.std.str.Path;
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private static final int REBALANCE_EVENT_ID = -1; // A rebalance event is used to rebalance load across different threads
+    private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is
+    // not able to populate it for some reason, the event needs to be committed to the
+    // queue incomplete
     private static final IntHashSet ALLOWED_LONG_CONVERSIONS = new IntHashSet();
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
@@ -93,7 +96,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
     private Sequence pubSeq;
-    private long nextEventCursor = -1;
+    private final ReentrantLock rebalanceLock = new ReentrantLock();
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
 
@@ -205,16 +208,23 @@ class LineTcpMeasurementScheduler implements Closeable {
             return true;
         }
         if (null != tableUpdateDetails) {
-            LineTcpMeasurementEvent event = getNewEvent();
-            if (null != event) {
+            long seq = getNextPublisherEventSequence();
+            if (seq >= 0) {
                 try {
+                    LineTcpMeasurementEvent event = queue.get(seq);
+                    event.threadId = INCOMPLETE_EVENT_ID;
                     event.createMeasurementEvent(tableUpdateDetails, protoParser, charSink);
                     return true;
                 } finally {
-                    pubSeq.done(nextEventCursor);
-                    nextEventCursor = -1;
-                    if (tableUpdateDetails.nUpdates++ > nUpdatesPerLoadRebalance) {
-                        loadRebalance();
+                    pubSeq.done(seq);
+                    if (rebalanceLock.tryLock()) {
+                        try {
+                            if (tableUpdateDetails.nUpdates++ > nUpdatesPerLoadRebalance) {
+                                loadRebalance();
+                            }
+                        } finally {
+                            rebalanceLock.unlock();
+                        }
                     }
                 }
             }
@@ -245,13 +255,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    void commitRebalanceEvent(LineTcpMeasurementEvent event, int fromThreadId, int toThreadId, TableUpdateDetails tableUpdateDetails) {
-        assert isOpen() && nextEventCursor != -1 && queue.get(nextEventCursor) == event;
-        event.createRebalanceEvent(fromThreadId, toThreadId, tableUpdateDetails);
-        pubSeq.done(nextEventCursor);
-        nextEventCursor = -1;
-    }
-
     int[] getLoadByThread() {
         return loadByThread;
     }
@@ -264,22 +267,13 @@ class LineTcpMeasurementScheduler implements Closeable {
         return nRebalances;
     }
 
-    LineTcpMeasurementEvent getNewEvent() {
+    long getNextPublisherEventSequence() {
         assert isOpen();
-        if (nextEventCursor != -1 || (nextEventCursor = pubSeq.next()) > -1) {
-            return queue.get(nextEventCursor);
+        long seq;
+        while ((seq = pubSeq.next()) == -2) {
+            ;
         }
-
-        while (nextEventCursor == -2) {
-            nextEventCursor = pubSeq.next();
-        }
-
-        if (nextEventCursor < 0) {
-            nextEventCursor = -1;
-            return null;
-        }
-
-        return queue.get(nextEventCursor);
+        return seq;
     }
 
     private boolean isOpen() {
@@ -357,20 +351,23 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         if (null != tableToMove) {
-            LineTcpMeasurementEvent event = getNewEvent();
-            if (null == event) {
-                return;
+            long seq = getNextPublisherEventSequence();
+            if (seq >= 0) {
+                try {
+                    LineTcpMeasurementEvent event = queue.get(seq);
+                    event.threadId = INCOMPLETE_EVENT_ID;
+                    event.createRebalanceEvent(fromThreadId, toThreadId, tableToMove);
+                    tableToMove.threadId = toThreadId;
+                    LOG.info()
+                            .$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances)
+                            .$(", table=").$(tableToMove.tableName)
+                            .$(", fromThreadId=").$(fromThreadId)
+                            .$(", toThreadId=").$(toThreadId)
+                            .$(']').$();
+                } finally {
+                    pubSeq.done(seq);
+                }
             }
-
-            LOG.info()
-                    .$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances)
-                    .$(", table=").$(tableToMove.tableName)
-                    .$(", fromThreadId=").$(fromThreadId)
-                    .$(", toThreadId=").$(toThreadId)
-                    .$(']').$();
-
-            commitRebalanceEvent(event, fromThreadId, toThreadId, tableToMove);
-            tableToMove.threadId = toThreadId;
         }
     }
 
@@ -521,7 +518,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         throw CairoException.instance(0).put("line prototol entity type cannot be mapped to column type [entityType=").put(entityType).put(", columnType=").put(columnType).put(']');
     }
 
-    class LineTcpMeasurementEvent implements Closeable {
+    private class LineTcpMeasurementEvent implements Closeable {
         private final CharSequenceCache cache;
         private final MicrosecondClock clock;
         private final LineProtoTimestampAdapter timestampAdapter;

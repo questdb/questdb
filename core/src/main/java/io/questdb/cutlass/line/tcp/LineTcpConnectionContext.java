@@ -142,13 +142,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return peerDisconnected;
     }
 
-    private boolean handleDisconnectEvent() {
-        if (recvBufPos < recvBufEnd && !peerDisconnected) {
-            return false;
-        }
-        return doHandleDisconnectEvent();
-    }
-
     IOContextResult handleIO() {
         read();
         while (true) {
@@ -158,7 +151,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     case MEASUREMENT_COMPLETE: {
                         if (!invalidMeasurement) {
                             if (!scheduler.tryCommitNewEvent(protoParser, charSink)) {
-                                return IOContextResult.NEEDS_CPU;
+                                // Waiting for writer threads to drain queue, request callback as soon as possible
+                                if (checkQueueFullLogHysteresis()) {
+                                    LOG.info().$('[').$(fd).$("] queue full, consider increasing queue size or number of writer jobs").$();
+                                }
+                                return IOContextResult.QUEUE_FULL;
                             }
                         } else {
                             int position = (int) (protoParser.getBufferAddress() - recvBufStartOfMeasurement);
@@ -228,6 +225,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     enum IOContextResult {
-        NEEDS_READ, NEEDS_WRITE, NEEDS_CPU, NEEDS_DISCONNECT
+        NEEDS_READ, NEEDS_WRITE, QUEUE_FULL, NEEDS_DISCONNECT
     }
 }
