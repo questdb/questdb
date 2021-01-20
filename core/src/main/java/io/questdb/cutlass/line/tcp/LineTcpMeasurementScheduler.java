@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.jetbrains.annotations.NotNull;
@@ -59,7 +60,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -89,7 +89,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
     private Sequence pubSeq;
-    private final ReentrantLock rebalanceLock = new ReentrantLock();
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
 
@@ -183,7 +182,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-            loadByThread[stats.threadId] += stats.nUpdates;
+            loadByThread[stats.threadId] += stats.nUpdates.get();
         }
     }
 
@@ -210,13 +209,13 @@ class LineTcpMeasurementScheduler implements Closeable {
                     return true;
                 } finally {
                     pubSeq.done(seq);
-                    if (rebalanceLock.tryLock()) {
-                        try {
-                            if (tableUpdateDetails.nUpdates++ > nUpdatesPerLoadRebalance) {
+                    if (tableUpdateDetails.nUpdates.incrementAndGet() > nUpdatesPerLoadRebalance) {
+                        if (tableUpdateDetailsLock.tryLock()) {
+                            try {
                                 loadRebalance();
+                            } finally {
+                                tableUpdateDetailsLock.unlock();
                             }
-                        } finally {
-                            rebalanceLock.unlock();
                         }
                     }
                 }
@@ -317,10 +316,10 @@ class LineTcpMeasurementScheduler implements Closeable {
             String leastLoadedTableName = null;
             for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                 TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-                if (stats.threadId == highestLoadedThreadId && stats.nUpdates > 0) {
+                if (stats.threadId == highestLoadedThreadId && stats.nUpdates.get() > 0) {
                     nTables++;
-                    if (stats.nUpdates < lowestLoad) {
-                        lowestLoad = stats.nUpdates;
+                    if (stats.nUpdates.get() < lowestLoad) {
+                        lowestLoad = stats.nUpdates.get();
                         leastLoadedTableName = stats.tableName;
                     }
                 }
@@ -340,7 +339,8 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-            stats.nUpdates = 0;
+            stats.nUpdates.set(0);
+            ;
         }
 
         if (null != tableToMove) {
@@ -515,7 +515,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final MicrosecondClock clock;
         private final LineProtoTimestampAdapter timestampAdapter;
         private int threadId;
-        private long timestamp;
 
         private TableUpdateDetails tableUpdateDetails;
         private long bufLo;
@@ -666,7 +665,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private class TableUpdateDetails implements Closeable {
         private final String tableName;
         private int threadId;
-        private int nUpdates; // Number of updates since the last load rebalance
+        private final AtomicInteger nUpdates = new AtomicInteger(); // Number of updates since the last load rebalance
         private TableWriter writer;
         private int nUncommitted = 0;
         private final ConcurrentHashMap<Integer> columnIndexByName = new ConcurrentHashMap<>();
@@ -713,7 +712,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final Sequence sequence;
         private final AppendMemory appendMemory = new AppendMemory();
         private final Path path = new Path();
-        private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
         private final String jobName;
         private long lastMaintenanceJobMillis = 0;
 
@@ -799,8 +797,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 // until cursor value is released
                 if (eventProcessed) {
                     sequence.done(cursor);
-                    // } else {
-                    // return false;
+                } else {
+                    return false;
                 }
             }
         }
