@@ -26,6 +26,7 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
@@ -121,6 +122,8 @@ public class TextLoader implements Closeable, Mutable {
                 .$("`, overwrite=").$(overwrite)
                 .$(", durable=").$(durable)
                 .$(", atomicity=").$(atomicity)
+                .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
+                .$(", timestamp=").$(timestampIndexCol)
                 .$(']').$();
     }
 

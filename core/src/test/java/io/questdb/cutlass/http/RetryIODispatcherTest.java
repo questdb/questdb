@@ -110,21 +110,21 @@ public class RetryIODispatcherTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "064a\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
-            "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-            "|      Timestamp  |                                              NONE  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-            "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                                DispatchingBaseNum  |                   STRING  |         0  |\r\n" +
-            "|              1  |                                    PickupDateTime  |                     DATE  |         0  |\r\n" +
-            "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-            "|              3  |                                      PUlocationID  |                   STRING  |         0  |\r\n" +
-            "|              4  |                                      DOlocationID  |                   STRING  |         0  |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "0666\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |      Errors  |\r\n" +
+            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+            "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
+            "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|              0  |                                DispatchingBaseNum  |                   STRING  |           0  |\r\n" +
+            "|              1  |                                    PickupDateTime  |                     DATE  |           0  |\r\n" +
+            "|              2  |                                   DropOffDatetime  |                   STRING  |           0  |\r\n" +
+            "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
+            "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
             "\r\n";
@@ -266,7 +266,9 @@ public class RetryIODispatcherTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
-                ).run((engine) -> new SendAndReceiveRequestBuilder().execute(ValidImportRequest,
+                ).run((engine) -> new SendAndReceiveRequestBuilder()
+                .withExpectDisconnect(true)
+                .execute(ValidImportRequest,
                 "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +

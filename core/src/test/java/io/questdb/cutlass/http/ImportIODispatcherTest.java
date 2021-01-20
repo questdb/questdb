@@ -174,19 +174,19 @@ public class ImportIODispatcherTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "0564\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|      Location:  |                                             trips  |        Pattern  | Locale  |    Errors  |\r\n" +
-            "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-            "|      Timestamp  |                                              NONE  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-            "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                                              Col1  |                   STRING  |         0  |\r\n" +
-            "|              1  |                                    PickupDateTime  |                TIMESTAMP  |         0  |\r\n" +
-            "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "057c\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|      Location:  |                                             trips  |        Pattern  | Locale  |      Errors  |\r\n" +
+            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+            "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
+            "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|              0  |                                              Col1  |                   STRING  |           0  |\r\n" +
+            "|              1  |                                    PickupDateTime  |                TIMESTAMP  |           0  |\r\n" +
+            "|              2  |                                   DropOffDatetime  |                   STRING  |           0  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
             "\r\n";
@@ -197,21 +197,21 @@ public class ImportIODispatcherTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "064a\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|      Location:  |                                             trips  |        Pattern  | Locale  |    Errors  |\r\n" +
-            "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-            "|      Timestamp  |                                    PickupDateTime  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-            "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                                              Col1  |                   STRING  |         0  |\r\n" +
-            "|              1  |                                              Col2  |                   STRING  |         0  |\r\n" +
-            "|              2  |                                              Col3  |                   STRING  |         0  |\r\n" +
-            "|              3  |                                              Col4  |                   STRING  |         0  |\r\n" +
-            "|              4  |                                    PickupDateTime  |                TIMESTAMP  |         0  |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "0666\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|      Location:  |                                             trips  |        Pattern  | Locale  |      Errors  |\r\n" +
+            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+            "|      Timestamp  |                                    PickupDateTime  |                 |         |              |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
+            "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|              0  |                                              Col1  |                   STRING  |           0  |\r\n" +
+            "|              1  |                                              Col2  |                   STRING  |           0  |\r\n" +
+            "|              2  |                                              Col3  |                   STRING  |           0  |\r\n" +
+            "|              3  |                                              Col4  |                   STRING  |           0  |\r\n" +
+            "|              4  |                                    PickupDateTime  |                TIMESTAMP  |           0  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
             "\r\n";
@@ -222,19 +222,19 @@ public class ImportIODispatcherTest {
             "Transfer-Encoding: chunked\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "\r\n" +
-            "0564\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|      Location:  |                                             trips  |        Pattern  | Locale  |    Errors  |\r\n" +
-            "|   Partition by  |                                              NONE  |                 |         |  TblVlUsd  |\r\n" +
-            "|      Timestamp  |                                              NONE  |                 |         |  TblVlUsd  |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-            "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                                              Col1  |                   STRING  |         0  |\r\n" +
-            "|              1  |                                    PickupDateTime  |                TIMESTAMP  |         0  |\r\n" +
-            "|              2  |                                   DropOffDatetime  |                   STRING  |         0  |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+            "057c\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|      Location:  |                                             trips  |        Pattern  | Locale  |      Errors  |\r\n" +
+            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
+            "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+            "|              0  |                                              Col1  |                   STRING  |           0  |\r\n" +
+            "|              1  |                                    PickupDateTime  |                TIMESTAMP  |           0  |\r\n" +
+            "|              2  |                                   DropOffDatetime  |                   STRING  |           0  |\r\n" +
+            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
             "\r\n";
@@ -260,7 +260,7 @@ public class ImportIODispatcherTest {
             "{\"name\":\"DropOffDatetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0}" +
             "]}\r\n" +
             "00\r\n"+
-            "\r\n";;
+            "\r\n";
 
     private final String WarningValidImportResponse2 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
@@ -394,8 +394,8 @@ public class ImportIODispatcherTest {
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     AtomicInteger success = new AtomicInteger();
 
-                    String ddl1 = "(Col1+SYMBOL+NOCACHE,PickupDateTime+TIMESTAMP," +
-                            "DropOffDatetime+SYMBOL+NOCACHE+INDEX)+timestamp(PickupDateTime)";
+                    String ddl1 = "(Col1+SYMBOL+NOCACHE+INDEX,PickupDateTime+TIMESTAMP," +
+                            "DropOffDatetime+SYMBOL)+timestamp(PickupDateTime)";
                     String ddl2 = "(Col1+SYMBOL+NOCACHE+INDEX,Col2+STRING,Col3+STRING,Col4+STRING,PickupDateTime+TIMESTAMP)" +
                             "+timestamp(PickupDateTime)";
                     String[] ddl = new String[]{ddl1, ddl2};
@@ -469,25 +469,6 @@ public class ImportIODispatcherTest {
                             "Expected successful import count does not match actual imports",
                             totalImports,
                             success.get());
-
-//                    for (int i = 0; i < parallelCount; i++) {
-//                        final String tableName = "trip" + i;
-//                        new SendAndReceiveRequestBuilder().withExpectDisconnect(false).executeMany(httpClient -> {
-//                            for (int row = 0; row < importRowCount; row++) {
-//                                final String request = "SELECT+Col1+FROM+" + tableName + "+WHERE+Col1%3D%27SYM-" + row + "%27; ";
-//
-//                                httpClient.executeWithStandardHeaders(
-//                                        "GET /query?query=" + request + "HTTP/1.1\r\n",
-//                                        "8" + (stringLen(row) * 2) + "\r\n" +
-//                                                "{\"query\":\"SELECT Col1 FROM " + tableName + " WHERE Col1='SYM-"
-//                                                + row +
-//                                                "';\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"}]," +
-//                                                "\"dataset\":[[\"SYM-" + row + "\"]],\"count\":1}\r\n"
-//                                                + "00\r\n"
-//                                                + "\r\n");
-//                            }
-//                        });
-//                    }
                 });
     }
 

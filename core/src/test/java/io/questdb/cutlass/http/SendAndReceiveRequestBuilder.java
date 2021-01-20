@@ -81,7 +81,9 @@ public class SendAndReceiveRequestBuilder {
                     Assert.fail("could not connect: " + nf.errno());
                 }
                 Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                if (!expectDisconnect) {
+                    NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                }
 
                 executeWithSocket(request, response, fd);
             } finally {
@@ -201,6 +203,9 @@ public class SendAndReceiveRequestBuilder {
                 Assert.fail("could not connect: " + nf.errno());
             }
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+            if (!expectDisconnect) {
+                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+            }
 
             try {
                 RequestExecutor executor = new RequestExecutor() {

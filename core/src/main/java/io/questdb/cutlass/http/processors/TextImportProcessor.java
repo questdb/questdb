@@ -60,7 +60,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int TO_STRING_COL2_PAD = 50;
     private static final int TO_STRING_COL3_PAD = 15;
     private static final int TO_STRING_COL4_PAD = 7;
-    private static final int TO_STRING_COL5_PAD = 10;
+    private static final int TO_STRING_COL5_PAD = 12;
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
@@ -68,6 +68,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
     private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
+    private static final String OVERRIDDEN_FROM_TABLE = "From Table";
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
@@ -346,7 +347,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
                 if (hasFlag(textLoaderCompletedState.getWarnings(), PARTITION_TYPE_MISMATCH)) {
-                    pad(socket, TO_STRING_COL5_PAD, "TblVlUsd");
+                    pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);
                 } else {
                     pad(socket, TO_STRING_COL5_PAD, "");
                 }
@@ -358,7 +359,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
                 if (hasFlag(textLoaderCompletedState.getWarnings(), TIMESTAMP_MISMATCH)) {
-                    pad(socket, TO_STRING_COL5_PAD, "TblVlUsd");
+                    pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);
                 }else {
                     pad(socket, TO_STRING_COL5_PAD, "");
                 }

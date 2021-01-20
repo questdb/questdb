@@ -311,8 +311,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 } else {
                     writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
                     if (timestampIndexCol != null &&
-                            (writer.getDesignatedTimestampColumnName() == null ||
-                                    !Chars.equals(timestampIndexCol, writer.getDesignatedTimestampColumnName()))) {
+                            !Chars.equalsNc(timestampIndexCol, writer.getDesignatedTimestampColumnName())) {
                         warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
                     }
                     timestampIndexCol = writer.getDesignatedTimestampColumnName();
