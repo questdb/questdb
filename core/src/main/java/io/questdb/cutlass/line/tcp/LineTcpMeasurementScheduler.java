@@ -45,11 +45,7 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
-import io.questdb.cutlass.line.CachedCharSequence;
-import io.questdb.cutlass.line.CharSequenceCache;
-import io.questdb.cutlass.line.LineProtoParser;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.cutlass.line.TruncatedLineProtoLexer;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -64,9 +60,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -82,7 +76,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private static final int INCOMPLETE_EVENT_ID = -2; // An incomplete event is used when the queue producer has grabbed an event but is
     // not able to populate it for some reason, the event needs to be committed to the
     // queue incomplete
-    private static final IntHashSet ALLOWED_LONG_CONVERSIONS = new IntHashSet();
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final CairoConfiguration cairoConfiguration;
@@ -519,16 +512,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private class LineTcpMeasurementEvent implements Closeable {
-        private final CharSequenceCache cache;
         private final MicrosecondClock clock;
         private final LineProtoTimestampAdapter timestampAdapter;
-        private final LongList addresses = new LongList();
-        private TruncatedLineProtoLexer lexer;
-        private long measurementNameAddress;
-        private int firstFieldIndex;
-        private long timestampAddress;
-        private int errorPosition;
-        private int errorCode;
         private int threadId;
         private long timestamp;
 
@@ -543,68 +528,17 @@ class LineTcpMeasurementScheduler implements Closeable {
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
             bufSize = (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
             bufLo = Unsafe.malloc(bufSize);
-            lexer = new TruncatedLineProtoLexer(maxMeasurementSize);
-            cache = lexer.getCharSequenceCache();
             this.clock = clock;
             this.timestampAdapter = timestampAdapter;
-            lexer.withParser(new LineProtoParser() {
-                @Override
-                public void onError(int position, int state, int code) {
-                    assert errorPosition == -1;
-                    errorPosition = position;
-                    errorCode = code;
-                }
-
-                @Override
-                public void onEvent(CachedCharSequence token, int type, CharSequenceCache cache) {
-                    assert cache == LineTcpMeasurementEvent.this.cache;
-                    switch (type) {
-                        case EVT_MEASUREMENT:
-                            assert measurementNameAddress == 0;
-                            measurementNameAddress = token.getCacheAddress();
-                            break;
-                        case EVT_TAG_NAME:
-                        case EVT_TAG_VALUE:
-                            assert firstFieldIndex == -1;
-                            addresses.add(token.getCacheAddress());
-                            break;
-                        case EVT_FIELD_NAME:
-                            if (firstFieldIndex == -1) {
-                                firstFieldIndex = addresses.size() / 2;
-                            }
-                        case EVT_FIELD_VALUE:
-                            assert firstFieldIndex != -1;
-                            addresses.add(token.getCacheAddress());
-                            break;
-                        case EVT_TIMESTAMP:
-                            assert timestampAddress == 0;
-                            timestampAddress = token.getCacheAddress();
-                            break;
-                        default:
-                            throw new RuntimeException("Unrecognised type " + type);
-                    }
-                }
-
-                @Override
-                public void onLineEnd(CharSequenceCache cache) {
-                }
-            });
         }
 
         @Override
         public void close() {
-            lexer.close();
-            lexer = null;
             Unsafe.free(bufLo, bufSize);
             bufLo = 0;
         }
 
         private void clear() {
-            measurementNameAddress = 0;
-            addresses.clear();
-            firstFieldIndex = -1;
-            timestampAddress = 0;
-            errorPosition = -1;
         }
 
         void createRebalanceEvent(int fromThreadId, int toThreadId, TableUpdateDetails tableUpdateDetails) {
@@ -724,70 +658,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        int getErrorCode() {
-            return errorCode;
-        }
-
-        int getErrorPosition() {
-            return errorPosition;
-        }
-
-        int getFirstFieldIndex() {
-            return firstFieldIndex;
-        }
-
-        int getNValues() {
-            return addresses.size() / 2;
-        }
-
-        CharSequence getName(int i) {
-            return cache.get(addresses.getQuick(2 * i));
-        }
-
-        CharSequence getTableName() {
-            return cache.get(measurementNameAddress);
-        }
-
-        long getTimestamp() throws NumericException {
-            if (timestampAddress != 0) {
-                try {
-                    timestamp = timestampAdapter.getMicros(cache.get(timestampAddress));
-                    timestampAddress = 0;
-                } catch (NumericException e) {
-                    LOG.error().$("invalid timestamp: ").$(cache.get(timestampAddress)).$();
-                    timestamp = Long.MIN_VALUE;
-                    throw e;
-                }
-            }
-            return timestamp;
-        }
-
-        CharSequence getValue(int i) {
-            return cache.get(addresses.getQuick(2 * i + 1));
-        }
-
         boolean isRebalanceEvent() {
             return threadId == REBALANCE_EVENT_ID;
-        }
-
-        boolean isSuccess() {
-            return errorPosition == -1;
-        }
-
-        long parseLine(long bytesPtr, long hi) {
-            clear();
-            long recvBufLineNext = lexer.parseLine(bytesPtr, hi);
-            if (recvBufLineNext != -1) {
-                if (isSuccess() && firstFieldIndex == -1) {
-                    errorPosition = (int) (recvBufLineNext - bytesPtr);
-                    errorCode = LineProtoParser.ERROR_EMPTY;
-                }
-
-                if (isSuccess() && timestampAddress == 0) {
-                    timestamp = clock.getTicks();
-                }
-            }
-            return recvBufLineNext;
         }
     }
 
@@ -1039,11 +911,5 @@ class LineTcpMeasurementScheduler implements Closeable {
             this.protoParser = protoParser;
             return this;
         }
-    }
-
-    static {
-        ALLOWED_LONG_CONVERSIONS.add(ColumnType.SHORT);
-        ALLOWED_LONG_CONVERSIONS.add(ColumnType.LONG256);
-        ALLOWED_LONG_CONVERSIONS.add(ColumnType.TIMESTAMP);
     }
 }

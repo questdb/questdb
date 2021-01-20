@@ -129,6 +129,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public int getMaxUncommittedRows() {
+                return 25;
+            }
+
+            @Override
             public MicrosecondClock getMicrosecondClock() {
                 return new MicrosecondClockImpl() {
                     @Override
