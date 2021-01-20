@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
@@ -125,4 +126,9 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 	public String getAuthDbPath() {
 	    return null;
 	}
+
+    @Override
+    public int getDefaultPartitionBy() {
+        return PartitionBy.DAY;
+    }
 }

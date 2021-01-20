@@ -24,16 +24,34 @@
 
 package io.questdb;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Properties;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.MimeTypesCache;
+import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMilliTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoSecondTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
@@ -42,8 +60,25 @@ import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.SelectFacadeImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -55,12 +90,6 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.File;
-import java.util.Arrays;
-import java.util.Map;
-import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -290,6 +319,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpMaxUncommittedRows;
     private long lineTcpMaintenanceJobHysteresisInMs;
     private String lineTcpAuthDbPath;
+    private int lineDefaultPartitionBy;
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -623,6 +653,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpMaxUncommittedRows = getInt(properties, env, "line.tcp.max.uncommitted.rows", 1000);
             this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, env, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
             this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
+            String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
+            this.lineDefaultPartitionBy = PartitionBy.fromString(defaultPartitionByProperty);
+            if (this.lineDefaultPartitionBy == -1) {
+                log.info().$("invalid partition by ").$(defaultPartitionByProperty).$("), will use DAY").$();
+                this.lineDefaultPartitionBy = PartitionBy.DAY;
+            }
             if (null != lineTcpAuthDbPath) {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
@@ -1948,6 +1984,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getAuthDbPath() {
             return lineTcpAuthDbPath;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return lineDefaultPartitionBy;
         }
     }
 

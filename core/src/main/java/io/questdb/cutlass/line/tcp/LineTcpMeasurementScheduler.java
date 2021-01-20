@@ -41,7 +41,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -88,6 +87,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final double maxLoadRatio;
     private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
+    private final int defaultPartitionBy;
     private Sequence pubSeq;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
@@ -143,6 +143,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         maxLoadRatio = lineConfiguration.getMaxLoadRatio();
         maxUncommittedRows = lineConfiguration.getMaxUncommittedRows();
         maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
+        defaultPartitionBy = lineConfiguration.getDefaultPartitionBy();
     }
 
     @Override
@@ -881,7 +882,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         @Override
         public int getPartitionBy() {
-            return PartitionBy.DAY;
+            return defaultPartitionBy;
         }
 
         @Override

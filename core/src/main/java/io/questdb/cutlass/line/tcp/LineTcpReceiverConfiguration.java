@@ -66,4 +66,6 @@ public interface LineTcpReceiverConfiguration {
     long getMaintenanceJobHysteresisInMs();
     
     String getAuthDbPath();
+
+    int getDefaultPartitionBy();
 }

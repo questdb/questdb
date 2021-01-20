@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
@@ -248,6 +249,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1.9, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
         Assert.assertEquals(250, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
@@ -560,6 +562,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1.5, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
             Assert.assertEquals(100000, configuration.getLineTcpReceiverConfiguration().getMaxUncommittedRows());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceJobHysteresisInMs());
+            Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
 
             Assert.assertTrue(configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled());
             Assert.assertEquals(512, configuration.getCairoConfiguration().getTelemetryConfiguration().getQueueCapacity());
