@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -46,17 +47,22 @@ public class NowFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends TimestampFunction implements Function {
-
-        private final long now;
+        private long now;
+        private final MicrosecondClock clock;
 
         public Func(int position, MicrosecondClock clock) {
             super(position);
-            this.now = clock.getTicks();
+            this.clock = clock;
         }
 
         @Override
         public long getTimestamp(Record rec) {
             return now;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.now = clock.getTicks();
         }
 
         @Override

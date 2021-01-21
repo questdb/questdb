@@ -577,4 +577,57 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testNowIsSameForAllQueryParts() throws Exception {
+        //yyyy-MM-ddTHH:mm:ssz
+        try {
+            currentMicros = 0;
+            assertMemoryLeak(() -> {
+                //create table
+                String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+                compiler.compile(createStmt, sqlExecutionContext);
+                //insert
+                executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+                String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
+                        "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
+
+                String query1 = "select now() as now1, now() as now2, symbol, timestamp FROM ob_mem_snapshot WHERE now() = now()";
+                printSqlResult(expected, query1, "timestamp", null, null, true, true, true);
+
+                expected = "symbol\tme_seq_num\ttimestamp\n" +
+                        "1\t1\t2020-12-31T23:59:59.000000Z\n";
+                String query = "select * from ob_mem_snapshot where timestamp > now()";
+                printSqlResult(expected, query, "timestamp", null, null, true, true, false);
+            });
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+//    @Test
+//    public void testNowPerformsBinarySearchOnTimestamp() throws Exception {
+//        //yyyy-MM-ddTHH:mm:ssz
+//        try {
+//            currentMicros = 0;
+//            assertMemoryLeak(() -> {
+//                int hoursCount = 2000;
+//
+//                //create table
+//                // One hour step timestamps from epoch for 2000 steps
+//                String createStmt = "create table x as (select x * 3600 * 1000 * 1000 timestamp from long_sequence(2000)) timestamp(timestamp) partition by DAY";
+//                compiler.compile(createStmt, sqlExecutionContext);
+//
+//                String query1 = "select now() as now1, now() as now2, symbol, timestamp FROM ob_mem_snapshot WHERE now() = now()";
+//                printSqlResult(expected, query1, "timestamp", null, null, true, true, true);
+//
+//                expected = "symbol\tme_seq_num\ttimestamp\n" +
+//                        "1\t1\t2020-12-31T23:59:59.000000Z\n";
+//                String query = "select * from ob_mem_snapshot where timestamp > now()";
+//                printSqlResult(expected, query, "timestamp", null, null, true, true, false);
+//            });
+//        } finally {
+//            currentMicros = -1;
+//        }
+//    }
+
 }
