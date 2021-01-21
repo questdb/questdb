@@ -65,6 +65,7 @@ public class SendAndReceiveRequestBuilder {
     private boolean expectDisconnect;
     private int requestCount = 1;
     private int compareLength = -1;
+    private int maxWaitTimeoutMs = 5000;
 
     public void execute(
             String request,
@@ -146,7 +147,6 @@ public class SendAndReceiveRequestBuilder {
                 disconnected = true;
                 break;
             } else {
-                int maxWaitTimeoutMs = 5000;
                 if (System.currentTimeMillis() - timestamp > maxWaitTimeoutMs) {
                     timeoutExpired = true;
                     break;
@@ -256,6 +256,11 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withRequestCount(int requestCount) {
         this.requestCount = requestCount;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withMaxTimeout(int maxTimeout) {
+        this.maxWaitTimeoutMs = maxTimeout;
         return this;
     }
 
