@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
+import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,6 +42,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
+
+import static io.questdb.cutlass.text.TextLoadWarning.*;
 
 
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
@@ -57,7 +60,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final int TO_STRING_COL2_PAD = 50;
     private static final int TO_STRING_COL3_PAD = 15;
     private static final int TO_STRING_COL4_PAD = 7;
-    private static final int TO_STRING_COL5_PAD = 10;
+    private static final int TO_STRING_COL5_PAD = 12;
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
@@ -65,6 +68,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
     private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
+    private static final String OVERRIDDEN_FROM_TABLE = "From Table";
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
@@ -230,8 +234,22 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                         .putQuoted("location").put(':').encodeUtf8AndQuote(completeState.getTableName()).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows + completeState.getErrorLineCount()).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
-                        .putQuoted("header").put(':').put(completeState.isForceHeaders()).put(',')
-                        .putQuoted("columns").put(':').put('[');
+                        .putQuoted("header").put(':').put(completeState.isForceHeaders()).put(',');
+                if (completeState.getWarnings() != TextLoadWarning.NONE) {
+                    final int warningFlags = completeState.getWarnings();
+                    socket.putQuoted("warnings").put(':').put('[');
+                    boolean isFirst = true;
+                    if ((warningFlags & TextLoadWarning.TIMESTAMP_MISMATCH) != TextLoadWarning.NONE) {
+                        isFirst = false;
+                        socket.putQuoted("Existing table timestamp column is used");
+                    }
+                    if ((warningFlags & PARTITION_TYPE_MISMATCH) != TextLoadWarning.NONE) {
+                        if (!isFirst) socket.put(',');
+                        socket.putQuoted("Existing table PartitionBy is used");
+                    }
+                    socket.put(']').put(',');
+                }
+                socket.putQuoted("columns").put(':').put('[');
                 state.responseState = RESPONSE_COLUMN;
                 // fall through
             case RESPONSE_COLUMN:
@@ -328,7 +346,25 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TO_STRING_COL2_PAD, PartitionBy.toString(textLoaderCompletedState.getPartitionBy()));
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
-                pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
+                if (hasFlag(textLoaderCompletedState.getWarnings(), PARTITION_TYPE_MISMATCH)) {
+                    pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);
+                } else {
+                    pad(socket, TO_STRING_COL5_PAD, "");
+                }
+                socket.put(Misc.EOL);
+
+                socket.put('|');
+                pad(socket, TO_STRING_COL1_PAD, "Timestamp");
+                pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getTimestampCol() == null ? "NONE" : textLoaderCompletedState.getTimestampCol());
+                pad(socket, TO_STRING_COL3_PAD, "");
+                pad(socket, TO_STRING_COL4_PAD, "");
+                if (hasFlag(textLoaderCompletedState.getWarnings(), TIMESTAMP_MISMATCH)) {
+                    pad(socket, TO_STRING_COL5_PAD, OVERRIDDEN_FROM_TABLE);
+                }else {
+                    pad(socket, TO_STRING_COL5_PAD, "");
+                }
+                socket.put(Misc.EOL);
+
                 sep(socket);
 
                 socket.put('|');
@@ -337,7 +373,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 pad(socket, TO_STRING_COL3_PAD, "");
                 pad(socket, TO_STRING_COL4_PAD, "");
                 pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
-
                 socket.put('|');
                 pad(socket, TO_STRING_COL1_PAD, "Rows imported");
                 pad(socket, TO_STRING_COL2_PAD, textLoaderCompletedState.getWrittenLineCount());

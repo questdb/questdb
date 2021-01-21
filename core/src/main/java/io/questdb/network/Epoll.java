@@ -51,10 +51,6 @@ public final class Epoll implements Closeable {
         }
     }
 
-    public Epoll(int capacity) {
-        this(EpollFacadeImpl.INSTANCE, capacity);
-    }
-
     @Override
     public void close() {
         if (closed) {
