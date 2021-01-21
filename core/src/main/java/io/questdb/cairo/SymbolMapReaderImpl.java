@@ -32,7 +32,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
@@ -40,18 +39,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private final ExtendableOnePageMemory charMem = new ExtendableOnePageMemory();
     private final ExtendableOnePageMemory offsetMem = new ExtendableOnePageMemory();
     private final ObjList<String> cache = new ObjList<>();
-    private final int instanceId;
     private int maxHash;
     private boolean cached;
     private int symbolCount;
     private long maxOffset;
     private int symbolCapacity;
     private boolean nullValue;
-    private static AtomicInteger instance = new AtomicInteger();
 
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         of(configuration, path, name, symbolCount);
-        instanceId = instance.incrementAndGet();
     }
 
     @Override
@@ -126,7 +122,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.indexReader.of(configuration, path.trimTo(plen), name, 0);
 
             // this is the place where symbol values are stored
-            // LOG.info().$("Setting charmem of ").$(instanceId).$();
             this.charMem.of(ff, SymbolMapWriter.charFileName(path.trimTo(plen), name), mapPageSize, 0);
 
             // move append pointer for symbol values in the correct place
@@ -211,9 +206,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private CharSequence uncachedValue(int key) {
-        CharSequence val = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
-        // LOG.info().$("instance ").$(instanceId).$(" read ").$(val).$();
-        return val;
+        return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     @Override
