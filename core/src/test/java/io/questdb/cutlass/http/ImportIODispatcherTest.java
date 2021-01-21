@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cutlass.text.Atomicity;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.junit.Assert;
@@ -33,6 +34,7 @@ import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ImportIODispatcherTest {
@@ -381,22 +383,26 @@ public class ImportIODispatcherTest {
         }
     }
 
+    Exception lastError = null;
+
     private void testImportWitNocacheSymbols() throws Exception {
-        final int parallelCount = 2;
+        final int parallelCount = 1;
         final int insertCount = 1;
-        final int importRowCount = 10;
+        final int readerCount = 16;
+        final int importRowCount = readerCount * 500;
+
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
-                .withWorkerCount(parallelCount)
+                .withWorkerCount(readerCount / 2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     AtomicInteger success = new AtomicInteger();
 
-                    String ddl1 = "(Col1+SYMBOL+NOCACHE+INDEX,PickupDateTime+TIMESTAMP," +
+                    String ddl1 = "(Col1+SYMBOL+NOCACHE,PickupDateTime+TIMESTAMP," +
                             "DropOffDatetime+SYMBOL)+timestamp(PickupDateTime)";
-                    String ddl2 = "(Col1+SYMBOL+NOCACHE+INDEX,Col2+STRING,Col3+STRING,Col4+STRING,PickupDateTime+TIMESTAMP)" +
+                    String ddl2 = "(Col1+SYMBOL+NOCACHE,Col2+STRING,Col3+STRING,Col4+STRING,PickupDateTime+TIMESTAMP)" +
                             "+timestamp(PickupDateTime)";
                     String[] ddl = new String[]{ddl1, ddl2};
                     String[] headers = new String[]{Request1Header, Request2Header};
@@ -418,7 +424,7 @@ public class ImportIODispatcherTest {
                                         "00\r\n" +
                                         "\r\n");
 
-                        new Thread(() -> {
+//                        new Thread(() -> {
                             try {
                                 try {
                                     for (int batch = 0; batch < 2; batch++) {
@@ -434,22 +440,46 @@ public class ImportIODispatcherTest {
                                                 .execute(requestTemplate, "HTTP/1.1 200 OK");
                                     }
 
-                                    new SendAndReceiveRequestBuilder().withExpectDisconnect(false).executeMany(httpClient -> {
-                                        for (int row = 0; row < importRowCount; row++) {
-                                            final String request = "SELECT+Col1+FROM+" + tableName + "+WHERE+Col1%3D%27SYM-" + row + "%27; ";
+                                    final int readingBatch = importRowCount / readerCount;
+                                    AtomicInteger readSuccess = new AtomicInteger();
+                                    CountDownLatch done = new CountDownLatch(readerCount);
+                                    AtomicBoolean stop = new AtomicBoolean(false);
+                                    lastError = null;
+                                    for(int rdr = 0; rdr < readerCount; rdr++) {
+                                        final int readerIndex = rdr;
+                                        new Thread(() -> {
+                                            try {
+                                                new SendAndReceiveRequestBuilder().withExpectDisconnect(false).executeMany(httpClient -> {
+                                                    for (int row = readerIndex * readingBatch; row < (readerIndex + 1) * readingBatch; row++) {
+                                                        if (stop.get()) return;
 
-                                            httpClient.executeWithStandardHeaders(
-                                                    "GET /query?query=" + request + "HTTP/1.1\r\n",
-                                                    "8" + (stringLen(row) * 2) + "\r\n" +
-                                                            "{\"query\":\"SELECT Col1 FROM " + tableName + " WHERE Col1='SYM-"
-                                                            + row +
-                                                            "';\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"}]," +
-                                                            "\"dataset\":[[\"SYM-" + row + "\"]],\"count\":1}\r\n"
-                                                            + "00\r\n"
-                                                            + "\r\n");
-                                        }
-                                    });
+                                                        final String request = "SELECT+Col1+FROM+" + tableName + "+WHERE+Col1%3D%27SYM-" + row + "%27; ";
+                                                        httpClient.executeWithStandardHeaders(
+                                                                "GET /query?query=" + request + "HTTP/1.1\r\n",
+                                                                "8" + (stringLen(row) * 2) + "\r\n" +
+                                                                        "{\"query\":\"SELECT Col1 FROM " + tableName + " WHERE Col1='SYM-"
+                                                                        + row +
+                                                                        "';\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"}]," +
+                                                                        "\"dataset\":[[\"SYM-" + row + "\"]],\"count\":1}\r\n"
+                                                                        + "00\r\n"
+                                                                        + "\r\n");
+                                                    }
+                                                });
+                                                readSuccess.incrementAndGet();
+                                            } catch (Exception e) {
+                                                lastError = e;
+                                                LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
+                                                stop.set(true);
+                                            } finally {
+                                                done.countDown();
+                                            }
+                                        }).start();
+                                    }
 
+                                    done.await();
+                                    if (lastError != null) throw lastError;
+
+                                    Assert.assertEquals(readerCount, readSuccess.get());
                                     success.incrementAndGet();
                                 } catch (Exception e) {
                                     LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
@@ -457,7 +487,7 @@ public class ImportIODispatcherTest {
                             } finally {
                                 countDownLatch.countDown();
                             }
-                        }).start();
+//                        }).start();
                     }
 
                     final int totalImports = parallelCount * insertCount;

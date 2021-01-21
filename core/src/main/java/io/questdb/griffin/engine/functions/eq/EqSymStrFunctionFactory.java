@@ -68,9 +68,9 @@ public class EqSymStrFunctionFactory extends AbstractBooleanFunctionFactory impl
             if (constValue == null) {
                 return new NullCheckFunc(position, varFunc, isNegated);
             }
-            if (func.isSymbolTableStatic()) {
-                return new ConstSymIntCheckFunc(position, func, constValue, isNegated);
-            }
+//            if (func.isSymbolTableStatic()) {
+//                return new ConstSymIntCheckFunc(position, func, constValue, isNegated);
+//            }
             return new ConstCheckFunc(position, func, constValue, isNegated);
         }
     }
