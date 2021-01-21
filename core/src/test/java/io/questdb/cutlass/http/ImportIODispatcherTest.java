@@ -373,7 +373,7 @@ public class ImportIODispatcherTest {
 
     @Test
     public void testImportWitNocacheSymbolsLoop() throws Exception {
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 1; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
@@ -386,14 +386,14 @@ public class ImportIODispatcherTest {
     Exception lastError = null;
 
     private void testImportWitNocacheSymbols() throws Exception {
-        final int parallelCount = 1;
+        final int parallelCount = 2;
         final int insertCount = 1;
-        final int readerCount = 16;
-        final int importRowCount = readerCount * 500;
+        final int readerCount = 10;
+        final int importRowCount = readerCount * 1000;
 
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
-                .withWorkerCount(readerCount / 2)
+                .withWorkerCount(readerCount / 2 + 2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
@@ -403,13 +403,15 @@ public class ImportIODispatcherTest {
                     String ddl1 = "(Col1+SYMBOL+NOCACHE,PickupDateTime+TIMESTAMP," +
                             "DropOffDatetime+SYMBOL)+timestamp(PickupDateTime)";
                     String ddl2 = "(Col1+SYMBOL+NOCACHE,Col2+STRING,Col3+STRING,Col4+STRING,PickupDateTime+TIMESTAMP)" +
-                            "+timestamp(PickupDateTime)";
+                            "+timestamp(PickupDateTime)+Partition+By+DAY";
                     String[] ddl = new String[]{ddl1, ddl2};
                     String[] headers = new String[]{Request1Header, Request2Header};
 
                     String[][] csvTemplate = {
                             new String[]{"SYM-%d", "2017-02-01 00:00:00", "SYM-2-%s"},
-                            new String[]{"SYM-%d", "%d", "%d", "", "2017-02-01 00:00:00"}
+                            new String[]{"SYM-%d", "2017-02-02 00:00:00", "SYM-2-%s"},
+                            new String[]{"SYM-%d", "%d", "%d", "", "2017-02-01 00:00:00"},
+                            new String[]{"SYM-%d", "%d", "%d", "", "2017-02-02 00:00:00"}
                     };
 
                     for (int i = 0; i < parallelCount; i++) {
@@ -432,7 +434,7 @@ public class ImportIODispatcherTest {
                                         int hi = importRowCount / 2 * (batch + 1);
                                         String requestTemplate =
                                                 headers[tableIndex].replace("POST /upload?name=trips ", "POST /upload?name=" + tableName + " ")
-                                                        + GenerateImportCsv(low, hi, csvTemplate[tableIndex])
+                                                        + GenerateImportCsv(low, hi, csvTemplate[tableIndex*2+batch])
                                                         + RequestFooter;
 
                                         new SendAndReceiveRequestBuilder()
@@ -465,6 +467,7 @@ public class ImportIODispatcherTest {
                                                                         + "\r\n");
                                                     }
                                                 });
+                                                LOG.info().$("query ok ").$(readerIndex).$();
                                                 readSuccess.incrementAndGet();
                                             } catch (Exception e) {
                                                 lastError = e;
