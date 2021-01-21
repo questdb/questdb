@@ -26,7 +26,6 @@
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
-#include <sys/mman.h>
 
 typedef struct {
     uint64_t c8[256];
@@ -39,9 +38,21 @@ typedef struct {
     uint64_t c1[256];
 } rscounts_t;
 
-typedef struct {
+typedef struct index_t {
     uint64_t ts;
     uint64_t i;
+
+    bool operator<(int64_t other) const {
+        return ts < other;
+    }
+
+    bool operator>(int64_t other) const {
+        return ts > other;
+    }
+
+    bool operator==(index_t other) const {
+        return ts == other.ts;
+    }
 } index_t;
 
 #define RADIX_SHUFFLE 0
@@ -397,6 +408,46 @@ void k_way_merge_long_index(
     }
 }
 
+template<class T>
+inline int64_t binary_search(T *data, int64_t value, int64_t low, int64_t high, int32_t scan_dir) {
+    while (low < high) {
+        int64_t mid = (low + high) / 2;
+        T midVal = data[mid];
+
+        if (midVal < value) {
+            if (low < mid) {
+                low = mid;
+            } else {
+                if (data[high] > value) {
+                    return low;
+                }
+                return high;
+            }
+        } else if (midVal > value)
+            high = mid;
+        else {
+            // In case of multiple equal values, find the first
+            mid += scan_dir;
+            while (mid > 0 && mid <= high && data[mid] == midVal) {
+                mid += scan_dir;
+            }
+            return mid - scan_dir;
+        }
+    }
+
+    if (data[low] > value) {
+        return low - 1;
+    }
+    return low;
+}
+
+inline void make_timestamp_index(const int64_t *data, int64_t low, int64_t high, index_t *dest) {
+    for (int64_t l = low; l <= high; l++) {
+        dest[l - low].ts = data[l];
+        dest[l - low].i = l | (1ull << 63);
+    }
+}
+
 extern "C" {
 
 JNIEXPORT void JNICALL
@@ -501,6 +552,29 @@ Java_io_questdb_std_Vect_flattenIndex(JNIEnv *env, jclass cl, jlong pIndex,
     for (int64_t i = 0; i < count; i++) {
         index[i].i = i;
     }
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_binarySearch64Bit(JNIEnv *env, jclass cl, jlong pData, jlong value, jlong low,
+                                           jlong high, jint scan_dir) {
+    return binary_search<int64_t>(reinterpret_cast<int64_t *>(pData), value, low, high, scan_dir);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_binarySearchIndexT(JNIEnv *env, jclass cl, jlong pData, jlong value, jlong low,
+                                            jlong high, jint scan_dir) {
+    return binary_search<index_t>(reinterpret_cast<index_t *>(pData), value, low, high, scan_dir);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData, jlong low,
+                                            jlong high, jlong pIndex) {
+    make_timestamp_index(
+            reinterpret_cast<int64_t *>(pData),
+            low,
+            high,
+            reinterpret_cast<index_t *>(pIndex)
+    );
 }
 }
 

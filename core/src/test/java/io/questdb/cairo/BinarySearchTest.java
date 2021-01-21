@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -221,7 +222,7 @@ public class BinarySearchTest extends AbstractCairoTest {
             }
 
             long max = distinctValueCount * repeatCount - 1;
-            long index = TableWriter.oooSearchIndex(mem, searchValue, 0, max, scanDirection);
+            long index = Vect.binarySearchIndexT(mem, searchValue, 0, max, scanDirection);
             if (searchValue > distinctValueCount - 1) {
                 Assert.assertEquals(max, index);
             } else {

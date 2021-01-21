@@ -98,6 +98,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
                 final long lo;
                 if (partitionTimestampLo < intervalLo) {
+                    assert column instanceof OnePageMemory;
                     lo = BinarySearch.find(column, intervalLo - 1, 0, limitHi, BinarySearch.SCAN_DOWN) + 1;
                 } else {
                     lo = 0;
@@ -105,6 +106,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
 
                 final long hi;
                 if (partitionTimestampHi > intervalHi) {
+                    assert column instanceof OnePageMemory;
                     hi = BinarySearch.find(column, intervalHi, lo, limitHi, BinarySearch.SCAN_DOWN) + 1;
                 } else {
                     hi = limitHi + 1;

@@ -98,4 +98,10 @@ public final class Vect {
     public static native void mergeShuffle64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void freeMergedIndex(long pIndex);
+
+    public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
+
+    public static native long binarySearchIndexT(long pData, long value, long low, long high, int scanDirection);
+
+    public static native long makeTimestampIndex(long pData, long low, long high, long pIndex);
 }
