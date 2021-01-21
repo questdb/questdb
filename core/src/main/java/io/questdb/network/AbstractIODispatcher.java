@@ -180,7 +180,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
             final int connectionCount = this.connectionCount.get();
             if (connectionCount == activeConnectionLimit) {
-                LOG.info().$("connection limit exceeded [fd=").$(fd)
+                LOG.error().$("connection limit exceeded [fd=").$(fd)
                         .$(", connectionCount=").$(connectionCount)
                         .$(", activeConnectionLimit=").$(activeConnectionLimit)
                         .$(']').$();

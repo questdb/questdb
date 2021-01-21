@@ -40,7 +40,7 @@ import io.questdb.std.str.Path;
 
 public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
-    private final IODispatcherConfiguration dispatcherConfiguration = new DefaultIODispatcherConfiguration();
+    private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
     private final SqlInterruptorConfiguration interruptorConfiguration;
 
@@ -117,6 +117,10 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration) {
+        this(httpContextConfiguration, new DefaultIODispatcherConfiguration());
+    }
+
+    public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration, IODispatcherConfiguration ioDispatcherConfiguration) {
         String defaultFilePath = this.getClass().getResource("/site/conf/mime.types").getFile();
         if (Os.type == Os.WINDOWS) {
             // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
@@ -128,7 +132,9 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
         this.httpContextConfiguration = httpContextConfiguration;
         this.interruptorConfiguration = new DefaultSqlInterruptorConfiguration();
+        this.dispatcherConfiguration = ioDispatcherConfiguration;
     }
+
 
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {

@@ -68,7 +68,10 @@ public class EqSymStrFunctionFactory extends AbstractBooleanFunctionFactory impl
             if (constValue == null) {
                 return new NullCheckFunc(position, varFunc, isNegated);
             }
-            return new ConstCheckFunc(position, varFunc, constValue, isNegated);
+            if (func.isSymbolTableStatic()) {
+                return new ConstSymIntCheckFunc(position, func, constValue, isNegated);
+            }
+            return new ConstCheckFunc(position, func, constValue, isNegated);
         }
     }
 
@@ -113,6 +116,38 @@ public class EqSymStrFunctionFactory extends AbstractBooleanFunctionFactory impl
         @Override
         public boolean getBool(Record rec) {
             return isNegated != Chars.equalsNc(constant, arg.getSymbol(rec));
+        }
+    }
+
+    private static class ConstSymIntCheckFunc extends BooleanFunction implements UnaryFunction {
+        private final boolean isNegated;
+        private final SymbolFunction arg;
+        private final CharSequence constant;
+        private int valueIndex;
+        private boolean exists;
+
+        public ConstSymIntCheckFunc(int position, SymbolFunction arg, CharSequence constant, boolean isNegated) {
+            super(position);
+            this.arg = arg;
+            this.constant = constant;
+            this.isNegated = isNegated;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return isNegated != (exists && arg.getInt(rec) == valueIndex);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            arg.init(symbolTableSource, executionContext);
+            valueIndex = arg.getStaticSymbolTable().keyOf(constant);
+            exists = valueIndex != SymbolTable.VALUE_NOT_FOUND;
         }
     }
 
