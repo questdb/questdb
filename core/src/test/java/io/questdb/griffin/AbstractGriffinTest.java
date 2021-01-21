@@ -41,7 +41,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
-    protected static BindVariableService bindVariableService;
+    protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private static final LongList rows = new LongList();
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
@@ -106,7 +106,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         null,
                         -1,
                         null);
-        bindVariableService = new BindVariableServiceImpl(configuration);
         bindVariableService.clear();
     }
 
