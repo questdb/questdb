@@ -24,8 +24,13 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -33,6 +38,7 @@ import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ImportIODispatcherTest {
@@ -262,31 +268,6 @@ public class ImportIODispatcherTest {
             "00\r\n"+
             "\r\n";
 
-    private final String WarningValidImportResponse2 = "HTTP/1.1 200 OK\r\n" +
-            "Server: questDB/1.0\r\n" +
-            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-            "Transfer-Encoding: chunked\r\n" +
-            "Content-Type: text/plain; charset=utf-8\r\n" +
-            "\r\n" +
-            "064a\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|      Location:  |                                             trips  |        Pattern  | Locale  |    Errors  |\r\n" +
-            "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
-            "|      Timestamp  |                                    PickupDateTime  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
-            "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                                              Col1  |                   STRING  |         0  |\r\n" +
-            "|              1  |                                              Col2  |                   STRING  |         0  |\r\n" +
-            "|              2  |                                              Col3  |                   STRING  |         0  |\r\n" +
-            "|              3  |                                              Col4  |                   STRING  |         0  |\r\n" +
-            "|              4  |                                    PickupDateTime  |                TIMESTAMP  |         0  |\r\n" +
-            "+---------------------------------------------------------------------------------------------------------------+\r\n" +
-            "\r\n" +
-            "00\r\n" +
-            "\r\n";
-
     private final String DdlCols1 = "(Col1+STRING,PickupDateTime+TIMESTAMP,DropOffDatetime+STRING)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,PickupDateTime+TIMESTAMP)+timestamp(PickupDateTime)";
 
@@ -368,6 +349,32 @@ public class ImportIODispatcherTest {
                             success.get());
                 });
     }
+
+    @Test
+    public void testImportLocksTable() throws Exception {
+        final String tableName = "trips";
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    AtomicBoolean locked = new AtomicBoolean(false);
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                        if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name, tableName)) {
+                            try (Path path = new Path()) {
+                                if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+                                    locked.set(true);
+                                }
+                            }
+                        }
+                    });
+
+                    new SendAndReceiveRequestBuilder().execute(ValidImportRequest1, ValidImportResponse1);
+                    Assert.assertTrue("Engine must be locked on table creation from upload", locked.get());
+                });
+    }
+
 
     @Test
     public void testImportWitNocacheSymbolsLoop() throws Exception {
