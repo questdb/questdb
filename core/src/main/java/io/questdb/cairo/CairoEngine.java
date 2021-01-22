@@ -103,6 +103,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(readerPool);
         configuration.getFilesFacade().munmap(tableIndexMem, tableIndexMemSize);
         configuration.getFilesFacade().close(tableIndexFd);
+        Misc.free(messageBus);
     }
 
     public void createTableUnsafe(

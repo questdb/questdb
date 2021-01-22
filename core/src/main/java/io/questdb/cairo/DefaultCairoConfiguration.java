@@ -451,7 +451,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getTableBlockWriterQueueSize() {
+    public int getTableBlockWriterQueueCapacity() {
         return 4;
     }
 

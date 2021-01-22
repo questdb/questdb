@@ -27,12 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.json.JsonException;
-import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoMilliTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoSecondTimestampAdapter;
+import io.questdb.cutlass.line.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.EpollFacadeImpl;
@@ -44,18 +39,18 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
 
 public class PropServerConfigurationTest {
 
@@ -297,7 +292,7 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.sql.append.page.size", "3G");
         env.put("QDB_CAIRO_SQL_APPEND_PAGE_SIZE", "9G");
 
-        PropServerConfiguration configuration = new PropServerConfiguration(configPath, new Properties(), env, LOG, new BuildInformationHolder());
+        PropServerConfiguration configuration = new PropServerConfiguration(configPath, properties, env, LOG, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals("2.0 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());

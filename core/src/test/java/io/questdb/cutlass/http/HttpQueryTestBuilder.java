@@ -127,10 +127,10 @@ public class HttpQueryTestBuilder {
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false);
+                    final MessageBus messageBus = new MessageBusImpl(cairoConfiguration)
             ) {
                 TelemetryJob telemetryJob = null;
-                final MessageBus messageBus = new MessageBusImpl(cairoConfiguration);
                 if (telemetry) {
                     telemetryJob = new TelemetryJob(engine);
                 }

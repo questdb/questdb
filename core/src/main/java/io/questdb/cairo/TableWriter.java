@@ -41,7 +41,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.OutOfOrderInsertTask;
+import io.questdb.tasks.OutOfOrderSortTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -66,10 +66,10 @@ public class TableWriter implements Closeable {
     private final static MergeShuffleOutOfOrderDataInternal MERGE_SHUFFLE_16 = Vect::mergeShuffle16Bit;
     private final static MergeShuffleOutOfOrderDataInternal MERGE_SHUFFLE_32 = Vect::mergeShuffle32Bit;
     private final static MergeShuffleOutOfOrderDataInternal MERGE_SHUFFLE_64 = Vect::mergeShuffle64Bit;
-    private static final int OO_BLOCK_NONE = -1;
-    private static final int OO_BLOCK_OO = 1;
-    private static final int OO_BLOCK_DATA = 2;
-    private static final int OO_BLOCK_MERGE = 3;
+    public static final int OO_BLOCK_NONE = -1;
+    public static final int OO_BLOCK_OO = 1;
+    public static final int OO_BLOCK_DATA = 2;
+    public static final int OO_BLOCK_MERGE = 3;
     final ObjList<AppendMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
@@ -120,7 +120,7 @@ public class TableWriter implements Closeable {
     private final LongList partitionsToDrop = new LongList();
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
     private final boolean outOfOrderEnabled;
-    private final ObjList<OutOfOrderInsertTask> oooPendingSortTasks = new ObjList<>();
+    private final ObjList<OutOfOrderSortTask> oooPendingSortTasks = new ObjList<>();
     private final OutOfOrderSortMethod oooSortVarColumnRef = this::oooSortVarColumn;
     private final OutOfOrderSortMethod oooSortFixColumnRef = this::oooSortFixColumn;
     private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
@@ -1277,7 +1277,7 @@ public class TableWriter implements Closeable {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16 + Long.BYTES);
     }
 
-    private static long getTimestampIndexValue(long timestampIndex, long indexRow) {
+    public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
     }
 
@@ -2731,6 +2731,7 @@ public class TableWriter implements Closeable {
             // we start loop with 1 because first array entry is there to
             // help us calculate partition range
             for (int i = 1, n = oooPartitions.size() / 2; i < n; i++) {
+
                 // find "current" partition boundary in the out of order data
                 // once we know the boundary we can move on to calculating another one
                 // indexHi is index inclusive of value
@@ -3969,8 +3970,8 @@ public class TableWriter implements Closeable {
     private void oooSortParallel(long mergedTimestamps, int timestampIndex) {
         oooPendingSortTasks.clear();
 
-        final SPSequence pubSeq = this.messageBus.getOutOfOrderInsertPubSeq();
-        final RingQueue<OutOfOrderInsertTask> queue = this.messageBus.getOutOfOrderInsertQueue();
+        final SPSequence pubSeq = this.messageBus.getOutOfOrderSortPubSeq();
+        final RingQueue<OutOfOrderSortTask> queue = this.messageBus.getOutOfOrderSortQueue();
 
         oooLatch.reset();
         int queuedCount = 0;
@@ -3980,7 +3981,7 @@ public class TableWriter implements Closeable {
                 long cursor = pubSeq.next();
                 if (cursor > -1) {
                     try {
-                        final OutOfOrderInsertTask task = queue.get(cursor);
+                        final OutOfOrderSortTask task = queue.get(cursor);
                         switch (type) {
                             case ColumnType.BINARY:
                             case ColumnType.STRING:
@@ -4057,9 +4058,9 @@ public class TableWriter implements Closeable {
         }
 
         for (int n = oooPendingSortTasks.size() - 1; n > -1; n--) {
-            final OutOfOrderInsertTask task = oooPendingSortTasks.getQuick(n);
+            final OutOfOrderSortTask task = oooPendingSortTasks.getQuick(n);
             if (task.tryLock()) {
-                OutOfOrderInsertJob.doSort(
+                OutOfOrderSortJob.doSort(
                         task,
                         -1,
                         null

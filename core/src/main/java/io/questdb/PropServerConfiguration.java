@@ -171,7 +171,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpMinServerEnabled;
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private final PropSqlInterruptorConfiguration interruptorConfiguration = new PropSqlInterruptorConfiguration();
-    private final int tableBlockWriterQueueSize;
+    private final int tableBlockWriterQueueCapacity;
     private final int sqlAnalyticStorePageSize;
     private final int sqlAnalyticStoreMaxPages;
     private final int sqlAnalyticRowIdPageSize;
@@ -564,12 +564,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.backupTempDirName = getString(properties, env, "cairo.sql.backup.dir.tmp.name", "tmp");
         this.backupMkdirMode = getInt(properties, env, "cairo.sql.backup.mkdir.mode", 509);
 
-        this.tableBlockWriterQueueSize = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.size", 4096));
-        this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
-        this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
-        this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
+        this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 4096));
+        this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
+        this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
+        this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
         this.sqlAnalyticRowIdMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.rowid.max.pages", Integer.MAX_VALUE));
-        this.sqlAnalyticTreeKeyPageSize = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.tree.page.size", 512 * 1024));
+        this.sqlAnalyticTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.tree.page.size", 512 * 1024));
         this.sqlAnalyticTreeKeyMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.tree.max.pages", Integer.MAX_VALUE));
 
         this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
@@ -1672,8 +1672,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getTableBlockWriterQueueSize() {
-            return tableBlockWriterQueueSize;
+        public int getTableBlockWriterQueueCapacity() {
+            return tableBlockWriterQueueCapacity;
         }
 
         @Override

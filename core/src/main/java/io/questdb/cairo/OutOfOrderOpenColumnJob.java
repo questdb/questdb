@@ -22,39 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.cairo;
 
-import io.questdb.std.Misc;
-import io.questdb.std.ObjectFactory;
-
-import java.io.Closeable;
-
-public class RingQueue<T> implements Closeable {
-    private final int mask;
-    private final T[] buf;
-
-    @SuppressWarnings("unchecked")
-    public RingQueue(ObjectFactory<T> factory, int cycle) {
-        this.mask = cycle - 1;
-        this.buf = (T[]) new Object[cycle];
-
-        for (int i = 0; i < cycle; i++) {
-            buf[i] = factory.newInstance();
-        }
-    }
-
-    @Override
-    public void close() {
-        for (int i = 0, n = buf.length; i < n; i++) {
-            Misc.free(buf[i]);
-        }
-    }
-
-    public T get(long cursor) {
-        return buf[(int) (cursor & mask)];
-    }
-
-    public int getCapacity() {
-        return buf.length;
-    }
+public class OutOfOrderOpenColumnJob {
 }

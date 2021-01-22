@@ -199,7 +199,7 @@ public interface CairoConfiguration {
 
     long getAppendPageSize();
 
-    int getTableBlockWriterQueueSize();
+    int getTableBlockWriterQueueCapacity();
 
     BuildInformation getBuildInformation();
 

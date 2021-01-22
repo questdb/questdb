@@ -1264,8 +1264,6 @@ public class IODispatcherTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--";
 
-                String expectedResponse = ValidImportResponse;
-
 
                 NetworkFacade nf = new NetworkFacadeImpl() {
                     int totalSent = 0;
@@ -1292,7 +1290,7 @@ public class IODispatcherTest {
                     sendAndReceive(
                             nf,
                             request,
-                            expectedResponse,
+                            ValidImportResponse,
                             3,
                             0,
                             false

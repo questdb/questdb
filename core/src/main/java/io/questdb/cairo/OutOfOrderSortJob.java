@@ -28,15 +28,15 @@ import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
-import io.questdb.tasks.OutOfOrderInsertTask;
+import io.questdb.tasks.OutOfOrderSortTask;
 import org.jetbrains.annotations.Nullable;
 
-public class OutOfOrderInsertJob extends AbstractQueueConsumerJob<OutOfOrderInsertTask> {
-    public OutOfOrderInsertJob(MessageBus messageBus) {
-        super(messageBus.getOutOfOrderInsertQueue(), messageBus.getOutOfOrderInsertSubSeq());
+public class OutOfOrderSortJob extends AbstractQueueConsumerJob<OutOfOrderSortTask> {
+    public OutOfOrderSortJob(MessageBus messageBus) {
+        super(messageBus.getOutOfOrderSortQueue(), messageBus.getOutOfOrderSortSubSeq());
     }
 
-    public static void doSort(OutOfOrderInsertTask task, long cursor, @Nullable Sequence subSeq) {
+    public static void doSort(OutOfOrderSortTask task, long cursor, @Nullable Sequence subSeq) {
         final int columnIndex = task.getColumnIndex();
         final int shl = task.getShl();
         final long mergedTimestampsAddr = task.getMergedTimestampsAddr();
@@ -63,7 +63,7 @@ public class OutOfOrderInsertJob extends AbstractQueueConsumerJob<OutOfOrderInse
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        OutOfOrderInsertTask task = queue.get(cursor);
+        OutOfOrderSortTask task = queue.get(cursor);
         // copy task on stack so that publisher has fighting chance of
         // publishing all it has to the queue
 

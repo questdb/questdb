@@ -30,30 +30,41 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Misc;
 import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.OutOfOrderInsertTask;
+import io.questdb.tasks.OutOfOrderPartitionTask;
+import io.questdb.tasks.OutOfOrderSortTask;
 import io.questdb.tasks.VectorAggregateTask;
 
-public interface MessageBus {
+import java.io.Closeable;
+import java.io.IOException;
+
+public interface MessageBus extends Closeable {
+    CairoConfiguration getConfiguration();
+
     Sequence getIndexerPubSequence();
 
     RingQueue<ColumnIndexerTask> getIndexerQueue();
 
     Sequence getIndexerSubSequence();
 
-    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
+    SPSequence getOutOfOrderPartitionPubSeq();
 
-    SPSequence getOutOfOrderInsertPubSeq();
+    RingQueue<OutOfOrderPartitionTask> getOutOfOrderPartitionQueue();
 
-    Sequence getVectorAggregatePubSequence();
+    MCSequence getOutOfOrderPartitionSubSeq();
 
-    Sequence getVectorAggregateSubSequence();
+    SPSequence getOutOfOrderSortPubSeq();
 
-    default RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
+    RingQueue<OutOfOrderSortTask> getOutOfOrderSortQueue();
+
+    MCSequence getOutOfOrderSortSubSeq();
+
+    default Sequence getTableBlockWriterPubSequence() {
         return null;
     }
 
-    default Sequence getTableBlockWriterPubSequence() {
+    default RingQueue<TableBlockWriterTaskHolder> getTableBlockWriterQueue() {
         return null;
     }
 
@@ -61,9 +72,14 @@ public interface MessageBus {
         return null;
     }
 
-    RingQueue<OutOfOrderInsertTask> getOutOfOrderInsertQueue();
+    Sequence getVectorAggregatePubSequence();
 
-    MCSequence getOutOfOrderInsertSubSeq();
+    RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
-    CairoConfiguration getConfiguration();
+    Sequence getVectorAggregateSubSequence();
+
+    @Override
+    default void close() {
+        Misc.free(getOutOfOrderPartitionQueue());
+    }
 }

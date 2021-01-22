@@ -28,7 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
 import io.questdb.mp.*;
 import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.OutOfOrderInsertTask;
+import io.questdb.tasks.OutOfOrderPartitionTask;
+import io.questdb.tasks.OutOfOrderSortTask;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -45,15 +46,19 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableBlockWriterPubSeq;
     private final MCSequence tableBlockWriterSubSeq;
 
-    private final RingQueue<OutOfOrderInsertTask> outOfOrderInsertQueue;
-    private final SPSequence outOfOrderInsertPubSeq;
-    private final MCSequence outOfOrderInsertSubSeq;
+    private final RingQueue<OutOfOrderSortTask> outOfOrderSortQueue;
+    private final SPSequence outOfOrderSortPubSeq;
+    private final MCSequence outOfOrderSortSubSeq;
+
+    private final RingQueue<OutOfOrderPartitionTask> outOfOrderPartitionQueue;
+    private final SPSequence outOfOrderPartitionPubSeq;
+    private final MCSequence outOfOrderPartitionSubSeq;
 
     private final CairoConfiguration configuration;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
-
+        // todo: move queue size to configuration
         this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
         this.indexerPubSeq = new MPSequence(indexerQueue.getCapacity());
         this.indexerSubSeq = new MCSequence(indexerQueue.getCapacity());
@@ -64,30 +69,35 @@ public class MessageBusImpl implements MessageBus {
         this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
 
-        this.tableBlockWriterQueue = new RingQueue<>(TableBlockWriterTaskHolder::new, configuration.getTableBlockWriterQueueSize());
+        this.tableBlockWriterQueue = new RingQueue<>(TableBlockWriterTaskHolder::new, configuration.getTableBlockWriterQueueCapacity());
         this.tableBlockWriterPubSeq = new MPSequence(tableBlockWriterQueue.getCapacity());
         this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
         tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
 
-        this.outOfOrderInsertQueue = new RingQueue<>(OutOfOrderInsertTask::new, 1024);
-        this.outOfOrderInsertPubSeq = new SPSequence(this.outOfOrderInsertQueue.getCapacity());
-        this.outOfOrderInsertSubSeq = new MCSequence(this.outOfOrderInsertQueue.getCapacity());
-        outOfOrderInsertPubSeq.then(outOfOrderInsertSubSeq).then(outOfOrderInsertPubSeq);
+        this.outOfOrderSortQueue = new RingQueue<>(OutOfOrderSortTask::new, 1024);
+        this.outOfOrderSortPubSeq = new SPSequence(this.outOfOrderSortQueue.getCapacity());
+        this.outOfOrderSortSubSeq = new MCSequence(this.outOfOrderSortQueue.getCapacity());
+        outOfOrderSortPubSeq.then(outOfOrderSortSubSeq).then(outOfOrderSortPubSeq);
+
+        this.outOfOrderPartitionQueue = new RingQueue<>(OutOfOrderPartitionTask::new, 1024);
+        this.outOfOrderPartitionPubSeq = new SPSequence(this.outOfOrderSortQueue.getCapacity());
+        this.outOfOrderPartitionSubSeq = new MCSequence(this.outOfOrderSortQueue.getCapacity());
+        outOfOrderSortPubSeq.then(outOfOrderSortSubSeq).then(outOfOrderSortPubSeq);
     }
 
     @Override
-    public SPSequence getOutOfOrderInsertPubSeq() {
-        return outOfOrderInsertPubSeq;
+    public SPSequence getOutOfOrderSortPubSeq() {
+        return outOfOrderSortPubSeq;
     }
 
     @Override
-    public RingQueue<OutOfOrderInsertTask> getOutOfOrderInsertQueue() {
-        return outOfOrderInsertQueue;
+    public RingQueue<OutOfOrderSortTask> getOutOfOrderSortQueue() {
+        return outOfOrderSortQueue;
     }
 
     @Override
-    public MCSequence getOutOfOrderInsertSubSeq() {
-        return outOfOrderInsertSubSeq;
+    public MCSequence getOutOfOrderSortSubSeq() {
+        return outOfOrderSortSubSeq;
     }
 
     @Override
@@ -138,5 +148,20 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getTableBlockWriterSubSequence() {
         return tableBlockWriterSubSeq;
+    }
+
+    @Override
+    public SPSequence getOutOfOrderPartitionPubSeq() {
+        return outOfOrderPartitionPubSeq;
+    }
+
+    @Override
+    public RingQueue<OutOfOrderPartitionTask> getOutOfOrderPartitionQueue() {
+        return outOfOrderPartitionQueue;
+    }
+
+    @Override
+    public MCSequence getOutOfOrderPartitionSubSeq() {
+        return outOfOrderPartitionSubSeq;
     }
 }

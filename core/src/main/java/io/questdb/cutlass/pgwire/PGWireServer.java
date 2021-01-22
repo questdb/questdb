@@ -46,6 +46,7 @@ public class PGWireServer implements Closeable {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
     private final WorkerPool workerPool;
+    private final MessageBus messageBus;
 
     public PGWireServer(
             PGWireConfiguration configuration,
@@ -55,6 +56,7 @@ public class PGWireServer implements Closeable {
             MessageBus messageBus,
             FunctionFactoryCache functionFactoryCache
     ) {
+        this.messageBus = messageBus;
         this.contextFactory = new PGConnectionContextFactory(engine, configuration, messageBus, workerPool.getWorkerCount());
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
@@ -126,6 +128,11 @@ public class PGWireServer implements Closeable {
         }
         Misc.free(contextFactory);
         Misc.free(dispatcher);
+
+        // when worker pool is not null we will also have local message bus
+        if (workerPool != null) {
+            Misc.free(messageBus);
+        }
     }
 
     private static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable, EagerThreadSetup {
