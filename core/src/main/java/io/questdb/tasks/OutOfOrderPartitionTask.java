@@ -25,6 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.AppendMemory;
+import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.TableWriterMetadata;
 import io.questdb.std.AbstractLockable;
 import io.questdb.std.FilesFacade;
@@ -36,6 +37,7 @@ import java.io.Closeable;
 
 public class OutOfOrderPartitionTask extends AbstractLockable implements Closeable {
     private final Path path = new Path();
+    private long txn;
     private long oooTimestampMax;
     private long oooIndexLo;
     private long oooIndexHi;
@@ -53,6 +55,7 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
     private int partitionBy;
     private int timestampIndex;
     private ObjList<AppendMemory> columns;
+    private ObjList<ContiguousVirtualMemory> oooColumns;
     private TableWriterMetadata metadata;
 
     @Override
@@ -60,8 +63,24 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
         Misc.free(path);
     }
 
+    public ObjList<AppendMemory> getColumns() {
+        return columns;
+    }
+
     public FilesFacade getFf() {
         return ff;
+    }
+
+    public long getLastPartitionIndexMax() {
+        return lastPartitionIndexMax;
+    }
+
+    public TableWriterMetadata getMetadata() {
+        return metadata;
+    }
+
+    public ObjList<ContiguousVirtualMemory> getOooColumns() {
+        return oooColumns;
     }
 
     public long getOooIndexHi() {
@@ -100,6 +119,10 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
         return tableCeilOfMaxTimestamp;
     }
 
+    public long getTableFloorOfMaxTimestamp() {
+        return tableFloorOfMaxTimestamp;
+    }
+
     public long getTableFloorOfMinTimestamp() {
         return tableFloorOfMinTimestamp;
     }
@@ -108,27 +131,15 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
         return tableMaxTimestamp;
     }
 
-    public long getTimestampMergeIndex() {
-        return timestampMergeIndex;
-    }
-
     public int getTimestampIndex() {
         return timestampIndex;
     }
 
-    public long getTableFloorOfMaxTimestamp() {
-        return tableFloorOfMaxTimestamp;
+    public long getTimestampMergeIndex() {
+        return timestampMergeIndex;
     }
 
-    public ObjList<AppendMemory> getColumns() {
-        return columns;
-    }
-
-    public TableWriterMetadata getMetadata() {
-        return metadata;
-    }
-
-    public long getLastPartitionIndexMax() {
-        return lastPartitionIndexMax;
+    public long getTxn() {
+        return txn;
     }
 }

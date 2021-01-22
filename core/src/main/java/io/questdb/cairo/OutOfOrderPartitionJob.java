@@ -32,8 +32,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderOpenColumnTask;
 import io.questdb.tasks.OutOfOrderPartitionTask;
 
-import static io.questdb.cairo.TableUtils.dFile;
-import static io.questdb.cairo.TableUtils.readPartitionSize;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderPartitionTask> {
@@ -101,18 +100,20 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
         final long tableMaxTimestamp = task.getTableMaxTimestamp();
         final ObjList<AppendMemory> columns = task.getColumns();
+        final ObjList<ContiguousVirtualMemory> oooColumns = task.getOooColumns();
         final TableWriterMetadata metadata = task.getMetadata();
         final Path path = task.getPath();
         final int rootLen = task.getRootLen();
         final int partitionBy = task.getPartitionBy();
         final int timestampIndex = task.getTimestampIndex();
+        final long txn = task.getTxn();
         TableUtils.setPathForPartition(path.trimTo(rootLen), partitionBy, oooPartitionTimestampMin);
         final int plen = path.length();
 
         long timestampFd = 0;
         long dataTimestampLo;
-        long dataTimestampHi = Long.MIN_VALUE;
-        long dataIndexMax = 0;
+        long dataTimestampHi;
+        long dataIndexMax;
 
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and and write to existing file descriptors
@@ -123,16 +124,31 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             // - this partition is above min partition of the table
             // - this partition is below max partition of the table
             // pure OOO data copy into new partition
-//            long[] mergeStruct = oooOpenNewPartitionForAppend(
-//                    path,
-//                    oooIndexLo,
-//                    oooIndexHi,
-//                    oooIndexMax
-//            );
-//            publishOpenColumnTasks(
-//                    metadata,
-//
-//            );
+            publishOpenColumnTasks(
+                    ff,
+                    txn,
+                    metadata,
+                    columns,
+                    oooColumns,
+                    path,
+                    oooIndexLo,
+                    oooIndexHi,
+                    oooIndexMax,
+                    // below parameters are unused by this type of append
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    5 //oooOpenNewPartitionForAppend
+            );
         } else {
 
             // out of order is hitting existing partition
@@ -425,7 +441,15 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 }
 
                 publishOpenColumnTasks(
+                        ff,
+                        txn,
                         metadata,
+                        columns,
+                        oooColumns,
+                        path,
+                        oooIndexLo,
+                        oooIndexHi,
+                        oooIndexMax,
                         prefixType,
                         prefixLo,
                         prefixHi,
@@ -437,6 +461,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         suffixType,
                         suffixLo,
                         suffixHi,
+                        dataIndexMax,
                         openColumnMode
                 );
 
@@ -448,14 +473,50 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         }
     }
 
-    private void publishOpenColumnTasks(TableWriterMetadata metadata, int prefixType, long prefixLo, long prefixHi, int mergeType, long mergeDataLo, long mergeDataHi, long mergeOOOLo, long mergeOOOHi, int suffixType, long suffixLo, long suffixHi, int openColumnMode) {
+    private void publishOpenColumnTasks(
+            FilesFacade ff,
+            long txn,
+            TableWriterMetadata metadata,
+            ObjList<AppendMemory> columns,
+            ObjList<ContiguousVirtualMemory> oooColumns,
+            Path path,
+            long oooIndexLo,
+            long oooIndexHi,
+            long oooIndexMax,
+            int prefixType,
+            long prefixLo,
+            long prefixHi,
+            int mergeType,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            int suffixType,
+            long suffixLo,
+            long suffixHi,
+            long dataIndexMax,
+            int openColumnMode
+    ) {
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             long c = openColumnPubSeq.next();
             // todo: check if c is valid
-            OutOfOrderOpenColumnTask openColumnTask = openColumnTaskQueue.get(c);
-
+            final OutOfOrderOpenColumnTask openColumnTask = openColumnTaskQueue.get(c);
+            int colOffset = TableWriter.getPrimaryColumnIndex(i);
             openColumnTask.of(
+                    ff,
+                    txn,
                     openColumnMode,
+                    metadata.getColumnName(i),
+                    metadata.getColumnType(i),
+                    metadata.isColumnIndexed(i),
+                    columns.getQuick(colOffset),
+                    columns.getQuick(colOffset + 1),
+                    oooColumns.getQuick(colOffset),
+                    oooColumns.getQuick(colOffset + 1),
+                    path,
+                    oooIndexLo,
+                    oooIndexHi,
+                    oooIndexMax,
                     prefixType,
                     prefixLo,
                     prefixHi,
@@ -466,10 +527,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     mergeOOOHi,
                     suffixType,
                     suffixLo,
-                    suffixHi
+                    suffixHi,
+                    dataIndexMax
             );
             openColumnPubSeq.done(c);
         }
     }
-
 }
