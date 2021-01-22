@@ -731,7 +731,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((TimestampBindVariable) function).value = value;
                 break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = value / 1000;
+                ((DateBindVariable) function).value = value != Numbers.LONG_NaN ? value / 1000 : value;
                 break;
             case ColumnType.FLOAT:
                 ((FloatBindVariable) function).value = value != Numbers.LONG_NaN ? value : Float.NaN;
