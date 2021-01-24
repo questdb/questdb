@@ -66,7 +66,7 @@ public class NowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
+        public boolean isRuntimeConstant() {
             return true;
         }
     }

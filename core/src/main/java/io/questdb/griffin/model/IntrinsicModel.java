@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -44,6 +45,7 @@ public class IntrinsicModel implements Mutable {
     private final LongList intervalsA = new LongList();
     private final LongList intervalsB = new LongList();
     private final LongList intervalsC = new LongList();
+    private final ObjList<RuntimePeriodIntrinsic> runtimeConstIntervals = new ObjList<>();
     public CharSequence keyColumn;
     public ExpressionNode filter;
     public LongList intervals;
@@ -266,6 +268,7 @@ public class IntrinsicModel implements Mutable {
         intervals = null;
         intrinsicValue = UNDEFINED;
         keySubQuery = null;
+        runtimeConstIntervals.clear();
     }
 
     public void clearInterval() {
@@ -304,6 +307,10 @@ public class IntrinsicModel implements Mutable {
         temp.add(lo);
         temp.add(hi);
         intersectIntervals(temp);
+    }
+
+    public void intersectIntervals(RuntimePeriodIntrinsic runtimeConstInterval) {
+        runtimeConstIntervals.add(runtimeConstInterval);
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {

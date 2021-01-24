@@ -286,7 +286,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         long day = 24L * 3600 * 1000 * 1000;
         currentMicros = 3600 * 1000 * 1000;
         try {
-            IntrinsicModel m = modelOf("timestamp >= now()");
+            IntrinsicModel m = modelOf("timestamp < now()");
             TestUtils.assertEquals("[{lo=1970-01-02T00:00:00.000000Z, hi=}]",
                     GriffinParserTestUtils.intervalToString(m.intervals));
             Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());

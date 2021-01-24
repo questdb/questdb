@@ -130,6 +130,10 @@ public interface Function extends Closeable {
         return false;
     }
 
+    default boolean isRuntimeConstant() {
+        return false;
+    }
+
     default void toTop() {
     }
 }

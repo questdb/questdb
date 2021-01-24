@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimePeriodIntrinsic;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -54,6 +55,7 @@ final class WhereClauseParser implements Mutable {
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
     private final ObjList<ExpressionNode> tempNodes = new ObjList<>();
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
+    private final ObjectPool<RuntimePeriodIntrinsic> runtimePeriods = new ObjectPool<>(RuntimePeriodIntrinsic.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private final IntList tempPos = new IntList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
@@ -338,7 +340,18 @@ final class WhereClauseParser implements Mutable {
                         if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP) {
                             throw SqlException.invalidDate(node.rhs.position);
                         }
-                        hi = function.getTimestamp(null);
+
+                        if (function.isConstant()) {
+                            hi = function.getTimestamp(null) + adjustComparison(equalsTo, false);
+                        } else if (function.isRuntimeConstant()) {
+                            RuntimePeriodIntrinsic period = runtimePeriods.next()
+                                    .setLess(Long.MIN_VALUE, function, adjustComparison(equalsTo, false));
+                            model.intersectIntervals(period);
+                            node.intrinsicValue = IntrinsicModel.TRUE;
+                            return true;
+                        } else {
+                            return false;
+                        }
                     } else {
                         return false;
                     }
@@ -367,6 +380,10 @@ final class WhereClauseParser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static long adjustComparison(boolean equalsTo, boolean isLo) {
+        return equalsTo ? 0 : isLo ? 1 : -1;
     }
 
     private boolean analyzeListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, ExpressionNode node) {
