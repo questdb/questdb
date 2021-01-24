@@ -1018,6 +1018,7 @@ nodejs code:
     }
 
     @Test
+    @Ignore
     public void testInsertSimpleText() throws Exception {
         testInsert0(true, false);
     }
