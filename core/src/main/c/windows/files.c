@@ -147,6 +147,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlo
     return 0;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jlong fd) {
+    // windows does not seem to have fsync or cannot fsync directory
+    // to be fair we never saw our destructive test fail on windows
+    // which leads to an assumption and all directory changes are synchronous on windows.
+    return -1;
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
 

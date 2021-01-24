@@ -139,10 +139,8 @@ public final class TableUtils {
 
         final int rootLen = path.length();
 
-        long dirFd = ff.openRO(path.$());
-
+        final long dirFd = !ff.isRestrictedFileSystem() ? ff.openRO(path.$()) : 0;
         if (dirFd != -1) {
-
             try (AppendMemory mem = memory) {
                 mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
                 final int count = structure.getColumnCount();
@@ -190,10 +188,12 @@ public final class TableUtils {
                 mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
                 TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN);
             } finally {
-                if (ff.fsync(dirFd) != 0) {
-                    LOG.error().$("Could not fsync [fd=").$(dirFd).$(']').$();
+                if (dirFd > 0) {
+                    if (ff.fsync(dirFd) != 0) {
+                        LOG.error().$("Could not fsync [fd=").$(dirFd).$(']').$();
+                    }
+                    ff.close(dirFd);
                 }
-                ff.close(dirFd);
             }
         } else {
             throw CairoException.instance(ff.errno()).put("Could not open dir [path=").put(path).put(']');
