@@ -29,10 +29,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.date.ToTimestampFunctionFactory;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
@@ -51,7 +51,7 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
         final Function nameFunction = args.getQuick(0);
         final CharSequence type = args.getQuick(1).getStr(null);
 
-        if (Chars.equals(type, "class")) {
+        if (SqlKeywords.isRegclassKeyword(type)) {
             final IntConstant func = map.get(nameFunction.getStr(null));
             if (func != null) {
                 return func;
@@ -59,7 +59,7 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
             throw SqlException.$(nameFunction.getPosition(), "unsupported class");
         }
 
-        if (Chars.equals(type, "timestamp")) {
+        if (SqlKeywords.isTimestampKeyword(type)) {
             return new ToTimestampFunctionFactory.ToTimestampFunction(nameFunction.getPosition(), nameFunction);
         }
 
