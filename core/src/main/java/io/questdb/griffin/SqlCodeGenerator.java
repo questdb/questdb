@@ -2271,7 +2271,10 @@ public class SqlCodeGenerator implements Mutable {
                         whereClause,
                         readerMeta,
                         latestByColumnCount > 0 ? latestBy.getQuick(0).token : null,
-                        readerTimestampIndex
+                        readerTimestampIndex,
+                        functionParser,
+                        myMeta,
+                        executionContext
                 );
 
                 // intrinsic parser can collapse where clause when removing parts it can replace

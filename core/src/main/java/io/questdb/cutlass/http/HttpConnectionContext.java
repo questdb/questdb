@@ -643,9 +643,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     private void doFail(HttpException e, HttpRequestProcessor processor) throws
             PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
-        LOG.info().$("Failing client query with: ").$(e.getMessage()).$();
+        LOG.info().$("failing client query with: ").$(e.getMessage()).$();
         processor.failRequest(this, e);
         clear();
+        LOG.info().$("disconnecting").$();
         dispatcher.disconnect(this);
     }
 }

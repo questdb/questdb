@@ -29,6 +29,15 @@ import io.questdb.std.Rnd;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.TimeZone;
+import java.util.function.LongPredicate;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
+import java.util.stream.Stream;
+
 public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Before
@@ -604,30 +613,58 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         }
     }
 
-//    @Test
-//    public void testNowPerformsBinarySearchOnTimestamp() throws Exception {
-//        //yyyy-MM-ddTHH:mm:ssz
-//        try {
-//            currentMicros = 0;
-//            assertMemoryLeak(() -> {
-//                int hoursCount = 2000;
-//
-//                //create table
-//                // One hour step timestamps from epoch for 2000 steps
-//                String createStmt = "create table x as (select x * 3600 * 1000 * 1000 timestamp from long_sequence(2000)) timestamp(timestamp) partition by DAY";
-//                compiler.compile(createStmt, sqlExecutionContext);
-//
-//                String query1 = "select now() as now1, now() as now2, symbol, timestamp FROM ob_mem_snapshot WHERE now() = now()";
-//                printSqlResult(expected, query1, "timestamp", null, null, true, true, true);
-//
-//                expected = "symbol\tme_seq_num\ttimestamp\n" +
-//                        "1\t1\t2020-12-31T23:59:59.000000Z\n";
-//                String query = "select * from ob_mem_snapshot where timestamp > now()";
-//                printSqlResult(expected, query, "timestamp", null, null, true, true, false);
-//            });
-//        } finally {
-//            currentMicros = -1;
-//        }
-//    }
+    @Test
+    public void testNowPerformsBinarySearchOnTimestamp() throws Exception {
+        try {
+            currentMicros = 0;
+            assertMemoryLeak(() -> {
+                //create table
+                // One hour step timestamps from epoch for 2000 steps
+                final int count = 200;
+                String createStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
+                SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
+                compiler.compile(createStmt, sqlExecutionContext);
 
+                formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
+                Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
+                        .map(i -> i * 3600L * 1000)
+                        .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new Date(ts))});
+
+                List<Object[]> datesArr = dates.collect(Collectors.toList());
+
+                compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true, true);
+
+                // Scroll now to the end
+                final long hour = 3600L * 1000 * 1000;
+                final long day = 24 * hour;
+                currentMicros = 200L * hour;
+                compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour, false);
+
+                for(currentMicros = hour; currentMicros < count*hour; currentMicros += day) {
+                    compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros, false);
+                }
+
+                for(currentMicros = hour; currentMicros < count*hour; currentMicros += 12*hour) {
+                    compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros, false);
+                }
+
+                for(currentMicros = 0; currentMicros < count * hour; currentMicros += 5 *  hour) {
+                    compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
+                            datesArr,
+                            ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day), false);
+                }
+
+            });
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    private void compareNowRange(String query, List<Object[]> dates, LongPredicate filter, boolean expectSize) throws SqlException {
+        String expected = "ts\n"
+                + dates.stream().filter(arr -> filter.test((long) arr[0]))
+                .map(arr -> arr[1] + "\n")
+                .collect(Collectors.joining());
+        printSqlResult(expected, query, "ts", null, null, true, true, expectSize);
+    }
 }

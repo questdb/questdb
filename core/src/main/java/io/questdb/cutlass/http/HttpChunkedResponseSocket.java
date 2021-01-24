@@ -42,4 +42,7 @@ public interface HttpChunkedResponseSocket extends CharSink {
     void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
     void status(int status, CharSequence contentType);
+
+    default void send() {
+    }
 }

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
@@ -315,7 +316,7 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private boolean analyzeLess(IntrinsicModel model, ExpressionNode node, boolean equalsTo) throws SqlException {
+    private boolean analyzeLess(IntrinsicModel model, ExpressionNode node, boolean equalsTo, FunctionParser functionParser, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
 
         checkNodeValid(node);
 
@@ -330,11 +331,20 @@ final class WhereClauseParser implements Mutable {
 
         if (node.lhs.type == ExpressionNode.LITERAL && Chars.equals(node.lhs.token, timestamp)) {
             try {
-
+                long hi;
                 if (node.rhs.type != ExpressionNode.CONSTANT) {
-                    return false;
+                    if (node.rhs.type == ExpressionNode.FUNCTION) {
+                        Function function = functionParser.parseFunction(node.rhs, metadata, executionContext);
+                        if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP) {
+                            throw SqlException.invalidDate(node.rhs.position);
+                        }
+                        hi = function.getTimestamp(null);
+                    } else {
+                        return false;
+                    }
+                } else {
+                    hi = parseFullOrPartialDate(equalsTo, node.rhs, false);
                 }
-                long hi = parseFullOrPartialDate(equalsTo, node.rhs, false);
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -708,8 +718,11 @@ final class WhereClauseParser implements Mutable {
             ExpressionNode node,
             RecordMetadata m,
             CharSequence preferredKeyColumn,
-            int timestampIndex
-    ) throws SqlException {
+            int timestampIndex,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+            ) throws SqlException {
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 
@@ -718,7 +731,7 @@ final class WhereClauseParser implements Mutable {
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        if (removeAndIntrinsics(translator, model, node, m)) {
+        if (removeAndIntrinsics(translator, model, node, m, functionParser, metadata, executionContext)) {
             return model;
         }
         ExpressionNode root = node;
@@ -726,10 +739,10 @@ final class WhereClauseParser implements Mutable {
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
                 if (isAndKeyword(node.token)) {
-                    if (!removeAndIntrinsics(translator, model, node.rhs, m)) {
+                    if (!removeAndIntrinsics(translator, model, node.rhs, m, functionParser, metadata, executionContext)) {
                         stack.push(node.rhs);
                     }
-                    node = removeAndIntrinsics(translator, model, node.lhs, m) ? null : node.lhs;
+                    node = removeAndIntrinsics(translator, model, node.lhs, m, functionParser, metadata, executionContext) ? null : node.lhs;
                 } else {
                     node = stack.poll();
                 }
@@ -770,7 +783,7 @@ final class WhereClauseParser implements Mutable {
         return ts;
     }
 
-    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
+    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m, FunctionParser functionParser, RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN:
                 return analyzeIn(translator, model, node, m);
@@ -779,9 +792,9 @@ final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_GREATER_EQ:
                 return analyzeGreater(model, node, true);
             case INTRINSIC_OP_LESS:
-                return analyzeLess(model, node, false);
+                return analyzeLess(model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_LESS_EQ:
-                return analyzeLess(model, node, true);
+                return analyzeLess(model, node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL:
                 return analyzeEquals(translator, model, node, m);
             case INTRINSIC_OP_NOT_EQ:

@@ -397,7 +397,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws SqlException {
-        RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        RecordCursorFactory factory = cc.getRecordCursorFactory();
         try {
             assertTimestamp(expectedTimestamp, factory);
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);

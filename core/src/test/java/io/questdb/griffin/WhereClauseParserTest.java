@@ -25,19 +25,22 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
+
+import java.util.ServiceLoader;
 
 public class WhereClauseParserTest extends AbstractCairoTest {
 
-    private final static SqlCompiler compiler = new SqlCompiler(new CairoEngine(configuration));
+    private SqlCompiler compiler;
+    protected BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private static TableReader reader;
     private static TableReader noTimestampReader;
     private static TableReader unindexedReader;
@@ -49,6 +52,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
+    private FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class)));
+    private SqlExecutionContext sqlExecutionContext;
+    private CairoEngine engine;
 
     @BeforeClass
     public static void setUp2() {
@@ -61,6 +67,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     .col("mode", ColumnType.SYMBOL).indexed(true, 4)
                     .col("ex", ColumnType.SYMBOL).indexed(true, 4)
                     .timestamp();
+
             CairoTestUtils.create(model);
         }
 
@@ -102,6 +109,21 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         reader.close();
         noTimestampReader.close();
         unindexedReader.close();
+    }
+
+    @Before
+    public void setUp1() {
+        engine = new CairoEngine(configuration);
+        bindVariableService = new BindVariableServiceImpl(configuration);
+        compiler = new SqlCompiler(new CairoEngine(configuration));
+        sqlExecutionContext = new SqlExecutionContextImpl(
+                engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
     }
 
     @Test
@@ -257,6 +279,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:09:59.999999Z},{lo=2015-02-23T10:10:00.000001Z, hi=2015-02-23T10:30:55.000000Z}]",
                 GriffinParserTestUtils.intervalToString(m.intervals));
         Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());
+    }
+
+    @Test
+    public void testComplexNow() throws Exception {
+        long day = 24L * 3600 * 1000 * 1000;
+        currentMicros = 3600 * 1000 * 1000;
+        try {
+            IntrinsicModel m = modelOf("timestamp >= now()");
+            TestUtils.assertEquals("[{lo=1970-01-02T00:00:00.000000Z, hi=}]",
+                    GriffinParserTestUtils.intervalToString(m.intervals));
+            Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());
+        } finally {
+            currentMicros = -1;
+        }
     }
 
     @Test
@@ -1473,12 +1509,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), metadata, preferredColumn, metadata.getTimestampIndex());
+        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), metadata, preferredColumn, metadata.getTimestampIndex(), functionParser, metadata, sqlExecutionContext);
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex());
+        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex(), functionParser, metadata, sqlExecutionContext);
     }
 
     private void testBadOperator(String op) {
@@ -1506,6 +1542,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private IntrinsicModel unindexedModelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), unindexedMetadata, preferredColumn, unindexedMetadata.getTimestampIndex());
+        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), unindexedMetadata, preferredColumn, unindexedMetadata.getTimestampIndex(), functionParser, metadata, sqlExecutionContext);
     }
 }

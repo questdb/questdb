@@ -113,7 +113,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     @Override
     public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         sendError(transientContext, e.getFlyweightMessage(), Chars.equalsNc("json", transientContext.getRequestHeader().getUrlParam("fmt")));
-        throw ServerDisconnectException.INSTANCE;
+//        throw ServerDisconnectException.INSTANCE;
     }
 
     @Override
@@ -485,6 +485,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         }
         socket.sendChunk();
         socket.done();
+        socket.send();
     }
 
     private void resumeError(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {

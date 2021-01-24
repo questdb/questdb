@@ -332,7 +332,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         resumeSend();
     }
 
-    private void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
         int sent = 0;
         while (sent < flushBufSize) {
             int n = nf.send(fd, flushBuf + sent, flushBufSize - sent);
