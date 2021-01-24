@@ -284,6 +284,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     @Override
     public void close() {
+        clear();
         this.fd = -1;
         sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
         Unsafe.free(sendBuffer, sendBufferSize);
@@ -1338,7 +1339,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private void prepareForNewQuery() {
         LOG.debug().$("prepare for new query").$();
+        isEmptyQuery = false;
         characterStore.clear();
+        bindVariableService.clear();
         currentCursor = Misc.free(currentCursor);
         typesAndInsert = null;
         rowCount = 0;
