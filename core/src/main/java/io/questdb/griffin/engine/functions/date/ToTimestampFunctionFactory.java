@@ -22,52 +22,57 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.IntConstant;
-import io.questdb.griffin.engine.functions.date.ToTimestampFunctionFactory;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
-import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
-import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
-
-public class ClassResolveFunctionFactory implements FunctionFactory {
-    private static final CharSequenceObjHashMap<IntConstant> map = new CharSequenceObjHashMap<>();
-
+public class ToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "::(ss)";
+        return "to_timestamp(S)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function nameFunction = args.getQuick(0);
-        final CharSequence type = args.getQuick(1).getStr(null);
-
-        if (Chars.equals(type, "class")) {
-            final IntConstant func = map.get(nameFunction.getStr(null));
-            if (func != null) {
-                return func;
-            }
-            throw SqlException.$(nameFunction.getPosition(), "unsupported class");
-        }
-
-        if (Chars.equals(type, "timestamp")) {
-            return new ToTimestampFunctionFactory.ToTimestampFunction(nameFunction.getPosition(), nameFunction);
-        }
-
-        throw SqlException.$(args.getQuick(1).getPosition(), "unsupported type");
+        final Function arg = args.getQuick(0);
+        return new ToTimestampFunction(position, arg);
     }
 
-    static {
-        map.put("pg_namespace", new IntConstant(0, PG_NAMESPACE_OID));
-        map.put("pg_class", new IntConstant(0, PG_CLASS_OID));
+    public static final class ToTimestampFunction extends TimestampFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public ToTimestampFunction(int position, Function arg) {
+            super(position);
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final CharSequence value = arg.getStr(rec);
+            try {
+                if (value != null) {
+                    return TimestampFormatUtils.PG_TIMESTAMPZ_FORMAT.parse(value, TimestampFormatUtils.enLocale);
+                }
+            } catch (NumericException ignore) {
+            }
+            return Numbers.LONG_NaN;
+        }
     }
 }

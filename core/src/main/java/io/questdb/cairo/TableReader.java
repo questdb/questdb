@@ -545,7 +545,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void checkDefaultPartitionExistsAndUpdatePartitionCount() {
-        if (maxTimestamp == Numbers.LONG_NaN) {
+        if (maxTimestamp == Numbers.LONG_NaN && transientRowCount == 0) {
             partitionCount = 0;
         } else {
             Path path = pathGenDefault();
@@ -832,8 +832,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             return -1;
         }
 
-        // todo: this may not be the best place to check if partition is out of range
-        if (maxTimestamp == Long.MIN_VALUE) {
+        if (maxTimestamp == Numbers.LONG_NaN && transientRowCount == 0) {
             return -1;
         }
 
