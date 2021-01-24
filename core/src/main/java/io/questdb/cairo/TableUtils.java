@@ -130,6 +130,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
+        LOG.debug().$("create table [name=").$(structure.getTableName()).$(']').$();
         path.of(root).concat(structure.getTableName());
 
         if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
