@@ -208,20 +208,12 @@ public class CairoTextWriter implements Closeable, Mutable {
             ObjList<TypeAdapter> detectedTypes,
             CairoSecurityContext cairoSecurityContext
     ) throws TextException {
-        if (engine.lock(cairoSecurityContext, tableName)) {
-            try {
-                engine.createTable(
-                        cairoSecurityContext,
-                        appendMemory,
-                        path,
-                        tableStructureAdapter.of(names, detectedTypes)
-                );
-            } finally {
-                engine.unlock(cairoSecurityContext, tableName, null);
-            }
-        } else {
-            throw EntryUnavailableException.INSTANCE;
-        }
+        engine.createTable(
+                cairoSecurityContext,
+                appendMemory,
+                path,
+                tableStructureAdapter.of(names, detectedTypes)
+        );
         this.types = detectedTypes;
     }
 
