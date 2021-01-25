@@ -103,6 +103,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int fsync(long fd) {
+        return Files.fsync(fd);
+    }
+
+    @Override
     public long getMapPageSize() {
         if (mapPageSize == 0) {
             mapPageSize = computeMapPageSize();
