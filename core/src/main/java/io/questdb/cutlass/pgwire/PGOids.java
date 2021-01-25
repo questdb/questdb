@@ -67,6 +67,8 @@ public class PGOids {
     public static final int X_B_PG_DATE = 1 | X_PG_DATE;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
+    public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
+    public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
     public static final int PG_CATALOG_OID = 11;
     public static final int PG_CLASS_OID = 1259;
     public static final int PG_PUBLIC_OID = 2200;

@@ -69,48 +69,6 @@ public class PGJobContextTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
 
     @Test
-    public void testLargeBatchInsertMethod() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(4);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table test_large_batch(id long,val int)");
-                }
-                connection.setAutoCommit(false);
-                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
-                    for (int i = 0; i < 50_000; i++) {
-                        batchInsert.clearParameters();
-                        batchInsert.setLong(1, 0L);
-                        batchInsert.setInt(2, 1);
-                        batchInsert.addBatch();
-
-                        batchInsert.clearParameters();
-                        batchInsert.setLong(1, 1L);
-                        batchInsert.setInt(2, 2);
-                        batchInsert.addBatch();
-
-                        batchInsert.clearParameters();
-                        batchInsert.setLong(1, 2L);
-                        batchInsert.setInt(2, 3);
-                        batchInsert.addBatch();
-                    }
-                    batchInsert.executeBatch();
-                    connection.commit();
-                }
-
-                StringSink sink = new StringSink();
-                String expected = "count[BIGINT]\n" +
-                        "150000\n";
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
-                assertResultSet(expected, sink, rs);
-            }
-        });
-    }
-
-    @Test
     public void regularBatchInsertMethod() throws Exception {
 
         assertMemoryLeak(() -> {
@@ -837,6 +795,28 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertDateAndTimestampFromRustHex() throws Exception {
+        String script = ">0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">5100000063435245415445205441424c45204946204e4f54204558495354532072757374202874732054494d455354414d502c20647420444154452c206e616d6520535452494e472c2076616c756520494e54292074696d657374616d70287473293b00\n" +
+                "<43000000074f4b005a0000000549\n" +
+                ">500000002e733000494e5345525420494e544f20727573742056414c5545532824312c24322c24332c2434290000004400000008537330005300000004\n" +
+                "<3100000004740000001600040000045a0000045a00000413000000176e000000045a0000000549\n" +
+                ">4200000042007330000001000100040000000800025c7a454d92ad0000000800025c7a454d92ad0000000c72757374206578616d706c65000000040000007b00010001450000000900000000005300000004\n" +
+                "<3200000004430000000f494e5345525420302031005a0000000549\n" +
+                ">4300000008537330005300000004\n" +
+                "<33000000045a0000000549\n" +
+                ">5800000004";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                new DefaultPGWireConfiguration()
+        );
+    }
+
+    @Test
     public void testInsertExtendedBinary() throws Exception {
         testInsert0(false, true);
     }
@@ -1117,6 +1097,48 @@ nodejs code:
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
+    }
+
+    @Test
+    public void testLargeBatchInsertMethod() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(4);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table test_large_batch(id long,val int)");
+                }
+                connection.setAutoCommit(false);
+                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
+                    for (int i = 0; i < 50_000; i++) {
+                        batchInsert.clearParameters();
+                        batchInsert.setLong(1, 0L);
+                        batchInsert.setInt(2, 1);
+                        batchInsert.addBatch();
+
+                        batchInsert.clearParameters();
+                        batchInsert.setLong(1, 1L);
+                        batchInsert.setInt(2, 2);
+                        batchInsert.addBatch();
+
+                        batchInsert.clearParameters();
+                        batchInsert.setLong(1, 2L);
+                        batchInsert.setInt(2, 3);
+                        batchInsert.addBatch();
+                    }
+                    batchInsert.executeBatch();
+                    connection.commit();
+                }
+
+                StringSink sink = new StringSink();
+                String expected = "count[BIGINT]\n" +
+                        "150000\n";
+                Statement statement = connection.createStatement();
+                ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
+                assertResultSet(expected, sink, rs);
+            }
+        });
     }
 
     @Test

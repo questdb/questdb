@@ -33,6 +33,7 @@ import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.cutlass.http.processors.StaticContentProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -2463,7 +2464,7 @@ public class IODispatcherTest {
     @Test
     public void testJsonQueryMultiThreaded() throws Exception {
         final int threadCount = 4;
-        final int requestsPerThread = 5000;
+        final int requestsPerThread = 500;
         final String[][] requests = {
                 {
                         "GET /exec?query=xyz%20where%20sym%20%3D%20%27UDEYY%27 HTTP/1.1\r\n" +
@@ -2558,53 +2559,37 @@ public class IODispatcherTest {
                                 "\r\n"
                 }
         };
-        final String baseDir = temp.getRoot().getAbsolutePath();
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
-        try (
-                CairoEngine cairoEngine = new CairoEngine(configuration);
-                HttpServer ignored = HttpServer.create(
-                        new DefaultHttpServerConfiguration(
-                                new DefaultHttpContextConfiguration() {
-                                    @Override
-                                    public MillisecondClock getClock() {
-                                        return StationaryMillisClock.INSTANCE;
-                                    }
-                                },
-                                new DefaultIODispatcherConfiguration() {
-                                    @Override
-                                    public int getActiveConnectionLimit() {
-                                        return threadCount * 2;
-                                    }
-                                }
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(threadCount)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
 
-                        ),
-                        null,
-                        LOG,
-                        cairoEngine
-                )) {
+                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                        compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", sqlExecutionContext);
 
-            final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(cairoEngine, 1);
-            try (SqlCompiler compiler = new SqlCompiler(cairoEngine)) {
-                compiler.compile("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", sqlExecutionContext);
+                        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                        final CountDownLatch latch = new CountDownLatch(threadCount);
+                        final AtomicInteger errorCount = new AtomicInteger(0);
 
-                final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-                final CountDownLatch latch = new CountDownLatch(threadCount);
-                final AtomicInteger errorCount = new AtomicInteger(0);
+                        for (int i = 0; i < threadCount; i++) {
+                            new QueryThread(
+                                    requests,
+                                    requestsPerThread,
+                                    barrier,
+                                    latch,
+                                    errorCount
+                            ).start();
+                        }
 
-                for (int i = 0; i < threadCount; i ++) {
-                    new QueryThread(
-                            requests,
-                            requestsPerThread,
-                            barrier,
-                            latch,
-                            errorCount
-                    ).start();
-                }
-
-                latch.await();
-                Assert.assertEquals(0, errorCount.get());
-            }
-        }
+                        latch.await();
+                        Assert.assertEquals(0, errorCount.get());
+                    } catch (SqlException e) {
+                        Assert.fail(e.getMessage());
+                    }
+                });
     }
 
     private static class QueryThread extends Thread {

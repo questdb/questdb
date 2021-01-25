@@ -781,11 +781,12 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
 
                 preprocessEvent(event);
-                engine.createTable(
+                engine.createTableUnsafe(
                         securityContext,
                         appendMemory,
                         path,
-                        tableStructureAdapter.of(event, this));
+                        tableStructureAdapter.of(event, this)
+                );
                 int nValues = event.getNValues();
                 for (int n = 0; n < nValues; n++) {
                     colIndexMappings.set(n, n);
