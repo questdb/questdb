@@ -1905,6 +1905,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isEnabled() {
             return true;
         }
+
+        @Override
+        public String getPoolName() {
+            return "ilpwriter";
+        }
     }
 
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
@@ -1926,6 +1931,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return true;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "ilpio";
         }
     }
 

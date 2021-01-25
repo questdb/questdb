@@ -34,4 +34,8 @@ public interface WorkerPoolConfiguration {
     default boolean isDaemonPool() {
         return false;
     }
+
+    default String getPoolName() {
+        return "worker";
+    }
 }

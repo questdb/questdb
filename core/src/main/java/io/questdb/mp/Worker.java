@@ -54,12 +54,13 @@ public class Worker extends Thread {
             final Log log,
             final WorkerCleaner cleaner,
             final boolean haltOnError,
-            final int workerId
+            final int workerId,
+            String poolName
     ) {
         this.log = log;
         this.jobs = jobs;
         this.haltLatch = haltLatch;
-        this.setName("questdb-worker-" + COUNTER.incrementAndGet());
+        this.setName("questdb-" + poolName + "-" + COUNTER.incrementAndGet());
         this.affinity = affinity;
         this.cleaner = cleaner;
         this.haltOnError = haltOnError;
