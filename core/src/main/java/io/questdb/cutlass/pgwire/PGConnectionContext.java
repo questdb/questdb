@@ -1509,7 +1509,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                             lo += Short.BYTES;
                             activeSelectColumnTypes.setQuick(i, toColumnBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
                         }
-                    } else if(columnFormatCodeCount == 1) {
+                    } else if (columnFormatCodeCount == 1) {
                         final short code = getShortUnsafe(lo);
                         for (int i = 0; i < columnCount; i++) {
                             activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));
