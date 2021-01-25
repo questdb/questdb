@@ -32,6 +32,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import org.jetbrains.annotations.NotNull;
 
+import io.questdb.Telemetry;
 import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -66,6 +67,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TelemetryTask;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -238,6 +240,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 engine.createTable(securityContext, mem, path, tableStructureAdapter.of(tableName, protoParser));
             }
             TableWriter writer = engine.getWriter(securityContext, tableName);
+            TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
 
             return assignTableToThread(tableName, keyIndex, writer);
         } finally {

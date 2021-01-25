@@ -24,7 +24,31 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+
 public final class TelemetryTask {
+    public static void doStoreTelemetry(CairoEngine engine, short event, short origin) {
+        MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
+        Sequence telemetryPubSeq = engine.getTelemetryPubSequence();
+        RingQueue<TelemetryTask> telemetryQueue = engine.getTelemetryQueue();
+        long cursor = telemetryPubSeq.next();
+        while (cursor == -2) {
+            cursor = telemetryPubSeq.next();
+        }
+
+        if (cursor > -1) {
+            TelemetryTask row = telemetryQueue.get(cursor);
+
+            row.created = clock.getTicks();
+            row.event = event;
+            row.origin = origin;
+            telemetryPubSeq.done(cursor);
+        }
+    }
+
     public long created;
     public CharSequence id;
     public short event;
