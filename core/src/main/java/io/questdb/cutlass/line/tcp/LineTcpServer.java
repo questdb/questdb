@@ -123,7 +123,7 @@ public class LineTcpServer implements Closeable {
         }
 
         WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool);
-        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool);
+        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool);
         LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool);
         if (ioWorkerPool != sharedWorkerPool) {
             ioWorkerPool.start(LOG);
