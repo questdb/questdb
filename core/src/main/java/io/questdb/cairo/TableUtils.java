@@ -190,7 +190,10 @@ public final class TableUtils {
             } finally {
                 if (dirFd > 0) {
                     if (ff.fsync(dirFd) != 0) {
-                        LOG.error().$("Could not fsync [fd=").$(dirFd).$(']').$();
+                        LOG.error()
+                                .$("could not fsync [fd=").$(dirFd)
+                                .$(", errno=").$(ff.errno())
+                                .$(']').$();
                     }
                     ff.close(dirFd);
                 }
