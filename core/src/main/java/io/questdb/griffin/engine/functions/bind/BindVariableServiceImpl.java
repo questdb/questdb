@@ -575,7 +575,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setLong0(function, value, index, null, ColumnType.TIMESTAMP);
+            setTimestamp0(function, value, index);
         } else {
             indexedVariables.setQuick(index, function = timestampVarPool.next());
             ((TimestampBindVariable) function).value = value;
@@ -714,6 +714,36 @@ public class BindVariableServiceImpl implements BindVariableService {
                 break;
             default:
                 reportError(function, srcType, index, name);
+                break;
+        }
+    }
+
+    private static void setTimestamp0(Function function, long value, int index) throws SqlException {
+        final int functionType = function.getType();
+        switch (functionType) {
+            case ColumnType.INT:
+                ((IntBindVariable) function).value = (int) value;
+                break;
+            case ColumnType.LONG:
+                ((LongBindVariable) function).value = value;
+                break;
+            case ColumnType.TIMESTAMP:
+                ((TimestampBindVariable) function).value = value;
+                break;
+            case ColumnType.DATE:
+                ((DateBindVariable) function).value = value != Numbers.LONG_NaN ? value / 1000 : value;
+                break;
+            case ColumnType.FLOAT:
+                ((FloatBindVariable) function).value = value != Numbers.LONG_NaN ? value : Float.NaN;
+                break;
+            case ColumnType.DOUBLE:
+                ((DoubleBindVariable) function).value = value != Numbers.LONG_NaN ? value : Double.NaN;
+                break;
+            case ColumnType.STRING:
+                ((StrBindVariable) function).setValue(value);
+                break;
+            default:
+                reportError(function, ColumnType.TIMESTAMP, index, null);
                 break;
         }
     }

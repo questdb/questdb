@@ -40,7 +40,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
     private static final int rowCount = PG_TYPE_OIDS.size();
     private final TypeCatalogueRecord record = new TypeCatalogueRecord();
-    public int[] intValues = new int[METADATA.getColumnCount()];
+    public final int[] intValues = new int[METADATA.getColumnCount()];
     private int row = -1;
 
     public TypeCatalogueCursor() {

@@ -54,6 +54,8 @@ public interface FilesFacade {
 
     int msync(long addr, long len, boolean async);
 
+    int fsync(long fd);
+
     long getMapPageSize();
 
     long getOpenFileCount();

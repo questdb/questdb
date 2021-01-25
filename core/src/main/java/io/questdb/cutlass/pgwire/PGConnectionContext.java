@@ -311,7 +311,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool
+            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool,
+            int operation
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, BadProtocolException {
 
         this.typesAndSelectCache = selectAndTypesCache;
@@ -321,74 +322,62 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             doSend(bufferRemainingOffset, bufferRemainingSize);
         }
 
-        // If we have empty buffer we need to try to read something from socket
-        // however the opposite  is a little tricky. If buffer is non-empty
-        // we still may need to read from socket if contents of this buffer
-        // is incomplete and cannot be parsed
-        if (recvBufferReadOffset == recvBufferWriteOffset) {
-            recv();
-        }
-
         try {
-            long readOffsetBeforeParse = recvBufferReadOffset;
-
-            // Parse will update the value of recvBufferOffset upon completion of
-            // logical block. We cannot count on return value because 'parse' may try to
-            // respond to client and fail with exception. When it does fail we would have
-            // to retry 'send' but not parse the same input again
-            parse(
-                    recvBuffer + recvBufferReadOffset,
-                    (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                    compiler
-            );
-
-            // nothing changed?
-            if (readOffsetBeforeParse == recvBufferReadOffset) {
-                // how come we have something in buffer and parse didn't do anything?
-                if (readOffsetBeforeParse < recvBufferWriteOffset) {
-                    // may be content was incomplete?
-                    recv();
-                    // still nothing? oh well
-                    if (readOffsetBeforeParse == recvBufferReadOffset) {
-                        return;
+            boolean keepReceiving = true;
+            OUTER:
+            do {
+                if (operation == IOOperation.READ) {
+                    if (recv() == 0) {
+                        keepReceiving = false;
                     }
-                    // at this point we have some contact and parse did do something
-                } else {
-                    return;
                 }
-            }
 
-            // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
-            if (recvBufferWriteOffset - recvBufferReadOffset > 0) {
-                // did we not parse input fully?
-                do {
-                    readOffsetBeforeParse = recvBufferReadOffset;
-                    parse(
-                            recvBuffer + recvBufferReadOffset,
-                            (int) (recvBufferWriteOffset - recvBufferReadOffset),
-                            compiler
-                    );
+                // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
+                if (keepReceiving) {
+                    do {
+                        // Parse will update the value of recvBufferOffset upon completion of
+                        // logical block. We cannot count on return value because 'parse' may try to
+                        // respond to client and fail with exception. When it does fail we would have
+                        // to retry 'send' but not parse the same input again
 
-                    // nothing changed?
-                    if (readOffsetBeforeParse == recvBufferReadOffset) {
-                        // shift to start
-                        Unsafe.getUnsafe().copyMemory(
-                                recvBuffer + readOffsetBeforeParse,
-                                recvBuffer,
-                                recvBufferWriteOffset - readOffsetBeforeParse);
-                        recvBufferWriteOffset = recvBufferWriteOffset - readOffsetBeforeParse;
-                        recvBufferReadOffset = 0;
-                        // read more
-                        return;
-                    }
-                } while (recvBufferReadOffset < recvBufferWriteOffset);
-            }
-            clearRecvBuffer();
+                        long readOffsetBeforeParse = recvBufferReadOffset;
+                        parse(
+                                recvBuffer + recvBufferReadOffset,
+                                (int) (recvBufferWriteOffset - recvBufferReadOffset),
+                                compiler
+                        );
+
+                        // nothing changed?
+                        if (readOffsetBeforeParse == recvBufferReadOffset) {
+                            // shift to start
+                            shiftReceiveBuffer(readOffsetBeforeParse);
+                            continue OUTER;
+                        }
+                    } while (recvBufferReadOffset < recvBufferWriteOffset);
+                    clearRecvBuffer();
+                }
+            } while (keepReceiving);
         } catch (SqlException e) {
             reportError(e.getPosition(), e.getFlyweightMessage());
         } catch (CairoException e) {
             reportError(-1, e.getFlyweightMessage());
         }
+    }
+
+    private void shiftReceiveBuffer(long readOffsetBeforeParse) {
+        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
+        LOG.debug()
+                .$("shift [offset=").$(readOffsetBeforeParse)
+                .$(", len=").$(len)
+                .$(']').$();
+
+        Unsafe.getUnsafe().copyMemory(
+                recvBuffer + readOffsetBeforeParse,
+                recvBuffer,
+                len
+        );
+        recvBufferWriteOffset = len;
+        recvBufferReadOffset = 0;
     }
 
     public PGConnectionContext of(long clientFd, IODispatcher<PGConnectionContext> dispatcher) {
@@ -443,6 +432,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Long.BYTES, valueLen);
         bindVariableService.setLong(index, getLongUnsafe(address));
+    }
+
+    public void setTimestampBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(Long.BYTES, valueLen);
+        bindVariableService.setTimestamp(index, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
     }
 
     public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
@@ -865,6 +859,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     case X_B_PG_INT8:
                         setLongBindVariable(j, lo, valueLen);
                         break;
+                    case X_B_PG_TIMESTAMP:
+                        setTimestampBindVariable(j, lo, valueLen);
+                        break;
                     case X_B_PG_INT2:
                         setShortBindVariable(j, lo, valueLen);
                         break;
@@ -1185,8 +1182,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         final byte type = Unsafe.getUnsafe().getByte(address);
-        LOG.debug().$("received msg [type=").$((char) type).$(']').$();
         final int msgLen = getIntUnsafe(address + 1);
+        LOG.debug()
+                .$("received msg [type=").$((char) type)
+                .$(", len=").$(msgLen)
+                .$(']').$();
         if (msgLen < 1) {
             LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(']').$();
             throw BadProtocolException.INSTANCE;
@@ -1197,6 +1197,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             // When this happens we need to shift our receive buffer left
             // to fit this message. Outer function will do that if we
             // just exit.
+            LOG.debug()
+                    .$("not enough data in buffer [expected=").$(msgLen)
+                    .$(", have=").$(len)
+                    .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
+                    .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
+                    .$(']').$();
             return;
         }
         // we have enough to read entire message
@@ -1503,7 +1509,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                             lo += Short.BYTES;
                             activeSelectColumnTypes.setQuick(i, toColumnBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
                         }
-                    } else if(columnFormatCodeCount == 1) {
+                    } else if (columnFormatCodeCount == 1) {
                         final short code = getShortUnsafe(lo);
                         for (int i = 0; i < columnCount; i++) {
                             activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));
@@ -1821,12 +1827,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
+    int recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
         assertTrue(remaining > 0, "undersized receive buffer or someone is abusing protocol");
 
         int n = doReceive(remaining);
+        LOG.debug().$("recv [n=").$(n).$(']').$();
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
         }
@@ -1853,6 +1860,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         }
         recvBufferWriteOffset += n;
+        return n;
     }
 
     private void reportError(int position, CharSequence flyweightMessage) throws PeerDisconnectedException, PeerIsSlowToReadException {

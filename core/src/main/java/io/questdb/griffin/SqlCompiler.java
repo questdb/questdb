@@ -1405,7 +1405,7 @@ public class SqlCompiler implements Closeable {
 
                 try {
                     if (createTableModel.getQueryModel() == null) {
-                        engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
+                        engine.createTableUnsafe(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
                     } else {
                         writer = createTableFromCursor(createTableModel, executionContext);
                     }
@@ -1430,7 +1430,7 @@ public class SqlCompiler implements Closeable {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
-            engine.createTable(
+            engine.createTableUnsafe(
                     executionContext.getCairoSecurityContext(),
                     mem,
                     path,

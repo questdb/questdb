@@ -59,6 +59,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private TimestampAdapter timestampAdapter;
     private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
     private final ObjectPool<DateToTimestampAdapter> dateToTimestampAdapterPool = new ObjectPool<>(DateToTimestampAdapter::new, 4);
+    private int warnings;
 
     public CairoTextWriter(
             CairoEngine engine,
@@ -78,6 +79,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         columnErrorCounts.clear();
         timestampAdapter = null;
         _size = 0;
+        warnings = TextLoadWarning.NONE;
     }
 
     @Override
@@ -118,6 +120,14 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public TextLexer.Listener getTextListener() {
         return timestampAdapter != null ? partitionedListener : nonPartitionedListener;
+    }
+
+    public CharSequence getTimestampCol() {
+        return timestampIndexCol;
+    }
+
+    public int getWarnings() {
+        return warnings;
     }
 
     public long getWrittenLineCount() {
@@ -300,6 +310,15 @@ public class CairoTextWriter implements Closeable, Mutable {
                     writer = engine.getWriter(cairoSecurityContext, tableName);
                 } else {
                     writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
+                    if (timestampIndexCol != null &&
+                            !Chars.equalsNc(timestampIndexCol, writer.getDesignatedTimestampColumnName())) {
+                        warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
+                    }
+                    timestampIndexCol = writer.getDesignatedTimestampColumnName();
+                    if (partitionBy != PartitionBy.NONE && partitionBy != writer.getPartitionBy()) {
+                        warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;
+                    }
+                    partitionBy = writer.getPartitionBy();
                     tableStructureAdapter.of(names, detectedTypes);
                 }
                 break;

@@ -54,7 +54,7 @@ public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionF
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(position, new EmptyTableRecordCursorFactory(metadata));
     }
 }

@@ -584,4 +584,31 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testSymbolNotPresentAndThenInserted() throws Exception {
+        final String expected = "k\tprice\tts\n";
+
+        String query = "select sym k, price, ts from x where sym = 'ABC'";
+        assertQuery(
+                "k\tprice\tts\n",
+                query,
+                "create table x as (" +
+                        "select " +
+                        "rnd_symbol('ABB', 'HBC', 'DXR') sym, " +
+                        "rnd_double() price, " +
+                        "timestamp_sequence(172800000000, 360000000) ts " +
+                        "from long_sequence(10)" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into x select * from (select rnd_symbol('ABC') sym, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(177800000000, 360000000) ts \n" +
+                        "    from long_sequence(2)) timestamp (ts)",
+                expected +
+                        "ABC\t0.6276954028373309\t1970-01-03T01:23:20.000000Z\n" +
+                        "ABC\t0.6778564558839208\t1970-01-03T01:29:20.000000Z\n",
+                true
+        );
+    }
 }

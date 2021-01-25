@@ -1428,6 +1428,32 @@ public class TableReaderTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testAppendNullTimestamp() throws Exception {
+        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+                .col("int", ColumnType.INT)
+                .timestamp("t")
+        ) {
+            CairoTestUtils.createTableWithVersionAndId(model, ColumnType.VERSION, 1);
+
+            TestUtils.assertMemoryLeak(() -> {
+                try (TableWriter w = new TableWriter(configuration, "all")) {
+                    TableWriter.Row r = w.newRow(Numbers.LONG_NaN);
+                    r.putInt(0, 100);
+                    r.append();
+                    w.commit();
+
+                    Assert.assertEquals(1, w.size());
+                }
+
+                try (TableReader reader = new TableReader(configuration, "all")) {
+                    Assert.assertEquals(1, reader.getPartitionCount());
+                    Assert.assertEquals(1, reader.openPartition(0));
+                }
+            });
+        }
+    }
+
+    @Test
     public void testCharAsString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
@@ -3345,7 +3371,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private void assertBatch2(int count, long increment, long ts, long blob, TableReader reader) {
         RecordCursor cursor = reader.getCursor();
         Rnd exp = new Rnd();
-        long ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3 * count, (r, rnd13, ts13, blob13) -> {
+        long ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3L * count, (r, rnd13, ts13, blob13) -> {
             BATCH1_ASSERTER.assertRecord(r, rnd13, ts13, blob13);
             BATCH2_BEFORE_ASSERTER.assertRecord(r, rnd13, ts13, blob13);
         });
@@ -3356,7 +3382,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Rnd exp = new Rnd();
         long ts2;
         RecordCursor cursor = reader.getCursor();
-        ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+        ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3L * count, (r, rnd1, ts1, blob1) -> {
             BATCH1_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH2_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH3_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
@@ -3375,7 +3401,7 @@ public class TableReaderTest extends AbstractCairoTest {
         long ts2;
         exp = new Rnd();
         RecordCursor cursor = reader.getCursor();
-        ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+        ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3L * count, (r, rnd1, ts1, blob1) -> {
             BATCH1_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH2_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH3_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
@@ -3400,7 +3426,7 @@ public class TableReaderTest extends AbstractCairoTest {
         long ts2;
 
         cursor.toTop();
-        ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+        ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3L * count, (r, rnd1, ts1, blob1) -> {
             BATCH1_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH2_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH3_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
@@ -3433,7 +3459,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private void assertBatch7(int count, long increment, long ts, long blob, RecordCursor cursor) {
         cursor.toTop();
         Rnd exp = new Rnd();
-        long ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+        long ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3L * count, (r, rnd1, ts1, blob1) -> {
             BATCH1_7_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH_2_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH_3_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
@@ -3458,7 +3484,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private void assertBatch8(int count, long increment, long ts, long blob, RecordCursor cursor) {
         cursor.toTop();
         Rnd exp = new Rnd();
-        long ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+        long ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3L * count, (r, rnd1, ts1, blob1) -> {
             BATCH1_7_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH_2_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH_3_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
@@ -3484,7 +3510,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private void assertBatch9(int count, long increment, long ts, long blob, RecordCursor cursor) {
         cursor.toTop();
         Rnd exp = new Rnd();
-        long ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+        long ts2 = assertPartialCursor(cursor, exp, ts, increment, blob, 3L * count, (r, rnd1, ts1, blob1) -> {
             BATCH1_9_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH_2_9_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
             BATCH_3_9_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
@@ -3700,21 +3726,21 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertTrue(reader.reload());
 
                     // check if we can see second batch after reader was reloaded
-                    assertCursor(cursor, ts, increment, blob, 2 * count, BATCH1_ASSERTER);
+                    assertCursor(cursor, ts, increment, blob, 2L * count, BATCH1_ASSERTER);
 
                     // writer will inflate last partition in order to optimise appends
                     // reader must be able to cope with that
                     try (TableWriter writer = new TableWriter(configuration, "all")) {
 
                         // this is a bit of paranoid check, but make sure our reader doesn't flinch when new writer is open
-                        assertCursor(cursor, ts, increment, blob, 2 * count, BATCH1_ASSERTER);
+                        assertCursor(cursor, ts, increment, blob, 2L * count, BATCH1_ASSERTER);
 
                         // also make sure that there is nothing to reload, we've not done anything to data after all
                         Assert.assertFalse(reader.reload());
 
                         // check that we can still see two batches after no-op reload
                         // we rule out possibility of reload() corrupting table state
-                        assertCursor(cursor, ts, increment, blob, 2 * count, BATCH1_ASSERTER);
+                        assertCursor(cursor, ts, increment, blob, 2L * count, BATCH1_ASSERTER);
 
                         // just for no reason add third batch
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH1_GENERATOR);
@@ -3723,7 +3749,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         Assert.assertTrue(reader.reload());
 
                         // and we should see three batches of data
-                        assertCursor(cursor, ts, increment, blob, 3 * count, BATCH1_ASSERTER);
+                        assertCursor(cursor, ts, increment, blob, 3L * count, BATCH1_ASSERTER);
 
                         // this is where things get interesting
                         // add single column

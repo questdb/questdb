@@ -105,7 +105,7 @@ public class CairoEngine implements Closeable, WriterSource {
         configuration.getFilesFacade().close(tableIndexFd);
     }
 
-    public void createTable(
+    public void createTableUnsafe(
             CairoSecurityContext securityContext,
             AppendMemory mem,
             Path path,
@@ -121,6 +121,28 @@ public class CairoEngine implements Closeable, WriterSource {
                 configuration.getMkDirMode(),
                 (int) getNextTableId()
         );
+    }
+
+    public void createTable(
+            CairoSecurityContext securityContext,
+            AppendMemory mem,
+            Path path,
+            TableStructure struct
+    ) {
+        if (lock(securityContext, struct.getTableName())) {
+            try {
+                createTableUnsafe(
+                        securityContext,
+                        mem,
+                        path,
+                        struct
+                );
+            } finally {
+                unlock(securityContext, struct.getTableName(), null);
+            }
+        } else {
+            throw EntryUnavailableException.INSTANCE;
+        }
     }
 
     public TableWriter getBackupWriter(
