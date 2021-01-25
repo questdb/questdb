@@ -49,7 +49,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     protected long recvBufEnd;
     protected long recvBufPos;
     protected boolean peerDisconnected;
-    private boolean queueFull;
     private long lastQueueFullLogMillis = 0;
     private final NewLineProtoParser protoParser = new NewLineProtoParser();
     private boolean invalidMeasurement;
@@ -69,7 +68,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     public void clear() {
         recvBufPos = recvBufStart;
         peerDisconnected = false;
-        queueFull = false;
         resetParser();
     }
 
@@ -143,7 +141,14 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     IOContextResult handleIO() {
-        read();
+        if (read()) {
+            return parseMeasurements();
+        } else {
+            return IOContextResult.NEEDS_READ;
+        }
+    }
+
+    protected final IOContextResult parseMeasurements() {
         while (true) {
             try {
                 ParseResult rc = invalidMeasurement ? protoParser.skipMeasurement(recvBufPos) : protoParser.parseMeasurement(recvBufPos);
@@ -220,8 +225,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             } else {
                 peerDisconnected = nRead < 0;
             }
+            return bufferRemaining < orig;
         }
-        return bufferRemaining < orig || queueFull;
+        return !peerDisconnected;
     }
 
     enum IOContextResult {

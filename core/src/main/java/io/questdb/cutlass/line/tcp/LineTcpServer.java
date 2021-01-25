@@ -28,9 +28,7 @@ import java.io.Closeable;
 
 import org.jetbrains.annotations.Nullable;
 
-import io.questdb.MessageBus;
 import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.WorkerPoolAwareConfiguration.ServerFactory;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
