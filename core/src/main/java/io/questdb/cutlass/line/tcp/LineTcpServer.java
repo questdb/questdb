@@ -76,6 +76,7 @@ public class LineTcpServer implements Closeable {
                 private void onRequest(int operation, LineTcpConnectionContext context) {
                     if (handleIO(context)) {
                         busyContexts.add(context);
+                        LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
                     }
                 }
 
@@ -90,6 +91,7 @@ public class LineTcpServer implements Closeable {
                             busy = true;
                             break;
                         }
+                        LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();
                         busyContexts.remove(i);
                     }
 
