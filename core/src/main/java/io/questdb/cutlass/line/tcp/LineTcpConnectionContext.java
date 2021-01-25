@@ -141,11 +141,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     IOContextResult handleIO() {
-        if (read()) {
-            return parseMeasurements();
-        } else {
-            return IOContextResult.NEEDS_READ;
-        }
+        read();
+        return parseMeasurements();
     }
 
     protected final IOContextResult parseMeasurements() {

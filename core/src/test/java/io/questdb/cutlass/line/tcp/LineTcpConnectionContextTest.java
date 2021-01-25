@@ -1247,5 +1247,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         }
         Assert.assertTrue(maxIterations > 0);
         Assert.assertTrue(disconnected);
+        // Wait for last commit
+        try {
+            Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs() + 50);
+        } catch (InterruptedException ex) {
+            throw new RuntimeException(ex);
+        }
     }
 }

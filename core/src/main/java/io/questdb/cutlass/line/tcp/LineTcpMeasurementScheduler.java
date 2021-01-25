@@ -31,9 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -756,7 +754,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private void doMaintenance(boolean busy) {
             long millis = milliClock.getTicks();
-            if (busy && (millis - lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
+            if ((millis - lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
                 return;
             }
 
