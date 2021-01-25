@@ -1077,7 +1077,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 Arrays.fill(affinityByThread, -1);
             }
         });
-        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool, null) {
+        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool) {
             @Override
             boolean tryCommitNewEvent(NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
                 if (null != onCommitNewEvent) {

@@ -575,7 +575,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                 Arrays.fill(affinityByThread, -1);
             }
         });
-        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool, null);
+        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool);
 
         AuthDb authDb = new AuthDb(lineTcpConfiguration);
         context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler);

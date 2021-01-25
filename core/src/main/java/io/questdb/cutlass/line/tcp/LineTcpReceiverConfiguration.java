@@ -55,7 +55,9 @@ public interface LineTcpReceiverConfiguration {
 
     MillisecondClock getMillisecondClock();
 
-    WorkerPoolAwareConfiguration getWorkerPoolConfiguration();
+    WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
+
+    WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration();
 
     int getNUpdatesPerLoadRebalance();
 

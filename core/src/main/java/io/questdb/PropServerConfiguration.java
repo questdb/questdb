@@ -193,7 +193,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
     private final boolean lineTcpEnabled;
-    private final WorkerPoolAwareConfiguration lineTcpWorkerPoolConfiguration = new PropLineTcpWorkerPoolConfiguration();
+    private final WorkerPoolAwareConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
+    private final WorkerPoolAwareConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
     private final Log log;
     private final PropHttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
@@ -311,9 +312,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpMsgBufferSize;
     private int lineTcpMaxMeasurementSize;
     private int lineTcpWriterQueueSize;
-    private int lineTcpWorkerCount;
-    private int[] lineTcpWorkerAffinity;
-    private boolean lineTcpWorkerPoolHaltOnError;
+    private int lineTcpWriterWorkerCount;
+    private int[] lineTcpWriterWorkerAffinity;
+    private boolean lineTcpWriterWorkerPoolHaltOnError;
+    private int lineTcpIOWorkerCount;
+    private int[] lineTcpIOWorkerAffinity;
+    private boolean lineTcpIOWorkerPoolHaltOnError;
     private int lineTcpNUpdatesPerLoadRebalance;
     private double lineTcpMaxLoadRatio;
     private int lineTcpMaxUncommittedRows;
@@ -645,9 +649,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                         "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
             }
             this.lineTcpWriterQueueSize = getIntSize(properties, env, "line.tcp.writer.queue.size", 128);
-            this.lineTcpWorkerCount = getInt(properties, env, "line.tcp.worker.count", 0);
-            this.lineTcpWorkerAffinity = getAffinity(properties, env, "line.tcp.worker.affinity", lineTcpWorkerCount);
-            this.lineTcpWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.halt.on.error", false);
+            this.lineTcpWriterWorkerCount = getInt(properties, env, "line.tcp.writer.worker.count", 0);
+            this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, "line.tcp.writer.worker.affinity", lineTcpWriterWorkerCount);
+            this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.writer.halt.on.error", false);
+            this.lineTcpIOWorkerCount = getInt(properties, env, "line.tcp.io.worker.count", 0);
+            this.lineTcpIOWorkerAffinity = getAffinity(properties, env, "line.tcp.io.worker.affinity", lineTcpIOWorkerCount);
+            this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.io.halt.on.error", false);
             this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000);
             this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
             this.lineTcpMaxUncommittedRows = getInt(properties, env, "line.tcp.max.uncommitted.rows", 1000);
@@ -1878,20 +1885,42 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
         @Override
         public int[] getWorkerAffinity() {
-            return lineTcpWorkerAffinity;
+            return lineTcpWriterWorkerAffinity;
         }
 
         @Override
         public int getWorkerCount() {
-            return lineTcpWorkerCount;
+            return lineTcpWriterWorkerCount;
         }
 
         @Override
         public boolean haltOnError() {
-            return lineTcpWorkerPoolHaltOnError;
+            return lineTcpWriterWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+    }
+
+    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+        @Override
+        public int[] getWorkerAffinity() {
+            return lineTcpIOWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return lineTcpIOWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return lineTcpIOWorkerPoolHaltOnError;
         }
 
         @Override
@@ -1957,8 +1986,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
-            return lineTcpWorkerPoolConfiguration;
+        public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
+            return lineTcpWriterWorkerPoolConfiguration;
+        }
+
+        @Override
+        public WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration() {
+            return lineTcpIOWorkerPoolConfiguration;
         }
 
         @Override

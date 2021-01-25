@@ -99,8 +99,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool writerWorkerPool,
-            @Nullable MessageBus messageBus
+            WorkerPool writerWorkerPool
     ) {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();

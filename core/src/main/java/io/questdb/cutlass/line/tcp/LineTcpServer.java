@@ -57,17 +57,17 @@ public class LineTcpServer implements Closeable {
     public LineTcpServer(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool workerPool,
-            @Nullable MessageBus messageBus
+            WorkerPool ioWorkerPool,
+            WorkerPool writerWorkerPool
     ) {
         this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
                 lineConfiguration.getNetDispatcherConfiguration(),
                 contextFactory);
-        workerPool.assign(dispatcher);
-        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, workerPool, messageBus);
-        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            workerPool.assign(i, new Job() {
+        ioWorkerPool.assign(dispatcher);
+        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, writerWorkerPool);
+        for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
+            ioWorkerPool.assign(i, new Job() {
                 // Context blocked on LineTcpMeasurementScheduler queue
                 private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
                 private int busyContextIndex = 0;
@@ -104,10 +104,10 @@ public class LineTcpServer implements Closeable {
         }
 
         final Closeable cleaner = contextFactory::closeContextPool;
-        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
+        for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            workerPool.assign(i, cleaner);
+            ioWorkerPool.assign(i, cleaner);
         }
     }
 
@@ -122,24 +122,16 @@ public class LineTcpServer implements Closeable {
             return null;
         }
 
-        ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (
-                netWorkerPoolConfiguration,
-                engine,
-                workerPool,
-                local,
-                bus,
-                functionFactory) -> new LineTcpServer(
-                        lineConfiguration,
-                        cairoEngine,
-                        workerPool,
-                        bus);
-        return WorkerPoolAwareConfiguration.create(
-                lineConfiguration.getWorkerPoolConfiguration(),
-                sharedWorkerPool,
-                log,
-                cairoEngine,
-                factory,
-                null);
+        WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool);
+        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool);
+        LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool);
+        if (ioWorkerPool != sharedWorkerPool) {
+            ioWorkerPool.start(LOG);
+        }
+        if (writerWorkerPool != sharedWorkerPool) {
+            writerWorkerPool.start(LOG);
+        }
+        return lineTcpServer;
     }
 
     @Override
