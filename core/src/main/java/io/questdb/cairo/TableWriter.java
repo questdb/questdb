@@ -3234,8 +3234,6 @@ public class TableWriter implements Closeable {
         final long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
 
         // copy timestamp column of the partition into a "index" memory
-
-        long t = System.nanoTime();
         final long mergeIndex = oooCreateMergeIndex(
                 timestampIndex,
                 mergedTimestamps,
@@ -3245,7 +3243,6 @@ public class TableWriter implements Closeable {
                 mergeOOOHi,
                 mergeStruct
         );
-        System.out.println("merge index: " + (System.nanoTime() - t));
 
         try {
             for (int i = 0; i < columnCount; i++) {
@@ -5181,7 +5178,7 @@ public class TableWriter implements Closeable {
     }
 
     @FunctionalInterface
-    private interface MergeShuffleOutOfOrderDataInternal {
+    public interface MergeShuffleOutOfOrderDataInternal {
         void shuffle(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
     }
 

@@ -60,6 +60,7 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
     private AppendMemory varColumn;
     private ContiguousVirtualMemory oooFixColumn;
     private ContiguousVirtualMemory oooVarColumn;
+    private long timestampFd;
 
     @Override
     public void close() {
@@ -158,6 +159,10 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return suffixType;
     }
 
+    public long getTimestampFd() {
+        return timestampFd;
+    }
+
     public long getTxn() {
         return txn;
     }
@@ -196,7 +201,8 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
             int suffixType,
             long suffixLo,
             long suffixHi,
-            long dataIndexMax
+            long dataIndexMax,
+            long timestampFd
     ) {
         // todo: copy path
         this.ff = ff;
@@ -224,5 +230,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         this.suffixLo = suffixLo;
         this.suffixHi = suffixHi;
         this.dataIndexMax = dataIndexMax;
+        this.timestampFd = timestampFd;
     }
 }

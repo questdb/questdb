@@ -147,7 +147,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     0,
                     0,
                     0,
-                    5 //oooOpenNewPartitionForAppend
+                    5, //oooOpenNewPartitionForAppend
+                    -1,  // timestamp fd
+                    timestampIndex
             );
         } else {
 
@@ -462,7 +464,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         suffixLo,
                         suffixHi,
                         dataIndexMax,
-                        openColumnMode
+                        openColumnMode,
+                        timestampFd,
+                        timestampIndex
                 );
 
             } finally {
@@ -495,7 +499,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixLo,
             long suffixHi,
             long dataIndexMax,
-            int openColumnMode
+            int openColumnMode,
+            long timestampFd,
+            int timestampIndex
     ) {
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             long c = openColumnPubSeq.next();
@@ -528,7 +534,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     suffixType,
                     suffixLo,
                     suffixHi,
-                    dataIndexMax
+                    dataIndexMax,
+                    i != timestampIndex ? -1 : timestampFd
             );
             openColumnPubSeq.done(c);
         }
