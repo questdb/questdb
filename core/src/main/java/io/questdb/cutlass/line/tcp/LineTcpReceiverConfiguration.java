@@ -70,4 +70,6 @@ public interface LineTcpReceiverConfiguration {
     String getAuthDbPath();
 
     int getDefaultPartitionBy();
+
+    boolean isIOAggressiveRecv();
 }

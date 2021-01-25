@@ -324,6 +324,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceJobHysteresisInMs;
     private String lineTcpAuthDbPath;
     private int lineDefaultPartitionBy;
+    private boolean lineTcpAggressiveRecv;
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -669,6 +670,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (null != lineTcpAuthDbPath) {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
+            this.lineTcpAggressiveRecv = getBoolean(properties, env, "line.tcp.io.aggressive.recv", false);
         }
 
         this.buildInformation = buildInformation;
@@ -2033,6 +2035,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDefaultPartitionBy() {
             return lineDefaultPartitionBy;
+        }
+
+        @Override
+        public boolean isIOAggressiveRecv() {
+            return lineTcpAggressiveRecv;
         }
     }
 

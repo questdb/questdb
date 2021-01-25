@@ -136,4 +136,9 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public int getDefaultPartitionBy() {
         return PartitionBy.DAY;
     }
+
+    @Override
+    public boolean isIOAggressiveRecv() {
+        return false;
+    }
 }
