@@ -24,7 +24,20 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import java.net.URL;
+import java.security.PrivateKey;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+
+import org.junit.Assert;
+import org.junit.Test;
+
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
@@ -42,12 +55,6 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import org.junit.Test;
-
-import java.net.URL;
-import java.security.PrivateKey;
-import java.util.Random;
-import java.util.function.Supplier;
 
 public class LineTcpServerTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpServerTest.class);
@@ -55,28 +62,31 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
+    private static final AtomicInteger N_TEST = new AtomicInteger();
+    private static final long TEST_TIMEOUT_IN_MS = 120000;
 
-    @Test(timeout = 300000)
+    @Test
     public void testUnauthenticated() {
         test(null, null, 200, 1_000);
     }
 
-    @Test(timeout = 300000)
+    @Test
     public void testGoodAuthenticated() {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000);
     }
 
-    @Test(timeout = 300000, expected = NetworkError.class)
+    @Test(expected = NetworkError.class)
     public void testInvalidUser() {
         test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 100);
     }
 
-    @Test(timeout = 300000, expected = NetworkError.class)
+    @Test(expected = NetworkError.class)
     public void testInvalidSignature() {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 100);
     }
 
     private void test(String authKeyId, PrivateKey authPrivateKey, int msgBufferSize, final int nRows) {
+        int nTest = N_TEST.incrementAndGet();
         WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
             private final int[] affinity = { -1, -1 };
 
@@ -151,12 +161,13 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
         };
 
-        final String[] tables = { "weather1", "weather2", "weather3" };
+        final String[] tables = { "weather1-" + nTest, "weather2-" + nTest, "weather3-" + nTest };
         final String[] locations = { "london", "paris", "rome" };
 
         final Random rand = new Random(0);
         final StringBuilder[] expectedSbs = new StringBuilder[tables.length];
 
+        long startEpochMs = System.currentTimeMillis();
         try (CairoEngine engine = new CairoEngine(configuration)) {
             LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
 
@@ -228,11 +239,18 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     sender.close();
                 }
 
-                tablesCreated.await();
+                boolean created = tablesCreated.await(TEST_TIMEOUT_IN_MS * 1_000_1000);
+                Assert.assertTrue(created);
                 int nRowsWritten;
                 do {
-                    Thread.yield();
                     nRowsWritten = 0;
+                    long timeTakenMs = System.currentTimeMillis() - startEpochMs;
+                    if (timeTakenMs > TEST_TIMEOUT_IN_MS) {
+                        LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
+                        break;
+                    }
+
+                    Thread.yield();
                     for (int n = 0; n < tables.length; n++) {
                         String tableName = tables[n];
                         try (TableReader reader = new TableReader(configuration, tableName)) {

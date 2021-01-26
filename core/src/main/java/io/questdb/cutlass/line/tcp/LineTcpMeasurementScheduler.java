@@ -40,10 +40,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
@@ -55,9 +57,9 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -552,7 +554,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void createMeasurementEvent(TableUpdateDetails tableUpdateDetails, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
-            threadId = Integer.MAX_VALUE;
+            threadId = INCOMPLETE_EVENT_ID;
             this.tableUpdateDetails = tableUpdateDetails;
             long timestamp = protoParser.getTimestamp();
             if (timestamp != NewLineProtoParser.NULL_TIMESTAMP) {
@@ -567,8 +569,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             for (int nEntity = 0; nEntity < nEntities; nEntity++) {
                 assert bufPos < (bufLo + bufSize + 6);
                 ProtoEntity entity = protoParser.getEntity(nEntity);
-                Integer colIndex = tableUpdateDetails.columnIndexByName.get(entity.getName());
-                if (null == colIndex) {
+                int colIndex = tableUpdateDetails.getColumnIndex(entity.getName());
+                if (colIndex < 0) {
                     int colNameLen = entity.getName().length();
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                     bufPos += Integer.BYTES;
@@ -604,9 +606,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     int colIndex = Unsafe.getUnsafe().getInt(bufPos);
                     bufPos += Integer.BYTES;
                     byte entityType;
-                    EntityValueRowWriter valueWriter;
                     if (colIndex >= 0) {
-                        valueWriter = tableUpdateDetails.valueWriters.get(colIndex);
                         entityType = Unsafe.getUnsafe().getByte(bufPos);
                         bufPos += Byte.BYTES;
                     } else {
@@ -627,7 +627,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (TableUtils.isValidColumnName(job.charSink)) {
                                 colIndex = writer.getMetadata().getColumnCount();
                                 writer.addColumn(job.charSink, columnType);
-                                tableUpdateDetails.valueWriters.ensureCapacity(colIndex + 1);
                             } else {
                                 throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
                                         .put(", columnName=").put(job.charSink).put(']');
@@ -638,16 +637,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                             row = writer.newRow(timestamp);
                             continue;
                         }
-                        valueWriter = tableUpdateDetails.valueWriters.size() > colIndex ? tableUpdateDetails.valueWriters.get(colIndex) : null;
-                        if (null == valueWriter) {
-                            int columnType = writer.getMetadata().getColumnType(colIndex);
-                            valueWriter = resolveRowWriter(columnType, entityType);
-                            tableUpdateDetails.valueWriters.extendAndSet(colIndex, valueWriter);
-                            CharSequence colName = job.byteSink.of(nameLo, nameHi); // colName in UTF8, it will be copied by the
-                                                                                    // tableUpdateDetails.columnIndexByName map
-                            tableUpdateDetails.columnIndexByName.put(colName, Integer.valueOf(colIndex));
-                        }
                     }
+                    EntityValueRowWriter valueWriter = getValueWriter(writer, colIndex, entityType);
                     bufPos = valueWriter.write(bufPos, entityType, row, colIndex, job.floatingCharSink);
                 }
                 row.append();
@@ -658,6 +649,16 @@ class LineTcpMeasurementScheduler implements Closeable {
                     row.cancel();
                 }
             }
+        }
+
+        private EntityValueRowWriter getValueWriter(TableWriter writer, int colIndex, byte entityType) {
+            EntityValueRowWriter valueWriter = tableUpdateDetails.valueWriters.size() > colIndex ? tableUpdateDetails.valueWriters.get(colIndex) : null;
+            if (null == valueWriter) {
+                int columnType = writer.getMetadata().getColumnType(colIndex);
+                valueWriter = resolveRowWriter(columnType, entityType);
+                tableUpdateDetails.valueWriters.extendAndSet(colIndex, valueWriter);
+            }
+            return valueWriter;
         }
 
         boolean isRebalanceEvent() {
@@ -671,7 +672,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final AtomicInteger nUpdates = new AtomicInteger(); // Number of updates since the last load rebalance
         private TableWriter writer;
         private int nUncommitted = 0;
-        private final ConcurrentHashMap<Integer> columnIndexByName = new ConcurrentHashMap<>();
+        private ThreadLocal<CharSequenceIntHashMap> refColumnIndexByName = ThreadLocal.withInitial(() -> {
+            return new CharSequenceIntHashMap();
+        });
         private final ObjList<EntityValueRowWriter> valueWriters = new ObjList<>();
         private boolean assignedToJob = false;
         private long lastWriterCommitEpochMs = Long.MAX_VALUE;
@@ -713,10 +716,25 @@ class LineTcpMeasurementScheduler implements Closeable {
             return writer;
         }
 
+        int getColumnIndex(CharSequence colName) {
+            CharSequenceIntHashMap columnIndexByName = refColumnIndexByName.get();
+            int colIndex = columnIndexByName.get(colName);
+            if (colIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    colIndex = reader.getMetadata().getColumnIndexQuiet(colName);
+                    if (colIndex < 0) {
+                        return -1;
+                    }
+                    columnIndexByName.put(colName.toString(), colIndex);
+                }
+            }
+            return colIndex;
+        }
+
         @Override
         public void close() throws IOException {
             if (threadId != Integer.MIN_VALUE) {
-                columnIndexByName.clear();
+                refColumnIndexByName = null;
                 Misc.freeObjList(valueWriters);
                 valueWriters.clear();
                 if (null != writer) {
