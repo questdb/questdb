@@ -83,7 +83,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getWriterQueueSize() {
+    public int getWriterQueueCapacity() {
         return 64;
     }
 

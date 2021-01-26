@@ -49,7 +49,7 @@ public interface LineTcpReceiverConfiguration {
 
     NetworkFacade getNetworkFacade();
 
-    int getWriterQueueSize();
+    int getWriterQueueCapacity();
 
     MicrosecondClock getMicrosecondClock();
 

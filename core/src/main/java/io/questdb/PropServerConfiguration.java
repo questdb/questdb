@@ -311,7 +311,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private LineProtoTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpMsgBufferSize;
     private int lineTcpMaxMeasurementSize;
-    private int lineTcpWriterQueueSize;
+    private int lineTcpWriterQueueCapacity;
     private int lineTcpWriterWorkerCount;
     private int[] lineTcpWriterWorkerAffinity;
     private boolean lineTcpWriterWorkerPoolHaltOnError;
@@ -650,7 +650,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new IllegalArgumentException(
                         "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
             }
-            this.lineTcpWriterQueueSize = getIntSize(properties, env, "line.tcp.writer.queue.size", 128);
+            this.lineTcpWriterQueueCapacity = getInt(properties, env, "line.tcp.writer.queue.capacity", 128);
             this.lineTcpWriterWorkerCount = getInt(properties, env, "line.tcp.writer.worker.count", 0);
             this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, "line.tcp.writer.worker.affinity", lineTcpWriterWorkerCount);
             this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.writer.halt.on.error", false);
@@ -1985,8 +1985,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWriterQueueSize() {
-            return lineTcpWriterQueueSize;
+        public int getWriterQueueCapacity() {
+            return lineTcpWriterQueueCapacity;
         }
 
         @Override

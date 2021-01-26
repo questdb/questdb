@@ -126,7 +126,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getWriterQueueSize() {
+            public int getWriterQueueCapacity() {
                 return 4;
             }
 

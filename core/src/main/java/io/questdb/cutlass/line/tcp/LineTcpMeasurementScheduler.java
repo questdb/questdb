@@ -113,7 +113,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         tableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         loadByThread = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
-        int queueSize = lineConfiguration.getWriterQueueSize();
+        int queueSize = lineConfiguration.getWriterQueueCapacity();
         queue = new RingQueue<>(
                 () -> new LineTcpMeasurementEvent(
                         maxMeasurementSize,
@@ -277,7 +277,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private void loadRebalance() {
-        LOG.info().$("load check [cycle=").$(++nLoadCheckCycles).$(']').$();
+        LOG.debug().$("load check [cycle=").$(++nLoadCheckCycles).$(']').$();
         calcThreadLoad();
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         int fromThreadId = -1;
@@ -755,7 +755,6 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private final DirectCharSink charSink = new DirectCharSink(64);
         private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
-        private final DirectByteCharSequence byteSink = new DirectByteCharSequence();
         private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
 
         private WriterJob(
@@ -771,7 +770,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         public boolean run(int workerId) {
             assert workerId == id;
             boolean busy = drainQueue();
-            doMaintenance(busy);
+            doMaintenance();
             return busy;
         }
 
@@ -791,7 +790,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             assignedTables.clear();
         }
 
-        private void doMaintenance(boolean busy) {
+        private void doMaintenance() {
             long millis = milliClock.getTicks();
             if ((millis - lastMaintenanceJobMillis) < maintenanceJobHysteresisInMs) {
                 return;
