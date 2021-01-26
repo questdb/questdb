@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -68,9 +69,14 @@ public class InsertStatementImpl implements InsertStatement {
 
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext) {
+        return createMethod(executionContext, engine);
+    }
+
+    @Override
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName);
+            final TableWriter writer = writerSource.getWriter(executionContext.getCairoSecurityContext(), tableName);
             if (writer.getStructureVersion() != getStructureVersion()) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;

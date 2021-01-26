@@ -40,7 +40,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        StaticSymbolTable symbolTable = cursor.getSymbolMapReader(columnIndex);
+        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
 
         long rowCount = 0;
         DataFrame frame;

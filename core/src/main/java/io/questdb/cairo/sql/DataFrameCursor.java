@@ -30,7 +30,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public interface DataFrameCursor extends Closeable  {
+public interface DataFrameCursor extends Closeable, SymbolTableSource  {
 
     // same TableReader is available on each data frame
     TableReader getTableReader();
@@ -46,6 +46,5 @@ public interface DataFrameCursor extends Closeable  {
 
     long size();
 
-    SymbolMapReader getSymbolMapReader(int columnIndex);
-
+    SymbolMapReader getSymbolTable(int columnIndex);
 }

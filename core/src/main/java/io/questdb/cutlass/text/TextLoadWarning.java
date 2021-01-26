@@ -22,24 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.cutlass.text;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.ObjList;
+public final class TextLoadWarning {
+    public final static int NONE = 0;
+    public final static int TIMESTAMP_MISMATCH = 0x1;
+    public final static int PARTITION_TYPE_MISMATCH = 0x2;
 
-public class PrefixedPgGetPartKeyDefFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_get_partkeydef(I)";
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return StrConstant.NULL;
+    public static boolean hasFlag(int warnings, int flag) {
+        return (warnings & flag) != 0;
     }
 }

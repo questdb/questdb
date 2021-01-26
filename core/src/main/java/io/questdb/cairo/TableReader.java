@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -36,16 +38,16 @@ import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.cairo.TableUtils.TX_OFFSET_MIN_TIMESTAMP;
 
-public class TableReader implements Closeable {
+public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final PartitionPathGenerator YEAR_GEN = TableReader::pathGenYear;
     private static final PartitionPathGenerator MONTH_GEN = TableReader::pathGenMonth;
     private static final PartitionPathGenerator DAY_GEN = TableReader::pathGenDay;
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.pathGenDefault();
-    private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
-    private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
     private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
+    private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
+    private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final Timestamps.TimestampFloorMethod ENTITY_FLOOR_METHOD = timestamp -> timestamp;
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
@@ -272,20 +274,6 @@ public class TableReader implements Closeable {
         return minTimestamp;
     }
 
-    public long getPageAddressAt(int partitionIndex, long row, int columnIndex) {
-        final int base = getColumnBase(partitionIndex);
-        final int column = getPrimaryColumnIndex(base, columnIndex);
-        final long r = row - getColumnTop(base, columnIndex);
-        final int columnType = metadata.getColumnType(columnIndex);
-        switch (columnType) {
-            case ColumnType.STRING:
-            case ColumnType.BINARY:
-                return getColumn(column + 1).getLong(r * Long.BYTES);
-            default:
-                return r * ColumnType.sizeOf(columnType);
-        }
-    }
-
     public long getPageValueCount(int partitionIndex, long rowLo, long rowHi, int columnIndex) {
         return rowHi - rowLo - getColumnTop(getColumnBase(partitionIndex), columnIndex);
     }
@@ -304,6 +292,11 @@ public class TableReader implements Closeable {
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return symbolMapReaders.getQuick(columnIndex);
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return getSymbolMapReader(columnIndex);
     }
 
     public String getTableName() {
@@ -375,7 +368,7 @@ public class TableReader implements Closeable {
     public void reshuffleSymbolMapReaders(long pTransitionIndex) {
         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
         final long index = pTransitionIndex + 8;
-        final long stateAddress = index + columnCount * 8;
+        final long stateAddress = index + columnCount * 8L;
 
         if (columnCount > this.columnCount) {
             symbolMapReaders.setPos(columnCount);
@@ -393,7 +386,7 @@ public class TableReader implements Closeable {
 
             Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
 
-            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
+            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8L);
 
             // don't copy entries to themselves, unless symbol map was deleted
             if (copyFrom == i + 1 && copyFrom < columnCount) {
@@ -411,7 +404,7 @@ public class TableReader implements Closeable {
             if (copyFrom > 0) {
                 tmp = copyOrRenewSymbolMapReader(symbolMapReaders.getAndSetQuick(copyFrom - 1, null), i);
 
-                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
+                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8L + 4);
 
                 // now we copied entry, what do we do with value that was already there?
                 // do we copy it somewhere else?
@@ -424,7 +417,7 @@ public class TableReader implements Closeable {
                     Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
 
                     tmp = copyOrRenewSymbolMapReader(tmp, copyTo - 1);
-                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
+                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8L + 4);
                 }
                 Misc.free(tmp);
             } else {
@@ -552,7 +545,7 @@ public class TableReader implements Closeable {
     }
 
     private void checkDefaultPartitionExistsAndUpdatePartitionCount() {
-        if (maxTimestamp == Numbers.LONG_NaN) {
+        if (maxTimestamp == Numbers.LONG_NaN && transientRowCount == 0) {
             partitionCount = 0;
         } else {
             Path path = pathGenDefault();
@@ -690,7 +683,7 @@ public class TableReader implements Closeable {
                 final long partitionRowCount = partitionRowCounts.getQuick(partitionIndex);
                 final boolean lastPartition = partitionIndex == partitionCount - 1;
                 for (int i = 0; i < columnCount; i++) {
-                    final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
+                    final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
                     if (copyFrom > -1) {
                         fetchColumnsFrom(this.columns, this.columnTops, this.bitmapIndexes, oldBase, copyFrom);
                         copyColumnsTo(columns, columnTops, indexReaders, base, i, partitionRowCount, lastPartition);
@@ -839,8 +832,7 @@ public class TableReader implements Closeable {
             return -1;
         }
 
-        // todo: this may not be the best place to check if partition is out of range
-        if (maxTimestamp == Long.MIN_VALUE) {
+        if (maxTimestamp == Numbers.LONG_NaN && transientRowCount == 0) {
             return -1;
         }
 
@@ -1320,7 +1312,7 @@ public class TableReader implements Closeable {
                 for (int i = 0; i < columnCount; i++) {
 
                     if (isEntryToBeProcessed(pState, i)) {
-                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
+                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
 
                         if (copyFrom == i) {
                             // It appears that column hasn't changed its position. There are three possibilities here:
@@ -1340,10 +1332,10 @@ public class TableReader implements Closeable {
                         if (copyFrom > -1) {
                             fetchColumnsFrom(this.columns, this.columnTops, this.bitmapIndexes, base, copyFrom);
                             copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount, lastPartition);
-                            int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8 + 4) - 1;
+                            int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
                             while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
                                 copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount, lastPartition);
-                                copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8 + 4);
+                                copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8L + 4);
                             }
                             Misc.free(tempCopyStruct.mem1);
                             Misc.free(tempCopyStruct.mem2);

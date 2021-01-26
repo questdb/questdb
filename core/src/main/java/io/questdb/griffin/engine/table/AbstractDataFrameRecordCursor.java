@@ -61,7 +61,7 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return dataFrameCursor.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
+        return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
     @Override

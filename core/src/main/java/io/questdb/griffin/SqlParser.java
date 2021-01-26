@@ -1173,8 +1173,6 @@ public final class SqlParser {
                     } while (Chars.equals(tok, ','));
                 }
                 expectTok(tok, lexer.lastTokenPosition(), ')');
-//                model.addBottomUpColumn(col);
-//                tok = tok(lexer, "'from' or ','");
                 tok = optTok(lexer);
 
             } else {

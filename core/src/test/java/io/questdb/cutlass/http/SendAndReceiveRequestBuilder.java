@@ -31,9 +31,11 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.BrokenBarrierException;
 
 public class SendAndReceiveRequestBuilder {
     public final static String RequestHeaders = "Host: localhost:9000\r\n" +
@@ -63,6 +65,179 @@ public class SendAndReceiveRequestBuilder {
     private boolean expectDisconnect;
     private int requestCount = 1;
     private int compareLength = -1;
+    private int maxWaitTimeoutMs = 5000;
+
+    public void execute(
+            String request,
+            String response
+    ) throws InterruptedException {
+        final long fd = nf.socketTcp(true);
+        nf.configureNoLinger(fd);
+        try {
+            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            try {
+                Assert.assertTrue(fd > -1);
+                long ret = nf.connect(fd, sockAddr);
+                if (ret != 0) {
+                    Assert.fail("could not connect: " + nf.errno());
+                }
+                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+                if (!expectDisconnect) {
+                    NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                }
+
+                executeWithSocket(request, response, fd);
+            } finally {
+                nf.freeSockAddr(sockAddr);
+            }
+        } finally {
+            nf.close(fd);
+        }
+    }
+
+    private void executeWithSocket(String request, String response, long fd) throws InterruptedException {
+        byte[] expectedResponse = response.getBytes();
+        final int len = Math.max(expectedResponse.length, request.length()) * 2;
+        long ptr = Unsafe.malloc(len);
+        try {
+            for (int j = 0; j < requestCount; j++) {
+                executeExplicit(request, fd, response, len, ptr, null);
+            }
+        } finally {
+            Unsafe.free(ptr, len);
+        }
+    }
+
+    public void executeExplicit(String request, long fd, String expectedResponse, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
+        long timestamp = System.currentTimeMillis();
+        int sent = 0;
+        int reqLen = request.length();
+        Chars.asciiStrCpy(request, reqLen, ptr);
+        while (sent < reqLen) {
+            int n = nf.send(fd, ptr + sent, reqLen - sent);
+            Assert.assertTrue(n > -1);
+            sent += n;
+        }
+
+        if (pauseBetweenSendAndReceive > 0) {
+            Thread.sleep(pauseBetweenSendAndReceive);
+        }
+        // receive response
+        final int expectedToReceive = expectedResponse.length();
+        int received = 0;
+        if (printOnly) {
+            System.out.println("expected");
+            System.out.println(expectedResponse);
+        }
+
+        boolean disconnected = false;
+        boolean timeoutExpired = false;
+        IntList receivedByteList = new IntList(expectedToReceive);
+        while (received < expectedToReceive) {
+            int n = nf.recv(fd, ptr + received, len - received);
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
+                }
+                received += n;
+                if (null != listener) {
+                    listener.onReceived(received);
+                }
+            } else if (n < 0) {
+                disconnected = true;
+                break;
+            } else {
+                if (System.currentTimeMillis() - timestamp > maxWaitTimeoutMs) {
+                    timeoutExpired = true;
+                    break;
+                } else {
+                    Thread.sleep(10);
+                }
+            }
+        }
+        byte[] receivedBytes = new byte[receivedByteList.size()];
+        for (int i = 0; i < receivedByteList.size(); i++) {
+            receivedBytes[i] = (byte) receivedByteList.getQuick(i);
+        }
+
+        String actual = new String(receivedBytes, StandardCharsets.UTF_8);
+        if (!printOnly) {
+            String expected = expectedResponse;
+            if (compareLength > 0) {
+                expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
+                actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
+            }
+            TestUtils.assertEquals(actual.length() > 0 ? "" : "Server disconnected", expected, actual);
+
+        } else {
+            System.out.println("actual");
+            System.out.println(actual);
+        }
+
+        if (disconnected && !expectDisconnect) {
+            LOG.error().$("disconnected?").$();
+            Assert.fail();
+        }
+
+        if (timeoutExpired) {
+            LOG.error().$("timeout expired").$();
+            Assert.fail();
+        }
+    }
+
+    public void executeWithStandardHeaders(
+            String request,
+            String response
+    ) throws InterruptedException {
+        execute(request + RequestHeaders, ResponseHeaders + response);
+    }
+
+    public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
+        final long fd = nf.socketTcp(true);
+        nf.configureNoLinger(fd);
+        try {
+            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            Assert.assertTrue(fd > -1);
+            long ret = nf.connect(fd, sockAddr);
+            if (ret != 0) {
+                Assert.fail("could not connect: " + nf.errno());
+            }
+            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+            if (!expectDisconnect) {
+                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+            }
+
+            try {
+                RequestExecutor executor = new RequestExecutor() {
+                    @Override
+                    public void executeWithStandardHeaders(String request, String response) throws InterruptedException {
+                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
+                    }
+
+                    @Override
+                    public void execute(String request, String response) throws InterruptedException {
+                        executeWithSocket(request, response, fd);
+                    }
+                };
+
+                action.run(executor);
+            } finally {
+                nf.freeSockAddr(sockAddr);
+            }
+        } finally {
+            nf.close(fd);
+        }
+    }
+
+    public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
+        this.compareLength = compareLength;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withExpectDisconnect(boolean expectDisconnect) {
+        this.expectDisconnect = expectDisconnect;
+        return this;
+    }
 
     public SendAndReceiveRequestBuilder withNetworkFacade(NetworkFacade nf) {
         this.nf = nf;
@@ -79,133 +254,30 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    public SendAndReceiveRequestBuilder withExpectDisconnect(boolean expectDisconnect) {
-        this.expectDisconnect = expectDisconnect;
-        return this;
-    }
-    
     public SendAndReceiveRequestBuilder withRequestCount(int requestCount) {
         this.requestCount = requestCount;
         return this;
     }
 
-    public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
-        this.compareLength = compareLength;
+    public SendAndReceiveRequestBuilder withMaxTimeout(int maxTimeout) {
+        this.maxWaitTimeoutMs = maxTimeout;
         return this;
     }
 
-    public void executeWithStandardHeaders(
-            String request,
-            String response
-    ) throws InterruptedException {
-        execute(request + RequestHeaders, ResponseHeaders + response);
+    @FunctionalInterface
+    public interface RequestAction {
+        void run(RequestExecutor executor) throws InterruptedException, BrokenBarrierException;
     }
 
-    public void execute(
-            String request,
-            String response         
-    ) throws InterruptedException {
-        long fd = nf.socketTcp(true);
-        try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
-            try {
-                Assert.assertTrue(fd > -1);
-                Assert.assertEquals(0, nf.connect(fd, sockAddr));
-                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+    public interface RequestExecutor {
+        void executeWithStandardHeaders(
+                String request,
+                String response
+        ) throws InterruptedException;
 
-                byte[] expectedResponse = response.getBytes();
-                final int len = Math.max(expectedResponse.length, request.length()) * 2;
-                long ptr = Unsafe.malloc(len);
-                try {
-                    for (int j = 0; j < requestCount; j++) {
-                        executeExplicit(request, fd, expectedResponse, len, ptr, null);
-                    }
-                } finally {
-                    Unsafe.free(ptr, len);
-                }
-            } finally {
-                nf.freeSockAddr(sockAddr);
-            }
-        } finally {
-            nf.close(fd);
-        }
-    }
-
-    public void executeExplicit(String request, long fd, byte[] expectedResponse, final int len, long ptr,  HttpClientStateListener listener) throws InterruptedException {
-        long timestamp = System.currentTimeMillis();
-        int sent = 0;
-        int reqLen = request.length();
-        Chars.asciiStrCpy(request, reqLen, ptr);
-        while (sent < reqLen) {
-            int n = nf.send(fd, ptr + sent, reqLen - sent);
-            Assert.assertTrue(n > -1);
-            sent += n;
-        }
-
-        if (pauseBetweenSendAndReceive > 0) {
-            Thread.sleep(pauseBetweenSendAndReceive);
-        }
-        // receive response
-        final int expectedToReceive = expectedResponse.length;
-        int received = 0;
-        if (printOnly) {
-            System.out.println("expected");
-            System.out.println(new String(expectedResponse, StandardCharsets.UTF_8));
-        }
-
-        boolean disconnected = false;
-        boolean timeoutExpired = false;
-        IntList receivedByteList = new IntList(expectedToReceive);
-        while (received < expectedToReceive) {
-            int n = nf.recv(fd, ptr + received, len - received);
-            if (n > 0) {
-                // dump(ptr + received, n);
-                // compare bytes
-                for (int i = 0; i < n; i++) {
-                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
-                }
-                received += n;
-                if (null != listener) {
-                    listener.onReceived(received);
-                }
-            } else if (n < 0) {
-                disconnected = true;
-                break;
-            } else {
-                int maxWaitTimeoutMs = 5000;
-                if (System.currentTimeMillis() - timestamp > maxWaitTimeoutMs) {
-                    timeoutExpired = true;
-                    break;
-                }
-            }
-        }
-        byte[] receivedBytes = new byte[receivedByteList.size()];
-        for (int i = 0; i < receivedByteList.size(); i++) {
-            receivedBytes[i] = (byte) receivedByteList.getQuick(i);
-        }
-
-        String actual = new String(receivedBytes, StandardCharsets.UTF_8);
-        if (!printOnly) {
-            String expected = (new String(expectedResponse, StandardCharsets.UTF_8));
-            if (compareLength > 0) {
-                expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
-                actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
-            }
-            Assert.assertEquals(expected, actual);
-
-        } else {
-            System.out.println("actual");
-            System.out.println(actual);
-        }
-
-        if (disconnected && !expectDisconnect) {
-            LOG.error().$("disconnected?").$();
-            Assert.fail();
-        }
-
-        if (timeoutExpired) {
-            LOG.error().$("timeout expired").$();
-            Assert.fail();
-        }
+        void execute(
+                String request,
+                String response
+        ) throws InterruptedException;
     }
 }

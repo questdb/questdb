@@ -29,6 +29,7 @@ import io.questdb.MessageBusImpl;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,7 +45,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.ColumnType.SYMBOL;
 
-public class CairoEngine implements Closeable {
+public class CairoEngine implements Closeable, WriterSource {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
 
     private final WriterPool writerPool;
@@ -104,7 +105,7 @@ public class CairoEngine implements Closeable {
         configuration.getFilesFacade().close(tableIndexFd);
     }
 
-    public void createTable(
+    public void createTableUnsafe(
             CairoSecurityContext securityContext,
             AppendMemory mem,
             Path path,
@@ -120,6 +121,28 @@ public class CairoEngine implements Closeable {
                 configuration.getMkDirMode(),
                 (int) getNextTableId()
         );
+    }
+
+    public void createTable(
+            CairoSecurityContext securityContext,
+            AppendMemory mem,
+            Path path,
+            TableStructure struct
+    ) {
+        if (lock(securityContext, struct.getTableName())) {
+            try {
+                createTableUnsafe(
+                        securityContext,
+                        mem,
+                        path,
+                        struct
+                );
+            } finally {
+                unlock(securityContext, struct.getTableName(), null);
+            }
+        } else {
+            throw EntryUnavailableException.INSTANCE;
+        }
     }
 
     public TableWriter getBackupWriter(
@@ -217,6 +240,7 @@ public class CairoEngine implements Closeable {
         return telemetrySubSeq;
     }
 
+    @Override
     public TableWriter getWriter(
             CairoSecurityContext securityContext,
             CharSequence tableName
@@ -332,7 +356,7 @@ public class CairoEngine implements Closeable {
             }
         } else {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
-            throw EntryUnavailableException.INSTANCE.put("Cannot lock [table=").put(tableName).put(']');
+            throw EntryUnavailableException.INSTANCE;
         }
     }
 

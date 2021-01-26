@@ -36,15 +36,7 @@ public final class Files {
 
     public static final Charset UTF_8;
     public static final long PAGE_SIZE;
-    //    public static final int DT_UNKNOWN = 0;
-//    public static final int DT_FIFO = 1;
-//    public static final int DT_CHR = 2;
     public static final int DT_DIR = 4;
-    //    public static final int DT_BLK = 6;
-//    public static final int DT_REG = 8;
-//    public static final int DT_LNK = 10;
-//    public static final int DT_SOCK = 12;
-//    public static final int DT_WHT = 14;
 
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
@@ -115,6 +107,8 @@ public final class Files {
     public static native int lock(long fd);
 
     public static native int msync(long addr, long len, boolean async);
+
+    public static native int fsync(long fd);
 
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.address(), mode);

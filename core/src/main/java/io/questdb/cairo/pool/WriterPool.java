@@ -403,6 +403,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     private boolean returnToPool(Entry e) {
+        e.writer.rollback();
         CharSequence name = e.writer.getName();
         long thread = Thread.currentThread().getId();
         if (e.owner != UNALLOCATED) {

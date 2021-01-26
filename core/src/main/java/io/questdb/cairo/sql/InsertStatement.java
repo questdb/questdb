@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.pool.WriterSource;
 import io.questdb.griffin.SqlExecutionContext;
 
 import java.io.Closeable;
@@ -33,6 +34,8 @@ public interface InsertStatement extends Closeable {
     void close();
 
     InsertMethod createMethod(SqlExecutionContext executionContext);
+
+    InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource);
 
     long getStructureVersion();
 

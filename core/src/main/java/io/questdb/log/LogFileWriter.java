@@ -79,7 +79,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
             }
         }
         if (this.fd == -1) {
-            throw new LogError("Cannot open file for append: " + location);
+            throw new LogError("Cannot open file for append: " + location + " [errno=" + Os.errno() + ']');
         }
     }
 

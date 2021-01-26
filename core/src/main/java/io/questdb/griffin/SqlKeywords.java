@@ -1019,6 +1019,22 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'p';
     }
 
+    public static boolean isRegclassKeyword(CharSequence tok) {
+        if (tok.length() != 8) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'g'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i) | 32) == 's';
+    }
+
     public static boolean isToKeyword(CharSequence tok) {
         if (tok.length() != 2) {
             return false;
