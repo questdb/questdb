@@ -22,33 +22,42 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
-    int value;
+import java.util.concurrent.atomic.AtomicLong;
 
-    IntBindVariable() {
-        super(0);
-    }
+public class QueryConstantsImpl implements QueryConstants, Mutable {
+    private final static AtomicLong QUERY_ID_SEQUENCE = new AtomicLong();
+    private long nowTimestamp = Long.MAX_VALUE;
+    private long queryId;
+    private MicrosecondClock clock;
 
-    @Override
-    public int getInt(Record rec) {
-        return value;
+    public QueryConstantsImpl(MicrosecondClock clock) {
+        this.clock = clock;
     }
 
     @Override
     public void clear() {
-        this.value = Numbers.INT_NaN;
+        queryId = -1;
+        nowTimestamp = 0;
+    }
+
+    public QueryConstantsImpl init() {
+        nowTimestamp = clock.getTicks();
+        queryId = QUERY_ID_SEQUENCE.incrementAndGet();
+        return this;
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public long getNowTimestamp() {
+        return nowTimestamp;
+    }
+
+    @Override
+    public long getQueryId() {
+        return queryId;
     }
 }

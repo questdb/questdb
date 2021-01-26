@@ -34,6 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StdoutSink;
 

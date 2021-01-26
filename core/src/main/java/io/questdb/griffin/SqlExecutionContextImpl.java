@@ -59,6 +59,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private long requestFd = -1;
     private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
+    private QueryConstants queryConstants;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
         this(cairoEngine, workerCount, cairoEngine.getMessageBus());
@@ -169,18 +170,20 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public long getNow() {
-        return 0;
+    public QueryConstants getQueryConstants() {
+        return queryConstants;
     }
 
     public SqlExecutionContextImpl with(
             @NotNull CairoSecurityContext cairoSecurityContext,
             @Nullable BindVariableService bindVariableService,
-            @Nullable Rnd rnd
+            @Nullable Rnd rnd,
+            @Nullable QueryConstants queryConstants
     ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
+        this.queryConstants = queryConstants;
         return this;
     }
 
@@ -188,6 +191,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             long requestFd
     ) {
         this.requestFd = requestFd;
+        this.queryConstants = null;
         return this;
     }
 
@@ -196,13 +200,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
             long requestFd,
-            @Nullable SqlExecutionInterruptor interruptor
+            @Nullable SqlExecutionInterruptor interruptor,
+            @Nullable QueryConstants queryConstants
     ) {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
         this.interruptor = null == interruptor ? SqlExecutionInterruptor.NOP_INTERRUPTOR : interruptor;
+        this.queryConstants = queryConstants;
         return this;
     }
 

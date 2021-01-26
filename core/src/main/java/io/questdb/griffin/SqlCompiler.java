@@ -764,7 +764,7 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         alterTableDropColumn(tableNamePosition, writer);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        alterTableDropPartition(writer);
+                        alterTableDropPartition(writer, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
@@ -1032,7 +1032,7 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableDropPartition(TableWriter writer) throws SqlException {
+    private void alterTableDropPartition(TableWriter writer, SqlExecutionContext executionContext) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
@@ -1045,6 +1045,7 @@ public class SqlCompiler implements Closeable {
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && function.getType() == ColumnType.BOOLEAN) {
+                    function.init(null, executionContext);
                     writer.removePartition(function, pos);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");

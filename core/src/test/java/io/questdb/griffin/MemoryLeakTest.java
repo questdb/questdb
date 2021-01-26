@@ -42,6 +42,8 @@ import org.junit.Test;
 
 public class MemoryLeakTest extends AbstractGriffinTest {
 
+    private QueryConstantsImpl queryConstants = new QueryConstantsImpl(engine.getConfiguration().getMicrosecondClock());
+
     @Test
     public void testQuestDbForLeaks() throws Exception {
         testForLeaks(() -> {
@@ -54,7 +56,8 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                 final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(
                         engine, 1, new MessageBusImpl(configuration)).with(AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
-                        null);
+                        null,
+                        queryConstants.init());
                 StringSink sink = new StringSink();
                 sink.clear();
                 sink.put("users");
@@ -76,7 +79,8 @@ public class MemoryLeakTest extends AbstractGriffinTest {
         try (SqlCompiler compiler = new SqlCompiler(engine)) {
             final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, new MessageBusImpl(configuration)).with(AllowAllCairoSecurityContext.INSTANCE,
                     new BindVariableServiceImpl(configuration),
-                    null);
+                    null,
+                    queryConstants.init());
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024);
             try {

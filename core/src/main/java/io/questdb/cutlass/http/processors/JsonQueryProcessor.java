@@ -45,6 +45,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -61,6 +62,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final Path path = new Path();
     private final NanosecondClock nanosecondClock;
     private final HttpSqlExecutionInterruptor interruptor;
+    private final MicrosecondClock microsecondClock;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -106,6 +108,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
+        this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
         this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
     }
 
@@ -121,7 +124,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         // do not set random for new request to avoid copying random from previous request into next one
         // the only time we need to copy random from state is when we resume request execution
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()));
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()), state.getQueryConstants());
         state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
         final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
         try {
@@ -167,6 +170,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             LV.set(context, state = new JsonQueryProcessorState(
                     context,
                     nanosecondClock,
+                    microsecondClock,
                     configuration.getFloatScale(),
                     configuration.getDoubleScale()
             ));
@@ -189,7 +193,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd(), context.getFd(), interruptor.of(context.getFd()));
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd(), context.getFd(), interruptor.of(context.getFd()), state.getQueryConstants());
             doResumeSend(state, context);
         }
     }

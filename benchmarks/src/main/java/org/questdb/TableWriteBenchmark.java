@@ -26,10 +26,7 @@ package org.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -47,12 +44,19 @@ public class TableWriteBenchmark {
 
     private static TableWriter writer;
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
+    private static QueryConstantsImpl queryConstants = new QueryConstantsImpl(configuration.getMicrosecondClock());
 
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         try (CairoEngine engine = new CairoEngine(configuration)) {
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, null).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, null).with(
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    null,
+                    null,
+                    -1,
+                    null,
+                    queryConstants.init());
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table test1(f long)", sqlExecutionContext);
             } catch (SqlException e) {

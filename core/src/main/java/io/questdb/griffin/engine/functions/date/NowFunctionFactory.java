@@ -43,16 +43,14 @@ public class NowFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position, configuration.getMicrosecondClock());
+        return new Func(position);
     }
 
     private static class Func extends TimestampFunction implements Function {
         private long now;
-        private final MicrosecondClock clock;
 
-        public Func(int position, MicrosecondClock clock) {
+        public Func(int position) {
             super(position);
-            this.clock = clock;
         }
 
         @Override
@@ -62,7 +60,7 @@ public class NowFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.now = clock.getTicks();
+            this.now = executionContext.getQueryConstants().getNowTimestamp();
         }
 
         @Override

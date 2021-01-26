@@ -105,7 +105,8 @@ public class SecurityTest extends AbstractGriffinTest {
                         bindVariableService,
                         null,
                         -1,
-                        dummyInterruptor);
+                        dummyInterruptor,
+                        queryConstants);
         memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine);
     }
 
@@ -511,7 +512,12 @@ public class SecurityTest extends AbstractGriffinTest {
     @Test
     public void testMemoryResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+                .with(new CairoSecurityContextImpl(false),
+                        bindVariableService,
+                        null,
+                        -1,
+                        null,
+                        queryConstants);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -627,7 +633,12 @@ public class SecurityTest extends AbstractGriffinTest {
     @Test
     public void testTreeResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+                .with(new CairoSecurityContextImpl(false),
+                        bindVariableService,
+                        null,
+                        -1,
+                        null,
+                        queryConstants);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +

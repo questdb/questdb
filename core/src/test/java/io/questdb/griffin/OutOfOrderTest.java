@@ -63,7 +63,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null,
+                        queryConstants);
         bindVariableService.clear();
 
         SharedRandom.RANDOM.set(new Rnd());

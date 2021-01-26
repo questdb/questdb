@@ -35,6 +35,8 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.griffin.QueryConstants;
+import io.questdb.griffin.QueryConstantsImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -43,6 +45,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
@@ -90,10 +93,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long compilerNanos;
     private boolean timings;
     private boolean queryCacheable = false;
+    private final QueryConstantsImpl queryConstants;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
             NanosecondClock nanosecondClock,
+            MicrosecondClock microsecondClock,
             int floatScale,
             int doubleScale
     ) {
@@ -142,6 +147,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
+        this.queryConstants = new QueryConstantsImpl(microsecondClock);
     }
 
     @Override
@@ -164,6 +170,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         columnIndex = 0;
         countRows = false;
+        this.queryConstants.clear();
     }
 
     @Override
@@ -198,6 +205,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public CharSequence getQuery() {
         return query;
+    }
+
+    public QueryConstants getQueryConstants() {
+        return queryConstants;
     }
 
     public Rnd getRnd() {
@@ -525,6 +536,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     boolean of(RecordCursorFactory factory, SqlExecutionContextImpl sqlExecutionContext) throws PeerDisconnectedException, PeerIsSlowToReadException {
         this.recordCursorFactory = factory;
         queryCacheable = true;
+        this.queryConstants.init();
         this.cursor = factory.getCursor(sqlExecutionContext);
         final RecordMetadata metadata = factory.getMetadata();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();

@@ -45,4 +45,9 @@ class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable
     public void clear() {
         this.value = 0;
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

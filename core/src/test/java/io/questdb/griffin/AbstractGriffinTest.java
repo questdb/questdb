@@ -35,13 +35,11 @@ import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.*;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
+    protected static final QueryConstantsImpl queryConstants = new QueryConstantsImpl(configuration.getMicrosecondClock());
     private static final LongList rows = new LongList();
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
@@ -105,7 +103,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null,
+                        queryConstants);
         bindVariableService.clear();
     }
 
@@ -113,6 +112,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     public static void tearDown() {
         engine.close();
         compiler.close();
+    }
+
+    @Before
+    public void setUp1() {
+        queryConstants.init();
     }
 
     @After

@@ -53,6 +53,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class)));
     private SqlExecutionContext sqlExecutionContext;
     private CairoEngine engine;
+    private QueryConstantsImpl queryConstants;
 
     @BeforeClass
     public static void setUp2() {
@@ -114,6 +115,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         engine = new CairoEngine(configuration);
         bindVariableService = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(new CairoEngine(configuration));
+        queryConstants = new QueryConstantsImpl(engine.getConfiguration().getMicrosecondClock());
+        queryConstants.init();
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine, 1)
                 .with(
@@ -121,7 +124,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null,
+                        queryConstants);
     }
 
     @Test

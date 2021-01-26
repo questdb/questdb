@@ -45,4 +45,9 @@ class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable
     public float getFloat(Record rec) {
         return value;
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

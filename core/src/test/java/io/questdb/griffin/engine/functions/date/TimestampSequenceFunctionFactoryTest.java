@@ -49,7 +49,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
-                        null, -1, null);
+                        null, -1, null, queryConstants);
         bindVariableService.clear();
     }
 

@@ -156,7 +156,8 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null,
+                        queryConstants);
 
         createTables(configuration.getFilesFacade());
 
@@ -189,7 +190,8 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null,
+                        queryConstants);
 
         createTables(configuration.getFilesFacade());
 
