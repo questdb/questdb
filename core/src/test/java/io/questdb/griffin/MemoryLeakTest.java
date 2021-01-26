@@ -37,12 +37,18 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoryLeakTest extends AbstractGriffinTest {
 
-    private QueryConstantsImpl queryConstants = new QueryConstantsImpl(engine.getConfiguration().getMicrosecondClock());
+    private final QueryConstantsImpl queryConstants = new QueryConstantsImpl(engine.getConfiguration().getMicrosecondClock());
+
+    @After
+    public void tearDownAfterTest() {
+        queryConstants.clear();
+    }
 
     @Test
     public void testQuestDbForLeaks() throws Exception {
@@ -57,7 +63,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                         engine, 1, new MessageBusImpl(configuration)).with(AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
                         null,
-                        queryConstants.init());
+                        queryConstants);
                 StringSink sink = new StringSink();
                 sink.clear();
                 sink.put("users");
@@ -80,7 +86,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
             final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, new MessageBusImpl(configuration)).with(AllowAllCairoSecurityContext.INSTANCE,
                     new BindVariableServiceImpl(configuration),
                     null,
-                    queryConstants.init());
+                    queryConstants);
             compiler.compile("create table users (sequence long, event binary, timestamp timestamp, id long) timestamp(timestamp)", executionContext);
             long buffer = Unsafe.malloc(1024);
             try {

@@ -54,6 +54,12 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
     }
 
     @Override
+    public void intersectEmpty() {
+        runtimePeriods.clear();
+        staticIntervalsModel.intersectEmpty();
+    }
+
+    @Override
     public void intersectIntervals(long lo, long hi) {
         if (isDynamic()) {
             runtimePeriods.add(getNextRuntimePeriodIntrinsic().setInterval(IntervalOperation.INTERSECT, lo, hi));
@@ -108,6 +114,13 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
         if (!isDynamic() && staticIntervalsModel.isEmptySet()) return;
 
         runtimePeriods.add(getNextRuntimePeriodIntrinsic().setLess(IntervalOperation.INTERSECT, low, function, funcAdjust));
+    }
+
+    public void intersectIntervals(Function function, long hi, long funcAdjust) {
+        // Intersect nothing with anything is still nothing.
+        if (!isDynamic() && staticIntervalsModel.isEmptySet()) return;
+
+        runtimePeriods.add(getNextRuntimePeriodIntrinsic().setGreater(IntervalOperation.INTERSECT, function, hi, funcAdjust));
     }
 
     private RuntimePeriodIntrinsic getNextRuntimePeriodIntrinsic() {

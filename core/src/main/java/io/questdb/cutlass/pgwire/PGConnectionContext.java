@@ -1635,7 +1635,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
-            queryConstants.init();
+            queryConstants.clear();
             currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
             // cache random if it was replaced
             this.rnd = sqlExecutionContext.getRandom();
@@ -1798,7 +1798,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             buildSelectColumnTypes();
             assert queryText != null;
             queryTag = TAG_SELECT;
-            queryConstants.init();
+            queryConstants.clear();
             currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
             prepareRowDescription();
             sendCursor();

@@ -97,10 +97,6 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         return queryConstants;
     }
 
-    public void initQueryConstants() {
-        queryConstants.init();
-    }
-
     void setQueryCacheable(boolean queryCacheable) {
         this.queryCacheable = queryCacheable;
     }

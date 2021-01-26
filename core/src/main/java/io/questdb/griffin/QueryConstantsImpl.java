@@ -25,13 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.util.concurrent.atomic.AtomicLong;
 
 public class QueryConstantsImpl implements QueryConstants, Mutable {
     private final static AtomicLong QUERY_ID_SEQUENCE = new AtomicLong();
-    private long nowTimestamp = Long.MAX_VALUE;
+    private long nowTimestamp = Numbers.LONG_NaN;
     private long queryId;
     private MicrosecondClock clock;
 
@@ -42,22 +43,19 @@ public class QueryConstantsImpl implements QueryConstants, Mutable {
     @Override
     public void clear() {
         queryId = -1;
-        nowTimestamp = 0;
-    }
-
-    public QueryConstantsImpl init() {
-        nowTimestamp = clock.getTicks();
-        queryId = QUERY_ID_SEQUENCE.incrementAndGet();
-        return this;
+        nowTimestamp = Numbers.LONG_NaN;
     }
 
     @Override
     public long getNowTimestamp() {
+        if (nowTimestamp == Numbers.LONG_NaN)
+            return nowTimestamp = clock.getTicks();
+
         return nowTimestamp;
     }
 
     @Override
     public long getQueryId() {
-        return queryId;
+        return queryId == 0 ? (queryId = QUERY_ID_SEQUENCE.incrementAndGet()) : queryId;
     }
 }

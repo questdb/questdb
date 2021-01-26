@@ -114,16 +114,12 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         compiler.close();
     }
 
-    @Before
-    public void setUp1() {
-        queryConstants.init();
-    }
-
     @After
     public void tearDownAfterTest() {
         engine.resetTableId();
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+        queryConstants.clear();
     }
 
     protected static void assertCursor(

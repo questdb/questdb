@@ -536,7 +536,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     boolean of(RecordCursorFactory factory, SqlExecutionContextImpl sqlExecutionContext) throws PeerDisconnectedException, PeerIsSlowToReadException {
         this.recordCursorFactory = factory;
         queryCacheable = true;
-        this.queryConstants.init();
         this.cursor = factory.getCursor(sqlExecutionContext);
         final RecordMetadata metadata = factory.getMetadata();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();

@@ -36,6 +36,8 @@ public interface IntervalModel {
 
     boolean hasIntervals();
 
+    void intersectEmpty();
+
     void intersectIntervals(long lo, long hi);
 
     void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;

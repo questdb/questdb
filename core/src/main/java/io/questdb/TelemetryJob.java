@@ -73,7 +73,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         this.queryConstants = new QueryConstantsImpl(clock);
 
         try (final SqlCompiler compiler = new SqlCompiler(engine, engine.getMessageBus(), functionFactoryCache)) {
-            this.queryConstants.init();
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, engine.getMessageBus());
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, this.queryConstants);
 
@@ -115,6 +114,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 return;
             }
 
+            queryConstants.clear();
             final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
 
             try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {

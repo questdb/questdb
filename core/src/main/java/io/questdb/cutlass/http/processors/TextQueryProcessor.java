@@ -108,7 +108,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
             state.setQueryCacheable(true);
-            state.initQueryConstants();
             sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()), state.getQueryConstants());
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);

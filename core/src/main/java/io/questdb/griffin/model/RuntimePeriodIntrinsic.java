@@ -47,12 +47,6 @@ public class RuntimePeriodIntrinsic implements Mutable {
     @Override
     public void clear() {
         operation = IntervalOperation.NONE;
-        dynamicHi = null;
-        dynamicLo = null;
-        dynamicIncrement = 0;
-        count = 1;
-        periodType = 0;
-        period = 1;
     }
 
     public int getCount() {
@@ -63,7 +57,7 @@ public class RuntimePeriodIntrinsic implements Mutable {
         if (dynamicHi == null) return staticHi;
 
         dynamicHi.init(null, sqlContext);
-        return dynamicHi.getTimestamp(null);
+        return dynamicHi.getTimestamp(null) + dynamicIncrement;
     }
 
     public long getLo(SqlExecutionContext sqlContext) {
@@ -107,6 +101,14 @@ public class RuntimePeriodIntrinsic implements Mutable {
         this.operation = operation;
         staticLo = lo;
         dynamicHi = function;
+        this.dynamicIncrement = dynamicIncrement;
+        return this;
+    }
+
+    public RuntimePeriodIntrinsic setGreater(int operation, Function lo, long hi, long dynamicIncrement) {
+        this.operation = operation;
+        dynamicLo = lo;
+        this.staticHi = hi;
         this.dynamicIncrement = dynamicIncrement;
         return this;
     }

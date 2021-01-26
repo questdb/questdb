@@ -76,6 +76,12 @@ public class StaticIntervalsModel implements Mutable, IntervalModel {
     }
 
     @Override
+    public void intersectEmpty() {
+        intervals = intervalsA;
+        intervals.clear();
+    }
+
+    @Override
     public void intersectIntervals(long lo, long hi) {
         LongList temp = shuffleTemp(intervals, null);
         temp.add(lo);
