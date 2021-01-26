@@ -379,7 +379,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         bufPos += Integer.BYTES;
         long hi = bufPos + 2 * l;
         charSink.of(bufPos, hi);
-        Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), charSink);
+        if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), charSink)) {
+            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
+        }
         return hi;
     };
     static {
@@ -588,6 +590,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             threadId = tableUpdateDetails.threadId;
         }
 
+        @SuppressWarnings("resource")
         void processMeasurementEvent(WriterJob job) {
             Row row = null;
             try {
@@ -614,7 +617,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         long nameLo = bufPos; // UTF8 encoded
                         long nameHi = bufPos + colNameLen;
                         job.charSink.clear();
-                        Chars.utf8Decode(nameLo, nameHi, job.charSink);
+                        if (!Chars.utf8Decode(nameLo, nameHi, job.charSink)) {
+                            throw CairoException.instance(0).put("invalid UTF8 in column name ").put(job.floatingCharSink.asCharSequence(nameLo, nameHi));
+                        }
                         bufPos = nameHi;
                         entityType = Unsafe.getUnsafe().getByte(bufPos);
                         bufPos += Byte.BYTES;
