@@ -215,9 +215,9 @@ final class WhereClauseParser implements Mutable {
             model.intersectIntervals(lo, Long.MAX_VALUE);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
-        } else if (compareWithNode.type == ExpressionNode.FUNCTION) {
+        } else if (compareWithNode.type == ExpressionNode.FUNCTION || compareWithNode.type == ExpressionNode.BIND_VARIABLE) {
             Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
-            if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP) {
+            if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP && function.getType() != ColumnType.UNDEFINED) {
                 throw SqlException.invalidDate(compareWithNode.position);
             }
             if (function.isConstant()) {
@@ -382,9 +382,9 @@ final class WhereClauseParser implements Mutable {
                 throw SqlException.invalidDate(compareWithNode.position);
             }
             return true;
-        } else if (compareWithNode.type == ExpressionNode.FUNCTION) {
+        } else if (compareWithNode.type == ExpressionNode.FUNCTION || compareWithNode.type == ExpressionNode.BIND_VARIABLE) {
             Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
-            if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP) {
+            if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP && function.getType() != ColumnType.UNDEFINED) {
                 throw SqlException.invalidDate(compareWithNode.position);
             }
 

@@ -103,7 +103,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
 
     public void of(TableReader reader, SqlExecutionContext sqlContext) {
         this.reader = reader;
-        this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
+        this.intervals = new LongList(this.intervalsModel.calculateIntervals(sqlContext));
         calculateRanges(intervals);
     }
 

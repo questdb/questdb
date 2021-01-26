@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
 
@@ -112,14 +113,12 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
     public void intersectIntervals(long low, Function function, long funcAdjust) {
         // Intersect nothing with anything is still nothing.
         if (!isDynamic() && staticIntervalsModel.isEmptySet()) return;
-
         runtimePeriods.add(getNextRuntimePeriodIntrinsic().setLess(IntervalOperation.INTERSECT, low, function, funcAdjust));
     }
 
     public void intersectIntervals(Function function, long hi, long funcAdjust) {
         // Intersect nothing with anything is still nothing.
         if (!isDynamic() && staticIntervalsModel.isEmptySet()) return;
-
         runtimePeriods.add(getNextRuntimePeriodIntrinsic().setGreater(IntervalOperation.INTERSECT, function, hi, funcAdjust));
     }
 
@@ -148,29 +147,61 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
             tempModel.of(intervals);
             for (int i = 0; i < this.runtimePeriods.size(); i++) {
                 RuntimePeriodIntrinsic toApply = runtimePeriods.getQuick(i);
+                long lo, hi;
+                if (toApply.dynamicLo != null){
+                    toApply.dynamicLo.init(null, sqlContext);
+                    lo = toApply.dynamicLo.getTimestamp(null);
+                    // Numbers.LONG_NaN == Long.MIN_VALUE
+                    // there is no way to understand if the function evaluated to min value or
+                    // NULL. Assume it's null and it's period starting with undefined boundary.
+                    if (lo == Numbers.LONG_NaN) {
+                        return empty();
+                    }
+                    lo += toApply.dynamicIncrement;
+                } else {
+                    lo = toApply.staticLo;
+                }
+
+                if (toApply.dynamicHi != null){
+                    toApply.dynamicHi.init(null, sqlContext);
+                    hi = toApply.dynamicHi.getTimestamp(null);
+                    if (hi == Numbers.LONG_NaN) {
+                        return empty();
+                    }
+                    hi += toApply.dynamicIncrement;
+                } else {
+                    hi = toApply.staticHi;
+                }
+
+
                 switch (toApply.getOperation()) {
                     case IntervalOperation.SUBTRACT:
                         tempModel.applySubtract(
-                                toApply.getLo(sqlContext),
-                                toApply.getHi(sqlContext),
-                                toApply.getPeriod(),
-                                toApply.getPeriodType(),
-                                toApply.getCount());
+                                lo,
+                                hi,
+                                toApply.period,
+                                toApply.periodType,
+                                toApply.count);
                         break;
 
                     case IntervalOperation.INTERSECT:
                         tempModel.applyIntersect(
-                                toApply.getLo(sqlContext),
-                                toApply.getHi(sqlContext),
-                                toApply.getPeriod(),
-                                toApply.getPeriodType(),
-                                toApply.getCount());
+                                lo,
+                                hi,
+                                toApply.period,
+                                toApply.periodType,
+                                toApply.count);
                         break;
 
                     default:
                 }
             }
 
+            return tempModel.intervals;
+        }
+
+        private LongList empty() {
+            tempModel.intersectEmpty();
             return tempModel.intervals;
         }
 

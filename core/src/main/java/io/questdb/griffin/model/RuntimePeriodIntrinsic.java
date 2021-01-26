@@ -27,56 +27,30 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 
 public class RuntimePeriodIntrinsic implements Mutable {
     public static final ObjectFactory<RuntimePeriodIntrinsic> FACTORY = RuntimePeriodIntrinsic::new;
     private int operation;
-    private long staticLo;
-    private long staticHi;
 
-    private Function dynamicLo;
-    private Function dynamicHi;
+    int count;
+    char periodType;
+    int period;
 
-    private long dynamicIncrement;
-
-    private int count;
-    private char periodType;
-    private int period;
+    long staticLo;
+    long staticHi;
+    Function dynamicLo;
+    Function dynamicHi;
+    long dynamicIncrement;
 
     @Override
     public void clear() {
         operation = IntervalOperation.NONE;
     }
 
-    public int getCount() {
-        return count;
-    }
-
-    public long getHi(SqlExecutionContext sqlContext) {
-        if (dynamicHi == null) return staticHi;
-
-        dynamicHi.init(null, sqlContext);
-        return dynamicHi.getTimestamp(null) + dynamicIncrement;
-    }
-
-    public long getLo(SqlExecutionContext sqlContext) {
-        if (dynamicLo == null) return staticLo;
-
-        dynamicLo.init(null, sqlContext);
-        return dynamicLo.getTimestamp(null) + dynamicIncrement;
-    }
-
     public int getOperation() {
         return operation;
-    }
-
-    public int getPeriod() {
-        return period;
-    }
-
-    public char getPeriodType() {
-        return periodType;
     }
 
     public RuntimePeriodIntrinsic setInterval(int operation, long lo, long hi) {
