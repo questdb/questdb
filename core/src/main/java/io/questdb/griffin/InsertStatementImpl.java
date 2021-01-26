@@ -144,8 +144,10 @@ public class InsertStatementImpl implements InsertStatement {
         }
 
         @Override
-        public TableWriter getWriter() {
-            return writer;
+        public TableWriter popWriter() {
+            TableWriter w = writer;
+            this.writer = null;
+            return w;
         }
 
         @Override

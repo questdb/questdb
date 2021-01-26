@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToTimestampFunctionFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
@@ -61,6 +62,10 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
 
         if (SqlKeywords.isTimestampKeyword(type)) {
             return new ToTimestampFunctionFactory.ToTimestampFunction(nameFunction.getPosition(), nameFunction);
+        }
+
+        if (SqlKeywords.isDateKeyword(type)) {
+            return new ToPgDateFunctionFactory.ToPgDateFunction(nameFunction.getPosition(), nameFunction);
         }
 
         throw SqlException.$(args.getQuick(1).getPosition(), "unsupported type");
