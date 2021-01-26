@@ -239,7 +239,7 @@ public class LineTcpServerTest extends AbstractCairoTest {
                     sender.close();
                 }
 
-                boolean created = tablesCreated.await(TEST_TIMEOUT_IN_MS * 1_000_1000);
+                boolean created = tablesCreated.await(TEST_TIMEOUT_IN_MS * 1_000_000);
                 Assert.assertTrue(created);
                 int nRowsWritten;
                 do {

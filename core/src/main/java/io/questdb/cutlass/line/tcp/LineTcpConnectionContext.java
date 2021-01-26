@@ -51,7 +51,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     protected boolean peerDisconnected;
     private long lastQueueFullLogMillis = 0;
     private final NewLineProtoParser protoParser = new NewLineProtoParser();
-    private boolean invalidMeasurement;
+    private boolean goodMeasurement;
     protected long recvBufStartOfMeasurement;
     private final FloatingDirectCharSink charSink = new FloatingDirectCharSink();
 
@@ -73,7 +73,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
     private void resetParser() {
         protoParser.of(recvBufStart);
-        invalidMeasurement = false;
+        goodMeasurement = true;
         recvBufStartOfMeasurement = recvBufStart;
     }
 
@@ -148,10 +148,10 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     protected final IOContextResult parseMeasurements() {
         while (true) {
             try {
-                ParseResult rc = invalidMeasurement ? protoParser.skipMeasurement(recvBufPos) : protoParser.parseMeasurement(recvBufPos);
+                ParseResult rc = goodMeasurement ? protoParser.parseMeasurement(recvBufPos) : protoParser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
-                        if (!invalidMeasurement) {
+                        if (goodMeasurement) {
                             if (!scheduler.tryCommitNewEvent(protoParser, charSink)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
@@ -164,7 +164,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                             LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(protoParser.getErrorCode()).$(" at ").$(position)
                                     .$(" line (may be mangled due to partial parsing) is ")
                                     .$(byteCharSequence.of(recvBufStartOfMeasurement, protoParser.getBufferAddress())).$();
-                            invalidMeasurement = false;
+                            goodMeasurement = true;
                         }
                         protoParser.startNextMeasurement();
                         recvBufStartOfMeasurement = protoParser.getBufferAddress();
@@ -176,7 +176,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
 
                     case ERROR: {
-                        invalidMeasurement = true;
+                        goodMeasurement = false;
                         continue;
                     }
 
