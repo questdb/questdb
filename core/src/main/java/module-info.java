@@ -224,6 +224,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToDateFunctionFactory,
+            io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory,
 //                  cast functions,
 //                  cast double to ...,
             io.questdb.griffin.engine.functions.cast.CastDoubleToIntFunctionFactory,
