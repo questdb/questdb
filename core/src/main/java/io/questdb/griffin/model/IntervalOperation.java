@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.griffin.SqlExecutionContext;
+public final class IntervalOperation {
+    public static final int NONE = 0;
 
-public interface DataFrameCursorFactory {
-    DataFrameCursor getCursor(CairoSecurityContext securityContext, SqlExecutionContext executionContext);
+    public static final int INTERSECT = 1;
+    public static final int SUBTRACT = 2;
 }

@@ -22,11 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.griffin.SqlExecutionContext;
+public class Interval {
+    long lo;
+    long hi;
+    int count;
+    char periodType;
+    int period;
 
-public interface DataFrameCursorFactory {
-    DataFrameCursor getCursor(CairoSecurityContext securityContext, SqlExecutionContext executionContext);
+    public Interval of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
+        count = 1;
+        this.period = 0;
+        periodType = 0;
+        return this;
+    }
+
+    public Interval of(long lo, long hi, int period, char periodType, int count) {
+        this.lo = lo;
+        this.hi = hi;
+        this.count = count;
+        this.period = period;
+        this.periodType = periodType;
+        return this;
+    }
 }

@@ -168,6 +168,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         );
     }
 
+    @Override
+    public long getNow() {
+        return 0;
+    }
+
     public SqlExecutionContextImpl with(
             @NotNull CairoSecurityContext cairoSecurityContext,
             @Nullable BindVariableService bindVariableService,

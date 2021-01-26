@@ -22,11 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 
-public interface DataFrameCursorFactory {
-    DataFrameCursor getCursor(CairoSecurityContext securityContext, SqlExecutionContext executionContext);
+public interface IntervalModel {
+    void clearInterval();
+
+    boolean hasIntervals();
+
+    void intersectIntervals(long lo, long hi);
+
+    void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;
+
+    void subtractIntervals(long lo, long hi);
+
+    void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;
+
+    boolean isEmptySet();
 }

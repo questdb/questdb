@@ -25,25 +25,89 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
 public class RuntimePeriodIntrinsic implements Mutable {
     public static final ObjectFactory<RuntimePeriodIntrinsic> FACTORY = RuntimePeriodIntrinsic::new;
-    private long staticValue;
-    private Function dynamicValue;
-    private boolean isLoDynamic;
-    private long dynamicIncrement   ;
+    private int operation;
+    private long staticLo;
+    private long staticHi;
+
+    private Function dynamicLo;
+    private Function dynamicHi;
+
+    private long dynamicIncrement;
+
+    private int count;
+    private char periodType;
+    private int period;
 
     @Override
     public void clear() {
+        operation = IntervalOperation.NONE;
+        dynamicHi = null;
+        dynamicLo = null;
+        dynamicIncrement = 0;
+        count = 1;
+        periodType = 0;
+        period = 1;
     }
 
-    public RuntimePeriodIntrinsic setLess(long lo, Function function, long adjustComparison) {
-        staticValue = lo;
-        isLoDynamic = false;
-        dynamicValue = function;
-        dynamicIncrement = adjustComparison;
+    public int getCount() {
+        return count;
+    }
+
+    public long getHi(SqlExecutionContext sqlContext) {
+        if (dynamicHi == null) return staticHi;
+
+        dynamicHi.init(null, sqlContext);
+        return dynamicHi.getTimestamp(null);
+    }
+
+    public long getLo(SqlExecutionContext sqlContext) {
+        if (dynamicLo == null) return staticLo;
+
+        dynamicLo.init(null, sqlContext);
+        return dynamicLo.getTimestamp(null) + dynamicIncrement;
+    }
+
+    public int getOperation() {
+        return operation;
+    }
+
+    public int getPeriod() {
+        return period;
+    }
+
+    public char getPeriodType() {
+        return periodType;
+    }
+
+    public RuntimePeriodIntrinsic setInterval(int operation, long lo, long hi) {
+        this.operation = operation;
+        staticLo = lo;
+        staticHi = hi;
+        return this;
+    }
+
+    public RuntimePeriodIntrinsic setInterval(int operation, Interval tempInterval) {
+        this.operation = operation;
+        staticLo = tempInterval.lo;
+        staticHi = tempInterval.hi;
+        this.count = tempInterval.count;
+        this.periodType = tempInterval.periodType;
+        this.period = tempInterval.period;
+
+        return this;
+    }
+
+    public RuntimePeriodIntrinsic setLess(int operation, long lo, Function function, long dynamicIncrement) {
+        this.operation = operation;
+        staticLo = lo;
+        dynamicHi = function;
+        this.dynamicIncrement = dynamicIncrement;
         return this;
     }
 }

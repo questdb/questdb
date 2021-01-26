@@ -75,7 +75,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", 0);
                 long count = 0;
-                try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE)) {
+                try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, null)) {
                     DataFrame frame;
                     while ((frame = cursor.next()) != null) {
                         count += frame.getRowHi() - frame.getRowLo();
@@ -89,7 +89,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(AllowAllCairoSecurityContext.INSTANCE);
+                    factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, null);
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }

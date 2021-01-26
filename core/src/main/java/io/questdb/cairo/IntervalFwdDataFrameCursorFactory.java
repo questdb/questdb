@@ -25,7 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.std.LongList;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 
 public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final IntervalFwdDataFrameCursor cursor;
@@ -34,7 +35,7 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
             CairoEngine engine,
             String tableName,
             long tableVersion,
-            LongList intervals,
+            RuntimeIntrinsicIntervalModel intervals,
             int timestampIndex
     ) {
         super(engine, tableName, tableVersion);
@@ -42,8 +43,8 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     }
 
     @Override
-    public DataFrameCursor getCursor(CairoSecurityContext securityContext) {
-        cursor.of(getReader(securityContext));
+    public DataFrameCursor getCursor(CairoSecurityContext securityContext, SqlExecutionContext executionContext) {
+        cursor.of(getReader(securityContext), executionContext);
         return cursor;
     }
 }

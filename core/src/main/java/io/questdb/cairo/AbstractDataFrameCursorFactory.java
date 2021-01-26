@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.griffin.SqlExecutionContext;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
     private final CairoEngine engine;
@@ -37,9 +38,9 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
         this.tableVersion = tableVersion;
     }
 
-    protected TableReader getReader(CairoSecurityContext securityContext) {
+    protected TableReader getReader(CairoSecurityContext sqlContext) {
         return engine.getReader(
-                securityContext,
+                sqlContext,
                 tableName,
                 tableVersion
         );

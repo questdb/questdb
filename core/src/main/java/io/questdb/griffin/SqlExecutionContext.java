@@ -73,4 +73,6 @@ public interface SqlExecutionContext {
             boolean isOrdered,
             boolean baseSupportsRandomAccess
     );
+
+    long getNow();
 }

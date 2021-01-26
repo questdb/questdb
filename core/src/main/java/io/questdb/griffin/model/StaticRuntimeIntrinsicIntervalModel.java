@@ -22,11 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.LongList;
+import io.questdb.std.datetime.microtime.Timestamps;
 
-public interface DataFrameCursorFactory {
-    DataFrameCursor getCursor(CairoSecurityContext securityContext, SqlExecutionContext executionContext);
+    public class StaticRuntimeIntrinsicIntervalModel implements RuntimeIntrinsicIntervalModel {
+    private final LongList intervals;
+
+    public StaticRuntimeIntrinsicIntervalModel(LongList intervals) {
+        this.intervals = intervals;
+    }
+
+    @Override
+    public LongList calculateIntervals(SqlExecutionContext sqlContext) {
+        return intervals;
+    }
+
+    @Override
+    public boolean isFocused(Timestamps.TimestampFloorMethod floorDd) {
+        return isFocused(intervals, floorDd);
+    }
+
+    private boolean isFocused(LongList intervals, Timestamps.TimestampFloorMethod floorMethod) {
+        long floor = floorMethod.floor(intervals.getQuick(0));
+        for (int i = 1, n = intervals.size(); i < n; i++) {
+            if (floor != floorMethod.floor(intervals.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
 }

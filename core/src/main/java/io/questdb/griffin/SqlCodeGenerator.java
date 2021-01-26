@@ -904,8 +904,8 @@ public class SqlCodeGenerator implements Mutable {
             @NotNull IntList columnIndexes
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
-        if (intrinsicModel.intervals != null) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals, timestampIndex);
+        if (intrinsicModel.hasIntervals()) {
+            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.getIntervalModel(), timestampIndex);
         } else {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
         }
@@ -2313,17 +2313,18 @@ public class SqlCodeGenerator implements Mutable {
                 // below code block generates index-based filter
 
                 final boolean intervalHitsOnlyOnePartition;
-                if (intrinsicModel.intervals != null) {
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals, readerTimestampIndex);
+                if (intrinsicModel.hasIntervals()) {
+                    RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.getIntervalModel();
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intervalModel, readerTimestampIndex);
                     switch (reader.getPartitionedBy()) {
                         case PartitionBy.DAY:
-                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_DD);
+                            intervalHitsOnlyOnePartition = intervalModel.isFocused(Timestamps.FLOOR_DD);
                             break;
                         case PartitionBy.MONTH:
-                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_MM);
+                            intervalHitsOnlyOnePartition = intervalModel.isFocused(Timestamps.FLOOR_MM);
                             break;
                         case PartitionBy.YEAR:
-                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_YYYY);
+                            intervalHitsOnlyOnePartition = intervalModel.isFocused(Timestamps.FLOOR_YYYY);
                             break;
                         default:
                             intervalHitsOnlyOnePartition = true;
@@ -2487,7 +2488,7 @@ public class SqlCodeGenerator implements Mutable {
                 if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null) {
                     final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                     final int orderByAdviceSize = orderByAdvice.size();
-                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.intervals != null) {
+                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervals()) {
                         // we can only deal with 'order by symbol, timestamp' at best
                         // skip this optimisation if order by is more extensive
                         final int columnIndex = myMeta.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
@@ -2641,16 +2642,6 @@ public class SqlCodeGenerator implements Mutable {
             return timestampIndex;
         }
         return metadata.getTimestampIndex();
-    }
-
-    private boolean isFocused(LongList intervals, Timestamps.TimestampFloorMethod floorMethod) {
-        long floor = floorMethod.floor(intervals.getQuick(0));
-        for (int i = 1, n = intervals.size(); i < n; i++) {
-            if (floor != floorMethod.floor(intervals.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {

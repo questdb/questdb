@@ -27,10 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.AliasTranslator;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntrinsicModel;
-import io.questdb.griffin.model.RuntimePeriodIntrinsic;
+import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -40,7 +37,6 @@ import java.util.ArrayDeque;
 import static io.questdb.griffin.SqlKeywords.*;
 
 final class WhereClauseParser implements Mutable {
-
     private static final int INTRINSIC_OP_IN = 1;
     private static final int INTRINSIC_OP_GREATER = 2;
     private static final int INTRINSIC_OP_GREATER_EQ = 3;
@@ -54,8 +50,9 @@ final class WhereClauseParser implements Mutable {
     private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
     private final ObjList<ExpressionNode> tempNodes = new ObjList<>();
+
+    // TODO: configure size
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
-    private final ObjectPool<RuntimePeriodIntrinsic> runtimePeriods = new ObjectPool<>(RuntimePeriodIntrinsic.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private final IntList tempPos = new IntList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
@@ -344,9 +341,7 @@ final class WhereClauseParser implements Mutable {
                         if (function.isConstant()) {
                             hi = function.getTimestamp(null) + adjustComparison(equalsTo, false);
                         } else if (function.isRuntimeConstant()) {
-                            RuntimePeriodIntrinsic period = runtimePeriods.next()
-                                    .setLess(Long.MIN_VALUE, function, adjustComparison(equalsTo, false));
-                            model.intersectIntervals(period);
+                            model.intersectIntervals(Long.MIN_VALUE, function, adjustComparison(equalsTo, false));
                             node.intrinsicValue = IntrinsicModel.TRUE;
                             return true;
                         } else {
@@ -782,15 +777,15 @@ final class WhereClauseParser implements Mutable {
         if (len - 2 < 20) {
             if (isLo) {
                 if (equalsTo) {
-                    ts = IntrinsicModel.parseFloorPartialDate(node.token, 1, len - 1);
+                    ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1);
                 } else {
-                    ts = IntrinsicModel.parseCCPartialDate(node.token, 1, len - 1);
+                    ts = IntervalUtils.parseCCPartialDate(node.token, 1, len - 1);
                 }
             } else {
                 if (equalsTo) {
-                    ts = IntrinsicModel.parseCCPartialDate(node.token, 1, len - 1) - 1;
+                    ts = IntervalUtils.parseCCPartialDate(node.token, 1, len - 1) - 1;
                 } else {
-                    ts = IntrinsicModel.parseFloorPartialDate(node.token, 1, len - 1) - 1;
+                    ts = IntervalUtils.parseFloorPartialDate(node.token, 1, len - 1) - 1;
                 }
             }
         } else {

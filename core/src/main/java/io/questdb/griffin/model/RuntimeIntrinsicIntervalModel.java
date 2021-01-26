@@ -22,11 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.LongList;
+import io.questdb.std.datetime.microtime.Timestamps;
 
-public interface DataFrameCursorFactory {
-    DataFrameCursor getCursor(CairoSecurityContext securityContext, SqlExecutionContext executionContext);
+public interface RuntimeIntrinsicIntervalModel {
+    LongList calculateIntervals(SqlExecutionContext sqlContext);
+    boolean isFocused(Timestamps.TimestampFloorMethod floorDd);
 }
