@@ -738,6 +738,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                 Misc.freeObjList(valueWriters);
                 valueWriters.clear();
                 if (null != writer) {
+                    if (nUncommitted > 0) {
+                        writer.commit();
+                    }
                     writer.close();
                     writer = null;
                 }
