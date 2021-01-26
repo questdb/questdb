@@ -186,8 +186,9 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     @Override
     public boolean runSerially() {
         if (enabled) {
-            subSeq.consumeAll(queue, myConsumer);
-            writer.commit();
+            if (subSeq.consumeAll(queue, myConsumer)) {
+                writer.commit();
+            }
         }
 
         return false;
