@@ -130,6 +130,7 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
+        LOG.debug().$("create table [name=").$(structure.getTableName()).$(']').$();
         path.of(root).concat(structure.getTableName());
 
         if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
@@ -138,52 +139,67 @@ public final class TableUtils {
 
         final int rootLen = path.length();
 
-        try (AppendMemory mem = memory) {
-            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
-            final int count = structure.getColumnCount();
-            mem.putInt(count);
-            mem.putInt(structure.getPartitionBy());
-            mem.putInt(structure.getTimestampIndex());
-            mem.putInt(tableVersion);
-            mem.putInt(tableId);
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+        final long dirFd = !ff.isRestrictedFileSystem() ? ff.openRO(path.$()) : 0;
+        if (dirFd != -1) {
+            try (AppendMemory mem = memory) {
+                mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+                final int count = structure.getColumnCount();
+                mem.putInt(count);
+                mem.putInt(structure.getPartitionBy());
+                mem.putInt(structure.getTimestampIndex());
+                mem.putInt(tableVersion);
+                mem.putInt(tableId);
+                mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
-            for (int i = 0; i < count; i++) {
-                mem.putByte((byte) structure.getColumnType(i));
-                long flags = 0;
-                if (structure.isIndexed(i)) {
-                    flags |= META_FLAG_BIT_INDEXED;
+                for (int i = 0; i < count; i++) {
+                    mem.putByte((byte) structure.getColumnType(i));
+                    long flags = 0;
+                    if (structure.isIndexed(i)) {
+                        flags |= META_FLAG_BIT_INDEXED;
+                    }
+
+                    if (structure.isSequential(i)) {
+                        flags |= META_FLAG_BIT_SEQUENTIAL;
+                    }
+
+                    mem.putLong(flags);
+                    mem.putInt(structure.getIndexBlockCapacity(i));
+                    mem.skip(META_COLUMN_DATA_RESERVED); // reserved
+                }
+                for (int i = 0; i < count; i++) {
+                    mem.putStr(structure.getColumnName(i));
                 }
 
-                if (structure.isSequential(i)) {
-                    flags |= META_FLAG_BIT_SEQUENTIAL;
+                // create symbol maps
+                int symbolMapCount = 0;
+                for (int i = 0; i < count; i++) {
+                    if (structure.getColumnType(i) == ColumnType.SYMBOL) {
+                        SymbolMapWriter.createSymbolMapFiles(
+                                ff,
+                                mem,
+                                path.trimTo(rootLen),
+                                structure.getColumnName(i),
+                                structure.getSymbolCapacity(i),
+                                structure.getSymbolCacheFlag(i)
+                        );
+                        symbolMapCount++;
+                    }
                 }
-
-                mem.putLong(flags);
-                mem.putInt(structure.getIndexBlockCapacity(i));
-                mem.skip(META_COLUMN_DATA_RESERVED); // reserved
-            }
-            for (int i = 0; i < count; i++) {
-                mem.putStr(structure.getColumnName(i));
-            }
-
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
-                if (structure.getColumnType(i) == ColumnType.SYMBOL) {
-                    SymbolMapWriter.createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            structure.getColumnName(i),
-                            structure.getSymbolCapacity(i),
-                            structure.getSymbolCacheFlag(i)
-                    );
-                    symbolMapCount++;
+                mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+                TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN);
+            } finally {
+                if (dirFd > 0) {
+                    if (ff.fsync(dirFd) != 0) {
+                        LOG.error()
+                                .$("could not fsync [fd=").$(dirFd)
+                                .$(", errno=").$(ff.errno())
+                                .$(']').$();
+                    }
+                    ff.close(dirFd);
                 }
             }
-            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN);
+        } else {
+            throw CairoException.instance(ff.errno()).put("Could not open dir [path=").put(path).put(']');
         }
     }
 

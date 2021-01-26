@@ -434,6 +434,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         bindVariableService.setLong(index, getLongUnsafe(address));
     }
 
+    public void setTimestampBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(Long.BYTES, valueLen);
+        bindVariableService.setTimestamp(index, getLongUnsafe(address) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+    }
+
     public void setShortBindVariable(int index, long address, int valueLen) throws BadProtocolException, SqlException {
         ensureValueLength(Short.BYTES, valueLen);
         bindVariableService.setShort(index, getShortUnsafe(address));
@@ -853,6 +858,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         break;
                     case X_B_PG_INT8:
                         setLongBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_TIMESTAMP:
+                        setTimestampBindVariable(j, lo, valueLen);
                         break;
                     case X_B_PG_INT2:
                         setShortBindVariable(j, lo, valueLen);
@@ -1501,7 +1509,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                             lo += Short.BYTES;
                             activeSelectColumnTypes.setQuick(i, toColumnBinaryType(getShortUnsafe(lo), m.getColumnType(i)));
                         }
-                    } else if(columnFormatCodeCount == 1) {
+                    } else if (columnFormatCodeCount == 1) {
                         final short code = getShortUnsafe(lo);
                         for (int i = 0; i < columnCount; i++) {
                             activeSelectColumnTypes.setQuick(i, toColumnBinaryType(code, m.getColumnType(i)));

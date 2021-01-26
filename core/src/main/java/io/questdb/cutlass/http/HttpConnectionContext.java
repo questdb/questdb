@@ -123,7 +123,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         }
         this.pendingRetry = false;
         this.receivedBytes = 0;
-        LOG.debug().$("closed").$();
     }
 
     @Override

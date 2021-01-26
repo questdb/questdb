@@ -163,6 +163,17 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testDateVarSetToTimestamp() throws SqlException {
+        bindVariableService.setDate(0);
+        bindVariableService.setTimestamp(0, 99999001);
+        Assert.assertEquals(99999, bindVariableService.getFunction(0).getDate(null));
+
+        bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
+        final long d = bindVariableService.getFunction(0).getDate(null);
+        Assert.assertEquals(Numbers.LONG_NaN, d);
+    }
+
+    @Test
     public void testDoubleIndexedOverride() throws SqlException {
         bindVariableService.setInt(2, 10);
         try {

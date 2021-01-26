@@ -236,6 +236,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlo
     return msync((void *) addr, len, async ? MS_ASYNC : MS_SYNC);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jlong fd) {
+    return fsync((int) fd);
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_remove
         (JNIEnv *e, jclass cl, jlong lpsz) {
     return (jboolean) (remove((const char *) lpsz) == 0);
