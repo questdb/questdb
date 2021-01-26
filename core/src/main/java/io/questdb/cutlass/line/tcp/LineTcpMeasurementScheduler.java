@@ -87,6 +87,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final double maxLoadRatio;
     private final int maxUncommittedRows;
     private final long maintenanceJobHysteresisInMs;
+    private final long minIdleMsBeforeWriterRelease;
     private final int defaultPartitionBy;
     private Sequence pubSeq;
     private int nLoadCheckCycles = 0;
@@ -143,6 +144,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         maxUncommittedRows = lineConfiguration.getMaxUncommittedRows();
         maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
         defaultPartitionBy = lineConfiguration.getDefaultPartitionBy();
+        minIdleMsBeforeWriterRelease = lineConfiguration.getMinIdleMsBeforeWriterRelease();
     }
 
     @Override
@@ -160,7 +162,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     @NotNull
-    private TableUpdateDetails assignTableToThread(String tableName, int keyIndex, TableWriter writer) {
+    private TableUpdateDetails assignTableToThread(String tableName, int keyIndex) {
         TableUpdateDetails tableUpdateDetails;
         calcThreadLoad();
         int leastLoad = Integer.MAX_VALUE;
@@ -171,7 +173,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 threadId = n;
             }
         }
-        tableUpdateDetails = new TableUpdateDetails(tableName, threadId, writer);
+        tableUpdateDetails = new TableUpdateDetails(tableName, threadId);
         tableUpdateDetailsByTableName.putAt(keyIndex, tableName, tableUpdateDetails);
         LOG.info().$("assigned ").$(tableName).$(" to thread ").$(threadId).$();
         return tableUpdateDetails;
@@ -239,10 +241,9 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (status != TableUtils.TABLE_EXISTS) {
                 engine.createTable(securityContext, mem, path, tableStructureAdapter.of(tableName, protoParser));
             }
-            TableWriter writer = engine.getWriter(securityContext, tableName);
             TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
 
-            return assignTableToThread(tableName, keyIndex, writer);
+            return assignTableToThread(tableName, keyIndex);
         } finally {
             tableUpdateDetailsLock.unlock();
         }
@@ -588,13 +589,14 @@ class LineTcpMeasurementScheduler implements Closeable {
         void processMeasurementEvent(WriterJob job) {
             Row row = null;
             try {
+                TableWriter writer = tableUpdateDetails.getWriter();
                 long bufPos = bufLo;
                 long timestamp = Unsafe.getUnsafe().getLong(bufPos);
                 bufPos += Long.BYTES;
                 if (timestamp == NewLineProtoParser.NULL_TIMESTAMP) {
                     timestamp = clock.getTicks();
                 }
-                row = tableUpdateDetails.writer.newRow(timestamp);
+                row = writer.newRow(timestamp);
                 int nEntities = Unsafe.getUnsafe().getInt(bufPos);
                 bufPos += Integer.BYTES;
                 long firstEntityBufPos = bufPos;
@@ -616,29 +618,29 @@ class LineTcpMeasurementScheduler implements Closeable {
                         bufPos = nameHi;
                         entityType = Unsafe.getUnsafe().getByte(bufPos);
                         bufPos += Byte.BYTES;
-                        colIndex = tableUpdateDetails.writer.getMetadata().getColumnIndexQuiet(job.charSink);
+                        colIndex = writer.getMetadata().getColumnIndexQuiet(job.charSink);
                         if (colIndex < 0) {
                             // Cannot create a column with an open row, writer will commit when a column is created
                             row.cancel();
                             row = null;
                             int columnType = DEFAULT_COLUMN_TYPES[entityType];
                             if (TableUtils.isValidColumnName(job.charSink)) {
-                                colIndex = tableUpdateDetails.writer.getMetadata().getColumnCount();
-                                tableUpdateDetails.writer.addColumn(job.charSink, columnType);
+                                colIndex = writer.getMetadata().getColumnCount();
+                                writer.addColumn(job.charSink, columnType);
                                 tableUpdateDetails.valueWriters.ensureCapacity(colIndex + 1);
                             } else {
-                                throw CairoException.instance(0).put("invalid column name [table=").put(tableUpdateDetails.writer.getName())
+                                throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
                                         .put(", columnName=").put(job.charSink).put(']');
                             }
                             // Reset to begining of entities
                             bufPos = firstEntityBufPos;
                             nEntity = -1;
-                            row = tableUpdateDetails.writer.newRow(timestamp);
+                            row = writer.newRow(timestamp);
                             continue;
                         }
                         valueWriter = tableUpdateDetails.valueWriters.size() > colIndex ? tableUpdateDetails.valueWriters.get(colIndex) : null;
                         if (null == valueWriter) {
-                            int columnType = tableUpdateDetails.writer.getMetadata().getColumnType(colIndex);
+                            int columnType = writer.getMetadata().getColumnType(colIndex);
                             valueWriter = resolveRowWriter(columnType, entityType);
                             tableUpdateDetails.valueWriters.extendAndSet(colIndex, valueWriter);
                             CharSequence colName = job.byteSink.of(nameLo, nameHi); // colName in UTF8, it will be copied by the
@@ -665,45 +667,63 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     private class TableUpdateDetails implements Closeable {
         private final String tableName;
-        private int threadId;
+        private int threadId = Integer.MIN_VALUE;
         private final AtomicInteger nUpdates = new AtomicInteger(); // Number of updates since the last load rebalance
         private TableWriter writer;
         private int nUncommitted = 0;
         private final ConcurrentHashMap<Integer> columnIndexByName = new ConcurrentHashMap<>();
         private final ObjList<EntityValueRowWriter> valueWriters = new ObjList<>();
         private boolean assignedToJob = false;
+        private long lastWriterCommitEpochMs = Long.MAX_VALUE;
 
-        private TableUpdateDetails(String tableName, int threadId, TableWriter writer) {
+        private TableUpdateDetails(String tableName, int threadId) {
             super();
             this.tableName = tableName;
             this.threadId = threadId;
-            this.writer = writer;
         }
 
         private void handleRowAppended() {
             nUncommitted++;
             if (nUncommitted >= maxUncommittedRows) {
                 writer.commit();
+                lastWriterCommitEpochMs = milliClock.getTicks();
                 nUncommitted = 0;
             }
         }
 
         private void handleMaintenance() {
             if (nUncommitted == 0) {
+                if ((milliClock.getTicks() - lastWriterCommitEpochMs) >= minIdleMsBeforeWriterRelease) {
+                    LOG.info().$("writer idle since ").$ts(lastWriterCommitEpochMs).$(" [tableName=").$(tableName).$(']').$();
+                    writer.close();
+                    writer = null;
+                    lastWriterCommitEpochMs = Long.MAX_VALUE;
+                }
                 return;
             }
             writer.commit();
+            lastWriterCommitEpochMs = milliClock.getTicks();
             nUncommitted = 0;
+        }
+
+        TableWriter getWriter() {
+            if (null == writer) {
+                writer = engine.getWriter(securityContext, tableName);
+            }
+            return writer;
         }
 
         @Override
         public void close() throws IOException {
-            if (null != writer) {
+            if (threadId != Integer.MIN_VALUE) {
                 columnIndexByName.clear();
                 Misc.freeObjList(valueWriters);
                 valueWriters.clear();
-                writer.close();
-                writer = null;
+                if (null != writer) {
+                    writer.close();
+                    writer = null;
+                }
+                threadId = Integer.MIN_VALUE;
             }
         }
     }
@@ -713,7 +733,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final Sequence sequence;
         private final AppendMemory appendMemory = new AppendMemory();
         private final Path path = new Path();
-        private final String jobName;
         private long lastMaintenanceJobMillis = 0;
 
         private final DirectCharSink charSink = new DirectCharSink(64);
@@ -728,7 +747,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             super();
             this.id = id;
             this.sequence = sequence;
-            this.jobName = "tcp-line-writer-" + id;
         }
 
         @Override

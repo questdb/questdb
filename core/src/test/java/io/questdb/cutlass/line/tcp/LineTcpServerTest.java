@@ -56,22 +56,22 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
 
-    @Test(timeout = 120000)
+    @Test(timeout = 300000)
     public void testUnauthenticated() {
         test(null, null, 200, 1_000);
     }
 
-    @Test(timeout = 120000)
+    @Test(timeout = 300000)
     public void testGoodAuthenticated() {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000);
     }
 
-    @Test(timeout = 120000, expected = NetworkError.class)
+    @Test(timeout = 300000, expected = NetworkError.class)
     public void testInvalidUser() {
         test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 100);
     }
 
-    @Test(timeout = 120000, expected = NetworkError.class)
+    @Test(timeout = 300000, expected = NetworkError.class)
     public void testInvalidSignature() {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 100);
     }

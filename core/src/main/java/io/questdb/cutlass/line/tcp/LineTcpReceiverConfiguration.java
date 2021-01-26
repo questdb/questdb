@@ -72,4 +72,6 @@ public interface LineTcpReceiverConfiguration {
     int getDefaultPartitionBy();
 
     boolean isIOAggressiveRecv();
+
+    long getMinIdleMsBeforeWriterRelease();
 }

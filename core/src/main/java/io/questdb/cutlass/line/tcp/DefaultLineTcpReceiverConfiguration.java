@@ -126,11 +126,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public long getMaintenanceJobHysteresisInMs() {
         return 100;
     }
-	
-	@Override
-	public String getAuthDbPath() {
-	    return null;
-	}
+
+    @Override
+    public String getAuthDbPath() {
+        return null;
+    }
 
     @Override
     public int getDefaultPartitionBy() {
@@ -140,5 +140,10 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     @Override
     public boolean isIOAggressiveRecv() {
         return false;
+    }
+
+    @Override
+    public long getMinIdleMsBeforeWriterRelease() {
+        return 30_000;
     }
 }

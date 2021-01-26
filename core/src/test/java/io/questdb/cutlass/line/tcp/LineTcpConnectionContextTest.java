@@ -24,12 +24,41 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
+
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Unsafe;
@@ -38,18 +67,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.Random;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
-import java.util.function.Function;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpConnectionContextTest.class);
@@ -131,6 +148,11 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
             @Override
             public int getMaxUncommittedRows() {
                 return 25;
+            }
+
+            @Override
+            public long getMinIdleMsBeforeWriterRelease() {
+                return 150;
             }
 
             @Override
@@ -987,8 +1009,57 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    @Test(timeout = 300000)
+    public void testWriterRelease() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion(false);
+
+            int nRows;
+            do {
+                nRows = getTableCount("weather");
+            } while (nRows == 0);
+
+            TableWriter writer = null;
+            do {
+                try {
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
+                } catch (EntryUnavailableException ex) {
+                    try {
+                        Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs());
+                    } catch (InterruptedException e) {
+                        //
+                    }
+                }
+            } while (null == writer);
+            writer.close();
+
+            recvBuffer = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
     private void addTable() {
         try (
+                @SuppressWarnings("resource")
                 TableModel model = new TableModel(configuration, "weather",
                         PartitionBy.NONE).col("location", ColumnType.SYMBOL).col("temperature", ColumnType.DOUBLE).timestamp()) {
             CairoTestUtils.create(model);
@@ -1018,6 +1089,19 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         }
     }
 
+    private int getTableCount(CharSequence tableName) {
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            TableReaderRecordCursor recordCursor = reader.getCursor();
+            int nRows = 0;
+            while (recordCursor.hasNext()) {
+                nRows++;
+            }
+            return nRows;
+        } catch (CairoException ex) {
+            return 0;
+        }
+    }
+
     private void closeContext() {
         if (null != scheduler) {
             workerPool.halt();
@@ -1036,10 +1120,13 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         runInContext(r, null);
     }
 
+    private CairoEngine engine;
+
     private void runInContext(Runnable r, Runnable onCommitNewEvent) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                setupContext(engine, onCommitNewEvent);
+                LineTcpConnectionContextTest.this.engine = engine;
+                setupContext(onCommitNewEvent);
                 try {
                     r.run();
                 } finally {
@@ -1047,11 +1134,13 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     engine.releaseAllWriters();
                     engine.releaseAllReaders();
                 }
+            } finally {
+                LineTcpConnectionContextTest.this.engine = null;
             }
         });
     }
 
-    private void setupContext(CairoEngine engine, Runnable onCommitNewEvent) {
+    private void setupContext(Runnable onCommitNewEvent) {
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {
             private final int workerCount;
             private final int[] affinityByThread;
@@ -1236,17 +1325,24 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     private void waitForIOCompletion() {
+        waitForIOCompletion(true);
+    }
+
+    private void waitForIOCompletion(boolean closeConnection) {
         int maxIterations = 256;
         // Guard against slow writers on disconnect
         while (maxIterations-- > 0 && context.getDispatcher().getConnectionCount() > 0) {
             if (null != recvBuffer && recvBuffer.length() == 0) {
+                if (!closeConnection) {
+                    break;
+                }
                 recvBuffer = null;
             }
             handleContextIO();
             LockSupport.parkNanos(1_000_000);
         }
         Assert.assertTrue(maxIterations > 0);
-        Assert.assertTrue(disconnected);
+        Assert.assertTrue(disconnected || !closeConnection);
         // Wait for last commit
         try {
             Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs() + 50);

@@ -325,6 +325,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private String lineTcpAuthDbPath;
     private int lineDefaultPartitionBy;
     private boolean lineTcpAggressiveRecv;
+    private long minIdleMsBeforeWriterRelease;
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -671,6 +672,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
             this.lineTcpAggressiveRecv = getBoolean(properties, env, "line.tcp.io.aggressive.recv", false);
+            this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 30_000);
         }
 
         this.buildInformation = buildInformation;
@@ -2040,6 +2042,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOAggressiveRecv() {
             return lineTcpAggressiveRecv;
+        }
+
+        @Override
+        public long getMinIdleMsBeforeWriterRelease() {
+            return minIdleMsBeforeWriterRelease;
         }
     }
 
