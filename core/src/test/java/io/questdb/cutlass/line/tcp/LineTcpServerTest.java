@@ -146,6 +146,11 @@ public class LineTcpServerTest extends AbstractCairoTest {
             }
 
             @Override
+            public int getMaxUncommittedRows() {
+                return 50;
+            }
+
+            @Override
             public double getMaxLoadRatio() {
                 // Always rebalance as long as there are more tables than threads;
                 return 1;
