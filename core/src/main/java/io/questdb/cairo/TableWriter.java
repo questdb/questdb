@@ -1273,7 +1273,7 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
     }
 
-    private static long getTimestampIndexRow(long timestampIndex, long indexRow) {
+    public static long getTimestampIndexRow(long timestampIndex, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16 + Long.BYTES);
     }
 

@@ -47,7 +47,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long dstFixOffset = task.getDstFixOffset();
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
-        final long srcFixAddr= task.getSrcFixAddr();
+        final long srcFixAddr = task.getSrcFixAddr();
         final long srcFixSize = task.getSrcFixSize();
         final long srcVarAddr = task.getSrcVarAddr();
         final long srcVarSize = task.getSrcVarSize();
@@ -84,7 +84,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
-                        );
+                );
                 break;
             default:
                 break;
@@ -179,6 +179,18 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst + dstOffset, len);
     }
 
+    private void oooCopyIndex(
+            long mergeIndex,
+            long mergeIndexSize,
+            long dstAddr,
+            long dstOffset
+    ) {
+        final long dst = dstAddr + dstOffset;
+        for (long l = 0; l < mergeIndexSize; l++) {
+            Unsafe.getUnsafe().putLong(dst + l * Long.BYTES, getTimestampIndexValue(mergeIndex, l));
+        }
+    }
+
     private void oooCopyOOO(
             ContiguousVirtualMemory oooFixColumn,
             ContiguousVirtualMemory oooVarColumn,
@@ -264,6 +276,186 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
+    private void oooMergeCopyStrColumn(
+            long mergeIndex,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstVarAddr,
+            long dstVarOffset
+    ) {
+        // destination of variable length data
+        long destVarOffset = dstVarOffset;
+        final long dstFix = dstFixAddr + dstFixOffset;
+
+        // reverse order
+        // todo: cache?
+        long[] srcFix = new long[]{srcOooFixAddr, srcDataFixAddr};
+        long[] srcVar = new long[]{srcOooVarAddr, srcDataVarAddr};
+
+        for (long l = 0; l < mergeIndexSize; l++) {
+            final long row = getTimestampIndexRow(mergeIndex, l);
+            // high bit in the index in the source array [0,1]
+            final int bit = (int) (row >>> 63);
+            // row number is "row" with high bit removed
+            final long rr = row & ~(1L << 63);
+            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, destVarOffset);
+            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
+            long addr = srcVar[bit] + offset;
+            int len = Unsafe.getUnsafe().getInt(addr);
+            Unsafe.getUnsafe().putInt(dstVarAddr + destVarOffset, len);
+            len = Math.max(0, len);
+            Unsafe.getUnsafe().copyMemory(addr + 4, dstVarAddr + destVarOffset + 4, (long) len * Character.BYTES);
+            destVarOffset += (long) len * Character.BYTES + Integer.BYTES;
+        }
+    }
+
+    private void oooMergeCopyBinColumn(
+            long mergeIndex,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstVarAddr,
+            long dstVarOffset
+    ) {
+        // destination of variable length data
+        long destVarOffset = dstVarOffset;
+        final long dstFix = dstFixAddr + dstFixOffset;
+
+        // reverse order
+        // todo: cache?
+        long[] srcFix = new long[]{srcOooFixAddr, srcDataFixAddr};
+        long[] srcVar = new long[]{srcOooVarAddr, srcDataVarAddr};
+
+        for (long l = 0; l < mergeIndexSize; l++) {
+            final long row = getTimestampIndexRow(mergeIndex, l);
+            // high bit in the index in the source array [0,1]
+            final int bit = (int) (row >>> 63);
+            // row number is "row" with high bit removed
+            final long rr = row & ~(1L << 63);
+            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, destVarOffset);
+            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
+            long addr = srcVar[bit] + offset;
+            long len = Unsafe.getUnsafe().getLong(addr);
+            if (len > 0) {
+                Unsafe.getUnsafe().copyMemory(addr, dstVarAddr + destVarOffset, len + Long.BYTES);
+                destVarOffset += len + Long.BYTES;
+            } else {
+                Unsafe.getUnsafe().putLong(dstVarAddr + destVarOffset, len);
+                destVarOffset += Long.BYTES;
+            }
+        }
+    }
+
+    private void oooMergeCopy(
+            int columnType,
+            // todo: merge index has to be freed by last column copy
+            long mergeIndex,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcDataLo,
+            long srcDataHi,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstVarAddr,
+            long dstVarOffset
+    ) {
+        final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
+        try {
+            switch (columnType) {
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
+                    // todo: check if we only need to merge subset of data and out of order (i suspect "mergeIndex" has indices of rows in either, so we're supplying both fully)
+                    Vect.mergeShuffle8Bit(
+                            srcDataFixAddr,
+                            srcOooFixAddr,
+                            dstFixAddr + dstFixOffset,
+                            mergeIndex,
+                            rowCount
+                    );
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.CHAR:
+                    Vect.mergeShuffle16Bit(
+                            srcDataFixAddr,
+                            srcOooFixAddr,
+                            dstFixAddr + dstFixOffset,
+                            mergeIndex,
+                            rowCount
+                    );
+                    break;
+                case ColumnType.STRING:
+                    oooMergeCopyStrColumn(
+                            mergeIndex,
+                            rowCount,
+                            srcDataFixAddr,
+                            srcDataVarAddr,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            dstFixAddr,
+                            dstFixOffset,
+                            dstVarAddr,
+                            dstVarOffset
+                    );
+                    break;
+                case ColumnType.BINARY:
+                    oooMergeCopyBinColumn(
+                            mergeIndex,
+                            rowCount,
+                            srcDataFixAddr,
+                            srcDataVarAddr,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            dstFixAddr,
+                            dstFixOffset,
+                            dstVarAddr,
+                            dstVarOffset
+                    );
+                    break;
+                case ColumnType.INT:
+                case ColumnType.FLOAT:
+                case ColumnType.SYMBOL:
+                    Vect.mergeShuffle32Bit(
+                            srcDataFixAddr,
+                            srcOooFixAddr,
+                            dstFixAddr + dstFixOffset,
+                            mergeIndex,
+                            rowCount
+                    );
+                    break;
+                case ColumnType.DOUBLE:
+                case ColumnType.LONG:
+                case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
+                    Vect.mergeShuffle64Bit(
+                            srcDataFixAddr,
+                            srcOooFixAddr,
+                            dstFixAddr + dstFixOffset,
+                            mergeIndex,
+                            rowCount
+                    );
+                    break;
+                case -ColumnType.TIMESTAMP:
+                    oooCopyIndex(mergeIndex, rowCount, dstFixAddr, dstFixOffset);
+                    break;
+            }
+        } finally {
+            Vect.freeMergedIndex(mergeIndex);
+        }
+    }
+
     private void shiftCopyFixedSizeColumnData(
             long shift,
             long src,
@@ -280,74 +472,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long len = hi - lo;
         for (long o = 0; o < len; o += Long.BYTES) {
             Unsafe.getUnsafe().putLong(dest + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
-        }
-    }
-
-    private void oooMergeCopyFixColumn(
-            long[] mergeStruct,
-            long mergeIndex,
-            long count,
-            int columnIndex,
-            int fixColumnOffset,
-            MergeShuffleOutOfOrderDataInternal shuffleFunc
-    ) {
-        shuffleFunc.shuffle(
-                MergeStruct.getSrcAddressFromOffset(mergeStruct, fixColumnOffset),
-                oooColumns.getQuick(getPrimaryColumnIndex(columnIndex)).addressOf(0),
-                MergeStruct.getDestAddressFromOffset(mergeStruct, fixColumnOffset)
-                        + MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnOffset, MergeStruct.STAGE_MERGE),
-                mergeIndex,
-                count
-        );
-    }
-
-
-    private void oooMergeCopy(
-            int columnType,
-            // todo: merge index has to be freed by last column copy
-            long mergeIndex,
-            long mergedTimestamps,
-            long mergeDataLo,
-            long mergeDataHi,
-            long mergeOOOLo,
-            long mergeOOOHi
-    ) {
-        final long dataOOMergeIndexLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
-        try {
-                switch (columnType) {
-                    case ColumnType.BOOLEAN:
-                    case ColumnType.BYTE:
-                        oooMergeCopyFixColumn(mergeStruct, mergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, MERGE_SHUFFLE_8);
-                        break;
-                    case ColumnType.SHORT:
-                    case ColumnType.CHAR:
-                        oooMergeCopyFixColumn(mergeStruct, mergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, MERGE_SHUFFLE_16);
-                        break;
-                    case ColumnType.STRING:
-                        oooMergeCopyStrColumn(mergeStruct, mergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, varColumnOffset);
-                        break;
-                    case ColumnType.BINARY:
-                        oooMergeCopyBinColumn(mergeStruct, mergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, varColumnOffset);
-                        break;
-                    case ColumnType.INT:
-                    case ColumnType.FLOAT:
-                    case ColumnType.SYMBOL:
-                        oooMergeCopyFixColumn(mergeStruct, mergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, MERGE_SHUFFLE_32);
-                        break;
-                    case ColumnType.DOUBLE:
-                    case ColumnType.LONG:
-                    case ColumnType.DATE:
-                    case ColumnType.TIMESTAMP:
-                        if (i == timestampIndex) {
-                            // copy timestamp values from the merge index
-                            oooCopyIndex(mergeStruct, mergeIndex, dataOOMergeIndexLen, fixColumnOffset);
-                            break;
-                        }
-                        oooMergeCopyFixColumn(mergeStruct, mergeIndex, dataOOMergeIndexLen, i, fixColumnOffset, MERGE_SHUFFLE_64);
-                        break;
-                }
-        } finally {
-            Vect.freeMergedIndex(mergeIndex);
         }
     }
 }
