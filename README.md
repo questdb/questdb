@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="QuestDB Logo" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png" width="305px"/>
+  <img alt="QuestDB Logo" src="https://raw.githubusercontent.com/questdb/questdb/logo/.github/logo-readme.png" width="305px"/>
 </div>
 <p>&nbsp;</p>
 
