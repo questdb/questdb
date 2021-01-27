@@ -84,6 +84,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final RingQueue<LineTcpMeasurementEvent> queue;
     private final ReentrantLock tableUpdateDetailsLock = new ReentrantLock(true);
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsByTableName;
+    private final CharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsByTableName;
     private final int[] loadByThread;
     private final int nUpdatesPerLoadRebalance;
     private final double maxLoadRatio;
@@ -111,6 +112,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         // Worker count is set to 1 because we do not use this execution context
         // in worker threads.
         tableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+        idleTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         loadByThread = new int[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();
@@ -155,6 +157,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         if (null != pubSeq) {
             pubSeq = null;
             tableUpdateDetailsByTableName.clear();
+            idleTableUpdateDetailsByTableName.clear();
             for (int n = 0; n < queue.getCapacity(); n++) {
                 queue.get(n).close();
             }
@@ -193,7 +196,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     boolean tryCommitNewEvent(NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
         TableUpdateDetails tableUpdateDetails;
         try {
-            tableUpdateDetails = getTableUpdateDetails(protoParser);
+            tableUpdateDetails = startNewMeasurementEvent(protoParser);
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
             LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).$(']').$();
@@ -228,24 +231,35 @@ class LineTcpMeasurementScheduler implements Closeable {
         return false;
     }
 
-    private TableUpdateDetails getTableUpdateDetails(NewLineProtoParser protoParser) {
+    private TableUpdateDetails startNewMeasurementEvent(NewLineProtoParser protoParser) {
         tableUpdateDetailsLock.lock();
-        final int keyIndex;
+        TableUpdateDetails tableUpdateDetails;
+        int keyIndex;
         try {
             keyIndex = tableUpdateDetailsByTableName.keyIndex(protoParser.getMeasurementName());
             if (keyIndex < 0) {
-                return tableUpdateDetailsByTableName.valueAt(keyIndex);
+                tableUpdateDetails = tableUpdateDetailsByTableName.valueAt(keyIndex);
+            } else {
+                CharSequence tableName = protoParser.getMeasurementName().toString();
+                int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
+                if (status != TableUtils.TABLE_EXISTS) {
+                    engine.createTable(securityContext, mem, path, tableStructureAdapter.of(tableName, protoParser));
+                }
+
+                keyIndex = idleTableUpdateDetailsByTableName.keyIndex(tableName);
+                if (keyIndex < 0) {
+                    LOG.info().$("idle table going active [tableName=").$(tableName).$(']').$();
+                    tableUpdateDetails = idleTableUpdateDetailsByTableName.valueAt(keyIndex);
+                    idleTableUpdateDetailsByTableName.removeAt(keyIndex);
+                    tableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+                } else {
+                    TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
+                    tableUpdateDetails = assignTableToThread(tableName.toString(), keyIndex);
+                }
             }
 
-            // Original table name is transient
-            String tableName = protoParser.getMeasurementName().toString();
-            int status = engine.getStatus(securityContext, path, tableName, 0, tableName.length());
-            if (status != TableUtils.TABLE_EXISTS) {
-                engine.createTable(securityContext, mem, path, tableStructureAdapter.of(tableName, protoParser));
-            }
-            TelemetryTask.doStoreTelemetry(engine, Telemetry.SYSTEM_ILP_RESERVE_WRITER, Telemetry.ORIGIN_ILP_TCP);
-
-            return assignTableToThread(tableName, keyIndex);
+            tableUpdateDetails.startNewMeasumentEvent();
+            return tableUpdateDetails;
         } finally {
             tableUpdateDetailsLock.unlock();
         }
@@ -675,14 +689,15 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final String tableName;
         private int threadId = Integer.MIN_VALUE;
         private final AtomicInteger nUpdates = new AtomicInteger(); // Number of updates since the last load rebalance
+        private int version = 0;
         private TableWriter writer;
         private int nUncommitted = 0;
-        private ThreadLocal<CharSequenceIntHashMap> refColumnIndexByName = ThreadLocal.withInitial(() -> {
-            return new CharSequenceIntHashMap();
+        private final ThreadLocal<LocalDetails> refLocalDetails = ThreadLocal.withInitial(() -> {
+            return new LocalDetails();
         });
         private final ObjList<EntityValueRowWriter> valueWriters = new ObjList<>();
         private boolean assignedToJob = false;
-        private long lastWriterCommitEpochMs = Long.MAX_VALUE;
+        private long lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
 
         private TableUpdateDetails(String tableName, int threadId) {
             super();
@@ -690,27 +705,37 @@ class LineTcpMeasurementScheduler implements Closeable {
             this.threadId = threadId;
         }
 
-        private void handleRowAppended() {
+        void handleRowAppended() {
             nUncommitted++;
             if (nUncommitted >= maxUncommittedRows) {
                 writer.commit();
-                lastWriterCommitEpochMs = milliClock.getTicks();
                 nUncommitted = 0;
             }
         }
 
-        private void handleMaintenance() {
+        void handleMaintenance() {
             if (nUncommitted == 0) {
-                if ((milliClock.getTicks() - lastWriterCommitEpochMs) >= minIdleMsBeforeWriterRelease) {
-                    LOG.info().$("releasing writer, its been idle since ").$ts(lastWriterCommitEpochMs * 1_000).$(" [tableName=").$(tableName).$(']').$();
-                    writer.close();
-                    writer = null;
-                    lastWriterCommitEpochMs = Long.MAX_VALUE;
+                long localLastMeasurementReceivedEpochMs = lastMeasurementReceivedEpochMs;
+                if ((milliClock.getTicks() - localLastMeasurementReceivedEpochMs) >= minIdleMsBeforeWriterRelease) {
+                    tableUpdateDetailsLock.lock();
+                    try {
+                        if (localLastMeasurementReceivedEpochMs == lastMeasurementReceivedEpochMs) {
+                            LOG.info().$("releasing writer, its been idle since ").$ts(localLastMeasurementReceivedEpochMs * 1_000).$(" [tableName=").$(tableName).$(']').$();
+                            writer.close();
+                            writer = null;
+                            tableUpdateDetailsByTableName.remove(tableName);
+                            idleTableUpdateDetailsByTableName.put(tableName, this);
+                            valueWriters.clear();
+                            version++;
+                            lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
+                        }
+                    } finally {
+                        tableUpdateDetailsLock.unlock();
+                    }
                 }
                 return;
             }
             writer.commit();
-            lastWriterCommitEpochMs = milliClock.getTicks();
             nUncommitted = 0;
         }
 
@@ -722,7 +747,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         int getColumnIndex(CharSequence colName) {
-            CharSequenceIntHashMap columnIndexByName = refColumnIndexByName.get();
+            CharSequenceIntHashMap columnIndexByName = refLocalDetails.get().columnIndexByName;
             int colIndex = columnIndexByName.get(colName);
             if (colIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
@@ -752,10 +777,18 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
+        void startNewMeasumentEvent() {
+            LocalDetails localDetails = refLocalDetails.get();
+            if (version != localDetails.version) {
+                localDetails.columnIndexByName.clear();
+                localDetails.version = version;
+            }
+            lastMeasurementReceivedEpochMs = milliClock.getTicks();
+        }
+
         @Override
         public void close() throws IOException {
             if (threadId != Integer.MIN_VALUE) {
-                refColumnIndexByName = null;
                 Misc.freeObjList(valueWriters);
                 valueWriters.clear();
                 if (null != writer) {
@@ -767,6 +800,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
                 threadId = Integer.MIN_VALUE;
             }
+        }
+
+        private class LocalDetails {
+            private int version = 0;
+            private final CharSequenceIntHashMap columnIndexByName = new CharSequenceIntHashMap();
         }
     }
 
@@ -897,7 +935,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private class TableStructureAdapter implements TableStructure {
-        private String tableName;
+        private CharSequence tableName;
         private NewLineProtoParser protoParser;
 
         @Override
@@ -966,7 +1004,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             return protoParser.getnEntities();
         }
 
-        TableStructureAdapter of(String tableName, NewLineProtoParser protoParser) {
+        TableStructureAdapter of(CharSequence tableName, NewLineProtoParser protoParser) {
             this.tableName = tableName;
             this.protoParser = protoParser;
             return this;

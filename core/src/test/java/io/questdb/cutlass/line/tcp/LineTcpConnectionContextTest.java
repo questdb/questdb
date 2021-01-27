@@ -66,6 +66,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
@@ -1009,8 +1010,8 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
-    @Test(timeout = 300000)
-    public void testWriterRelease() throws Exception {
+    @Test
+    public void testWriterRelease1() throws Exception {
         runInContext(() -> {
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
@@ -1053,6 +1054,148 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWriterRelease2() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion(false);
+
+            int nRows;
+            do {
+                nRows = getTableCount("weather");
+            } while (nRows == 0);
+
+            TableWriter writer = null;
+            do {
+                try {
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
+                } catch (EntryUnavailableException ex) {
+                    try {
+                        Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs());
+                    } catch (InterruptedException e) {
+                        //
+                    }
+                }
+            } while (null == writer);
+            writer.truncate();
+            writer.close();
+
+            recvBuffer = "weather,location=us-midwest,source=sensor1 temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast,source=sensor2 temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost,source=sensor1 temperature=82 1465839830102500200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tsource\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tsensor1\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tsensor2\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tsensor1\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWriterRelease3() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion(false);
+
+            int nRows;
+            do {
+                nRows = getTableCount("weather");
+            } while (nRows == 0);
+
+            TableWriter writer = null;
+            do {
+                try {
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
+                } catch (EntryUnavailableException ex) {
+                    try {
+                        Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs());
+                    } catch (InterruptedException e) {
+                        //
+                    }
+                }
+            } while (null == writer);
+            writer.close();
+            Path path = new Path();
+            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+            path.close();
+
+            recvBuffer = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWriterRelease4() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion(false);
+
+            int nRows;
+            do {
+                nRows = getTableCount("weather");
+            } while (nRows == 0);
+
+            TableWriter writer = null;
+            do {
+                try {
+                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
+                } catch (EntryUnavailableException ex) {
+                    try {
+                        Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs());
+                    } catch (InterruptedException e) {
+                        //
+                    }
+                }
+            } while (null == writer);
+            writer.close();
+            Path path = new Path();
+            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+            path.close();
+
+            recvBuffer = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
+                    "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
+            handleContextIO();
+            Assert.assertFalse(disconnected);
+            waitForIOCompletion();
+
+            closeContext();
+            String expected = "location\tsource\ttemp\ttimestamp\n" +
+                    "us-midwest\tsensor1\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, "weather");
         });
     }
