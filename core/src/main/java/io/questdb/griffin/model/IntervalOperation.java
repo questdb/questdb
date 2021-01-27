@@ -29,4 +29,5 @@ public final class IntervalOperation {
 
     public static final int INTERSECT = 1;
     public static final int SUBTRACT = 2;
+    public static final int INTERSECT_EQUALS = 3;
 }

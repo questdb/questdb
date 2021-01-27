@@ -101,6 +101,11 @@ public class IntrinsicModel implements Mutable {
         intrinsicValue = FALSE;
     }
 
+    public void intersectEquals(Function function) {
+        intervalModel.intersectEquals(function);
+        if (intervalModel.isEmptySet()) intrinsicValue = FALSE;
+    }
+
     public void intersectIntervals(long lo, long hi) {
         intervalModel.intersectIntervals(lo, hi);
         if (intervalModel.isEmptySet()) intrinsicValue = FALSE;
@@ -117,6 +122,10 @@ public class IntrinsicModel implements Mutable {
 
     public void intersectIntervals(Function function, long hi, long funcAdjust) {
         intervalModel.intersectIntervals(function, hi, funcAdjust);
+    }
+
+    public void intersectIntervals(Function lo, Function hi, int adjustLo, int adjustHi) {
+
     }
 
     public void subtractIntervals(long lo, long hi) {

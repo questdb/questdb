@@ -104,7 +104,8 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
 
     public RuntimeIntrinsicIntervalModel getIntervalModel() {
         if (!isDynamic()) {
-            return new StaticRuntimeIntrinsicIntervalModel(staticIntervalsModel.intervals);
+            LongList intervalCopy = staticIntervalsModel.intervals != null ? new LongList(staticIntervalsModel.intervals) : null;
+            return new StaticRuntimeIntrinsicIntervalModel(intervalCopy);
         } else {
             return new DynamicRuntimeIntrinsicIntervalModel(staticIntervalsModel.intervals, runtimePeriods);
         }
@@ -122,6 +123,12 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
         runtimePeriods.add(getNextRuntimePeriodIntrinsic().setGreater(IntervalOperation.INTERSECT, function, hi, funcAdjust));
     }
 
+    public void intersectEquals(Function lo) {
+        // Intersect nothing with anything is still nothing.
+        if (!isDynamic() && staticIntervalsModel.isEmptySet()) return;
+        runtimePeriods.add(getNextRuntimePeriodIntrinsic().setEquals(IntervalOperation.INTERSECT_EQUALS, lo));
+    }
+
     private RuntimePeriodIntrinsic getNextRuntimePeriodIntrinsic() {
         // We cannot pool it here, objects will be transferred to cursor factory.
         return new RuntimePeriodIntrinsic();
@@ -133,6 +140,7 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
 
     private static class DynamicRuntimeIntrinsicIntervalModel implements RuntimeIntrinsicIntervalModel {
         private final LongList intervals;
+        private static final LongList emptyIntervals = new LongList();
         private final StaticIntervalsModel tempModel = new StaticIntervalsModel();
         private final ObjList<RuntimePeriodIntrinsic> runtimePeriods;
 
@@ -193,16 +201,31 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
                                 toApply.count);
                         break;
 
+                    case IntervalOperation.INTERSECT_EQUALS:
+                        // Single value stored in lo
+                        tempModel.applyIntersect(
+                                lo,
+                                lo,
+                                toApply.period,
+                                toApply.periodType,
+                                toApply.count);
+                        break;
+
                     default:
                 }
             }
 
-            return tempModel.intervals;
+            return copy(tempModel.intervals);
+        }
+
+        private LongList copy(LongList intervals) {
+            // We have to copy so that different query executions based on the same plan
+            // have independent periods list
+            return intervals == null ? null : new LongList(intervals);
         }
 
         private LongList empty() {
-            tempModel.intersectEmpty();
-            return tempModel.intervals;
+            return emptyIntervals;
         }
 
         @Override

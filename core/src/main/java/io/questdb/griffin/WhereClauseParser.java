@@ -86,22 +86,43 @@ final class WhereClauseParser implements Mutable {
                 Chars.equals(left.token, right.token);
     }
 
-    private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
+    private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m, FunctionParser functionParser, SqlExecutionContext executionContext) throws SqlException {
         checkNodeValid(node);
-        return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m) || analyzeEquals0(translator, model, node, node.rhs, node.lhs, m);
+        return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext) || analyzeEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext);
     }
 
-    private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m) throws SqlException {
+    private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m, FunctionParser functionParser, SqlExecutionContext executionContext) throws SqlException {
         if (nodesEqual(a, b)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
 
-        if (a.type == ExpressionNode.LITERAL && (b.type == ExpressionNode.CONSTANT || b.type == ExpressionNode.BIND_VARIABLE)) {
+        if (a.type == ExpressionNode.LITERAL && (b.type == ExpressionNode.CONSTANT || b.type == ExpressionNode.BIND_VARIABLE || b.type == ExpressionNode.FUNCTION)) {
             if (isTimestamp(a)) {
-                model.intersectIntervals(b.token, 1, b.token.length() - 1, b.position);
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
+                if (b.type == ExpressionNode.CONSTANT) {
+                    model.intersectIntervals(b.token, 1, b.token.length() - 1, b.position);
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                }
+
+                Function function = functionParser.parseFunction(b, m, executionContext);
+                checkFunctionCanBeTimestamp(m, executionContext, function);
+
+                if (function.isConstant()) {
+                    long value = function.getTimestamp(null);
+                    if (value == Numbers.LONG_NaN) {
+                        // make it empty set
+                        model.intersectEmpty();
+                    } else {
+                        model.intersectIntervals(value, value);
+                    }
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                } else if (function.isRuntimeConstant()) {
+                    model.intersectEquals(function);
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
+                }
             } else {
                 CharSequence column = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(column);
@@ -217,9 +238,8 @@ final class WhereClauseParser implements Mutable {
             return true;
         } else if (compareWithNode.type == ExpressionNode.FUNCTION || compareWithNode.type == ExpressionNode.BIND_VARIABLE) {
             Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
-            if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP && function.getType() != ColumnType.UNDEFINED) {
-                throw SqlException.invalidDate(compareWithNode.position);
-            }
+            checkFunctionCanBeTimestamp(metadata, executionContext, function);
+
             if (function.isConstant()) {
                 lo = function.getTimestamp(null);
                 if (lo == Numbers.LONG_NaN) {
@@ -229,6 +249,7 @@ final class WhereClauseParser implements Mutable {
                     model.intersectIntervals(lo + adjustComparison(equalsTo, true), Long.MAX_VALUE);
                 }
                 node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
             } else if (function.isRuntimeConstant()) {
                 model.intersectIntervals(function, Long.MAX_VALUE, adjustComparison(equalsTo, true));
                 node.intrinsicValue = IntrinsicModel.TRUE;
@@ -237,6 +258,15 @@ final class WhereClauseParser implements Mutable {
         }
 
         return false;
+    }
+
+    private void checkFunctionCanBeTimestamp(RecordMetadata metadata, SqlExecutionContext executionContext, Function function) throws SqlException {
+        if (function.getType() == ColumnType.UNDEFINED) {
+            int timestampType = metadata.getColumnType(metadata.getTimestampIndex());
+            function.assignType(timestampType, executionContext.getBindVariableService());
+        } else if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP) {
+            throw SqlException.invalidDate(function.getPosition());
+        }
     }
 
     private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
@@ -384,9 +414,7 @@ final class WhereClauseParser implements Mutable {
             return true;
         } else if (compareWithNode.type == ExpressionNode.FUNCTION || compareWithNode.type == ExpressionNode.BIND_VARIABLE) {
             Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
-            if (function.getType() != ColumnType.DATE && function.getType() != ColumnType.TIMESTAMP && function.getType() != ColumnType.UNDEFINED) {
-                throw SqlException.invalidDate(compareWithNode.position);
-            }
+            checkFunctionCanBeTimestamp(metadata, executionContext, function);
 
             if (function.isConstant()) {
                 long hi = function.getTimestamp(null);
@@ -396,6 +424,7 @@ final class WhereClauseParser implements Mutable {
                     model.intersectIntervals(Long.MIN_VALUE, hi + adjustComparison(equalsTo, false));
                 }
                 node.intrinsicValue = IntrinsicModel.TRUE;
+                return true;
             } else if (function.isRuntimeConstant()) {
                 model.intersectIntervals(Long.MIN_VALUE, function, adjustComparison(equalsTo, false));
                 node.intrinsicValue = IntrinsicModel.TRUE;
@@ -837,7 +866,7 @@ final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_LESS_EQ:
                 return analyzeLess(model, node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL:
-                return analyzeEquals(translator, model, node, m);
+                return analyzeEquals(translator, model, node, m, functionParser, executionContext);
             case INTRINSIC_OP_NOT_EQ:
                 return analyzeNotEquals(translator, model, node, m);
             case INTRINSIC_OP_NOT:

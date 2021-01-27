@@ -30,7 +30,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 
-public class RuntimePeriodIntrinsic implements Mutable {
+public class RuntimePeriodIntrinsic {
     public static final ObjectFactory<RuntimePeriodIntrinsic> FACTORY = RuntimePeriodIntrinsic::new;
     private int operation;
 
@@ -44,13 +44,16 @@ public class RuntimePeriodIntrinsic implements Mutable {
     Function dynamicHi;
     long dynamicIncrement;
 
-    @Override
-    public void clear() {
-        operation = IntervalOperation.NONE;
-    }
-
     public int getOperation() {
         return operation;
+    }
+
+    public RuntimePeriodIntrinsic setEquals(int operation, Function value) {
+        this.operation = operation;
+        dynamicLo = value;
+        dynamicHi = null;
+        staticHi = 0;
+        return this;
     }
 
     public RuntimePeriodIntrinsic setInterval(int operation, long lo, long hi) {

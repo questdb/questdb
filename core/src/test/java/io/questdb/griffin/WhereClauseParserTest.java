@@ -403,12 +403,40 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEqualsNow() throws Exception {
+    public void testTimestampEqualsNow() throws Exception {
         long day = 24L * 3600 * 1000 * 1000;
         currentMicros = day;
         queryConstants.clear();
         try {
-            runWhereIntervalTest0("now() = timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+            runWhereCompareToModelTest("timestamp = now()",
+                    "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
+    public void testTimestampEqualsFunctionOfNow() throws Exception {
+        long day = 24L * 3600 * 1000 * 1000;
+        currentMicros = day;
+        queryConstants.clear();
+        try {
+            runWhereCompareToModelTest("timestamp = dateadd('d', 2, now())",
+                    "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
+    public void testTimestampEqualsNowAndSymbolsInList() throws Exception {
+        long day = 24L * 3600 * 1000 * 1000;
+        currentMicros = day;
+        queryConstants.clear();
+        try {
+            IntrinsicModel m = runWhereCompareToModelTest("timestamp = now() and sym in (1, 2, 3)",
+                    "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+            Assert.assertNull(m.filter);
         } finally {
             currentMicros = -1;
         }
@@ -1577,11 +1605,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     private IntrinsicModel runWhereCompareToModelTest(String where, String expected) throws SqlException {
-        runWhereIntervalTest0(where + " and timestamp < now()", expected);
-        runWhereIntervalTest0(where + " and now() > timestamp", expected);
+        runWhereIntervalTest0(where + " and timestamp < dateadd('y', 1000, now())", expected);
+        runWhereIntervalTest0(where + " and dateadd('y', 1000, now()) > timestamp", expected);
 
-        runWhereIntervalTest0("timestamp < now() and " + where, expected);
-        runWhereIntervalTest0("now() > timestamp and " + where, expected);
+        runWhereIntervalTest0("timestamp < dateadd('y', 1000, now()) and " + where, expected);
+        runWhereIntervalTest0("dateadd('y', 1000, now()) > timestamp and " + where, expected);
 
         runWhereIntervalTest0(where + " and timestamp > dateadd('y', -1000, now())", expected);
         runWhereIntervalTest0(where + " and dateadd('y', -1000, now()) < timestamp", expected);

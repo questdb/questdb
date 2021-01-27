@@ -130,6 +130,8 @@ public interface Function extends Closeable {
         return false;
     }
 
+    // If function is constant for query, e.g. record independent
+    // For example now() and bind variables are Runtime Constants
     default boolean isRuntimeConstant() {
         return false;
     }
