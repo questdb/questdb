@@ -86,14 +86,14 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         // once we know the boundary we can move on to calculating another one
         // oooIndexHi is index inclusive of value
         // todo: rename this
-        final long mergedTimestamps = task.getTimestampMergeIndex();
+        final long timestampMergeIndex = task.getSortedTimestamps();
         final long oooIndexLo = task.getOooIndexLo();
         final long oooIndexHi = task.getOooIndexHi();
         final long oooIndexMax = task.getOooIndexMax();
         final long lastPartitionIndexMax = task.getLastPartitionIndexMax();
         final long partitionTimestampHi = task.getPartitionTimestampHi();
         final long oooTimestampMax = task.getOooTimestampMax();
-        final long oooPartitionTimestampMin = getTimestampIndexValue(mergedTimestamps, oooIndexLo);
+        final long oooPartitionTimestampMin = getTimestampIndexValue(timestampMergeIndex, oooIndexLo);
         final FilesFacade ff = task.getFf();
         final long tableCeilOfMaxTimestamp = task.getTableCeilOfMaxTimestamp();
         final long tableFloorOfMinTimestamp = task.getTableFloorOfMinTimestamp();
@@ -106,6 +106,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final int rootLen = task.getRootLen();
         final int partitionBy = task.getPartitionBy();
         final int timestampIndex = task.getTimestampIndex();
+        final long sortedTimestampsAddr = task.getSortedTimestamps();
         final long txn = task.getTxn();
         TableUtils.setPathForPartition(path.trimTo(rootLen), partitionBy, oooPartitionTimestampMin);
         final int plen = path.length();
@@ -149,7 +150,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     0,
                     5, //oooOpenNewPartitionForAppend
                     -1,  // timestamp fd
-                    timestampIndex
+                    timestampIndex,
+                    sortedTimestampsAddr
             );
         } else {
 
@@ -225,7 +227,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                             //  | data |
 
                             mergeDataLo = 0;
-                            prefixHi = Vect.binarySearchIndexT(mergedTimestamps, dataTimestampLo, oooIndexLo, oooIndexHi, BinarySearch.SCAN_DOWN);
+                            prefixHi = Vect.binarySearchIndexT(timestampMergeIndex, dataTimestampLo, oooIndexLo, oooIndexHi, BinarySearch.SCAN_DOWN);
                             mergeOOOLo = prefixHi + 1;
                         } else {
                             //            +-----+
@@ -270,7 +272,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                                 //          +-----+
 
                                 mergeDataHi = dataIndexMax - 1;
-                                mergeOOOHi = Vect.binarySearchIndexT(mergedTimestamps, dataTimestampHi - 1, mergeOOOLo, oooIndexHi, BinarySearch.SCAN_DOWN) + 1;
+                                mergeOOOHi = Vect.binarySearchIndexT(timestampMergeIndex, dataTimestampHi - 1, mergeOOOLo, oooIndexHi, BinarySearch.SCAN_DOWN) + 1;
 
                                 if (mergeOOOLo < mergeOOOHi) {
                                     mergeType = OO_BLOCK_MERGE;
@@ -383,7 +385,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                                     //          |     |
                                     //          +-----+
 
-                                    mergeOOOHi = Vect.binarySearchIndexT(mergedTimestamps, dataTimestampHi, oooIndexLo, oooIndexHi, BinarySearch.SCAN_UP);
+                                    mergeOOOHi = Vect.binarySearchIndexT(timestampMergeIndex, dataTimestampHi, oooIndexLo, oooIndexHi, BinarySearch.SCAN_UP);
                                     mergeDataHi = dataIndexMax - 1;
 
                                     mergeType = OO_BLOCK_MERGE;
@@ -466,7 +468,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         dataIndexMax,
                         openColumnMode,
                         timestampFd,
-                        timestampIndex
+                        timestampIndex,
+                        sortedTimestampsAddr
                 );
 
             } finally {
@@ -475,6 +478,29 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 }
             }
         }
+    }
+    private long oooCreateMergeIndex(
+            long srcDataTimestampAddr,
+            long mergedTimestamps,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi
+    ) {
+        // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
+        // have to go back and find data rows we need to move accordingly
+        final long indexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+        final long indexStruct = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+        final long index = Unsafe.malloc(indexSize);
+        Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
+        Unsafe.getUnsafe().putLong(indexStruct, index);
+        Unsafe.getUnsafe().putLong(indexStruct + Long.BYTES, mergeDataHi - mergeDataLo + 1);
+        Unsafe.getUnsafe().putLong(indexStruct + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
+        Unsafe.getUnsafe().putLong(indexStruct + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
+        final long result = Vect.mergeLongIndexesAsc(indexStruct, 2);
+        Unsafe.free(index, indexSize);
+        Unsafe.free(indexStruct, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+        return result;
     }
 
     private void publishOpenColumnTasks(
@@ -501,8 +527,23 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long dataIndexMax,
             int openColumnMode,
             long timestampFd,
-            int timestampIndex
+            int timestampIndex,
+            long sortedTimestampsAddr
     ) {
+        final long timestampMergeIndexAddr;
+        if (mergeType == OO_BLOCK_MERGE) {
+            timestampMergeIndexAddr = oooCreateMergeIndex(
+                    columns.getQuick(TableWriter.getPrimaryColumnIndex(timestampIndex)).addressOf(0),
+                    sortedTimestampsAddr,
+                    mergeDataLo,
+                    mergeDataHi,
+                    mergeOOOLo,
+                    mergeOOOHi
+            );
+        } else {
+            timestampMergeIndexAddr = 0;
+        }
+
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             long c = openColumnPubSeq.next();
             // todo: check if c is valid

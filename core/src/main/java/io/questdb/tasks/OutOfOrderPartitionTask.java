@@ -44,7 +44,7 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
     private long oooIndexMax;
     private long lastPartitionIndexMax;
     private long partitionTimestampHi;
-    private long timestampMergeIndex;
+    private long sortedTimestamps;
     private long tableMaxTimestamp;
     private long tableCeilOfMaxTimestamp;
     private long tableFloorOfMinTimestamp;
@@ -135,8 +135,8 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
         return timestampIndex;
     }
 
-    public long getTimestampMergeIndex() {
-        return timestampMergeIndex;
+    public long getSortedTimestamps() {
+        return sortedTimestamps;
     }
 
     public long getTxn() {

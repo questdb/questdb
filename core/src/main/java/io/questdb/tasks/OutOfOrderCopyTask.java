@@ -24,32 +24,38 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.std.AbstractLockable;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class OutOfOrderCopyTask extends AbstractLockable {
-    private long dstFixOffset;
-    private long dstVarOffset;
-    private long dstVarAddr;
-    private long dstFixAddr;
-    private long srcFixAddr;
-    private long srcFixSize;
-    private long srcVarAddr;
-    private long srcVarSize;
-    private long srcLo;
-    private long srcHi;
-    private int blockType;
+    private AtomicInteger partCounter;
     private int columnType;
-    private ContiguousVirtualMemory oooFixColumn;
-    private ContiguousVirtualMemory oooVarColumn;
-
-    public long getSrcHi() {
-        return srcHi;
-    }
-
-    public long getSrcLo() {
-        return srcLo;
-    }
+    private int blockType;
+    private long mergeIndexAddr;
+    private long srcDataFixAddr;
+    private long srcDataFixSize;
+    private long srcDataVarAddr;
+    private long srcDataVarSize;
+    private long srcDataLo;
+    private long srcDataHi;
+    private long srcOooFixAddr;
+    private long srcOooFixSize;
+    private long srcOooVarAddr;
+    private long srcOooVarSize;
+    private long srcOooLo;
+    private long srcOooHi;
+    private long dstFixFd;
+    private long dstFixAddr;
+    private long dstFixOffset;
+    private long dstFixSize;
+    private long dstVarFd;
+    private long dstVarAddr;
+    private long dstVarOffset;
+    private long dstVarSize;
+    private long dstKFd;
+    private long dstVFd;
+    private long dstIndexOffset;
 
     public int getBlockType() {
         return blockType;
@@ -59,43 +65,129 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return columnType;
     }
 
-    public long getDstVarAddr() {
-        return dstVarAddr;
+    public long getDstFixAddr() {
+        return dstFixAddr;
     }
 
     public long getDstFixOffset() {
         return dstFixOffset;
     }
 
+    public long getDstVarAddr() {
+        return dstVarAddr;
+    }
+
     public long getDstVarOffset() {
         return dstVarOffset;
     }
 
-    public long getDstFixAddr() {
-        return dstFixAddr;
+    public long getMergeIndexAddr() {
+        return mergeIndexAddr;
     }
 
-    public ContiguousVirtualMemory getOooFixColumn() {
-        return oooFixColumn;
+    public long getSrcDataFixAddr() {
+        return srcDataFixAddr;
     }
 
-    public ContiguousVirtualMemory getOooVarColumn() {
-        return oooVarColumn;
+    public long getSrcDataFixSize() {
+        return srcDataFixSize;
     }
 
-    public long getSrcFixAddr() {
-        return srcFixAddr;
+    public long getSrcDataHi() {
+        return srcDataHi;
     }
 
-    public long getSrcFixSize() {
-        return srcFixSize;
+    public long getSrcDataLo() {
+        return srcDataLo;
     }
 
-    public long getSrcVarAddr() {
-        return srcVarAddr;
+    public long getSrcDataVarAddr() {
+        return srcDataVarAddr;
     }
 
-    public long getSrcVarSize() {
-        return srcVarSize;
+    public long getSrcDataVarSize() {
+        return srcDataVarSize;
+    }
+
+    public long getSrcOooFixAddr() {
+        return srcOooFixAddr;
+    }
+
+    public long getSrcOooFixSize() {
+        return srcOooFixSize;
+    }
+
+    public long getSrcOooHi() {
+        return srcOooHi;
+    }
+
+    public long getSrcOooLo() {
+        return srcOooLo;
+    }
+
+    public long getSrcOooVarAddr() {
+        return srcOooVarAddr;
+    }
+
+    public long getSrcOooVarSize() {
+        return srcOooVarSize;
+    }
+
+    public void of(
+            AtomicInteger partCounter,
+            int columnType,
+            int blockType,
+            long mergeIndexAddr,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long srcDataLo,
+            long srcDataHi,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo,
+            long srcOooHi,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarOffset,
+            long dstVarSize,
+            long dstKFd,
+            long dstVFd,
+            long dstIndexOffset
+    ) {
+        this.partCounter = partCounter;
+        this.columnType = columnType;
+        this.blockType = blockType;
+        this.mergeIndexAddr = mergeIndexAddr;
+        this.srcDataFixAddr = srcDataFixAddr;
+        this.srcDataFixSize = srcDataFixSize;
+        this.srcDataVarAddr = srcDataVarAddr;
+        this.srcDataVarSize = srcDataVarSize;
+        this.srcDataLo = srcDataLo;
+        this.srcDataHi = srcDataHi;
+        this.srcOooFixAddr = srcOooFixAddr;
+        this.srcOooFixSize = srcOooFixSize;
+        this.srcOooVarAddr = srcOooVarAddr;
+        this.srcOooVarSize = srcOooVarSize;
+        this.srcOooLo = srcOooLo;
+        this.srcOooHi = srcOooHi;
+        this.dstFixFd = dstFixFd;
+        this.dstFixAddr = dstFixAddr;
+        this.dstFixOffset = dstFixOffset;
+        this.dstFixSize = dstFixSize;
+        this.dstVarFd = dstVarFd;
+        this.dstVarAddr = dstVarAddr;
+        this.dstVarOffset = dstVarOffset;
+        this.dstVarSize = dstVarSize;
+        this.dstKFd = dstKFd;
+        this.dstVFd = dstVFd;
+        this.dstIndexOffset = dstIndexOffset;
     }
 }

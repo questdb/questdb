@@ -41,32 +41,53 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 
     private void copy(OutOfOrderCopyTask task, long cursor, Sequence subSeq) {
         final int blockType = task.getBlockType();
-        final long srcLo = task.getSrcLo();
-        final long srcHi = task.getSrcHi();
+        final long srcDataFixAddr = task.getSrcDataFixAddr();
+        final long srcDataFixSize = task.getSrcDataFixSize();
+        final long srcDataVarAddr = task.getSrcDataVarAddr();
+        final long srcDataVarSize = task.getSrcDataVarSize();
+        final long srcDataLo = task.getSrcDataLo();
+        final long srcDataHi = task.getSrcDataHi();
+
+        final long srcOooFixAddr = task.getSrcOooFixAddr();
+        final long srcOooFixSize = task.getSrcOooFixSize();
+        final long srcOooVarAddr = task.getSrcOooVarAddr();
+        final long srcOooVarSize = task.getSrcOooVarSize();
+        final long srcOooLo = task.getSrcOooLo();
+        final long srcOooHi = task.getSrcOooHi();
+
+
         final long dstFixAddr = task.getDstFixAddr();
         final long dstFixOffset = task.getDstFixOffset();
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
-        final long srcFixAddr = task.getSrcFixAddr();
-        final long srcFixSize = task.getSrcFixSize();
-        final long srcVarAddr = task.getSrcVarAddr();
-        final long srcVarSize = task.getSrcVarSize();
         final int columnType = task.getColumnType();
-        final ContiguousVirtualMemory oooFixColumn = task.getOooFixColumn();
-        final ContiguousVirtualMemory oooVarColumn = task.getOooVarColumn();
+        final long mergeIndexAddr = task.getMergeIndexAddr();
 
         switch (blockType) {
             case OO_BLOCK_MERGE:
-
+                oooMergeCopy(
+                        columnType,
+                        mergeIndexAddr,
+                        srcDataFixAddr,
+                        srcDataVarAddr,
+                        srcDataLo,
+                        srcDataHi,
+                        srcOooFixAddr,
+                        srcOooVarAddr,
+                        srcOooLo,
+                        srcOooHi,
+                        dstFixAddr,
+                        dstFixOffset,
+                        dstVarAddr,
+                        dstVarOffset
+                );
             case OO_BLOCK_OO:
                 oooCopyOOO(
-                        oooFixColumn,
-                        oooVarColumn,
-                        dstFixOffset,
-                        srcLo,
-                        srcHi,
-                        columnType,
-                        dstFixAddr,
+                        columnType, srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo, srcOooHi, dstFixAddr, dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
@@ -74,12 +95,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case OO_BLOCK_DATA:
                 oooCopyData(
                         columnType,
-                        srcFixAddr,
-                        srcFixSize,
-                        srcVarAddr,
-                        srcVarSize,
-                        srcLo,
-                        srcHi,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        srcDataLo,
+                        srcDataHi,
                         dstFixAddr,
                         dstFixOffset,
                         dstVarAddr,
@@ -192,13 +213,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     }
 
     private void oooCopyOOO(
-            ContiguousVirtualMemory oooFixColumn,
-            ContiguousVirtualMemory oooVarColumn,
-            long dstFixOffset,
-            long indexLo,
-            long indexHi,
-            int columnType,
-            long dstFixAddr,
+            int columnType, long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo, long srcOooHi, long dstFixAddr, long dstFixOffset,
             long dstVarAddr,
             long dstVarOffset
     ) {
@@ -206,39 +225,42 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 // we can find out the edge of string column in one of two ways
-                // 1. if indexHi is at the limit of the page - we need to copy the whole page of strings
-                // 2  if there are more items behind indexHi we can get offset of indexHi+1
+                // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
+                // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
                 oooCopyVarSizeCol(
-                        oooVarColumn.addressOf(0),
-                        oooVarColumn.getAppendOffset(),
-                        oooFixColumn.addressOf(0),
-                        oooFixColumn.getAppendOffset(),
-                        indexLo,
-                        indexHi,
-                        dstFixAddr, dstFixOffset, dstVarAddr, dstVarOffset
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        dstFixAddr,
+                        dstFixOffset,
+                        dstVarAddr,
+                        dstVarOffset
                 );
                 break;
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                oooCopyFixedSizeCol(oooFixColumn.addressOf(0), indexLo, indexHi, dstFixAddr, dstFixOffset, 0);
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset, 0);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:
-                oooCopyFixedSizeCol(oooFixColumn.addressOf(0), indexLo, indexHi, dstFixAddr, dstFixOffset, 1);
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset, 1);
                 break;
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
-                oooCopyFixedSizeCol(oooFixColumn.addressOf(0), indexLo, indexHi, dstFixAddr, dstFixOffset, 2);
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset, 2);
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.DOUBLE:
             case ColumnType.TIMESTAMP:
-                oooCopyFixedSizeCol(oooFixColumn.addressOf(0), indexLo, indexHi, dstFixAddr, dstFixOffset, 3);
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset, 3);
                 break;
             case -ColumnType.TIMESTAMP:
-                copyFromTimestampIndex(oooFixColumn.addressOf(0), indexLo, indexHi, dstFixAddr, dstFixOffset);
+                copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset);
                 break;
             default:
                 break;
@@ -358,7 +380,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     private void oooMergeCopy(
             int columnType,
             // todo: merge index has to be freed by last column copy
-            long mergeIndex,
+            long mergeIndexAddr,
             long srcDataFixAddr,
             long srcDataVarAddr,
             long srcDataLo,
@@ -377,12 +399,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             switch (columnType) {
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
-                    // todo: check if we only need to merge subset of data and out of order (i suspect "mergeIndex" has indices of rows in either, so we're supplying both fully)
+                    // todo: check if we only need to merge subset of data and out of order (i suspect "mergeIndexAddr" has indices of rows in either, so we're supplying both fully)
                     Vect.mergeShuffle8Bit(
                             srcDataFixAddr,
                             srcOooFixAddr,
                             dstFixAddr + dstFixOffset,
-                            mergeIndex,
+                            mergeIndexAddr,
                             rowCount
                     );
                     break;
@@ -392,13 +414,13 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             srcDataFixAddr,
                             srcOooFixAddr,
                             dstFixAddr + dstFixOffset,
-                            mergeIndex,
+                            mergeIndexAddr,
                             rowCount
                     );
                     break;
                 case ColumnType.STRING:
                     oooMergeCopyStrColumn(
-                            mergeIndex,
+                            mergeIndexAddr,
                             rowCount,
                             srcDataFixAddr,
                             srcDataVarAddr,
@@ -412,7 +434,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     break;
                 case ColumnType.BINARY:
                     oooMergeCopyBinColumn(
-                            mergeIndex,
+                            mergeIndexAddr,
                             rowCount,
                             srcDataFixAddr,
                             srcDataVarAddr,
@@ -431,7 +453,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             srcDataFixAddr,
                             srcOooFixAddr,
                             dstFixAddr + dstFixOffset,
-                            mergeIndex,
+                            mergeIndexAddr,
                             rowCount
                     );
                     break;
@@ -443,16 +465,16 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             srcDataFixAddr,
                             srcOooFixAddr,
                             dstFixAddr + dstFixOffset,
-                            mergeIndex,
+                            mergeIndexAddr,
                             rowCount
                     );
                     break;
                 case -ColumnType.TIMESTAMP:
-                    oooCopyIndex(mergeIndex, rowCount, dstFixAddr, dstFixOffset);
+                    oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr, dstFixOffset);
                     break;
             }
         } finally {
-            Vect.freeMergedIndex(mergeIndex);
+            Vect.freeMergedIndex(mergeIndexAddr);
         }
     }
 
