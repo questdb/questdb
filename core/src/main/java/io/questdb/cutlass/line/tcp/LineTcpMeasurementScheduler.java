@@ -41,6 +41,7 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -65,7 +66,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
@@ -726,11 +726,16 @@ class LineTcpMeasurementScheduler implements Closeable {
             int colIndex = columnIndexByName.get(colName);
             if (colIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                    colIndex = reader.getMetadata().getColumnIndexQuiet(colName);
+                    TableReaderMetadata metadata = reader.getMetadata();
+                    colIndex = metadata.getColumnIndexQuiet(colName);
                     if (colIndex < 0) {
                         return -1;
                     }
-                    columnIndexByName.put(colName.toString(), colIndex);
+                    // re-cache all column names once
+                    columnIndexByName.clear();
+                    for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
+                        columnIndexByName.put(metadata.getColumnName(n), n);
+                    }
                 }
             }
             return colIndex;
