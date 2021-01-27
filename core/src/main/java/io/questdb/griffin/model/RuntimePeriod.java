@@ -24,25 +24,24 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.cairo.sql.Function;
 
-public interface IntervalModel {
-    boolean hasIntervals();
+public interface RuntimePeriod {
+    int getCount();
 
-    void intersectEmpty();
+    Function getDynamicHi();
 
-    void intersectIntervals(long lo, long hi);
+    int getDynamicIncrement();
 
-    void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;
+    Function getDynamicLo();
 
-    void subtractIntervals(long lo, long hi);
+    short getOperation();
 
-    void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;
+    int getPeriod();
 
-    boolean isEmptySet();
+    char getPeriodType();
+
+    long getStaticHi();
+
+    long getStaticLo();
 }

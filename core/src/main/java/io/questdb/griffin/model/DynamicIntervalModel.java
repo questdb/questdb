@@ -30,23 +30,29 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
 
+import java.io.Closeable;
+import java.io.IOException;
+
 public class DynamicIntervalModel implements IntervalModel, Mutable {
-    private final ObjList<RuntimePeriodIntrinsic> runtimePeriods = new ObjList<>();
     private final Interval tempInterval = new Interval();
-    private StaticIntervalsModel staticIntervalsModel = new StaticIntervalsModel();
+    private StaticIntervalsModel staticIntervalsModel;
+    private CompactDynamicIntervalModel dynamicModel = new CompactDynamicIntervalModel();
+
+    public DynamicIntervalModel(StaticIntervalsModel staticIntervalsModel) {
+        this.staticIntervalsModel = staticIntervalsModel;
+    }
 
     @Override
     public void clear() {
         staticIntervalsModel.clear();
-        runtimePeriods.clear();
-    }
-
-    @Override
-    public void clearInterval() {
-        clear();
+        if (dynamicModel == null) {
+            // This will then be passed to a factory, create new copy
+            dynamicModel = new CompactDynamicIntervalModel();
+        } else {
+            dynamicModel.clear();
+        }
     }
 
     @Override
@@ -56,14 +62,14 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
 
     @Override
     public void intersectEmpty() {
-        runtimePeriods.clear();
+        dynamicModel.clear();
         staticIntervalsModel.intersectEmpty();
     }
 
     @Override
     public void intersectIntervals(long lo, long hi) {
         if (isDynamic()) {
-            runtimePeriods.add(getNextRuntimePeriodIntrinsic().setInterval(IntervalOperation.INTERSECT, lo, hi));
+            dynamicModel.intersect(lo, hi);
         } else {
             staticIntervalsModel.intersectIntervals(lo, hi);
         }
@@ -72,8 +78,7 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
     @Override
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         if (isDynamic()) {
-            IntervalUtils.parseIntervalEx(seq, lo, lim, position, tempInterval);
-            runtimePeriods.add(getNextRuntimePeriodIntrinsic().setInterval(IntervalOperation.INTERSECT, tempInterval));
+            dynamicModel.intersectIntervals(seq, lo, lim, position, tempInterval);
         } else {
             staticIntervalsModel.intersectIntervals(seq, lo, lim, position);
         }
@@ -82,7 +87,7 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
     @Override
     public void subtractIntervals(long lo, long hi) {
         if (isDynamic()) {
-            runtimePeriods.add(getNextRuntimePeriodIntrinsic().setInterval(IntervalOperation.SUBTRACT, lo, hi));
+            dynamicModel.subtractInterval(lo, hi);
         } else {
             staticIntervalsModel.subtractIntervals(lo, hi);
         }
@@ -91,8 +96,7 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
     @Override
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         if (isDynamic()) {
-            IntervalUtils.parseIntervalEx(seq, lo, lim, position, tempInterval);
-            runtimePeriods.add(getNextRuntimePeriodIntrinsic().setInterval(IntervalOperation.SUBTRACT, tempInterval));
+            dynamicModel.subtractIntervals(seq, lo, lim, position, tempInterval);
         } else {
             staticIntervalsModel.subtractIntervals(seq, lo, lim, position);
         }
@@ -107,125 +111,128 @@ public class DynamicIntervalModel implements IntervalModel, Mutable {
             LongList intervalCopy = staticIntervalsModel.intervals != null ? new LongList(staticIntervalsModel.intervals) : null;
             return new StaticRuntimeIntrinsicIntervalModel(intervalCopy);
         } else {
-            return new DynamicRuntimeIntrinsicIntervalModel(staticIntervalsModel.intervals, runtimePeriods);
+            dynamicModel.saveStaticIntervals(staticIntervalsModel.intervals);
+            RuntimeIntrinsicIntervalModel result = new DynamicRuntimeIntrinsicIntervalModel(dynamicModel, staticIntervalsModel);
+            dynamicModel = null;
+            return result;
         }
     }
 
-    public void intersectIntervals(long low, Function function, long funcAdjust) {
+    public void intersectIntervals(long low, Function function, int funcAdjust) {
         // Intersect nothing with anything is still nothing.
         if (!isDynamic() && staticIntervalsModel.isEmptySet()) return;
-        runtimePeriods.add(getNextRuntimePeriodIntrinsic().setLess(IntervalOperation.INTERSECT, low, function, funcAdjust));
+        dynamicModel.intersect(low, function, funcAdjust);
     }
 
-    public void intersectIntervals(Function function, long hi, long funcAdjust) {
+    public void intersectIntervals(Function function, long hi, int funcAdjust) {
         // Intersect nothing with anything is still nothing.
         if (!isDynamic() && staticIntervalsModel.isEmptySet()) return;
-        runtimePeriods.add(getNextRuntimePeriodIntrinsic().setGreater(IntervalOperation.INTERSECT, function, hi, funcAdjust));
+        dynamicModel.intersect(function, hi, funcAdjust);
     }
 
     public void intersectEquals(Function lo) {
         // Intersect nothing with anything is still nothing.
         if (!isDynamic() && staticIntervalsModel.isEmptySet()) return;
-        runtimePeriods.add(getNextRuntimePeriodIntrinsic().setEquals(IntervalOperation.INTERSECT_EQUALS, lo));
-    }
-
-    private RuntimePeriodIntrinsic getNextRuntimePeriodIntrinsic() {
-        // We cannot pool it here, objects will be transferred to cursor factory.
-        return new RuntimePeriodIntrinsic();
+        dynamicModel.intersectEquals(lo);
     }
 
     private boolean isDynamic() {
-        return runtimePeriods.size() > 0;
+        return dynamicModel.size() > 0;
     }
 
     private static class DynamicRuntimeIntrinsicIntervalModel implements RuntimeIntrinsicIntervalModel {
-        private final LongList intervals;
-        private static final LongList emptyIntervals = new LongList();
-        private final StaticIntervalsModel tempModel = new StaticIntervalsModel();
-        private final ObjList<RuntimePeriodIntrinsic> runtimePeriods;
+        private static final LongList EMPTY_INTERVALS = new LongList();
+        private final CompactDynamicIntervalModel intervals;
+        private StaticIntervalsModel reusableTempModel;
+        private final LongList result = new LongList();
 
-        private DynamicRuntimeIntrinsicIntervalModel(LongList intervals, ObjList<RuntimePeriodIntrinsic> runtimePeriods) {
+        private DynamicRuntimeIntrinsicIntervalModel(CompactDynamicIntervalModel intervals, StaticIntervalsModel reusableTempModel) {
             this.intervals = intervals;
-            this.runtimePeriods = new ObjList<>(runtimePeriods.size());
-            this.runtimePeriods.addAll(runtimePeriods);
+            this.reusableTempModel = reusableTempModel;
         }
 
         @Override
         public LongList calculateIntervals(SqlExecutionContext sqlContext) {
-            tempModel.of(intervals);
-            for (int i = 0; i < this.runtimePeriods.size(); i++) {
-                RuntimePeriodIntrinsic toApply = runtimePeriods.getQuick(i);
-                long lo, hi;
-                if (toApply.dynamicLo != null){
-                    toApply.dynamicLo.init(null, sqlContext);
-                    lo = toApply.dynamicLo.getTimestamp(null);
-                    // Numbers.LONG_NaN == Long.MIN_VALUE
-                    // there is no way to understand if the function evaluated to min value or
-                    // NULL. Assume it's null and it's period starting with undefined boundary.
-                    if (lo == Numbers.LONG_NaN) {
-                        return empty();
+            result.clear();
+            intervals.extractStaticIntervalsTo(result);
+            try (Closeable ignored = reusableTempModel.overrideWith(result)) {
+                for (int i = 0; i < this.intervals.size(); i++) {
+                    RuntimePeriod toApply = intervals.getDynamicPeriod(i);
+
+                    long lo, hi = 0;
+                    if (toApply.getDynamicLo() != null) {
+                        toApply.getDynamicLo().init(null, sqlContext);
+                        lo = toApply.getDynamicLo().getTimestamp(null);
+                        // Numbers.LONG_NaN == Long.MIN_VALUE
+                        // there is no way to understand if the function evaluated to min value or
+                        // NULL. Assume it's null and it's period starting with undefined boundary.
+                        if (lo == Numbers.LONG_NaN) {
+                            return EMPTY_INTERVALS;
+                        }
+                        lo += toApply.getDynamicIncrement();
+                    } else {
+                        lo = toApply.getStaticLo();
                     }
-                    lo += toApply.dynamicIncrement;
-                } else {
-                    lo = toApply.staticLo;
-                }
 
-                if (toApply.dynamicHi != null){
-                    toApply.dynamicHi.init(null, sqlContext);
-                    hi = toApply.dynamicHi.getTimestamp(null);
-                    if (hi == Numbers.LONG_NaN) {
-                        return empty();
+                    if (toApply.getOperation() != IntervalOperation.INTERSECT_EQUALS) {
+                        if (toApply.getDynamicHi() != null) {
+                            toApply.getDynamicHi().init(null, sqlContext);
+                            hi = toApply.getDynamicHi().getTimestamp(null);
+                            if (hi == Numbers.LONG_NaN) {
+                                return EMPTY_INTERVALS;
+                            }
+                            hi += toApply.getDynamicIncrement();
+                        } else {
+                            hi = toApply.getStaticHi();
+                        }
                     }
-                    hi += toApply.dynamicIncrement;
-                } else {
-                    hi = toApply.staticHi;
+
+                    switch (toApply.getOperation()) {
+                        case IntervalOperation.SUBTRACT:
+                            reusableTempModel.applySubtract(
+                                    lo,
+                                    hi,
+                                    toApply.getPeriod(),
+                                    toApply.getPeriodType(),
+                                    toApply.getCount());
+                            break;
+
+                        case IntervalOperation.INTERSECT:
+                            reusableTempModel.applyIntersect(
+                                    lo,
+                                    hi,
+                                    toApply.getPeriod(),
+                                    toApply.getPeriodType(),
+                                    toApply.getCount());
+                            break;
+
+                        case IntervalOperation.INTERSECT_EQUALS:
+                            // Single value stored in lo
+                            reusableTempModel.applyIntersect(
+                                    lo,
+                                    lo,
+                                    toApply.getPeriod(),
+                                    toApply.getPeriodType(),
+                                    toApply.getCount());
+                            break;
+
+                        default:
+                    }
                 }
 
-
-                switch (toApply.getOperation()) {
-                    case IntervalOperation.SUBTRACT:
-                        tempModel.applySubtract(
-                                lo,
-                                hi,
-                                toApply.period,
-                                toApply.periodType,
-                                toApply.count);
-                        break;
-
-                    case IntervalOperation.INTERSECT:
-                        tempModel.applyIntersect(
-                                lo,
-                                hi,
-                                toApply.period,
-                                toApply.periodType,
-                                toApply.count);
-                        break;
-
-                    case IntervalOperation.INTERSECT_EQUALS:
-                        // Single value stored in lo
-                        tempModel.applyIntersect(
-                                lo,
-                                lo,
-                                toApply.period,
-                                toApply.periodType,
-                                toApply.count);
-                        break;
-
-                    default:
+                // reusableTempModel.intervals round robin between 3 lists
+                // if the final result is not in the list instance we want
+                // copy it to it before restoring reusableTempModel
+                if (reusableTempModel.intervals != result) {
+                    result.clear();
+                    result.add(reusableTempModel.intervals);
                 }
+                return result;
+            } catch (IOException e) {
+                // Should never be the case.
+                assert false;
+                return null;
             }
-
-            return copy(tempModel.intervals);
-        }
-
-        private LongList copy(LongList intervals) {
-            // We have to copy so that different query executions based on the same plan
-            // have independent periods list
-            return intervals == null ? null : new LongList(intervals);
-        }
-
-        private LongList empty() {
-            return emptyIntervals;
         }
 
         @Override

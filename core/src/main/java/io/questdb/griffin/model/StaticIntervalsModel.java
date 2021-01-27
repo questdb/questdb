@@ -29,6 +29,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
+import java.io.Closeable;
+
 
 public class StaticIntervalsModel implements Mutable, IntervalModel {
     public static final ObjectFactory<StaticIntervalsModel> FACTORY = StaticIntervalsModel::new;
@@ -36,13 +38,17 @@ public class StaticIntervalsModel implements Mutable, IntervalModel {
     public static final int FALSE = 2;
     public static final int UNDEFINED = 0;
     private static final LongList INFINITE_INTERVAL;
-    private final LongList intervalsA = new LongList();
+    private final LongList reversableAInstance = new LongList();
+
+    // This one can be overriden in the sequence of operations and then reversed back.
+    private LongList intervalsA = reversableAInstance;
     private final LongList intervalsB = new LongList();
     private final LongList intervalsC = new LongList();
     public LongList intervals;
     public int intrinsicValue = UNDEFINED;
-    public QueryModel keySubQuery;
     private Interval tempInterval = new Interval();
+
+    private Closeable reverseAToDefaultInstance = () -> intervalsA = reversableAInstance;
 
     public void applyIntersect(long lo, long hi, int period, char periodType, int count) {
         LongList temp = shuffleTemp(intervals, null);
@@ -60,14 +66,8 @@ public class StaticIntervalsModel implements Mutable, IntervalModel {
 
     @Override
     public void clear() {
-        clearInterval();
+        intervalsA = reversableAInstance;
         intervals = null;
-        keySubQuery = null;
-    }
-
-    @Override
-    public void clearInterval() {
-        this.intervals = null;
     }
 
     @Override
@@ -95,6 +95,12 @@ public class StaticIntervalsModel implements Mutable, IntervalModel {
         IntervalUtils.parseIntervalEx(seq, lo, lim, position, tempInterval);
         IntervalUtils.apply(temp, tempInterval);
         intersectIntervals(temp);
+    }
+
+    public Closeable overrideWith(LongList result) {
+        intervalsA = result;
+        intervals = result.size() > 0 ? result : null;
+        return reverseAToDefaultInstance;
     }
 
     @Override

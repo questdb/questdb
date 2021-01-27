@@ -60,6 +60,8 @@ final class WhereClauseParser implements Mutable {
     private final IntList tempPos = new IntList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempP = new IntList();
+
+    // TODO: configure size
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
     private CharSequence timestamp;
     private CharSequence preferredKeyColumn;
@@ -435,7 +437,7 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private static long adjustComparison(boolean equalsTo, boolean isLo) {
+    private static int adjustComparison(boolean equalsTo, boolean isLo) {
         return equalsTo ? 0 : isLo ? 1 : -1;
     }
 

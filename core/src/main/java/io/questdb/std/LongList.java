@@ -66,10 +66,14 @@ public class LongList implements Mutable, LongVec {
     }
 
     public void add(LongList that) {
+        add(that, 0, that.size());
+    }
+
+    public void add(LongList that, int lo, int hi) {
         int p = pos;
-        int s = that.size();
+        int s = hi - lo;
         ensureCapacity(p + s);
-        System.arraycopy(that.buffer, 0, this.buffer, p, s);
+        System.arraycopy(that.buffer, lo, this.buffer, p, s);
         pos += s;
     }
 

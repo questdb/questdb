@@ -40,12 +40,11 @@ public class IntrinsicModel implements Mutable {
     public final CharSequenceHashSet keyExcludedValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
     public final IntList keyExcludedValuePositions = new IntList();
-    private final ObjList<RuntimePeriodIntrinsic> runtimeConstIntervals = new ObjList<>();
     public CharSequence keyColumn;
     public ExpressionNode filter;
     public int intrinsicValue = UNDEFINED;
     public QueryModel keySubQuery;
-    private final DynamicIntervalModel intervalModel = new DynamicIntervalModel();
+    private final DynamicIntervalModel intervalModel = new DynamicIntervalModel(new StaticIntervalsModel());
 
     @Override
     public void clear() {
@@ -54,11 +53,10 @@ public class IntrinsicModel implements Mutable {
         keyExcludedValues.clear();
         keyValuePositions.clear();
         keyExcludedValuePositions.clear();
-        intervalModel.clearInterval();
+        intervalModel.clear();
         filter = null;
         intrinsicValue = UNDEFINED;
         keySubQuery = null;
-        runtimeConstIntervals.clear();
     }
 
     public void excludeValue(ExpressionNode val) {
@@ -116,16 +114,12 @@ public class IntrinsicModel implements Mutable {
         if (intervalModel.isEmptySet()) intrinsicValue = FALSE;
     }
 
-    public void intersectIntervals(long low, Function function, long funcAdjust) {
+    public void intersectIntervals(long low, Function function, int funcAdjust) {
         intervalModel.intersectIntervals(low, function, funcAdjust);
     }
 
-    public void intersectIntervals(Function function, long hi, long funcAdjust) {
+    public void intersectIntervals(Function function, long hi, int funcAdjust) {
         intervalModel.intersectIntervals(function, hi, funcAdjust);
-    }
-
-    public void intersectIntervals(Function lo, Function hi, int adjustLo, int adjustHi) {
-
     }
 
     public void subtractIntervals(long lo, long hi) {

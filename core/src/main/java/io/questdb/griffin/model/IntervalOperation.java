@@ -27,7 +27,7 @@ package io.questdb.griffin.model;
 public final class IntervalOperation {
     public static final int NONE = 0;
 
-    public static final int INTERSECT = 1;
-    public static final int SUBTRACT = 2;
-    public static final int INTERSECT_EQUALS = 3;
+    public static final short INTERSECT = 1;
+    public static final short SUBTRACT = 2;
+    public static final short INTERSECT_EQUALS = 3;
 }
