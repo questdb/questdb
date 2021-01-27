@@ -88,25 +88,40 @@ final class WhereClauseParser implements Mutable {
                 Chars.equals(left.token, right.token);
     }
 
-    private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m, FunctionParser functionParser, SqlExecutionContext executionContext) throws SqlException {
+    private boolean analyzeEquals(AliasTranslator translator,
+                                  IntrinsicModel model,
+                                  ExpressionNode node,
+                                  RecordMetadata m,
+                                  FunctionParser functionParser,
+                                  SqlExecutionContext executionContext) throws SqlException {
         checkNodeValid(node);
-        return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext) || analyzeEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext);
+        return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext) ||
+                analyzeEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext);
     }
 
-    private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m, FunctionParser functionParser, SqlExecutionContext executionContext) throws SqlException {
+    private boolean analyzeEquals0(AliasTranslator translator,
+                                   IntrinsicModel model,
+                                   ExpressionNode node,
+                                   ExpressionNode a,
+                                   ExpressionNode b,
+                                   RecordMetadata m,
+                                   FunctionParser functionParser,
+                                   SqlExecutionContext executionContext) throws SqlException {
         if (nodesEqual(a, b)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
 
-        if (a.type == ExpressionNode.LITERAL && (b.type == ExpressionNode.CONSTANT || b.type == ExpressionNode.BIND_VARIABLE || b.type == ExpressionNode.FUNCTION)) {
+        if (a.type == ExpressionNode.LITERAL && (b.type == ExpressionNode.CONSTANT
+                || b.type == ExpressionNode.BIND_VARIABLE
+                || b.type == ExpressionNode.FUNCTION
+                || b.type == ExpressionNode.OPERATION)) {
             if (isTimestamp(a)) {
                 if (b.type == ExpressionNode.CONSTANT) {
                     model.intersectIntervals(b.token, 1, b.token.length() - 1, b.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
-
                 Function function = functionParser.parseFunction(b, m, executionContext);
                 checkFunctionCanBeTimestamp(m, executionContext, function);
 
@@ -238,7 +253,9 @@ final class WhereClauseParser implements Mutable {
             model.intersectIntervals(lo, Long.MAX_VALUE);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
-        } else if (compareWithNode.type == ExpressionNode.FUNCTION || compareWithNode.type == ExpressionNode.BIND_VARIABLE) {
+        } else if (compareWithNode.type == ExpressionNode.FUNCTION
+                || compareWithNode.type == ExpressionNode.BIND_VARIABLE
+                || compareWithNode.type == ExpressionNode.OPERATION) {
             Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             checkFunctionCanBeTimestamp(metadata, executionContext, function);
 
@@ -414,7 +431,9 @@ final class WhereClauseParser implements Mutable {
                 throw SqlException.invalidDate(compareWithNode.position);
             }
             return true;
-        } else if (compareWithNode.type == ExpressionNode.FUNCTION || compareWithNode.type == ExpressionNode.BIND_VARIABLE) {
+        } else if (compareWithNode.type == ExpressionNode.FUNCTION
+                || compareWithNode.type == ExpressionNode.BIND_VARIABLE
+                || compareWithNode.type == ExpressionNode.OPERATION) {
             Function function = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             checkFunctionCanBeTimestamp(metadata, executionContext, function);
 

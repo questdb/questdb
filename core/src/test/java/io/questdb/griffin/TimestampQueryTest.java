@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.AbstractIntervalDataFrameCursor;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
@@ -600,13 +601,15 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
                         "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
 
+                queryConstants.clear();
                 String query1 = "select now() as now1, now() as now2, symbol, timestamp FROM ob_mem_snapshot WHERE now() = now()";
-                printSqlResult(expected, query1, "timestamp", null, null, true, true, true);
+                printSqlResult(expected, query1, "timestamp", null, null, true, true, false);
 
+                queryConstants.clear();
                 expected = "symbol\tme_seq_num\ttimestamp\n" +
                         "1\t1\t2020-12-31T23:59:59.000000Z\n";
                 String query = "select * from ob_mem_snapshot where timestamp > now()";
-                printSqlResult(expected, query, "timestamp", null, null, true, true, false);
+                printSqlResult(expected, query, "timestamp", null, null, true, true, true);
             });
         } finally {
             currentMicros = -1;
@@ -638,20 +641,21 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 final long hour = 3600L * 1000 * 1000;
                 final long day = 24 * hour;
                 currentMicros = 200L * hour;
-                compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour, false);
+                compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour, true);
+                compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour, true);
 
                 for(currentMicros = hour; currentMicros < count*hour; currentMicros += day) {
-                    compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros, false);
+                    compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros, true);
                 }
 
                 for(currentMicros = hour; currentMicros < count*hour; currentMicros += 12*hour) {
-                    compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros, false);
+                    compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros, true);
                 }
 
                 for(currentMicros = 0; currentMicros < count * hour; currentMicros += 5 *  hour) {
                     compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
                             datesArr,
-                            ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day), false);
+                            ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day), true);
                 }
 
             });
@@ -661,10 +665,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     private void compareNowRange(String query, List<Object[]> dates, LongPredicate filter, boolean expectSize) throws SqlException {
+        queryConstants.clear();
         String expected = "ts\n"
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", null, null, true, true, expectSize);
+        printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, AbstractIntervalDataFrameCursor.class);
     }
 }

@@ -383,7 +383,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
-        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
+        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null);
     }
 
     protected static void printSqlResult(
@@ -395,10 +395,14 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr,
             boolean expectSize,
-            boolean sizeCanBeVariable
+            boolean sizeCanBeVariable,
+            Class factoryClass
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
+        if (factoryClass != null) {
+            // Assert.assertTrue("Expected factory class " + factoryClass + " but was " + factory.getClass(), factoryClass.isAssignableFrom(factory.getCursor()));
+        }
         try {
             assertTimestamp(expectedTimestamp, factory);
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
@@ -447,9 +451,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 compiler.compile(ddl, sqlExecutionContext);
             }
             if (verify != null) {
-                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
             }
-            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
         });
     }
 
