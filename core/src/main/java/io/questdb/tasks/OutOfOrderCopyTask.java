@@ -32,9 +32,11 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private AtomicInteger partCounter;
     private int columnType;
     private int blockType;
-    private long mergeIndexAddr;
+    private long timestampMergeIndexAddr;
+    private long srcDataFixFd;
     private long srcDataFixAddr;
     private long srcDataFixSize;
+    private long srcDataVarFd;
     private long srcDataVarAddr;
     private long srcDataVarSize;
     private long srcDataLo;
@@ -69,24 +71,56 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return dstFixAddr;
     }
 
+    public long getDstFixFd() {
+        return dstFixFd;
+    }
+
     public long getDstFixOffset() {
         return dstFixOffset;
+    }
+
+    public long getDstFixSize() {
+        return dstFixSize;
+    }
+
+    public long getDstIndexOffset() {
+        return dstIndexOffset;
+    }
+
+    public long getDstKFd() {
+        return dstKFd;
+    }
+
+    public long getDstVFd() {
+        return dstVFd;
     }
 
     public long getDstVarAddr() {
         return dstVarAddr;
     }
 
+    public long getDstVarFd() {
+        return dstVarFd;
+    }
+
     public long getDstVarOffset() {
         return dstVarOffset;
     }
 
-    public long getMergeIndexAddr() {
-        return mergeIndexAddr;
+    public long getDstVarSize() {
+        return dstVarSize;
+    }
+
+    public AtomicInteger getPartCounter() {
+        return partCounter;
     }
 
     public long getSrcDataFixAddr() {
         return srcDataFixAddr;
+    }
+
+    public long getSrcDataFixFd() {
+        return srcDataFixFd;
     }
 
     public long getSrcDataFixSize() {
@@ -103,6 +137,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
 
     public long getSrcDataVarAddr() {
         return srcDataVarAddr;
+    }
+
+    public long getSrcDataVarFd() {
+        return srcDataVarFd;
     }
 
     public long getSrcDataVarSize() {
@@ -133,13 +171,19 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return srcOooVarSize;
     }
 
+    public long getTimestampMergeIndexAddr() {
+        return timestampMergeIndexAddr;
+    }
+
     public void of(
             AtomicInteger partCounter,
             int columnType,
             int blockType,
-            long mergeIndexAddr,
+            long timestampMergeIndexAddr,
+            long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
+            long srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
             long srcDataLo,
@@ -165,9 +209,11 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.partCounter = partCounter;
         this.columnType = columnType;
         this.blockType = blockType;
-        this.mergeIndexAddr = mergeIndexAddr;
+        this.timestampMergeIndexAddr = timestampMergeIndexAddr;
+        this.srcDataFixFd = srcDataFixFd;
         this.srcDataFixAddr = srcDataFixAddr;
         this.srcDataFixSize = srcDataFixSize;
+        this.srcDataVarFd = srcDataVarFd;
         this.srcDataVarAddr = srcDataVarAddr;
         this.srcDataVarSize = srcDataVarSize;
         this.srcDataLo = srcDataLo;

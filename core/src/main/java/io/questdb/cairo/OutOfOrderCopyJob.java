@@ -27,9 +27,12 @@ package io.questdb.cairo;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.tasks.OutOfOrderCopyTask;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableWriter.*;
 
@@ -40,28 +43,39 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     }
 
     private void copy(OutOfOrderCopyTask task, long cursor, Sequence subSeq) {
+
         final int blockType = task.getBlockType();
+        final long srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
         final long srcDataFixSize = task.getSrcDataFixSize();
+        final long srcDataVarFd = task.getSrcDataVarFd();
         final long srcDataVarAddr = task.getSrcDataVarAddr();
         final long srcDataVarSize = task.getSrcDataVarSize();
         final long srcDataLo = task.getSrcDataLo();
         final long srcDataHi = task.getSrcDataHi();
-
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
         final long srcOooVarAddr = task.getSrcOooVarAddr();
         final long srcOooVarSize = task.getSrcOooVarSize();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
-
-
+        final long dstFixFd = task.getDstFixFd();
         final long dstFixAddr = task.getDstFixAddr();
         final long dstFixOffset = task.getDstFixOffset();
+        final long dstFixSize = task.getDstFixSize();
+        final long dstVarFd = task.getDstVarFd();
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
+        final long dstVarSize = task.getDstVarSize();
         final int columnType = task.getColumnType();
-        final long mergeIndexAddr = task.getMergeIndexAddr();
+        final long mergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final AtomicInteger partCounter = task.getPartCounter();
+
+        final long dstKFd = task.getDstKFd();
+        final long dskVFd = task.getDstVFd();
+        final long dstIndexOffset = task.getDstIndexOffset();
+
+        subSeq.done(cursor);
 
         switch (blockType) {
             case OO_BLOCK_MERGE:
@@ -83,11 +97,15 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 );
             case OO_BLOCK_OO:
                 oooCopyOOO(
-                        columnType, srcOooFixAddr,
+                        columnType,
+                        srcOooFixAddr,
                         srcOooFixSize,
                         srcOooVarAddr,
                         srcOooVarSize,
-                        srcOooLo, srcOooHi, dstFixAddr, dstFixOffset,
+                        srcOooLo,
+                        srcOooHi,
+                        dstFixAddr,
+                        dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
@@ -109,6 +127,27 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 break;
             default:
                 break;
+        }
+
+        // decrement part counter and if we are the last task - perform final steps
+        if (partCounter.decrementAndGet() == 0) {
+            // todo: indexing
+
+            // unmap memory
+            unmapAndClose(srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
+            unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
+        }
+    }
+
+    private void unmapAndClose(long dstFixFd, long dstFixAddr, long dstFixSize) {
+        if (dstFixAddr != 0 && dstFixSize != 0) {
+            Files.munmap(dstFixAddr, dstFixSize);
+        }
+
+        if (dstFixFd > 0) {
+            Files.close(dstFixFd);
         }
     }
 
@@ -298,85 +337,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    private void oooMergeCopyStrColumn(
-            long mergeIndex,
-            long mergeIndexSize,
-            long srcDataFixAddr,
-            long srcDataVarAddr,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long dstFixAddr,
-            long dstFixOffset,
-            long dstVarAddr,
-            long dstVarOffset
-    ) {
-        // destination of variable length data
-        long destVarOffset = dstVarOffset;
-        final long dstFix = dstFixAddr + dstFixOffset;
-
-        // reverse order
-        // todo: cache?
-        long[] srcFix = new long[]{srcOooFixAddr, srcDataFixAddr};
-        long[] srcVar = new long[]{srcOooVarAddr, srcDataVarAddr};
-
-        for (long l = 0; l < mergeIndexSize; l++) {
-            final long row = getTimestampIndexRow(mergeIndex, l);
-            // high bit in the index in the source array [0,1]
-            final int bit = (int) (row >>> 63);
-            // row number is "row" with high bit removed
-            final long rr = row & ~(1L << 63);
-            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, destVarOffset);
-            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
-            long addr = srcVar[bit] + offset;
-            int len = Unsafe.getUnsafe().getInt(addr);
-            Unsafe.getUnsafe().putInt(dstVarAddr + destVarOffset, len);
-            len = Math.max(0, len);
-            Unsafe.getUnsafe().copyMemory(addr + 4, dstVarAddr + destVarOffset + 4, (long) len * Character.BYTES);
-            destVarOffset += (long) len * Character.BYTES + Integer.BYTES;
-        }
-    }
-
-    private void oooMergeCopyBinColumn(
-            long mergeIndex,
-            long mergeIndexSize,
-            long srcDataFixAddr,
-            long srcDataVarAddr,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long dstFixAddr,
-            long dstFixOffset,
-            long dstVarAddr,
-            long dstVarOffset
-    ) {
-        // destination of variable length data
-        long destVarOffset = dstVarOffset;
-        final long dstFix = dstFixAddr + dstFixOffset;
-
-        // reverse order
-        // todo: cache?
-        long[] srcFix = new long[]{srcOooFixAddr, srcDataFixAddr};
-        long[] srcVar = new long[]{srcOooVarAddr, srcDataVarAddr};
-
-        for (long l = 0; l < mergeIndexSize; l++) {
-            final long row = getTimestampIndexRow(mergeIndex, l);
-            // high bit in the index in the source array [0,1]
-            final int bit = (int) (row >>> 63);
-            // row number is "row" with high bit removed
-            final long rr = row & ~(1L << 63);
-            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, destVarOffset);
-            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
-            long addr = srcVar[bit] + offset;
-            long len = Unsafe.getUnsafe().getLong(addr);
-            if (len > 0) {
-                Unsafe.getUnsafe().copyMemory(addr, dstVarAddr + destVarOffset, len + Long.BYTES);
-                destVarOffset += len + Long.BYTES;
-            } else {
-                Unsafe.getUnsafe().putLong(dstVarAddr + destVarOffset, len);
-                destVarOffset += Long.BYTES;
-            }
-        }
-    }
-
     private void oooMergeCopy(
             int columnType,
             // todo: merge index has to be freed by last column copy
@@ -475,6 +435,85 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             }
         } finally {
             Vect.freeMergedIndex(mergeIndexAddr);
+        }
+    }
+
+    private void oooMergeCopyBinColumn(
+            long mergeIndex,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstVarAddr,
+            long dstVarOffset
+    ) {
+        // destination of variable length data
+        long destVarOffset = dstVarOffset;
+        final long dstFix = dstFixAddr + dstFixOffset;
+
+        // reverse order
+        // todo: cache?
+        long[] srcFix = new long[]{srcOooFixAddr, srcDataFixAddr};
+        long[] srcVar = new long[]{srcOooVarAddr, srcDataVarAddr};
+
+        for (long l = 0; l < mergeIndexSize; l++) {
+            final long row = getTimestampIndexRow(mergeIndex, l);
+            // high bit in the index in the source array [0,1]
+            final int bit = (int) (row >>> 63);
+            // row number is "row" with high bit removed
+            final long rr = row & ~(1L << 63);
+            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, destVarOffset);
+            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
+            long addr = srcVar[bit] + offset;
+            long len = Unsafe.getUnsafe().getLong(addr);
+            if (len > 0) {
+                Unsafe.getUnsafe().copyMemory(addr, dstVarAddr + destVarOffset, len + Long.BYTES);
+                destVarOffset += len + Long.BYTES;
+            } else {
+                Unsafe.getUnsafe().putLong(dstVarAddr + destVarOffset, len);
+                destVarOffset += Long.BYTES;
+            }
+        }
+    }
+
+    private void oooMergeCopyStrColumn(
+            long mergeIndex,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstVarAddr,
+            long dstVarOffset
+    ) {
+        // destination of variable length data
+        long destVarOffset = dstVarOffset;
+        final long dstFix = dstFixAddr + dstFixOffset;
+
+        // reverse order
+        // todo: cache?
+        long[] srcFix = new long[]{srcOooFixAddr, srcDataFixAddr};
+        long[] srcVar = new long[]{srcOooVarAddr, srcDataVarAddr};
+
+        for (long l = 0; l < mergeIndexSize; l++) {
+            final long row = getTimestampIndexRow(mergeIndex, l);
+            // high bit in the index in the source array [0,1]
+            final int bit = (int) (row >>> 63);
+            // row number is "row" with high bit removed
+            final long rr = row & ~(1L << 63);
+            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, destVarOffset);
+            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
+            long addr = srcVar[bit] + offset;
+            int len = Unsafe.getUnsafe().getInt(addr);
+            Unsafe.getUnsafe().putInt(dstVarAddr + destVarOffset, len);
+            len = Math.max(0, len);
+            Unsafe.getUnsafe().copyMemory(addr + 4, dstVarAddr + destVarOffset + 4, (long) len * Character.BYTES);
+            destVarOffset += (long) len * Character.BYTES + Integer.BYTES;
         }
     }
 

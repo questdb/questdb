@@ -548,14 +548,18 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long c = openColumnPubSeq.next();
             // todo: check if c is valid
             final OutOfOrderOpenColumnTask openColumnTask = openColumnTaskQueue.get(c);
-            int colOffset = TableWriter.getPrimaryColumnIndex(i);
+            final int colOffset = TableWriter.getPrimaryColumnIndex(i);
+            final boolean notTheTimestamp = i != timestampIndex;
+            final int columnType = metadata.getColumnType(i);
             openColumnTask.of(
                     ff,
                     txn,
                     openColumnMode,
                     metadata.getColumnName(i),
-                    metadata.getColumnType(i),
+                    notTheTimestamp ? columnType : -columnType,
                     metadata.isColumnIndexed(i),
+                    notTheTimestamp ? -1 : timestampFd,
+                    timestampMergeIndexAddr,
                     columns.getQuick(colOffset),
                     columns.getQuick(colOffset + 1),
                     oooColumns.getQuick(colOffset),
@@ -564,6 +568,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     oooIndexLo,
                     oooIndexHi,
                     oooIndexMax,
+                    dataIndexMax,
                     prefixType,
                     prefixLo,
                     prefixHi,
@@ -574,9 +579,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     mergeOOOHi,
                     suffixType,
                     suffixLo,
-                    suffixHi,
-                    dataIndexMax,
-                    i != timestampIndex ? -1 : timestampFd
+                    suffixHi
             );
             openColumnPubSeq.done(c);
         }

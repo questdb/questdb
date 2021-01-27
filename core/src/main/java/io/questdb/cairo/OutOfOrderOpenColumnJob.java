@@ -624,7 +624,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long suffixHi = task.getSuffixHi();
         final int mergeType = task.getMergeType();
         final long timestampFd = task.getTimestampFd();
-
+        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
         final AtomicInteger partCounter = new AtomicInteger();
 
         switch (columnType) {
@@ -855,12 +855,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         );
                         break;
                     case OO_BLOCK_MERGE:
-                        // todo: calculate merge index
                         publishCopyTask(
                                 partCounter,
                                 columnType,
                                 mergeType,
-                                0, // todo: this requires merge index
+                                timestampMergeIndexAddr,
                                 srcDataFixFd,
                                 srcDataFixAddr,
                                 srcDataFixSize,
@@ -1170,7 +1169,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             AtomicInteger partCounter,
             int columnType,
             int blockType,
-            long mergeIndexAddr,
+            long timestampMergeIndexAddr,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -1205,9 +1204,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 partCounter,
                 columnType,
                 blockType,
-                mergeIndexAddr,
+                timestampMergeIndexAddr,
+                srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixSize,
+                srcDataVarFd,
                 srcDataVarAddr,
                 srcDataVarSize,
                 srcDataLo,

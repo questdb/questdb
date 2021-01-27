@@ -41,6 +41,13 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
     private CharSequence columnName;
     private int columnType;
     private boolean isColumnIndexed;
+    private long timestampFd;
+    private long timestampMergeIndexAddr;
+    private AppendMemory fixColumn;
+    private AppendMemory varColumn;
+    private ContiguousVirtualMemory oooFixColumn;
+    private ContiguousVirtualMemory oooVarColumn;
+    private long srcDataMax;
     private long srcOooLo;
     private long srcOooHi;
     private long srcOooMax;
@@ -55,12 +62,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
     private int suffixType;
     private long suffixLo;
     private long suffixHi;
-    private long srcDataMax;
-    private AppendMemory fixColumn;
-    private AppendMemory varColumn;
-    private ContiguousVirtualMemory oooFixColumn;
-    private ContiguousVirtualMemory oooVarColumn;
-    private long timestampFd;
 
     @Override
     public void close() {
@@ -73,10 +74,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
 
     public int getColumnType() {
         return columnType;
-    }
-
-    public long getSrcDataMax() {
-        return srcDataMax;
     }
 
     public FilesFacade getFf() {
@@ -111,18 +108,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return oooFixColumn;
     }
 
-    public long getSrcOooHi() {
-        return srcOooHi;
-    }
-
-    public long getSrcOooLo() {
-        return srcOooLo;
-    }
-
-    public long getSrcOooMax() {
-        return srcOooMax;
-    }
-
     public ContiguousVirtualMemory getOooVarColumn() {
         return oooVarColumn;
     }
@@ -147,6 +132,22 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return prefixType;
     }
 
+    public long getSrcDataMax() {
+        return srcDataMax;
+    }
+
+    public long getSrcOooHi() {
+        return srcOooHi;
+    }
+
+    public long getSrcOooLo() {
+        return srcOooLo;
+    }
+
+    public long getSrcOooMax() {
+        return srcOooMax;
+    }
+
     public long getSuffixHi() {
         return suffixHi;
     }
@@ -161,6 +162,10 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
 
     public long getTimestampFd() {
         return timestampFd;
+    }
+
+    public long getTimestampMergeIndexAddr() {
+        return timestampMergeIndexAddr;
     }
 
     public long getTxn() {
@@ -182,14 +187,17 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
             CharSequence columnName,
             int columnType,
             boolean isColumnIndexed,
+            long timestampFd,
+            long timestampMergeIndexAddr,
             AppendMemory fixColumn,
             AppendMemory varColumn,
             ContiguousVirtualMemory oooFixColumn,
             ContiguousVirtualMemory oooVarColumn,
             CharSequence path,
-            long oooIndexLo,
-            long oooIndexHi,
-            long oooIndexMax,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long srcDataMax,
             int prefixType,
             long prefixLo,
             long prefixHi,
@@ -200,24 +208,25 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
             long mergeOOOHi,
             int suffixType,
             long suffixLo,
-            long suffixHi,
-            long dataIndexMax,
-            long timestampFd
+            long suffixHi
     ) {
         // todo: copy path
         this.ff = ff;
         this.txn = txn;
+        this.openColumnMode = openColumnMode;
         this.columnName = columnName;
         this.columnType = columnType;
         this.isColumnIndexed = isColumnIndexed;
+        this.timestampFd = timestampFd;
+        this.timestampMergeIndexAddr = timestampMergeIndexAddr;
         this.fixColumn = fixColumn;
         this.varColumn = varColumn;
         this.oooFixColumn = oooFixColumn;
         this.oooVarColumn = oooVarColumn;
-        this.srcOooLo = oooIndexLo;
-        this.srcOooHi = oooIndexHi;
-        this.srcOooMax = oooIndexMax;
-        this.openColumnMode = openColumnMode;
+        this.srcOooLo = srcOooLo;
+        this.srcOooHi = srcOooHi;
+        this.srcOooMax = srcOooMax;
+        this.srcDataMax = srcDataMax;
         this.prefixType = prefixType;
         this.prefixLo = prefixLo;
         this.prefixHi = prefixHi;
@@ -229,7 +238,5 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         this.suffixType = suffixType;
         this.suffixLo = suffixLo;
         this.suffixHi = suffixHi;
-        this.srcDataMax = dataIndexMax;
-        this.timestampFd = timestampFd;
     }
 }
