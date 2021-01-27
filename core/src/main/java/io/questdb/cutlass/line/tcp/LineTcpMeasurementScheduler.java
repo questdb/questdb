@@ -344,7 +344,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
             stats.nUpdates.set(0);
-            ;
         }
 
         if (null != tableToMove) {
@@ -356,7 +355,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     event.createRebalanceEvent(fromThreadId, toThreadId, tableToMove);
                     tableToMove.threadId = toThreadId;
                     LOG.info()
-                            .$("rebalance cycle, requesting table move [nRebalances=").$(++nRebalances)
+                            .$("rebalance cycle, requesting table move [cycle=").$(nLoadCheckCycles)
+                            .$(", nRebalances=").$(++nRebalances)
                             .$(", table=").$(tableToMove.tableName)
                             .$(", fromThreadId=").$(fromThreadId)
                             .$(", toThreadId=").$(toThreadId)
@@ -702,7 +702,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private void handleMaintenance() {
             if (nUncommitted == 0) {
                 if ((milliClock.getTicks() - lastWriterCommitEpochMs) >= minIdleMsBeforeWriterRelease) {
-                    LOG.info().$("writer idle since ").$ts(lastWriterCommitEpochMs).$(" [tableName=").$(tableName).$(']').$();
+                    LOG.info().$("releasing writer, its been idle since ").$ts(lastWriterCommitEpochMs * 1_000).$(" [tableName=").$(tableName).$(']').$();
                     writer.close();
                     writer = null;
                     lastWriterCommitEpochMs = Long.MAX_VALUE;
@@ -734,6 +734,17 @@ class LineTcpMeasurementScheduler implements Closeable {
                 }
             }
             return colIndex;
+        }
+
+        void switchThreads() {
+            assignedToJob = false;
+            if (null != writer) {
+                if (nUncommitted > 0) {
+                    writer.commit();
+                }
+                writer.close();
+                writer = null;
+            }
         }
 
         @Override
@@ -826,6 +837,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     if (!event.tableUpdateDetails.assignedToJob) {
                         assignedTables.add(event.tableUpdateDetails);
                         event.tableUpdateDetails.assignedToJob = true;
+                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(id).$();
                     }
                     event.processMeasurementEvent(this);
                     eventProcessed = true;
@@ -869,8 +881,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         break;
                     }
                 }
-                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$();
-                event.tableUpdateDetails.assignedToJob = false;
+                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$(", nUncommitted=")
+                        .$(event.tableUpdateDetails.nUncommitted).$(']').$();
+                event.tableUpdateDetails.switchThreads();
                 event.rebalanceReleasedByFromThread = true;
             }
 
