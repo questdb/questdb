@@ -403,6 +403,18 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqualsNow() throws Exception {
+        long day = 24L * 3600 * 1000 * 1000;
+        currentMicros = day;
+        queryConstants.clear();
+        try {
+            runWhereIntervalTest0("now() = timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
     public void testConstVsLambda() throws Exception {
         runWhereSymbolTest("ex in (1,2) and sym in (select * from xyz)", "ex in (1,2)");
     }
