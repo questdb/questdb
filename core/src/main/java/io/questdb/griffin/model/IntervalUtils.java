@@ -285,27 +285,27 @@ public final class IntervalUtils {
     }
 
 
-    public static void apply(LongList temp, Interval tempInterval) {
-        append(temp, tempInterval.lo, tempInterval.hi);
-        if (tempInterval.count > 1) {
-            switch (tempInterval.periodType) {
+    public static void apply(LongList temp, long lo, long hi, int period, char periodType, int count) {
+        append(temp, lo, hi);
+        if (count > 1) {
+            switch (periodType) {
                 case 'y':
-                    addYearIntervals(tempInterval.period, tempInterval.count, temp);
+                    addYearIntervals(period, count, temp);
                     break;
                 case 'M':
-                    addMonthInterval(tempInterval.period, tempInterval.count, temp);
+                    addMonthInterval(period, count, temp);
                     break;
                 case 'h':
-                    addMillisInterval(tempInterval.period * Timestamps.HOUR_MICROS, tempInterval.count, temp);
+                    addMillisInterval(period * Timestamps.HOUR_MICROS, count, temp);
                     break;
                 case 'm':
-                    addMillisInterval(tempInterval.period * Timestamps.MINUTE_MICROS, tempInterval.count, temp);
+                    addMillisInterval(period * Timestamps.MINUTE_MICROS, count, temp);
                     break;
                 case 's':
-                    addMillisInterval(tempInterval.period * Timestamps.SECOND_MICROS, tempInterval.count, temp);
+                    addMillisInterval(period * Timestamps.SECOND_MICROS, count, temp);
                     break;
                 case 'd':
-                    addMillisInterval(tempInterval.period * Timestamps.DAY_MICROS, tempInterval.count, temp);
+                    addMillisInterval(period * Timestamps.DAY_MICROS, count, temp);
                     break;
             }
         }
@@ -428,7 +428,7 @@ public final class IntervalUtils {
 
     static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, Interval temp, LongList out) throws SqlException {
         parseIntervalEx(seq, lo, lim, position, temp);
-        apply(out, temp);
+        apply(out, temp.lo, temp.hi, temp.period, temp.periodType, temp.count);
     }
 
     static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, Interval out) throws SqlException {

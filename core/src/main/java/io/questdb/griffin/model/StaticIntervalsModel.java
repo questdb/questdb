@@ -52,15 +52,13 @@ public class StaticIntervalsModel implements Mutable, IntervalModel {
 
     public void applyIntersect(long lo, long hi, int period, char periodType, int count) {
         LongList temp = shuffleTemp(intervals, null);
-        tempInterval.of(lo, hi, period, periodType, count);
-        IntervalUtils.apply(temp, tempInterval);
+        IntervalUtils.apply(temp, lo, hi, period, periodType, count);
         intersectIntervals(temp);
     }
 
     public void applySubtract(long lo, long hi, int period, char periodType, int count) {
         LongList temp = shuffleTemp(intervals, null);
-        tempInterval.of(lo, hi, period, periodType, count);
-        IntervalUtils.apply(temp, tempInterval);
+        IntervalUtils.apply(temp, lo, hi, period, periodType, count);
         subtractIntervals(temp);
     }
 
@@ -93,7 +91,7 @@ public class StaticIntervalsModel implements Mutable, IntervalModel {
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         LongList temp = shuffleTemp(intervals, null);
         IntervalUtils.parseIntervalEx(seq, lo, lim, position, tempInterval);
-        IntervalUtils.apply(temp, tempInterval);
+        IntervalUtils.apply(temp, tempInterval.lo, tempInterval.hi, tempInterval.period, tempInterval.periodType, tempInterval.count);
         intersectIntervals(temp);
     }
 
@@ -115,7 +113,7 @@ public class StaticIntervalsModel implements Mutable, IntervalModel {
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         LongList temp = shuffleTemp(intervals, null);
         IntervalUtils.parseIntervalEx(seq, lo, lim, position, tempInterval);
-        IntervalUtils.apply(temp, tempInterval);
+        IntervalUtils.apply(temp, tempInterval.lo, tempInterval.hi, tempInterval.period, tempInterval.periodType, tempInterval.count);
         subtractIntervals(temp);
     }
 
