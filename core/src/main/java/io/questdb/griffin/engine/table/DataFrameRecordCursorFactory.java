@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -66,25 +67,13 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
+    public void close() {
+        Misc.free(filter);
+    }
+
+    @Override
     public boolean followedOrderByAdvice() {
         return followsOrderByAdvice;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
-    }
-
-    @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) {
-        cursor.of(dataFrameCursor, executionContext);
-        if (filter != null) {
-            filter.init(cursor, executionContext);
-        }
-        return cursor;
     }
 
     @Override
@@ -101,13 +90,32 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
     public boolean supportPageFrameCursor() {
         return framingSupported;
     }
 
     @Override
-    public void close() {
-        Misc.free(filter);
+    public void toSink(CharSink sink) {
+        sink.put("{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":");
+        dataFrameCursorFactory.toSink(sink);
+        sink.put('}');
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) {
+        cursor.of(dataFrameCursor, executionContext);
+        if (filter != null) {
+            filter.init(cursor, executionContext);
+        }
+        return cursor;
     }
 
     private static class TableReaderPageFrameCursor implements PageFrameCursor {
@@ -135,11 +143,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         @Override
         public void close() {
             dataFrameCursor = Misc.free(dataFrameCursor);
-        }
-
-        @Override
-        public SymbolMapReader getSymbolMapReader(int columnIndex) {
-            return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         }
 
         @Override
@@ -228,6 +231,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         @Override
         public long size() {
             return reader.size();
+        }
+
+        @Override
+        public SymbolMapReader getSymbolMapReader(int columnIndex) {
+            return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         }
 
         public TableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {

@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.ExpressionNode;
@@ -38,7 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import java.sql.SQLException;
 import java.util.ServiceLoader;
 
 public class WhereClauseParserTest extends AbstractCairoTest {
@@ -56,7 +54,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
     protected BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
     private SqlCompiler compiler;
-    private FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class)));
+    private final FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class)));
     private SqlExecutionContext sqlExecutionContext;
     private CairoEngine engine;
     private QueryConstantsImpl queryConstants;
@@ -141,93 +139,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWrongTypeConstFunctionDateGreater() {
-        try {
-            IntrinsicModel m = modelOf("timestamp > abs(1)");
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(12, e.getPosition());
-        }
-    }
-
-    @Test
-    public void testWrongTypeConstFunctionDateLess() {
-        try {
-            IntrinsicModel m = modelOf("timestamp <= abs(1)");
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(13, e.getPosition());
-        }
-    }
-
-    @Test
     public void testBadConstFunctionDateGreater() throws SqlException {
         IntrinsicModel m = modelOf("timestamp > to_date('2015-02-AB', 'yyyy-MM-dd')");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
     }
 
     @Test
-    public void testTimestampGreaterConstFunction() throws SqlException {
-        runWhereIntervalTest0("timestamp > to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
-    }
-
-    @Test
     public void testBadConstFunctionDateLess() throws SqlException {
         IntrinsicModel m = modelOf("timestamp < to_date('2015-02-AA', 'yyyy-MM-dd')");
-        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
-    }
-
-    @Test
-    public void testTimestampLessConstFunction() throws SqlException {
-        runWhereIntervalTest0("timestamp <= to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=, hi=2015-02-22T00:00:00.000000Z}]");
-    }
-
-    @Test
-    public void testTimestampWithBindVariable() throws SqlException {
-        long day = 24L * 3600 * 1000 * 1000;
-        runWhereIntervalTest0("timestamp >= $1",
-                "[{lo=1970-01-02T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]",
-                bv -> bv.setTimestamp(0, day));
-    }
-
-    @Test
-    public void testTimestampWithBindVariableWithin() throws SqlException {
-        long day = 24L * 3600 * 1000 * 1000;
-        runWhereCompareToModelTest("timestamp >= $1 and timestamp <= $2",
-                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]",
-                bv -> {
-                    bv.setTimestamp(0, day);
-                    bv.setTimestamp(1, 2*day);
-                });
-    }
-
-    @Test
-    public void testTimestampWithBindNullVariable() throws SqlException {
-        IntrinsicModel m = runWhereIntervalTest0("timestamp >= $1", "[]",
-                bv -> bv.setTimestamp(0, Numbers.LONG_NaN));
-    }
-
-    @Test
-    public void testTimestampEqualsToBindVariable() throws SqlException {
-        long day = 24L * 3600 * 1000 * 1000;
-        sqlExecutionContext.getBindVariableService().setTimestamp(0, day);
-        runWhereIntervalTest0("timestamp = $1",
-                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]",
-                bv -> bv.setTimestamp(0, day));
-    }
-
-    @Test
-    public void testTimestampEqualsToNonConst() throws SqlException {
-        long day = 24L * 3600 * 1000 * 1000;
-        sqlExecutionContext.getBindVariableService().setTimestamp(0, day);
-        runWhereIntervalTest0("timestamp = dateadd('y',1,timestamp)", "");
-    }
-
-    @Test
-    public void testTimestampEqualsToConstNullFunc() throws SqlException {
-        long day = 24L * 3600 * 1000 * 1000;
-        sqlExecutionContext.getBindVariableService().setTimestamp(0, day);
-        IntrinsicModel m = runWhereIntervalTest0("timestamp = to_date('2015-02-AB', 'yyyy-MM-dd')", "[]");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
     }
 
@@ -427,59 +346,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         queryConstants.clear();
         try {
             runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z' <= timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
-        } finally {
-            currentMicros = -1;
-        }
-    }
-
-    @Test
-    public void testTimestampEqualsNow() throws Exception {
-        long day = 24L * 3600 * 1000 * 1000;
-        currentMicros = day;
-        queryConstants.clear();
-        try {
-            runWhereCompareToModelTest("timestamp = now()",
-                    "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
-        } finally {
-            currentMicros = -1;
-        }
-    }
-
-    @Test
-    public void testTimestampEqualsFunctionOfNow() throws Exception {
-        long day = 24L * 3600 * 1000 * 1000;
-        currentMicros = day;
-        queryConstants.clear();
-        try {
-            runWhereCompareToModelTest("timestamp = dateadd('d', 2, now())",
-                    "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
-        } finally {
-            currentMicros = -1;
-        }
-    }
-
-    @Test
-    public void testTimestampEqualsNowAndSymbolsInList() throws Exception {
-        long day = 24L * 3600 * 1000 * 1000;
-        currentMicros = day;
-        queryConstants.clear();
-        try {
-            IntrinsicModel m = runWhereCompareToModelTest("timestamp = now() and sym in (1, 2, 3)",
-                    "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
-            Assert.assertNull(m.filter);
-        } finally {
-            currentMicros = -1;
-        }
-    }
-
-    @Test
-    public void testTimestampEqualsConstFunction() throws Exception {
-        long day = 24L * 3600 * 1000 * 1000;
-        currentMicros = day;
-        queryConstants.clear();
-        try {
-            runWhereCompareToModelTest("timestamp = to_date('2020-03-01:15:43:21', 'yyyy-MM-dd:HH:mm:ss')",
-                    "[{lo=2020-03-01T15:43:21.000000Z, hi=2020-03-01T15:43:21.000000Z}]");
         } finally {
             currentMicros = -1;
         }
@@ -1450,6 +1316,118 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEqualsConstFunction() throws Exception {
+        long day = 24L * 3600 * 1000 * 1000;
+        currentMicros = day;
+        queryConstants.clear();
+        try {
+            runWhereCompareToModelTest("timestamp = to_date('2020-03-01:15:43:21', 'yyyy-MM-dd:HH:mm:ss')",
+                    "[{lo=2020-03-01T15:43:21.000000Z, hi=2020-03-01T15:43:21.000000Z}]");
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
+    public void testTimestampEqualsFunctionOfNow() throws Exception {
+        long day = 24L * 3600 * 1000 * 1000;
+        currentMicros = day;
+        queryConstants.clear();
+        try {
+            runWhereCompareToModelTest("timestamp = dateadd('d', 2, now())",
+                    "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
+    public void testTimestampEqualsNow() throws Exception {
+        long day = 24L * 3600 * 1000 * 1000;
+        currentMicros = day;
+        queryConstants.clear();
+        try {
+            runWhereCompareToModelTest("timestamp = now()",
+                    "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
+    public void testTimestampEqualsNowAndSymbolsInList() throws Exception {
+        long day = 24L * 3600 * 1000 * 1000;
+        currentMicros = day;
+        queryConstants.clear();
+        try {
+            IntrinsicModel m = runWhereCompareToModelTest("timestamp = now() and sym in (1, 2, 3)",
+                    "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+            Assert.assertNull(m.filter);
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
+    public void testTimestampEqualsToBindVariable() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        sqlExecutionContext.getBindVariableService().setTimestamp(0, day);
+        runWhereIntervalTest0("timestamp = $1",
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]",
+                bv -> bv.setTimestamp(0, day));
+    }
+
+    @Test
+    public void testTimestampEqualsToConstNullFunc() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        sqlExecutionContext.getBindVariableService().setTimestamp(0, day);
+        IntrinsicModel m = runWhereIntervalTest0("timestamp = to_date('2015-02-AB', 'yyyy-MM-dd')", "[]");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testTimestampEqualsToNonConst() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        sqlExecutionContext.getBindVariableService().setTimestamp(0, day);
+        runWhereIntervalTest0("timestamp = dateadd('y',1,timestamp)", "");
+    }
+
+    @Test
+    public void testTimestampGreaterConstFunction() throws SqlException {
+        runWhereIntervalTest0("timestamp > to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
+    public void testTimestampLessConstFunction() throws SqlException {
+        runWhereIntervalTest0("timestamp <= to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=, hi=2015-02-22T00:00:00.000000Z}]");
+    }
+
+    @Test
+    public void testTimestampWithBindNullVariable() throws SqlException {
+        IntrinsicModel m = runWhereIntervalTest0("timestamp >= $1", "[]",
+                bv -> bv.setTimestamp(0, Numbers.LONG_NaN));
+    }
+
+    @Test
+    public void testTimestampWithBindVariable() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        runWhereIntervalTest0("timestamp >= $1",
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]",
+                bv -> bv.setTimestamp(0, day));
+    }
+
+    @Test
+    public void testTimestampWithBindVariableWithin() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        runWhereCompareToModelTest("timestamp >= $1 and timestamp <= $2",
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]",
+                bv -> {
+                    bv.setTimestamp(0, day);
+                    bv.setTimestamp(1, 2 * day);
+                });
+    }
+
+    @Test
     public void testTwoBetweenIntervalsForDoubleColumn() throws Exception {
         IntrinsicModel m = modelOf("bid between 5 and 10 ");
         Assert.assertFalse(m.hasIntervals());
@@ -1622,6 +1600,26 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("[1,2]", m.keyValues.toString());
     }
 
+    @Test
+    public void testWrongTypeConstFunctionDateGreater() {
+        try {
+            IntrinsicModel m = modelOf("timestamp > abs(1)");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(12, e.getPosition());
+        }
+    }
+
+    @Test
+    public void testWrongTypeConstFunctionDateLess() {
+        try {
+            IntrinsicModel m = modelOf("timestamp <= abs(1)");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(13, e.getPosition());
+        }
+    }
+
     private void assertFilter(IntrinsicModel m, CharSequence expected) throws SqlException {
         Assert.assertNotNull(m.filter);
         TestUtils.assertEquals(expected, toRpn(m.filter));
@@ -1668,7 +1666,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         return m;
     }
 
-    private IntrinsicModel runWhereIntervalTest0(String where, String expected) throws SqlException, SqlException {
+    private IntrinsicModel runWhereIntervalTest0(String where, String expected) throws SqlException {
         return runWhereIntervalTest0(where, expected, null);
     }
 

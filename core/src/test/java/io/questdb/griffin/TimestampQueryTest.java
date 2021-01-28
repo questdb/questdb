@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractIntervalDataFrameCursor;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import org.junit.Before;
@@ -541,53 +540,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTimestampParseWithYearMonthDayTHourMinuteSecondTimeZone() throws Exception {
-        //yyyy-MM-ddTHH:mm:ssz
-        assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
-            String expected = "symbol\tme_seq_num\ttimestamp\n" +
-                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
-            expected = "symbol\tme_seq_num\ttimestamp\n" +
-                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-12-31T23:59:59Z'";
-            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
-        });
-    }
-
-    @Test
-    public void testTimestampParseWithYearMonthDayTHourMinuteSecondAndIncompleteMillisTimeZone() throws Exception {
-        //yyyy-MM-ddTHH:mm:ssz
-        assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            compiler.compile(createStmt, sqlExecutionContext);
-            //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
-            String expected = "symbol\tme_seq_num\ttimestamp\n" +
-                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            String query = "select * from ob_mem_snapshot";
-            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
-            //2 millisec characters
-            expected = "symbol\tme_seq_num\ttimestamp\n" +
-                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59.00Z'";
-            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
-            //1 millisec character
-            expected = "symbol\tme_seq_num\ttimestamp\n" +
-                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
-            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59.0Z'";
-            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
-            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
-        });
-    }
-
-    @Test
     public void testNowIsSameForAllQueryParts() throws Exception {
         //yyyy-MM-ddTHH:mm:ssz
         try {
@@ -644,15 +596,15 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour, true);
                 compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour, true);
 
-                for(currentMicros = hour; currentMicros < count*hour; currentMicros += day) {
+                for (currentMicros = hour; currentMicros < count * hour; currentMicros += day) {
                     compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros, true);
                 }
 
-                for(currentMicros = hour; currentMicros < count*hour; currentMicros += 12*hour) {
+                for (currentMicros = hour; currentMicros < count * hour; currentMicros += 12 * hour) {
                     compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros, true);
                 }
 
-                for(currentMicros = 0; currentMicros < count * hour; currentMicros += 5 *  hour) {
+                for (currentMicros = 0; currentMicros < count * hour; currentMicros += 5 * hour) {
                     compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
                             datesArr,
                             ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day), true);
@@ -664,12 +616,60 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testTimestampParseWithYearMonthDayTHourMinuteSecondAndIncompleteMillisTimeZone() throws Exception {
+        //yyyy-MM-ddTHH:mm:ssz
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+            //2 millisec characters
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59.00Z'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+            //1 millisec character
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp = '2020-12-31T23:59:59.0Z'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+        });
+    }
+
+    @Test
+    public void testTimestampParseWithYearMonthDayTHourMinuteSecondTimeZone() throws Exception {
+        //yyyy-MM-ddTHH:mm:ssz
+        assertMemoryLeak(() -> {
+            //create table
+            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
+            compiler.compile(createStmt, sqlExecutionContext);
+            //insert
+            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            String expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            String query = "select * from ob_mem_snapshot";
+            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+            expected = "symbol\tme_seq_num\ttimestamp\n" +
+                    "1\t1\t2020-12-31T23:59:59.000000Z\n";
+            query = "SELECT * FROM ob_mem_snapshot where timestamp ='2020-12-31T23:59:59Z'";
+            printSqlResult(expected, query, "timestamp", null, null, true, true, true);
+        });
+    }
+
     private void compareNowRange(String query, List<Object[]> dates, LongPredicate filter, boolean expectSize) throws SqlException {
+        String queryPlan = "{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":{\"name\":\"IntervalFwdDataFrameCursorFactory\", \"table\":\"xts\"}}";
         queryConstants.clear();
         String expected = "ts\n"
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, AbstractIntervalDataFrameCursor.class);
+        printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, queryPlan);
     }
 }

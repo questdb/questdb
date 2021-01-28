@@ -56,7 +56,7 @@ public class TableWriteBenchmark {
                     null,
                     -1,
                     null,
-                    queryConstants.init());
+                    queryConstants);
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table test1(f long)", sqlExecutionContext);
             } catch (SqlException e) {

@@ -396,12 +396,14 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable,
-            Class factoryClass
+            CharSequence expectedPlan
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
-        if (factoryClass != null) {
-            // Assert.assertTrue("Expected factory class " + factoryClass + " but was " + factory.getClass(), factoryClass.isAssignableFrom(factory.getCursor()));
+        if (expectedPlan != null) {
+            sink.clear();
+            factory.toSink(sink);
+            TestUtils.assertEquals(expectedPlan, sink);
         }
         try {
             assertTimestamp(expectedTimestamp, factory);

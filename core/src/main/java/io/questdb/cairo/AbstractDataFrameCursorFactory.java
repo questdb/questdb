@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
     private final CairoEngine engine;
@@ -36,6 +36,11 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
         this.engine = engine;
         this.tableName = tableName;
         this.tableVersion = tableVersion;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableName).put("\"}");
     }
 
     protected TableReader getReader(CairoSecurityContext sqlContext) {
