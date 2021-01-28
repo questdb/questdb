@@ -71,7 +71,6 @@ public class LineTcpServer implements Closeable {
             ioWorkerPool.assign(i, new Job() {
                 // Context blocked on LineTcpMeasurementScheduler queue
                 private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
-                private int busyContextIndex = 0;
                 private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
 
                 private void onRequest(int operation, LineTcpConnectionContext context) {
@@ -85,15 +84,13 @@ public class LineTcpServer implements Closeable {
                 public boolean run(int workerId) {
                     boolean busy = false;
                     while (busyContexts.size() > 0) {
-                        int i = busyContextIndex % busyContexts.size();
-                        LineTcpConnectionContext busyContext = busyContexts.getQuick(i);
+                        LineTcpConnectionContext busyContext = busyContexts.getQuick(0);
                         if (handleIO(busyContext)) {
-                            busyContextIndex++;
                             busy = true;
                             break;
                         }
                         LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();
-                        busyContexts.remove(i);
+                        busyContexts.remove(0);
                     }
 
                     if (dispatcher.processIOQueue(onRequest)) {
