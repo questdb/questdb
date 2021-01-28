@@ -51,17 +51,20 @@ public class LineTcpServer implements Closeable {
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
+    private final ObjList<WorkerPool> dedicatedPools;
 
     public LineTcpServer(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
             WorkerPool ioWorkerPool,
-            WorkerPool writerWorkerPool
+            WorkerPool writerWorkerPool,
+            ObjList<WorkerPool> dedicatedPools
     ) {
         this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
                 lineConfiguration.getNetDispatcherConfiguration(),
                 contextFactory);
+        this.dedicatedPools = dedicatedPools;
         ioWorkerPool.assign(dispatcher);
         scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, writerWorkerPool);
         for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
@@ -120,20 +123,26 @@ public class LineTcpServer implements Closeable {
             return null;
         }
 
+        ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
         WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool);
         WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool);
-        LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool);
         if (ioWorkerPool != sharedWorkerPool) {
             ioWorkerPool.start(LOG);
+            dedicatedPools.add(ioWorkerPool);
         }
         if (writerWorkerPool != sharedWorkerPool) {
             writerWorkerPool.start(LOG);
+            dedicatedPools.add(writerWorkerPool);
         }
+        LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
         return lineTcpServer;
     }
 
     @Override
     public void close() {
+        for (int n = 0, sz = dedicatedPools.size(); n < sz; n++) {
+            dedicatedPools.get(n).halt();
+        }
         Misc.free(scheduler);
         Misc.free(contextFactory);
         Misc.free(dispatcher);
