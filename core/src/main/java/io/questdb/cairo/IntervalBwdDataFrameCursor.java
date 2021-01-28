@@ -43,7 +43,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalBwdDataFrameCursor(@Transient RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
+    public IntervalBwdDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
         super(intervals, timestampIndex);
     }
 

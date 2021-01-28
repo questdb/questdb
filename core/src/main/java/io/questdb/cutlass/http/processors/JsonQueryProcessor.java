@@ -45,7 +45,6 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -62,7 +61,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final Path path = new Path();
     private final NanosecondClock nanosecondClock;
     private final HttpSqlExecutionInterruptor interruptor;
-    private final MicrosecondClock microsecondClock;
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -108,7 +106,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
-        this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
         this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
     }
 
@@ -170,7 +167,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             LV.set(context, state = new JsonQueryProcessorState(
                     context,
                     nanosecondClock,
-                    microsecondClock,
                     configuration.getFloatScale(),
                     configuration.getDoubleScale()
             ));
@@ -199,27 +195,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void onRequestRetry(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        JsonQueryProcessorState state = LV.get(context);
-        execute0(state);
-    }
-
-    @Override
     public void parkRequest(HttpConnectionContext context) {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // preserve random when we park the context
             state.setRnd(sqlExecutionContext.getRandom());
         }
-    }
-
-    @Override
-    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
-        internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
-        readyForNextRequest(context);
     }
 
     private static void doResumeSend(
@@ -337,6 +318,21 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         state.setCompilerNanos(0);
         state.logExecuteCached();
         executeSelect(state, factory, keepAliveHeader);
+    }
+
+    @Override
+    public void onRequestRetry(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        JsonQueryProcessorState state = LV.get(context);
+        execute0(state);
+    }
+
+    @Override
+    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        JsonQueryProcessorState state = LV.get(context);
+        internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
+        readyForNextRequest(context);
     }
 
     private void executeInsert(

@@ -130,6 +130,8 @@ public class CompactDynamicIntervalModel implements Mutable {
     private void saveInterval(Interval tempInterval, short operation) {
         staticPeriods.add(tempInterval.lo);
         staticPeriods.add(tempInterval.hi);
+        // Should be ASCII to safely cast to / from short
+        assert (int)tempInterval.periodType < 0xFF;
         staticPeriods.add(Numbers.encodeLowHighInts(
                 Numbers.encodeLowHighShorts(operation, (short) tempInterval.periodType),
                 tempInterval.count));

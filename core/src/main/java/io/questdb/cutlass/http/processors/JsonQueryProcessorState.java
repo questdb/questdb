@@ -95,7 +95,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
             NanosecondClock nanosecondClock,
-            MicrosecondClock microsecondClock,
             int floatScale,
             int doubleScale
     ) {

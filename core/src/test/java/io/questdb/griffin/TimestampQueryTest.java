@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -585,11 +586,11 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
                 List<Object[]> datesArr = dates.collect(Collectors.toList());
 
+                final long hour = Timestamps.HOUR_MICROS;
+                final long day = 24 * hour;
                 compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true, true);
 
                 // Scroll now to the end
-                final long hour = 3600L * 1000 * 1000;
-                final long day = 24 * hour;
                 currentMicros = 200L * hour;
                 compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour, true);
                 compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour, true);
@@ -608,6 +609,9 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                             ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day), true);
                 }
 
+                currentMicros = 100L * hour;
+                compareNowRange("WITH temp AS (SELECT ts FROM xts WHERE ts > dateadd('y', -1, now())) " +
+                        "SELECT ts FROM temp WHERE ts < now()", datesArr, ts -> ts < currentMicros, true);
             });
         } finally {
             currentMicros = -1;
