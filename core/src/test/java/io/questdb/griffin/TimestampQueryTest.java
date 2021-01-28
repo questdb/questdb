@@ -542,7 +542,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testNowIsSameForAllQueryParts() throws Exception {
-        //yyyy-MM-ddTHH:mm:ssz
         try {
             currentMicros = 0;
             assertMemoryLeak(() -> {
@@ -620,7 +619,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampParseWithYearMonthDayTHourMinuteSecondAndIncompleteMillisTimeZone() throws Exception {
-        //yyyy-MM-ddTHH:mm:ssz
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
@@ -647,7 +645,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampParseWithYearMonthDayTHourMinuteSecondTimeZone() throws Exception {
-        //yyyy-MM-ddTHH:mm:ssz
         assertMemoryLeak(() -> {
             //create table
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";

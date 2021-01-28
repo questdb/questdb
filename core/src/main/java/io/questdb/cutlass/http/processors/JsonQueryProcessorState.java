@@ -43,7 +43,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
