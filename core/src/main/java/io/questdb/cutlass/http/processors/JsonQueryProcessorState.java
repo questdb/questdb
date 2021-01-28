@@ -76,6 +76,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final NanosecondClock nanosecondClock;
     private final int floatScale;
     private final int doubleScale;
+    private final QueryConstantsImpl queryConstants;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -93,7 +94,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long compilerNanos;
     private boolean timings;
     private boolean queryCacheable = false;
-    private final QueryConstantsImpl queryConstants;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,

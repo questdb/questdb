@@ -199,12 +199,27 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
+    public void onRequestRetry(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        JsonQueryProcessorState state = LV.get(context);
+        execute0(state);
+    }
+
+    @Override
     public void parkRequest(HttpConnectionContext context) {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // preserve random when we park the context
             state.setRnd(sqlExecutionContext.getRandom());
         }
+    }
+
+    @Override
+    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        JsonQueryProcessorState state = LV.get(context);
+        internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
+        readyForNextRequest(context);
     }
 
     private static void doResumeSend(
@@ -322,21 +337,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         state.setCompilerNanos(0);
         state.logExecuteCached();
         executeSelect(state, factory, keepAliveHeader);
-    }
-
-    @Override
-    public void onRequestRetry(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        JsonQueryProcessorState state = LV.get(context);
-        execute0(state);
-    }
-
-    @Override
-    public void failRequest(HttpConnectionContext context, HttpException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
-        internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
-        readyForNextRequest(context);
     }
 
     private void executeInsert(
