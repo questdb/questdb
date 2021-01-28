@@ -2016,6 +2016,37 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByValue() throws Exception {
+        // no index
+        assertQuery("a\tb\tk\n" +
+                        "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
+                "select * from x latest by b where b = 'HNR'",
+                "create table x as " +
+                        "(" +
+                        "select " +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(2,4,4) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'HNR'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false,
+                true);
+    }
+
+    @Test
     public void testLatestByKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +

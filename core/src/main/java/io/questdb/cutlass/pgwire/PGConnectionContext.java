@@ -1121,9 +1121,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             switch (transactionState) {
                 case IN_TRANSACTION:
                     final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this);
-                    rowCount = m.execute();
-                    w = m.getWriter();
-                    pendingWriters.put(w.getName(), w);
+                    try {
+                        rowCount = m.execute();
+                        w = m.popWriter();
+                        pendingWriters.put(w.getName(), w);
+                    } catch (CairoException e) {
+                        Misc.free(m);
+                        throw e;
+                    }
                     break;
                 case ERROR_TRANSACTION:
                     // when transaction is in error state, skip execution

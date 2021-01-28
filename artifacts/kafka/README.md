@@ -82,7 +82,13 @@ json to reproduce issue with the timestamp
 {    "schema": {        "type": "struct",        "fields": [{            "type": "int32",            "optional": true,            "field": "c1"        }, {            "type": "string",            "optional": true,            "field": "c2"        }, {            "type": "int64",            "optional": false,            "name": "org.apache.kafka.connect.data.Timestamp",            "version": 1,            "field": "create_ts"        }, {            "type": "int64",            "optional": false,            "name": "org.apache.kafka.connect.data.Timestamp",            "version": 1,            "field": "update_ts"        }],        "optional": false,        "name": "foobar"    },    "payload": {        "c1": 10000,        "c2": "bar",        "create_ts": 1501834166000,        "update_ts": 1501834166000    }}
 ```
 
+this one is out of order for the above
+
+```json
+{    "schema": {        "type": "struct",        "fields": [{            "type": "int32",            "optional": true,            "field": "c1"        }, {            "type": "string",            "optional": true,            "field": "c2"        }, {            "type": "int64",            "optional": false,            "name": "org.apache.kafka.connect.data.Timestamp",            "version": 1,            "field": "create_ts"        }, {            "type": "int64",            "optional": false,            "name": "org.apache.kafka.connect.data.Timestamp",            "version": 1,            "field": "update_ts"        }],        "optional": false,        "name": "foobar"    },    "payload": {        "c1": 10000,        "c2": "bar",        "create_ts": 1501834166000,        "update_ts": 0    }}
+```
+
+
 ```json
 {    "schema": {        "type": "struct",        "fields": [{            "type": "int32",            "optional": true,            "field": "c1"        }, {            "type": "string",            "optional": true,            "field": "c2"        }, {            "type": "int32",            "optional": false,            "name": "org.apache.kafka.connect.data.Date",            "version": 1,            "field": "create_ts"        }, {            "type": "int64",            "optional": false,            "name": "org.apache.kafka.connect.data.Timestamp",            "version": 1,            "field": "update_ts"        }],        "optional": false,        "name": "foobar"    },    "payload": {        "c1": 10000,        "c2": "bar",        "create_ts": 1501834,        "update_ts": 1501834166    }}
-
 ```

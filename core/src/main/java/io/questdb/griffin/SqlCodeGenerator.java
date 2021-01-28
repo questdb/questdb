@@ -917,6 +917,18 @@ public class SqlCodeGenerator implements Mutable {
             final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
             final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
+            if (metadata.getColumnType(latestByIndex) != ColumnType.SYMBOL) {
+                return new LatestByAllFilteredRecordCursorFactory(
+                        metadata,
+                        configuration,
+                        dataFrameCursorFactory,
+                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                        keyTypes,
+                        filter,
+                        columnIndexes
+                );
+            }
+
             if (intrinsicModel.keyColumn != null) {
                 // key column must always be the same as latest by column
                 assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
@@ -2265,12 +2277,21 @@ public class SqlCodeGenerator implements Mutable {
             final String tableName = reader.getTableName();
 
             if (whereClause != null) {
+                CharSequence preferredKeyColumn = null;
+
+                if (listColumnFilterA.size() == 1) {
+                    final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+
+                    if (myMeta.getColumnType(latestByIndex) == ColumnType.SYMBOL) {
+                        preferredKeyColumn = latestBy.getQuick(0).token;
+                    }
+                }
 
                 final IntrinsicModel intrinsicModel = whereClauseParser.extract(
                         model,
                         whereClause,
                         readerMeta,
-                        latestByColumnCount > 0 ? latestBy.getQuick(0).token : null,
+                        preferredKeyColumn,
                         readerTimestampIndex,
                         functionParser,
                         myMeta,
