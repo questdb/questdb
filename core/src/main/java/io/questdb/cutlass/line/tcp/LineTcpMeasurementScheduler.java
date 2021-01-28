@@ -604,17 +604,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             threadId = tableUpdateDetails.threadId;
         }
 
-        private transient Row row;
-        private transient byte entityType;
-        private transient long bufPos;
-        private transient int nEntity;
-        private transient int colIndex;
-
+        @SuppressWarnings("resource")
         void processMeasurementEvent(WriterJob job) {
-            row = null;
+            Row row = null;
             try {
                 TableWriter writer = tableUpdateDetails.getWriter();
-                bufPos = bufLo;
+                long bufPos = bufLo;
                 long timestamp = Unsafe.getUnsafe().getLong(bufPos);
                 bufPos += Long.BYTES;
                 if (timestamp == NewLineProtoParser.NULL_TIMESTAMP) {
@@ -624,15 +619,41 @@ class LineTcpMeasurementScheduler implements Closeable {
                 int nEntities = Unsafe.getUnsafe().getInt(bufPos);
                 bufPos += Integer.BYTES;
                 long firstEntityBufPos = bufPos;
-                for (nEntity = 0; nEntity < nEntities; nEntity++) {
-                    colIndex = Unsafe.getUnsafe().getInt(bufPos);
+                for (int nEntity = 0; nEntity < nEntities; nEntity++) {
+                    int colIndex = Unsafe.getUnsafe().getInt(bufPos);
                     bufPos += Integer.BYTES;
+                    byte entityType;
                     if (colIndex >= 0) {
                         entityType = Unsafe.getUnsafe().getByte(bufPos);
                         bufPos += Byte.BYTES;
                     } else {
-                        boolean retry = findColumnIndex(job, writer, timestamp, firstEntityBufPos);
-                        if (retry) {
+                        int colNameLen = -1 * colIndex;
+                        long nameLo = bufPos; // UTF8 encoded
+                        long nameHi = bufPos + colNameLen;
+                        job.charSink.clear();
+                        if (!Chars.utf8Decode(nameLo, nameHi, job.charSink)) {
+                            throw CairoException.instance(0).put("invalid UTF8 in column name ").put(job.floatingCharSink.asCharSequence(nameLo, nameHi));
+                        }
+                        bufPos = nameHi;
+                        entityType = Unsafe.getUnsafe().getByte(bufPos);
+                        bufPos += Byte.BYTES;
+                        colIndex = writer.getMetadata().getColumnIndexQuiet(job.charSink);
+                        if (colIndex < 0) {
+                            // Cannot create a column with an open row, writer will commit when a column is created
+                            row.cancel();
+                            row = null;
+                            int columnType = DEFAULT_COLUMN_TYPES[entityType];
+                            if (TableUtils.isValidColumnName(job.charSink)) {
+                                colIndex = writer.getMetadata().getColumnCount();
+                                writer.addColumn(job.charSink, columnType);
+                            } else {
+                                throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
+                                        .put(", columnName=").put(job.charSink).put(']');
+                            }
+                            // Reset to begining of entities
+                            bufPos = firstEntityBufPos;
+                            nEntity = -1;
+                            row = writer.newRow(timestamp);
                             continue;
                         }
                     }
@@ -647,41 +668,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                     row.cancel();
                 }
             }
-        }
-
-        protected boolean findColumnIndex(WriterJob job, TableWriter writer, long timestamp, long firstEntityBufPos) {
-            boolean retry;
-            int colNameLen = -1 * colIndex;
-            long nameLo = bufPos; // UTF8 encoded
-            long nameHi = bufPos + colNameLen;
-            job.charSink.clear();
-            if (!Chars.utf8Decode(nameLo, nameHi, job.charSink)) {
-                throw CairoException.instance(0).put("invalid UTF8 in column name ").put(job.floatingCharSink.asCharSequence(nameLo, nameHi));
-            }
-            bufPos = nameHi;
-            entityType = Unsafe.getUnsafe().getByte(bufPos);
-            bufPos += Byte.BYTES;
-            colIndex = writer.getMetadata().getColumnIndexQuiet(job.charSink);
-            if (colIndex < 0) {
-                // Cannot create a column with an open row, writer will commit when a column is created
-                row.cancel();
-                int columnType = DEFAULT_COLUMN_TYPES[entityType];
-                if (TableUtils.isValidColumnName(job.charSink)) {
-                    colIndex = writer.getMetadata().getColumnCount();
-                    writer.addColumn(job.charSink, columnType);
-                } else {
-                    throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
-                            .put(", columnName=").put(job.charSink).put(']');
-                }
-                // Reset to begining of entities
-                bufPos = firstEntityBufPos;
-                nEntity = -1;
-                row = writer.newRow(timestamp);
-                retry = true;
-            } else {
-                retry = false;
-            }
-            return retry;
         }
 
         private EntityValueRowWriter getValueWriter(TableWriter writer, int colIndex, byte entityType) {
