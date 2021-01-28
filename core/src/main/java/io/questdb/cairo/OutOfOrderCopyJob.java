@@ -38,45 +38,51 @@ import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTask> {
 
-    public OutOfOrderCopyJob(RingQueue<OutOfOrderCopyTask> queue, Sequence subSeq) {
+    private final CairoConfiguration configuration;
+
+    public OutOfOrderCopyJob(
+            RingQueue<OutOfOrderCopyTask> queue,
+            Sequence subSeq,
+            CairoConfiguration configuration
+    ) {
         super(queue, subSeq);
+        this.configuration = configuration;
     }
 
-    private void copy(OutOfOrderCopyTask task, long cursor, Sequence subSeq) {
-
-        final int blockType = task.getBlockType();
-        final long srcDataFixFd = task.getSrcDataFixFd();
-        final long srcDataFixAddr = task.getSrcDataFixAddr();
-        final long srcDataFixSize = task.getSrcDataFixSize();
-        final long srcDataVarFd = task.getSrcDataVarFd();
-        final long srcDataVarAddr = task.getSrcDataVarAddr();
-        final long srcDataVarSize = task.getSrcDataVarSize();
-        final long srcDataLo = task.getSrcDataLo();
-        final long srcDataHi = task.getSrcDataHi();
-        final long srcOooFixAddr = task.getSrcOooFixAddr();
-        final long srcOooFixSize = task.getSrcOooFixSize();
-        final long srcOooVarAddr = task.getSrcOooVarAddr();
-        final long srcOooVarSize = task.getSrcOooVarSize();
-        final long srcOooLo = task.getSrcOooLo();
-        final long srcOooHi = task.getSrcOooHi();
-        final long dstFixFd = task.getDstFixFd();
-        final long dstFixAddr = task.getDstFixAddr();
-        final long dstFixOffset = task.getDstFixOffset();
-        final long dstFixSize = task.getDstFixSize();
-        final long dstVarFd = task.getDstVarFd();
-        final long dstVarAddr = task.getDstVarAddr();
-        final long dstVarOffset = task.getDstVarOffset();
-        final long dstVarSize = task.getDstVarSize();
-        final int columnType = task.getColumnType();
-        final long mergeIndexAddr = task.getTimestampMergeIndexAddr();
-        final AtomicInteger partCounter = task.getPartCounter();
-
-        final long dstKFd = task.getDstKFd();
-        final long dskVFd = task.getDstVFd();
-        final long dstIndexOffset = task.getDstIndexOffset();
-
-        subSeq.done(cursor);
-
+    public static void copy(
+            CairoConfiguration configuration,
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int blockType,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long srcDataLo,
+            long srcDataHi,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo,
+            long srcOooHi,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarOffset,
+            long dstVarSize,
+            int columnType,
+            long mergeIndexAddr,
+            long dstKFd,
+            long dskVFd,
+            long dstIndexOffset,
+            boolean isIndexed
+    ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
                 oooMergeCopy(
@@ -131,27 +137,24 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 
         // decrement part counter and if we are the last task - perform final steps
         if (partCounter.decrementAndGet() == 0) {
-            // todo: indexing
+            // todo: pool indexer
+            if (isIndexed) {
+                updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dskVFd, dstIndexOffset);
+            }
 
             // unmap memory
             unmapAndClose(srcDataFixFd, srcDataFixAddr, srcDataFixSize);
             unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
             unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
             unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
+
+            if (columnCounter.decrementAndGet() == 0) {
+                Vect.freeMergedIndex(mergeIndexAddr);
+            }
         }
     }
 
-    private void unmapAndClose(long dstFixFd, long dstFixAddr, long dstFixSize) {
-        if (dstFixAddr != 0 && dstFixSize != 0) {
-            Files.munmap(dstFixAddr, dstFixSize);
-        }
-
-        if (dstFixFd > 0) {
-            Files.close(dstFixFd);
-        }
-    }
-
-    private void copyFromTimestampIndex(
+    private static void copyFromTimestampIndex(
             long src,
             long srcLo,
             long srcHi,
@@ -169,23 +172,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        OutOfOrderCopyTask task = queue.get(cursor);
-        // copy task on stack so that publisher has fighting chance of
-        // publishing all it has to the queue
-
-        final boolean locked = task.tryLock();
-        if (locked) {
-            copy(task, cursor, subSeq);
-        } else {
-            subSeq.done(cursor);
-        }
-
-        return true;
-    }
-
-    private void oooCopyData(
+    private static void oooCopyData(
             int columnType,
             long srcFixAddr,
             long srcFixSize,
@@ -227,31 +214,19 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    private void oooCopyFixedSizeCol(
-            long src,
-            long srcLo,
-            long srcHi,
-            long dst,
-            long dstOffset,
-            final int shl
-    ) {
+    private static void oooCopyFixedSizeCol(long src, long srcLo, long srcHi, long dst, long dstOffset, final int shl) {
         final long len = (srcHi - srcLo + 1) << shl;
         Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst + dstOffset, len);
     }
 
-    private void oooCopyIndex(
-            long mergeIndex,
-            long mergeIndexSize,
-            long dstAddr,
-            long dstOffset
-    ) {
+    private static void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr, long dstOffset) {
         final long dst = dstAddr + dstOffset;
         for (long l = 0; l < mergeIndexSize; l++) {
-            Unsafe.getUnsafe().putLong(dst + l * Long.BYTES, getTimestampIndexValue(mergeIndex, l));
+            Unsafe.getUnsafe().putLong(dst + l * Long.BYTES, getTimestampIndexValue(mergeIndexAddr, l));
         }
     }
 
-    private void oooCopyOOO(
+    private static void oooCopyOOO(
             int columnType, long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -306,7 +281,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    private void oooCopyVarSizeCol(
+    private static void oooCopyVarSizeCol(
             long srcFixAddr,
             long srcFixSize,
             long srcVarAddr,
@@ -337,7 +312,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    private void oooMergeCopy(
+    private static void oooMergeCopy(
             int columnType,
             // todo: merge index has to be freed by last column copy
             long mergeIndexAddr,
@@ -355,90 +330,63 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long dstVarOffset
     ) {
         final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-        try {
-            switch (columnType) {
-                case ColumnType.BOOLEAN:
-                case ColumnType.BYTE:
-                    // todo: check if we only need to merge subset of data and out of order (i suspect "mergeIndexAddr" has indices of rows in either, so we're supplying both fully)
-                    Vect.mergeShuffle8Bit(
-                            srcDataFixAddr,
-                            srcOooFixAddr,
-                            dstFixAddr + dstFixOffset,
-                            mergeIndexAddr,
-                            rowCount
-                    );
-                    break;
-                case ColumnType.SHORT:
-                case ColumnType.CHAR:
-                    Vect.mergeShuffle16Bit(
-                            srcDataFixAddr,
-                            srcOooFixAddr,
-                            dstFixAddr + dstFixOffset,
-                            mergeIndexAddr,
-                            rowCount
-                    );
-                    break;
-                case ColumnType.STRING:
-                    oooMergeCopyStrColumn(
-                            mergeIndexAddr,
-                            rowCount,
-                            srcDataFixAddr,
-                            srcDataVarAddr,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            dstFixAddr,
-                            dstFixOffset,
-                            dstVarAddr,
-                            dstVarOffset
-                    );
-                    break;
-                case ColumnType.BINARY:
-                    oooMergeCopyBinColumn(
-                            mergeIndexAddr,
-                            rowCount,
-                            srcDataFixAddr,
-                            srcDataVarAddr,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            dstFixAddr,
-                            dstFixOffset,
-                            dstVarAddr,
-                            dstVarOffset
-                    );
-                    break;
-                case ColumnType.INT:
-                case ColumnType.FLOAT:
-                case ColumnType.SYMBOL:
-                    Vect.mergeShuffle32Bit(
-                            srcDataFixAddr,
-                            srcOooFixAddr,
-                            dstFixAddr + dstFixOffset,
-                            mergeIndexAddr,
-                            rowCount
-                    );
-                    break;
-                case ColumnType.DOUBLE:
-                case ColumnType.LONG:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
-                    Vect.mergeShuffle64Bit(
-                            srcDataFixAddr,
-                            srcOooFixAddr,
-                            dstFixAddr + dstFixOffset,
-                            mergeIndexAddr,
-                            rowCount
-                    );
-                    break;
-                case -ColumnType.TIMESTAMP:
-                    oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr, dstFixOffset);
-                    break;
-            }
-        } finally {
-            Vect.freeMergedIndex(mergeIndexAddr);
+        switch (columnType) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, mergeIndexAddr, rowCount);
+                break;
+            case ColumnType.SHORT:
+            case ColumnType.CHAR:
+                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, mergeIndexAddr, rowCount);
+                break;
+            case ColumnType.STRING:
+                oooMergeCopyStrColumn(
+                        mergeIndexAddr,
+                        rowCount,
+                        srcDataFixAddr,
+                        srcDataVarAddr,
+                        srcOooFixAddr,
+                        srcOooVarAddr,
+                        dstFixAddr,
+                        dstFixOffset,
+                        dstVarAddr,
+                        dstVarOffset
+                );
+                break;
+            case ColumnType.BINARY:
+                oooMergeCopyBinColumn(
+                        mergeIndexAddr,
+                        rowCount,
+                        srcDataFixAddr,
+                        srcDataVarAddr,
+                        srcOooFixAddr,
+                        srcOooVarAddr,
+                        dstFixAddr,
+                        dstFixOffset,
+                        dstVarAddr,
+                        dstVarOffset
+                );
+                break;
+            case ColumnType.INT:
+            case ColumnType.FLOAT:
+            case ColumnType.SYMBOL:
+                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, mergeIndexAddr, rowCount);
+                break;
+            case ColumnType.DOUBLE:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, mergeIndexAddr, rowCount);
+                break;
+            case -ColumnType.TIMESTAMP:
+                oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr, dstFixOffset);
+                break;
+            default:
+                break;
         }
     }
 
-    private void oooMergeCopyBinColumn(
+    private static void oooMergeCopyBinColumn(
             long mergeIndex,
             long mergeIndexSize,
             long srcDataFixAddr,
@@ -479,7 +427,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    private void oooMergeCopyStrColumn(
+    private static void oooMergeCopyStrColumn(
             long mergeIndex,
             long mergeIndexSize,
             long srcDataFixAddr,
@@ -517,7 +465,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    private void shiftCopyFixedSizeColumnData(
+    private static void shiftCopyFixedSizeColumnData(
             long shift,
             long src,
             long srcLo,
@@ -534,5 +482,122 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         for (long o = 0; o < len; o += Long.BYTES) {
             Unsafe.getUnsafe().putLong(dest + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
         }
+    }
+
+    private static void unmapAndClose(long dstFixFd, long dstFixAddr, long dstFixSize) {
+        if (dstFixAddr != 0 && dstFixSize != 0) {
+            Files.munmap(dstFixAddr, dstFixSize);
+        }
+
+        if (dstFixFd > 0) {
+            Files.close(dstFixFd);
+        }
+    }
+
+    private static void updateIndex(
+            CairoConfiguration configuration,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstKFd,
+            long dskVFd,
+            long dstIndexOffset
+    ) {
+        try (BitmapIndexWriter w = new BitmapIndexWriter()) {
+            long row = dstIndexOffset / Integer.BYTES;
+
+            w.of(configuration, dstKFd, dskVFd, row == 0);
+
+            final long count = dstFixSize / Integer.BYTES;
+            for (; row < count; row++) {
+                w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row);
+            }
+        }
+    }
+
+    private void copy(OutOfOrderCopyTask task, long cursor, Sequence subSeq) {
+        final AtomicInteger columnCounter = task.getColumnCounter();
+        final AtomicInteger partCounter = task.getPartCounter();
+        final int blockType = task.getBlockType();
+        final long srcDataFixFd = task.getSrcDataFixFd();
+        final long srcDataFixAddr = task.getSrcDataFixAddr();
+        final long srcDataFixSize = task.getSrcDataFixSize();
+        final long srcDataVarFd = task.getSrcDataVarFd();
+        final long srcDataVarAddr = task.getSrcDataVarAddr();
+        final long srcDataVarSize = task.getSrcDataVarSize();
+        final long srcDataLo = task.getSrcDataLo();
+        final long srcDataHi = task.getSrcDataHi();
+        final long srcOooFixAddr = task.getSrcOooFixAddr();
+        final long srcOooFixSize = task.getSrcOooFixSize();
+        final long srcOooVarAddr = task.getSrcOooVarAddr();
+        final long srcOooVarSize = task.getSrcOooVarSize();
+        final long srcOooLo = task.getSrcOooLo();
+        final long srcOooHi = task.getSrcOooHi();
+        final long dstFixFd = task.getDstFixFd();
+        final long dstFixAddr = task.getDstFixAddr();
+        final long dstFixOffset = task.getDstFixOffset();
+        final long dstFixSize = task.getDstFixSize();
+        final long dstVarFd = task.getDstVarFd();
+        final long dstVarAddr = task.getDstVarAddr();
+        final long dstVarOffset = task.getDstVarOffset();
+        final long dstVarSize = task.getDstVarSize();
+        final int columnType = task.getColumnType();
+        final long mergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final long dstKFd = task.getDstKFd();
+        final long dskVFd = task.getDstVFd();
+        final long dstIndexOffset = task.getDstIndexOffset();
+        final boolean isIndexed = task.isIndexed();
+
+        subSeq.done(cursor);
+
+        copy(
+                configuration,
+                columnCounter,
+                partCounter,
+                blockType,
+                srcDataFixFd,
+                srcDataFixAddr,
+                srcDataFixSize,
+                srcDataVarFd,
+                srcDataVarAddr,
+                srcDataVarSize,
+                srcDataLo,
+                srcDataHi,
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
+                srcOooLo,
+                srcOooHi,
+                dstFixFd,
+                dstFixAddr,
+                dstFixOffset,
+                dstFixSize,
+                dstVarFd,
+                dstVarAddr,
+                dstVarOffset,
+                dstVarSize,
+                columnType,
+                mergeIndexAddr,
+                dstKFd,
+                dskVFd,
+                dstIndexOffset,
+                isIndexed
+        );
+    }
+
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        OutOfOrderCopyTask task = queue.get(cursor);
+        // copy task on stack so that publisher has fighting chance of
+        // publishing all it has to the queue
+
+        final boolean locked = task.tryLock();
+        if (locked) {
+            copy(task, cursor, subSeq);
+        } else {
+            subSeq.done(cursor);
+        }
+
+        return true;
     }
 }

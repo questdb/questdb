@@ -32,6 +32,8 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderOpenColumnTask;
 import io.questdb.tasks.OutOfOrderPartitionTask;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
@@ -544,7 +546,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             timestampMergeIndexAddr = 0;
         }
 
-        for (int i = 0; i < metadata.getColumnCount(); i++) {
+        final int columnCount = metadata.getColumnCount();
+        AtomicInteger columnCounter = new AtomicInteger(columnCount);
+        for (int i = 0; i < columnCount; i++) {
             long c = openColumnPubSeq.next();
             // todo: check if c is valid
             final OutOfOrderOpenColumnTask openColumnTask = openColumnTaskQueue.get(c);
@@ -553,6 +557,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             final int columnType = metadata.getColumnType(i);
             openColumnTask.of(
                     ff,
+                    columnCounter,
                     txn,
                     openColumnMode,
                     metadata.getColumnName(i),

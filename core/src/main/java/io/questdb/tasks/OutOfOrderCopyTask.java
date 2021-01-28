@@ -29,6 +29,7 @@ import io.questdb.std.AbstractLockable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class OutOfOrderCopyTask extends AbstractLockable {
+    private AtomicInteger columnCounter;
     private AtomicInteger partCounter;
     private int columnType;
     private int blockType;
@@ -58,9 +59,14 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long dstKFd;
     private long dstVFd;
     private long dstIndexOffset;
+    private boolean isIndexed;
 
     public int getBlockType() {
         return blockType;
+    }
+
+    public AtomicInteger getColumnCounter() {
+        return columnCounter;
     }
 
     public int getColumnType() {
@@ -175,7 +181,12 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return timestampMergeIndexAddr;
     }
 
+    public boolean isIndexed() {
+        return isIndexed;
+    }
+
     public void of(
+            AtomicInteger columnCounter,
             AtomicInteger partCounter,
             int columnType,
             int blockType,
@@ -204,8 +215,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long dstVarSize,
             long dstKFd,
             long dstVFd,
-            long dstIndexOffset
+            long dstIndexOffset,
+            boolean isIndexed
     ) {
+        this.columnCounter = columnCounter;
         this.partCounter = partCounter;
         this.columnType = columnType;
         this.blockType = blockType;
@@ -235,5 +248,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.dstKFd = dstKFd;
         this.dstVFd = dstVFd;
         this.dstIndexOffset = dstIndexOffset;
+        this.isIndexed = isIndexed;
     }
 }

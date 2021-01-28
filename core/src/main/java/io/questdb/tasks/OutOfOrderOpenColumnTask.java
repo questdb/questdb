@@ -32,15 +32,17 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closeable {
     private final Path path = new Path();
     private FilesFacade ff;
+    private AtomicInteger columnCounter;
     private long txn;
     private int openColumnMode;
     private CharSequence columnName;
     private int columnType;
-    private boolean isColumnIndexed;
+    private boolean isIndexed;
     private long timestampFd;
     private long timestampMergeIndexAddr;
     private AppendMemory fixColumn;
@@ -176,17 +178,22 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return varColumn;
     }
 
-    public boolean isColumnIndexed() {
-        return isColumnIndexed;
+    public boolean isIndexed() {
+        return isIndexed;
+    }
+
+    public AtomicInteger getColumnCounter() {
+        return columnCounter;
     }
 
     public void of(
             FilesFacade ff,
+            AtomicInteger columnCounter,
             long txn,
             int openColumnMode,
             CharSequence columnName,
             int columnType,
-            boolean isColumnIndexed,
+            boolean isIndexed,
             long timestampFd,
             long timestampMergeIndexAddr,
             AppendMemory fixColumn,
@@ -212,11 +219,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
     ) {
         // todo: copy path
         this.ff = ff;
+        this.columnCounter = columnCounter;
         this.txn = txn;
         this.openColumnMode = openColumnMode;
         this.columnName = columnName;
         this.columnType = columnType;
-        this.isColumnIndexed = isColumnIndexed;
+        this.isIndexed = isIndexed;
         this.timestampFd = timestampFd;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
         this.fixColumn = fixColumn;
