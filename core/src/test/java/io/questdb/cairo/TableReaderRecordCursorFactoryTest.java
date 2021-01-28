@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.QueryConstantsImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -114,8 +113,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                                     new BindVariableServiceImpl(engine.getConfiguration()),
                                     null,
                                     -1,
-                                    null,
-                                    new QueryConstantsImpl(engine.getConfiguration().getMicrosecondClock())
+                                    null
                             );
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final Record record = cursor.getRecord();

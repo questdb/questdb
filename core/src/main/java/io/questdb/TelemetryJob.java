@@ -54,7 +54,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final CairoConfiguration configuration;
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
-    private final QueryConstantsImpl queryConstants;
     private boolean enabled;
     private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
@@ -70,11 +69,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         this.enabled = configuration.getTelemetryConfiguration().getEnabled();
         this.queue = engine.getTelemetryQueue();
         this.subSeq = engine.getTelemetrySubSequence();
-        this.queryConstants = new QueryConstantsImpl(clock);
 
         try (final SqlCompiler compiler = new SqlCompiler(engine, engine.getMessageBus(), functionFactoryCache)) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, engine.getMessageBus());
-            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, this.queryConstants);
+            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
 
             try (final Path path = new Path()) {
                 if (getTableStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -114,7 +112,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 return;
             }
 
-            queryConstants.clear();
             final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
 
             try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {

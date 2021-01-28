@@ -67,7 +67,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final MillisecondClock clock;
     private final int doubleScale;
     private final HttpSqlExecutionInterruptor interruptor;
-    private final MicrosecondClock microClock;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -92,7 +91,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
         this.doubleScale = configuration.getDoubleScale();
         this.interruptor = new HttpSqlExecutionInterruptor(configuration.getInterruptorConfiguration());
-        this.microClock = engine.getConfiguration().getMicrosecondClock();
     }
 
     @Override
@@ -108,7 +106,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
             state.setQueryCacheable(true);
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()), state.getQueryConstants());
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()));
             if (state.recordCursorFactory == null) {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
@@ -159,7 +157,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new TextQueryProcessorState(context, microClock));
+            LV.set(context, state = new TextQueryProcessorState(context));
         }
         // new request clears random
         state.rnd = null;
@@ -182,7 +180,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         // copy random during query resume
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), interruptor.of(context.getFd()), state.getQueryConstants());
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), interruptor.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();

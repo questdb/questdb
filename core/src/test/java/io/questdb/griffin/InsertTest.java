@@ -201,8 +201,7 @@ public class InsertTest extends AbstractGriffinTest {
                             bindVariableService,
                             null,
                             -1,
-                            null,
-                            queryConstants);
+                            null);
 
             bindVariableService.setDouble("bal", 56.4);
 

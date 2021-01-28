@@ -117,7 +117,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final IntList syncActions = new IntList(4);
-    private final QueryConstantsImpl queryConstants;
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
@@ -190,7 +189,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         );
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
-        this.queryConstants = new QueryConstantsImpl(engine.getConfiguration().getMicrosecondClock());
     }
 
     @Override
@@ -275,7 +273,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         namedStatementMap.clear();
         bindVariableService.clear();
         bindVariableTypes.clear();
-        queryConstants.clear();
     }
 
     public void clearWriters() {
@@ -289,7 +286,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public void close() {
         clear();
         this.fd = -1;
-        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null, null);
+        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
         Misc.free(path);
@@ -1047,7 +1044,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void doAuthentication(long msgLo, long msgLimit) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
-            sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, null, queryConstants);
+            sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, null);
             authenticationRequired = false;
             prepareLoginOk();
             sendAndReset();
@@ -1638,7 +1635,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void processExecute() throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        queryConstants.clear();
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
             currentCursor = typesAndSelect.getFactory().getCursor(sqlExecutionContext);
@@ -1798,7 +1794,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         prepareForNewQuery();
         parseQueryText(lo, limit - 1, compiler);
 
-        queryConstants.clear();
         if (typesAndSelect != null) {
             activeSelectColumnTypes = selectColumnTypes;
             buildSelectColumnTypes();

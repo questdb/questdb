@@ -54,7 +54,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private int initialPartitionLo;
     private int initialPartitionHi;
 
-    public AbstractIntervalDataFrameCursor(@Transient RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
+    public AbstractIntervalDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
         assert timestampIndex > -1;
         this.intervalsModel = intervals;
         this.timestampIndex = timestampIndex;

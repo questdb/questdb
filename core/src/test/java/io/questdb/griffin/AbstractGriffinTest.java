@@ -39,7 +39,6 @@ import org.junit.*;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
-    protected static final QueryConstantsImpl queryConstants = new QueryConstantsImpl(configuration.getMicrosecondClock());
     private static final LongList rows = new LongList();
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
@@ -103,8 +102,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         bindVariableService,
                         null,
                         -1,
-                        null,
-                        queryConstants);
+                        null);
         bindVariableService.clear();
     }
 
@@ -119,7 +117,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         engine.resetTableId();
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        queryConstants.clear();
     }
 
     protected static void assertCursor(

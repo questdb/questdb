@@ -105,8 +105,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         bindVariableService,
                         null,
                         -1,
-                        dummyInterruptor,
-                        queryConstants);
+                        dummyInterruptor);
         memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine);
     }
 
@@ -516,8 +515,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         bindVariableService,
                         null,
                         -1,
-                        null,
-                        queryConstants);
+                        null);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -637,8 +635,7 @@ public class SecurityTest extends AbstractGriffinTest {
                         bindVariableService,
                         null,
                         -1,
-                        null,
-                        queryConstants);
+                        null);
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +

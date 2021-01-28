@@ -124,7 +124,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         // do not set random for new request to avoid copying random from previous request into next one
         // the only time we need to copy random from state is when we resume request execution
-        sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()), state.getQueryConstants());
+        sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), interruptor.of(context.getFd()));
         state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
         final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
         try {
@@ -193,7 +193,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context
-            sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd(), context.getFd(), interruptor.of(context.getFd()), state.getQueryConstants());
+            sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd(), context.getFd(), interruptor.of(context.getFd()));
             doResumeSend(state, context);
         }
     }

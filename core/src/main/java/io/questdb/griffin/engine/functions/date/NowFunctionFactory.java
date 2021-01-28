@@ -46,7 +46,7 @@ public class NowFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends TimestampFunction implements Function {
-        private long now;
+        private SqlExecutionContext context;
 
         public Func(int position) {
             super(position);
@@ -54,12 +54,13 @@ public class NowFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            return now;
+            return context.getNow();
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.now = executionContext.getQueryConstants().getNowTimestamp();
+            executionContext.initNow();
+            context = executionContext;
         }
 
         @Override

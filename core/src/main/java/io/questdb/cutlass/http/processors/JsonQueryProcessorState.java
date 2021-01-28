@@ -35,8 +35,6 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.QueryConstants;
-import io.questdb.griffin.QueryConstantsImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -76,7 +74,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final NanosecondClock nanosecondClock;
     private final int floatScale;
     private final int doubleScale;
-    private final QueryConstantsImpl queryConstants;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -147,7 +144,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
-        this.queryConstants = new QueryConstantsImpl(microsecondClock);
     }
 
     @Override
@@ -170,7 +166,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         columnIndex = 0;
         countRows = false;
-        this.queryConstants.clear();
     }
 
     @Override
@@ -205,10 +200,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public CharSequence getQuery() {
         return query;
-    }
-
-    public QueryConstants getQueryConstants() {
-        return queryConstants;
     }
 
     public Rnd getRnd() {

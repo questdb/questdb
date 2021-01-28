@@ -37,12 +37,8 @@ import java.io.IOException;
 
 public class DynamicIntervalModel implements IntervalModel, Mutable {
     private final Interval tempInterval = new Interval();
-    private StaticIntervalsModel staticIntervalsModel;
+    private final StaticIntervalsModel staticIntervalsModel = new StaticIntervalsModel();
     private CompactDynamicIntervalModel dynamicModel = new CompactDynamicIntervalModel();
-
-    public DynamicIntervalModel(StaticIntervalsModel staticIntervalsModel) {
-        this.staticIntervalsModel = staticIntervalsModel;
-    }
 
     @Override
     public void clear() {

@@ -44,7 +44,7 @@ public class IntrinsicModel implements Mutable {
     public ExpressionNode filter;
     public int intrinsicValue = UNDEFINED;
     public QueryModel keySubQuery;
-    private final DynamicIntervalModel intervalModel = new DynamicIntervalModel(new StaticIntervalsModel());
+    private final DynamicIntervalModel intervalModel = new DynamicIntervalModel();
 
     @Override
     public void clear() {

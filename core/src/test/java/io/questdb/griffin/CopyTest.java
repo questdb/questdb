@@ -40,8 +40,6 @@ import java.io.IOException;
 public class CopyTest extends AbstractCairoTest {
 
     protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
-    protected static final QueryConstantsImpl queryConstants = new QueryConstantsImpl(configuration.getMicrosecondClock());
-
     protected static SqlExecutionContext sqlExecutionContext;
 
     private static final LongList rows = new LongList();
@@ -102,7 +100,7 @@ public class CopyTest extends AbstractCairoTest {
                 .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
-                        null, -1, null, queryConstants);
+                        null, -1, null);
         bindVariableService.clear();
     }
 

@@ -74,5 +74,7 @@ public interface SqlExecutionContext {
             boolean baseSupportsRandomAccess
     );
 
-    QueryConstants getQueryConstants();
+    void initNow();
+
+    long getNow();
 }

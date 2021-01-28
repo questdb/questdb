@@ -29,12 +29,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.griffin.QueryConstants;
-import io.questdb.griffin.QueryConstantsImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
@@ -55,11 +52,9 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     int queryState = JsonQueryProcessorState.QUERY_PREFIX;
     int columnIndex;
     private boolean queryCacheable = false;
-    private final QueryConstantsImpl queryConstants;
 
-    public TextQueryProcessorState(HttpConnectionContext httpConnectionContext, MicrosecondClock microsecondClock) {
+    public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
-        this.queryConstants  = new QueryConstantsImpl(microsecondClock);
     }
 
     @Override
@@ -80,7 +75,6 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         queryState = JsonQueryProcessorState.QUERY_PREFIX;
         columnIndex = 0;
         countRows = false;
-        queryConstants.clear();
     }
 
     @Override
@@ -91,10 +85,6 @@ public class TextQueryProcessorState implements Mutable, Closeable {
 
     public long getFd() {
         return httpConnectionContext.getFd();
-    }
-
-    public QueryConstants getQueryConstants() {
-        return queryConstants;
     }
 
     void setQueryCacheable(boolean queryCacheable) {
