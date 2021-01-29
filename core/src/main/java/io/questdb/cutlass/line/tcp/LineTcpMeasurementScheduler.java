@@ -27,8 +27,12 @@ package io.questdb.cutlass.line.tcp;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.LockSupport;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -82,7 +86,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final CairoConfiguration cairoConfiguration;
     private final MillisecondClock milliClock;
     private final RingQueue<LineTcpMeasurementEvent> queue;
-    private final ReentrantLock tableUpdateDetailsLock = new ReentrantLock(false);
+    private final Lock tableUpdateDetailsLock = new SimpleLock();
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsByTableName;
     private final CharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsByTableName;
     private final int[] loadByThread;
@@ -1010,5 +1014,42 @@ class LineTcpMeasurementScheduler implements Closeable {
             this.protoParser = protoParser;
             return this;
         }
+    }
+
+    private static class SimpleLock implements Lock {
+        private final AtomicBoolean locked = new AtomicBoolean();
+
+        @Override
+        public void lock() {
+            while (!locked.compareAndSet(false, true)) {
+                LockSupport.parkNanos(10);
+            }
+        }
+
+        @Override
+        public void lockInterruptibly() throws InterruptedException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean tryLock() {
+            return locked.compareAndSet(false, true);
+        }
+
+        @Override
+        public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void unlock() {
+            locked.set(false);
+        }
+
+        @Override
+        public Condition newCondition() {
+            throw new UnsupportedOperationException();
+        }
+
     }
 }

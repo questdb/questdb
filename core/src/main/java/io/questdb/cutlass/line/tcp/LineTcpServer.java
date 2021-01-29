@@ -86,11 +86,11 @@ public class LineTcpServer implements Closeable {
                     while (busyContexts.size() > 0) {
                         LineTcpConnectionContext busyContext = busyContexts.getQuick(0);
                         if (handleIO(busyContext)) {
-                            busy = true;
                             break;
                         }
                         LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();
                         busyContexts.remove(0);
+                        busy = true;
                     }
 
                     if (dispatcher.processIOQueue(onRequest)) {
