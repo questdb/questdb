@@ -305,6 +305,19 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'e';
     }
 
+    public static boolean isDateKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'd'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i) | 32) == 'e'
+;
+    }
+
     public static boolean isDatabaseKeyword(CharSequence tok) {
         if (tok.length() != 8) {
             return false;

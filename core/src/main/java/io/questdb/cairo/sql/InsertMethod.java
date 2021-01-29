@@ -36,7 +36,7 @@ public interface InsertMethod extends Closeable {
 
     void rollback();
 
-    TableWriter getWriter();
+    TableWriter popWriter();
 
     @Override
     void close();

@@ -35,39 +35,27 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.millitime.DateFormatCompiler;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 
-public class ToDateFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
-
+public class ToPgDateFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_date(Ss)";
+        return "to_pg_date(S)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function arg = args.getQuick(0);
-        final CharSequence pattern = args.getQuick(1).getStr(null);
-        if (pattern == null) {
-            throw SqlException.$(args.getQuick(1).getPosition(), "pattern is required");
-        }
-        return new ToDateFunction(position, arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+        return new ToPgDateFunction(position, arg);
     }
 
-    private static final class ToDateFunction extends DateFunction implements UnaryFunction {
+    public static final class ToPgDateFunction extends DateFunction implements UnaryFunction {
 
         private final Function arg;
-        private final DateFormat dateFormat;
-        private final DateLocale locale;
 
-        public ToDateFunction(int position, Function arg, DateFormat dateFormat, DateLocale locale) {
+        public ToPgDateFunction(int position, Function arg) {
             super(position);
             this.arg = arg;
-            this.dateFormat = dateFormat;
-            this.locale = locale;
         }
 
         @Override
@@ -80,7 +68,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
             CharSequence value = arg.getStr(rec);
             try {
                 if (value != null) {
-                    return dateFormat.parse(value, locale);
+                    return DateFormatUtils.PG_DATE_FORMAT.parse(value, DateFormatUtils.enLocale);
                 }
             } catch (NumericException ignore) {
             }
