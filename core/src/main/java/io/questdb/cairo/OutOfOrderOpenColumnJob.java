@@ -304,6 +304,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         long srcOooVarAddr = 0;
         long srcOooVarSize = 0;
 
+        // todo: cache
+        final AtomicInteger partCounter = new AtomicInteger();
+        int partCount = 0;
 
         final AppendMemory mem2 = task.getFixColumn();
         switch (columnType) {
@@ -350,9 +353,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 switch (prefixType) {
                     case OO_BLOCK_OO:
                         dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                        partCount++;
                         break;
                     case OO_BLOCK_DATA:
                         dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr, srcDataFixSize, srcDataVarSize);
+                        partCount++;
                         break;
                     default:
                         break;
@@ -370,6 +375,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     dstFixAppendOffset2 = dstFixAppendOffset1;
                     dstVarAppendOffset2 = dstVarAppendOffset1;
                 }
+
                 break;
             default:
                 srcDataFixFd = -mem2.getFd();
@@ -402,7 +408,20 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     BitmapIndexUtils.valueFileName(path.trimTo(pDirNameLen), columnName);
                     dstVFd = openReadWriteOrFail(ff, path);
                 }
+
+                if (prefixType != OO_BLOCK_NONE) {
+                    partCount++;
+                }
+
                 break;
+        }
+
+        if (mergeType != OO_BLOCK_NONE) {
+            partCount++;
+        }
+
+        if (suffixType != OO_BLOCK_NONE) {
+            partCount++;
         }
 
         publishMultCopyTasks(
@@ -446,7 +465,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVFd,
                 isIndexed
         );
-
     }
 
     private void oooOpenMidPartitionForAppend(OutOfOrderOpenColumnTask task) {
@@ -457,7 +475,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final FilesFacade ff = task.getFf();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
-        final long srcOooMax = task.getSrcOooMax();
         final long srcDataMax = task.getSrcDataMax();
         final long timestampFd = task.getTimestampFd();
         final AtomicInteger columnCounter = task.getColumnCounter();
@@ -578,7 +595,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
-        final long srcOooMax = task.getSrcOooMax();
         final long srcDataMax = task.getSrcDataMax();
         final int plen = path.length();
         final int columnType = task.getColumnType();

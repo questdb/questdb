@@ -52,7 +52,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
     private long srcDataMax;
     private long srcOooLo;
     private long srcOooHi;
-    private long srcOooMax;
     private int prefixType;
     private long prefixLo;
     private long prefixHi;
@@ -146,10 +145,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return srcOooLo;
     }
 
-    public long getSrcOooMax() {
-        return srcOooMax;
-    }
-
     public long getSuffixHi() {
         return suffixHi;
     }
@@ -203,7 +198,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
             CharSequence path,
             long srcOooLo,
             long srcOooHi,
-            long srcOooMax,
             long srcDataMax,
             int prefixType,
             long prefixLo,
@@ -233,7 +227,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         this.oooVarColumn = oooVarColumn;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
-        this.srcOooMax = srcOooMax;
         this.srcDataMax = srcDataMax;
         this.prefixType = prefixType;
         this.prefixLo = prefixLo;
