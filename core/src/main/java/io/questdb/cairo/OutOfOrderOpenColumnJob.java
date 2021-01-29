@@ -110,38 +110,19 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         return true;
     }
 
-    private long getOutOfOrderVarColumnSize(
-            ContiguousVirtualMemory oooFixColumn,
-            ContiguousVirtualMemory oooVarColumn,
-            long srcOooLo,
-            long srcOooHi,
-            long srcOooMax
-    ) {
-        // todo: duplicate logic
-        // todo: fix & var columns are reversed, we need to normalize this
-        final long lo = oooVarColumn.getLong(srcOooLo * Long.BYTES);
-        final long hi;
-        if (srcOooHi == srcOooMax - 1) {
-            hi = oooFixColumn.getAppendOffset();
-        } else {
-            hi = oooVarColumn.getLong((srcOooHi + 1) * Long.BYTES);
-        }
-        return (hi - lo);
-    }
-
     private long getVarColumnLength(
-            long indexLo,
-            long indexHi,
-            long srcFixed,
-            long srcFixedSize,
+            long srcLo,
+            long srcHi,
+            long srcFixAddr,
+            long srcFixSize,
             long srcVarSize
     ) {
-        final long lo = Unsafe.getUnsafe().getLong(srcFixed + indexLo * Long.BYTES);
+        final long lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
         final long hi;
-        if (indexHi + 1 == srcFixedSize / Long.BYTES) {
+        if (srcHi + 1 == srcFixSize / Long.BYTES) {
             hi = srcVarSize;
         } else {
-            hi = Unsafe.getUnsafe().getLong(srcFixed + (indexHi + 1) * Long.BYTES);
+            hi = Unsafe.getUnsafe().getLong(srcFixAddr + (srcHi + 1) * Long.BYTES);
         }
         return hi - lo;
     }
@@ -178,7 +159,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final FilesFacade ff = task.getFf();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
-        final long srcOooMax = task.getSrcOooMax();
         final Path path = task.getPath();
         final AtomicInteger columnCounter = task.getColumnCounter();
         final boolean isIndexed = task.isIndexed();
@@ -186,6 +166,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
         // todo: cache these
         final AtomicInteger partCounter = new AtomicInteger(1);
+
         final long srcOooFixAddr = task.getOooFixColumn().addressOf(0);
         final long srcOooFixSize = task.getOooFixColumn().getAppendOffset();
         long srcOooVarAddr = 0;
@@ -194,12 +175,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         long dstFixAddr;
         long dstFixOffset;
         long dstFixSize;
-
         long dstVarFd = 0;
         long dstVarSize = 0;
         long dstVarAddr = 0;
         long dstVarOffset = 0;
-
         long dstKFd = 0;
         long dstVFd = 0;
         long dstIndexOffset = 0;
@@ -209,24 +188,20 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.STRING:
                 final AppendMemory mem2 = task.getVarColumn();
                 final AppendMemory mem1 = task.getFixColumn();
+                srcOooVarAddr = task.getOooVarColumn().addressOf(0);
+                srcOooVarSize = task.getOooVarColumn().getAppendOffset();
+
                 dstFixOffset = mem2.getAppendOffset();
                 dstFixFd = -mem2.getFd();
                 dstFixSize = (srcOooHi - srcOooLo + 1) * Long.BYTES + dstFixOffset;
                 truncateToSizeOrFail(ff, null, -dstFixFd, dstFixSize);
                 dstFixAddr = mapReadWriteOrFail(ff, null, -dstFixFd, dstFixSize);
-                dstVarOffset = mem1.getAppendOffset();
+
                 dstVarFd = -mem1.getFd();
-                dstVarSize = getOutOfOrderVarColumnSize(
-                        task.getOooFixColumn(),
-                        task.getOooVarColumn(),
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax
-                ) + dstVarOffset;
+                dstVarOffset = mem1.getAppendOffset();
+                dstVarSize = dstVarOffset + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 truncateToSizeOrFail(ff, null, -dstVarFd, dstVarSize);
                 dstVarAddr = mapReadWriteOrFail(ff, null, -dstVarFd, dstVarSize);
-                srcOooVarAddr = task.getOooVarColumn().addressOf(0);
-                srcOooVarSize = task.getOooVarColumn().getAppendOffset();
                 break;
             default:
                 long oooSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(columnType);
@@ -282,43 +257,72 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     }
 
     private void oooOpenLastPartitionForMerge(OutOfOrderOpenColumnTask task) {
+        final AtomicInteger columnCounter = task.getColumnCounter();
         final Path path = task.getPath();
-        final long indexLo = task.getSrcOooLo();
-        final long indexHi = task.getSrcOooHi();
-        final long indexMax = task.getSrcOooMax();
+        final long srcOooLo = task.getSrcOooLo();
+        final long srcOooHi = task.getSrcOooHi();
+        final int mergeType = task.getMergeType();
         final long mergeOOOHi = task.getMergeOOOHi();
         final long mergeOOOLo = task.getMergeOOOLo();
         final long mergeDataHi = task.getMergeDataHi();
         final long mergeDataLo = task.getMergeDataLo();
-        final long dataIndexMax = task.getSrcDataMax();
+        final long srcDataMax = task.getSrcDataMax();
         final int prefixType = task.getPrefixType();
         final long prefixLo = task.getPrefixLo();
         final long prefixHi = task.getPrefixHi();
-
+        final int suffixType = task.getSuffixType();
+        final long suffixLo = task.getSuffixLo();
+        final long suffixHi = task.getSuffixHi();
         final int columnType = task.getColumnType();
-        final boolean isColumnIndexed = task.isIndexed();
+        final boolean isIndexed = task.isIndexed();
         final CharSequence columnName = task.getColumnName();
         final FilesFacade ff = task.getFf();
-
+        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final long srcOooFixAddr = task.getOooFixColumn().addressOf(0);
+        final long srcOooFixSize = task.getOooFixColumn().getAppendOffset();
         final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         final int plen = path.length();
+
+        long srcDataFixFd;
+        long srcDataFixAddr;
+        long srcDataFixSize;
+        long srcDataVarFd = 0;
+        long srcDataVarSize = 0;
+        long srcDataVarAddr = 0;
+        long dstFixFd;
+        long dstFixSize;
+        long dstFixAddr;
+        long dstVarFd = 0;
+        long dstVarSize = 0;
+        long dstVarAddr = 0;
+        long dstFixAppendOffset1;
+        long dstFixAppendOffset2;
+        long dstVarAppendOffset1 = 0;
+        long dstVarAppendOffset2 = 0;
+        long dstKFd = 0;
+        long dstVFd = 0;
+        long srcOooVarAddr = 0;
+        long srcOooVarSize = 0;
+
 
         final AppendMemory mem2 = task.getFixColumn();
         switch (columnType) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
+                srcOooVarAddr = task.getOooVarColumn().addressOf(0);
+                srcOooVarSize = task.getOooVarColumn().getAppendOffset();
                 // index files are opened as normal
                 final AppendMemory mem1 = task.getVarColumn();
                 iFile(path.trimTo(plen), columnName);
-                long srcFixFd = -mem1.getFd();
-                long srcFixAddr = mem1.getAppendOffset();
-                long srcFixSize = mapReadWriteOrFail(ff, path, Math.abs(srcFixFd), srcFixAddr);
+                srcDataFixFd = -mem1.getFd();
+                srcDataFixAddr = mem1.getAppendOffset();
+                srcDataFixSize = mapReadWriteOrFail(ff, path, Math.abs(srcDataFixFd), srcDataFixAddr);
 
                 // open data file now
                 dFile(path.trimTo(plen), columnName);
-                long srcVarFd = -mem2.getFd();
-                long srcVarSize = mem2.getAppendOffset();
-                long srcVarAddr = mapReadWriteOrFail(ff, path, Math.abs(srcVarFd), srcVarSize);
+                srcDataVarFd = -mem2.getFd();
+                srcDataVarSize = mem2.getAppendOffset();
+                srcDataVarAddr = mapReadWriteOrFail(ff, path, Math.abs(srcDataVarFd), srcDataVarSize);
 
                 appendTxnToPath(path.trimTo(plen), task.getTxn());
                 path.concat(columnName);
@@ -326,82 +330,53 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 path.put(FILE_SUFFIX_I).$();
                 createDirsOrFail(ff, path);
-
-                long dstFixFd = openReadWriteOrFail(ff, path);
-                long dstFixSize = (indexHi - indexLo + 1 + dataIndexMax) * Long.BYTES;
+                dstFixFd = openReadWriteOrFail(ff, path);
+                dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax) * Long.BYTES;
                 truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
-                long dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
 
                 path.trimTo(pColNameLen);
                 path.put(FILE_SUFFIX_D).$();
                 createDirsOrFail(ff, path);
-                long dstVarFd = openReadWriteOrFail(ff, path);
-                long dstVarSize = srcVarSize + getOutOfOrderVarColumnSize(
-                        task.getOooFixColumn(),
-                        task.getOooVarColumn(),
-                        indexLo,
-                        indexHi,
-                        indexMax
-                );
+                dstVarFd = openReadWriteOrFail(ff, path);
+                dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
-                long dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
+                dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
 
                 // append offset is 0
                 //MergeStruct.setDestAppendOffsetFromOffset0(mergeStruct, varColumnStructOffset, 0L);
 
                 // configure offsets
-                long fixOffset1;
-                final ContiguousVirtualMemory oooVarColumn = task.getOooVarColumn();
-                final ContiguousVirtualMemory oooFixColumn = task.getOooFixColumn();
-                final long varOffset1;
                 switch (prefixType) {
                     case OO_BLOCK_OO:
-                        varOffset1 = getVarColumnLength(
-                                prefixLo,
-                                prefixHi,
-                                oooVarColumn.addressOf(0),
-                                oooVarColumn.getAppendOffset(),
-                                oooFixColumn.getAppendOffset()
-
-                        );
+                        dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                         break;
                     case OO_BLOCK_DATA:
-                        varOffset1 = getVarColumnLength(prefixLo, prefixHi, srcFixAddr, srcFixSize, srcVarSize);
+                        dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr, srcDataFixSize, srcDataVarSize);
                         break;
                     default:
-                        varOffset1 = 0;
                         break;
                 }
 
-                fixOffset1 = (prefixHi - prefixLo + 1) * Long.BYTES;
+                dstFixAppendOffset1 = (prefixHi - prefixLo + 1) * Long.BYTES;
 
                 // offset 2
-                final long fixOffset2;
-                final long varOffset2;
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
-                    long oooLen = getVarColumnLength(
-                            mergeOOOLo,
-                            mergeOOOHi,
-                            oooVarColumn.addressOf(0),
-                            oooVarColumn.getAppendOffset(),
-                            oooFixColumn.getAppendOffset()
-                    );
-
-                    long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcFixAddr, srcFixSize, srcVarSize);
-
-                    fixOffset2 = fixOffset1 + (mergeLen * Long.BYTES);
-                    varOffset2 = varOffset1 + oooLen + dataLen;
+                    long oooLen = getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                    long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr, srcDataFixSize, srcDataVarSize);
+                    dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen * Long.BYTES);
+                    dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
                 } else {
-                    fixOffset2 = fixOffset1;
-                    varOffset2 = varOffset1;
+                    dstFixAppendOffset2 = dstFixAppendOffset1;
+                    dstVarAppendOffset2 = dstVarAppendOffset1;
                 }
                 break;
             default:
-                long srcFd = -mem2.getFd();
+                srcDataFixFd = -mem2.getFd();
                 final int shl = ColumnType.pow2SizeOf(columnType);
                 dFile(path.trimTo(plen), columnName);
-                long srcSize = mem2.getAppendOffset();
-                long srcAddr = mapReadWriteOrFail(ff, path, Math.abs(srcFd), srcSize);
+                srcDataFixSize = mem2.getAppendOffset();
+                srcDataFixAddr = mapReadWriteOrFail(ff, path, -srcDataFixFd, srcDataFixSize);
 
                 appendTxnToPath(path.trimTo(plen), task.getTxn());
                 final int pDirNameLen = path.length();
@@ -409,31 +384,69 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 path.concat(columnName).put(FILE_SUFFIX_D).$();
                 createDirsOrFail(ff, path);
 
-                long dstFd = openReadWriteOrFail(ff, path);
-                long dstSize = ((indexHi - indexLo + 1) + dataIndexMax) << shl;
-                truncateToSizeOrFail(ff, path, Math.abs(dstFd), dstSize);
-                long dstAddr = mapReadWriteOrFail(ff, path, Math.abs(dstFd), dstSize);
+                dstFixFd = openReadWriteOrFail(ff, path);
+                dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax) << shl;
+                truncateToSizeOrFail(ff, path, Math.abs(dstFixFd), dstFixSize);
+                dstFixAddr = mapReadWriteOrFail(ff, path, Math.abs(dstFixFd), dstFixSize);
                 // configure offsets for fixed columns
-                long offset0 = 0;
-                long offset1 = (prefixHi - prefixLo + 1) << shl;
-                long offset2;
+                dstFixAppendOffset1 = (prefixHi - prefixLo + 1) << shl;
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
-                    offset2 = offset1 + (mergeLen << shl);
+                    dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen << shl);
                 } else {
-                    offset2 = offset1;
+                    dstFixAppendOffset2 = dstFixAppendOffset1;
                 }
 
-                if (isColumnIndexed) {
+                if (isIndexed) {
                     BitmapIndexUtils.keyFileName(path.trimTo(pDirNameLen), columnName);
-                    long keyFd = openReadWriteOrFail(ff, path);
+                    dstKFd = openReadWriteOrFail(ff, path);
                     BitmapIndexUtils.valueFileName(path.trimTo(pDirNameLen), columnName);
-                    long valFd = openReadWriteOrFail(ff, path);
-                    // Transfer value of destination offset to the index start offset
-                    // This is where we need to begin indexing from. The index will contain all the values before the offset
-//                    MergeStruct.setDestIndexStartOffsetFromOffset(mergeStruct, fixColumnStructOffset, MergeStruct.getDestAppendOffsetFromOffsetStage(mergeStruct, fixColumnStructOffset, MergeStruct.STAGE_PREFIX));
+                    dstVFd = openReadWriteOrFail(ff, path);
                 }
                 break;
         }
+
+        publishMultCopyTasks(
+                partCount,
+                columnCounter,
+                partCounter,
+                columnType,
+                timestampMergeIndexAddr,
+                srcDataFixFd,
+                srcDataFixAddr,
+                srcDataFixSize,
+                srcDataVarFd,
+                srcDataVarAddr,
+                srcDataVarSize,
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
+                prefixType,
+                prefixLo,
+                prefixHi,
+                mergeType,
+                mergeDataLo,
+                mergeDataHi,
+                mergeOOOLo,
+                mergeOOOHi,
+                suffixType,
+                suffixLo,
+                suffixHi,
+                dstFixFd,
+                dstFixAddr,
+                dstFixSize,
+                dstVarFd,
+                dstVarAddr,
+                dstVarSize,
+                dstFixAppendOffset1,
+                dstFixAppendOffset2,
+                dstVarAppendOffset1,
+                dstVarAppendOffset2,
+                dstKFd,
+                dstVFd,
+                isIndexed
+        );
+
     }
 
     private void oooOpenMidPartitionForAppend(OutOfOrderOpenColumnTask task) {
@@ -450,6 +463,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final AtomicInteger columnCounter = task.getColumnCounter();
         final boolean isIndexed = task.isIndexed();
 
+        long srcOooFixAddr = task.getOooFixColumn().addressOf(0);
+        long srcOooFixSize = task.getOooFixColumn().getAppendOffset();
+        long srcOooVarAddr = 0;
+        long srcOooVarSize = 0;
         long dstKFd = 0;
         long dstVFd = 0;
         long dstIndexOffset = 0;
@@ -457,7 +474,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         long dstFixSize;
         long dstFixAddr;
         long dstFixOffset;
-
         long dstVarFd = 0;
         long dstVarAddr = 0;
         long dstVarSize = 0;
@@ -468,6 +484,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         switch (columnType) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
+
+                srcOooVarAddr = task.getOooVarColumn().addressOf(0);
+                srcOooVarSize = task.getOooVarColumn().getAppendOffset();
+
                 // index files are opened as normal
                 iFile(path.trimTo(plen), columnName);
                 dstFixFd = openReadWriteOrFail(ff, path);
@@ -485,13 +505,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         dstVarFd,
                         Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES)
                 );
-                dstVarSize = getOutOfOrderVarColumnSize(
-                        task.getOooFixColumn(),
-                        task.getOooVarColumn(),
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax
-                ) + dstVarOffset;
+                dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
                 dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
                 break;
@@ -534,10 +548,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 srcOooLo,
                 srcOooHi,
-                task.getOooFixColumn().addressOf(0),
-                task.getOooFixColumn().getAppendOffset(),
-                task.getOooVarColumn().addressOf(0),
-                task.getOooVarColumn().getAppendOffset(),
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
                 dstFixFd,
@@ -592,6 +606,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         long srcDataVarFd = 0;
         long srcDataVarAddr = 0;
         long srcDataVarSize = 0;
+
+        final long srcOooFixAddr = oooFixColumn.addressOf(0);
+        final long srcOooFixSize = oooFixColumn.getAppendOffset();
+        long srcOooVarAddr = 0;
+        long srcOooVarSize = 0;
         long dstFixFd;
         long dstFixSize;
         long dstFixAddr;
@@ -609,6 +628,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         switch (columnType) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
+                srcOooVarAddr = oooVarColumn.addressOf(0);
+                srcOooVarSize = oooVarColumn.getAppendOffset();
                 iFile(path.trimTo(plen), task.getColumnName());
                 srcDataFixFd = openReadWriteOrFail(ff, path);
                 srcDataFixSize = srcDataMax * Long.BYTES;
@@ -634,12 +655,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 appendTxnToPath(path.trimTo(plen), txn);
                 oooSetPathAndEnsureDir(ff, path, columnName, FILE_SUFFIX_D);
-                dstVarSize = srcDataVarSize + getOutOfOrderVarColumnSize(
-                        task.getOooFixColumn(),
-                        task.getOooVarColumn(),
-                        srcOooLo, srcOooHi,
-                        srcOooMax
-                );
+                dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 dstVarFd = openReadWriteOrFail(ff, path);
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
                 dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
@@ -647,14 +663,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 // configure offsets
                 switch (prefixType) {
                     case OO_BLOCK_OO:
-                        dstVarAppendOffset1 = getVarColumnLength(
-                                prefixLo,
-                                prefixHi,
-                                oooVarColumn.addressOf(0),
-                                oooVarColumn.getAppendOffset(),
-                                oooFixColumn.getAppendOffset()
-
-                        );
+                        dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                         partCount++;
                         break;
                     case OO_BLOCK_DATA:
@@ -672,15 +681,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstFixAppendOffset2 = dstFixAppendOffset1;
                 // offset 2
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
-                    long oooLen = getVarColumnLength(
-                            mergeOOOLo,
-                            mergeOOOHi,
-                            oooVarColumn.addressOf(0),
-                            oooVarColumn.getAppendOffset(),
-                            oooFixColumn.getAppendOffset()
-                    );
-
-                    long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr, srcDataFixSize, srcDataVarSize);
+                    final long oooLen = getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                    final long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr, srcDataFixSize, srcDataVarSize);
                     dstVarAppendOffset2 += oooLen + dataLen;
                     dstFixAppendOffset2 += mergeLen * Long.BYTES;
                     partCount++;
@@ -746,275 +748,53 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 break;
         }
 
-        partCounter.set(partCount);
-
-        switch (prefixType) {
-            case OO_BLOCK_OO:
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        prefixType,
-                        0,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
-                        0,
-                        0,
-                        oooFixColumn.addressOf(0),
-                        oooFixColumn.getAppendOffset(),
-                        oooVarColumn.addressOf(0),
-                        oooVarColumn.getAppendOffset(),
-                        prefixLo,
-                        prefixHi,
-                        dstFixFd,
-                        dstFixAddr,
-                        0,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        0,
-                        dstVarSize,
-                        dstKFd,
-                        dstVFd,
-                        0,
-                        isIndexed
-                );
-                break;
-            case OO_BLOCK_DATA:
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        prefixType,
-                        0,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
-                        prefixLo,
-                        prefixHi,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        dstFixFd,
-                        dstFixAddr,
-                        0,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        0,
-                        dstVarSize,
-                        dstKFd,
-                        dstVFd,
-                        0,
-                        isIndexed
-                );
-                break;
-            default:
-                break;
-        }
-
-        switch (mergeType) {
-            case OO_BLOCK_OO:
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        mergeType,
-                        0,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
-                        0,
-                        0,
-                        oooFixColumn.addressOf(0),
-                        oooFixColumn.getAppendOffset(),
-                        oooVarColumn.addressOf(0),
-                        oooVarColumn.getAppendOffset(),
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        dstFixFd,
-                        dstFixAddr,
-                        dstFixAppendOffset1,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        dstVarAppendOffset1,
-                        dstVarSize,
-                        dstKFd,
-                        dstVFd,
-                        0,
-                        isIndexed
-                );
-                break;
-            case OO_BLOCK_DATA:
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        mergeType,
-                        0,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
-                        mergeDataLo,
-                        mergeDataHi,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        dstFixFd,
-                        dstFixAddr,
-                        dstFixAppendOffset1,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        dstVarAppendOffset1,
-                        dstVarSize,
-                        dstKFd,
-                        dstVFd,
-                        0,
-                        isIndexed
-                );
-                break;
-            case OO_BLOCK_MERGE:
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        mergeType,
-                        timestampMergeIndexAddr,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
-                        mergeDataLo,
-                        mergeDataHi,
-                        oooFixColumn.addressOf(0),
-                        oooFixColumn.getAppendOffset(),
-                        oooVarColumn.addressOf(0),
-                        oooVarColumn.getAppendOffset(),
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        dstFixFd,
-                        dstFixAddr,
-                        dstFixAppendOffset1,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        dstVarAppendOffset1,
-                        dstVarSize,
-                        dstKFd,
-                        dstVFd,
-                        0,
-                        isIndexed
-                );
-                break;
-            default:
-                break;
-        }
-
-        switch (suffixType) {
-            case OO_BLOCK_OO:
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        suffixType,
-                        0,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
-                        0,
-                        0,
-                        oooFixColumn.addressOf(0),
-                        oooFixColumn.getAppendOffset(),
-                        oooVarColumn.addressOf(0),
-                        oooVarColumn.getAppendOffset(),
-                        suffixLo,
-                        suffixHi,
-                        dstFixFd,
-                        dstFixAddr,
-                        dstFixAppendOffset2,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        dstVarAppendOffset2,
-                        dstVarSize,
-                        0,
-                        0,
-                        0,
-                        isIndexed
-                );
-                break;
-            case OO_BLOCK_DATA:
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        prefixType,
-                        0,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
-                        suffixLo,
-                        suffixHi,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        dstFixFd,
-                        dstFixAddr,
-                        dstFixAppendOffset2,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        dstVarAppendOffset2,
-                        dstVarSize,
-                        0,
-                        0,
-                        0,
-                        isIndexed
-                );
-                break;
-            default:
-                break;
-        }
-
+        publishMultCopyTasks(
+                partCount,
+                columnCounter,
+                partCounter,
+                columnType,
+                timestampMergeIndexAddr,
+                srcDataFixFd,
+                srcDataFixAddr,
+                srcDataFixSize,
+                srcDataVarFd,
+                srcDataVarAddr,
+                srcDataVarSize,
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
+                prefixType,
+                prefixLo,
+                prefixHi,
+                mergeType,
+                mergeDataLo,
+                mergeDataHi,
+                mergeOOOLo,
+                mergeOOOHi,
+                suffixType,
+                suffixLo,
+                suffixHi,
+                dstFixFd,
+                dstFixAddr,
+                dstFixSize,
+                dstVarFd,
+                dstVarAddr,
+                dstVarSize,
+                dstFixAppendOffset1,
+                dstFixAppendOffset2,
+                dstVarAppendOffset1,
+                dstVarAppendOffset2,
+                dstKFd,
+                dstVFd,
+                isIndexed
+        );
     }
 
     private void oooOpenNewPartitionForAppend(OutOfOrderOpenColumnTask task) {
         final int columnType = task.getColumnType();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
-        final long srcOooMax = task.getSrcOooMax();
         final Path path = task.getPath();
         final FilesFacade ff = task.getFf();
         final boolean isColumnIndexed = task.isIndexed();
@@ -1022,15 +802,19 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final AtomicInteger columnCounter = task.getColumnCounter();
         final boolean isIndexed = task.isIndexed();
         final int plen = path.length();
-        final long dstVarFd;
-        final long dstVarAddr;
-        final long dstVarSize;
         final long dstFixFd;
         final long dstFixAddr;
         final long dstFixSize;
+        long dstVarFd = 0;
+        long dstVarAddr = 0;
+        long dstVarSize = 0;
         long dstKFd = 0;
         long dstVFd = 0;
-        long vOffset = 0;
+
+        final long srcOooFixAddr = task.getOooFixColumn().addressOf(0);
+        final long srcOooFixSize = task.getOooFixColumn().getAppendOffset();
+        long srcOooVarAddr = 0;
+        long srcOooVarSize = 0;
 
         // todo: pool these
         AtomicInteger partCounter = new AtomicInteger(1);
@@ -1038,6 +822,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         switch (columnType) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
+
+                srcOooVarAddr = task.getOooVarColumn().addressOf(0);
+                srcOooVarSize = task.getOooVarColumn().getAppendOffset();
+
                 oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_I);
                 dstFixFd = openReadWriteOrFail(ff, path);
                 truncateToSizeOrFail(ff, path, dstFixFd, (srcOooHi - srcOooLo + 1) * Long.BYTES);
@@ -1046,49 +834,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_D);
                 dstVarFd = openReadWriteOrFail(ff, path);
-                dstVarSize = getOutOfOrderVarColumnSize(
-                        task.getOooFixColumn(),
-                        task.getOooVarColumn(),
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax
-                );
+                dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
                 dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
-
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        OO_BLOCK_OO,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        task.getOooFixColumn().addressOf(0),
-                        task.getOooFixColumn().getAppendOffset(),
-                        task.getOooVarColumn().addressOf(0),
-                        task.getOooVarColumn().getAppendOffset(),
-                        srcOooLo,
-                        srcOooHi,
-                        dstFixFd,
-                        dstFixAddr,
-                        0,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        0,
-                        dstVarSize,
-                        0,
-                        0,
-                        0,
-                        isIndexed
-                );
                 break;
             default:
                 oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_D);
@@ -1103,42 +851,42 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
                     dstVFd = openReadWriteOrFail(ff, path);
                 }
-                publishCopyTask(
-                        columnCounter,
-                        partCounter,
-                        columnType,
-                        OO_BLOCK_OO,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        task.getOooFixColumn().addressOf(0),
-                        task.getOooFixColumn().getAppendOffset(),
-                        0,
-                        0,
-                        srcOooLo,
-                        srcOooHi,
-                        dstFixFd,
-                        dstFixAddr,
-                        0,
-                        dstFixSize,
-                        0,
-                        0,
-                        0,
-                        0,
-                        dstKFd,
-                        dstVFd,
-                        vOffset,
-                        isIndexed
-                );
-
                 break;
         }
+
+        publishCopyTask(
+                columnCounter,
+                partCounter,
+                columnType,
+                OO_BLOCK_OO,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
+                srcOooLo,
+                srcOooHi,
+                dstFixFd,
+                dstFixAddr,
+                0,
+                dstFixSize,
+                dstVarFd,
+                dstVarAddr,
+                0,
+                dstVarSize,
+                dstKFd,
+                dstVFd,
+                0,
+                isIndexed
+        );
     }
 
     private void oooSetPathAndEnsureDir(FilesFacade ff, Path path, CharSequence columnName, CharSequence suffix) {
@@ -1241,5 +989,308 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         );
         outboundPubSeq.done(cursor);
 
+    }
+
+    private void publishMultCopyTasks(
+            int partCount,
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int columnType,
+            long timestampMergeIndexAddr,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            int prefixType,
+            long prefixLo,
+            long prefixHi,
+            int mergeType,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi,
+            int suffixType,
+            long suffixLo,
+            long suffixHi,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize,
+            long dstFixAppendOffset1,
+            long dstFixAppendOffset2,
+            long dstVarAppendOffset1,
+            long dstVarAppendOffset2,
+            long dstKFd,
+            long dstVFd,
+            boolean isIndexed
+    ) {
+        partCounter.set(partCount);
+        switch (prefixType) {
+            case OO_BLOCK_OO:
+                publishCopyTask(
+                        columnCounter,
+                        partCounter,
+                        columnType,
+                        prefixType,
+                        0,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        0,
+                        0,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        prefixLo,
+                        prefixHi,
+                        dstFixFd,
+                        dstFixAddr,
+                        0,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        0,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        0,
+                        isIndexed
+                );
+                break;
+            case OO_BLOCK_DATA:
+                publishCopyTask(
+                        columnCounter,
+                        partCounter,
+                        columnType,
+                        prefixType,
+                        0,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        prefixLo,
+                        prefixHi,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        dstFixFd,
+                        dstFixAddr,
+                        0,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        0,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        0,
+                        isIndexed
+                );
+                break;
+            default:
+                break;
+        }
+
+        switch (mergeType) {
+            case OO_BLOCK_OO:
+                publishCopyTask(
+                        columnCounter,
+                        partCounter,
+                        columnType,
+                        mergeType,
+                        0,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        0,
+                        0,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        mergeOOOLo,
+                        mergeOOOHi,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixAppendOffset1,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarAppendOffset1,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        0,
+                        isIndexed
+                );
+                break;
+            case OO_BLOCK_DATA:
+                publishCopyTask(
+                        columnCounter,
+                        partCounter,
+                        columnType,
+                        mergeType,
+                        0,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        mergeDataLo,
+                        mergeDataHi,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixAppendOffset1,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarAppendOffset1,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        0,
+                        isIndexed
+                );
+                break;
+            case OO_BLOCK_MERGE:
+                publishCopyTask(
+                        columnCounter,
+                        partCounter,
+                        columnType,
+                        mergeType,
+                        timestampMergeIndexAddr,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        mergeDataLo,
+                        mergeDataHi,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        mergeOOOLo,
+                        mergeOOOHi,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixAppendOffset1,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarAppendOffset1,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        0,
+                        isIndexed
+                );
+                break;
+            default:
+                break;
+        }
+
+        switch (suffixType) {
+            case OO_BLOCK_OO:
+                publishCopyTask(
+                        columnCounter,
+                        partCounter,
+                        columnType,
+                        suffixType,
+                        0,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        0,
+                        0,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        suffixLo,
+                        suffixHi,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixAppendOffset2,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarAppendOffset2,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        0,
+                        isIndexed
+                );
+                break;
+            case OO_BLOCK_DATA:
+                publishCopyTask(
+                        columnCounter,
+                        partCounter,
+                        columnType,
+                        prefixType,
+                        0,
+                        srcDataFixFd,
+                        srcDataFixAddr,
+                        srcDataFixSize,
+                        srcDataVarFd,
+                        srcDataVarAddr,
+                        srcDataVarSize,
+                        suffixLo,
+                        suffixHi,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixAppendOffset2,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarAppendOffset2,
+                        dstVarSize,
+                        dstKFd,
+                        dstVFd,
+                        0,
+                        isIndexed
+                );
+                break;
+            default:
+                break;
+        }
     }
 }

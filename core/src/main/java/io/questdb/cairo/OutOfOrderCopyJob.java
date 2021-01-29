@@ -148,6 +148,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
             unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
 
+            Files.close(dskVFd);
+            Files.close(dskVFd);
+
             if (columnCounter.decrementAndGet() == 0) {
                 Vect.freeMergedIndex(mergeIndexAddr);
             }
@@ -314,7 +317,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 
     private static void oooMergeCopy(
             int columnType,
-            // todo: merge index has to be freed by last column copy
             long mergeIndexAddr,
             long srcDataFixAddr,
             long srcDataVarAddr,
