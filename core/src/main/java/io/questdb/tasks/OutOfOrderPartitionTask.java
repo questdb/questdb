@@ -41,7 +41,6 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
     private long oooTimestampMax;
     private long oooIndexLo;
     private long oooIndexHi;
-    private long oooIndexMax;
     private long lastPartitionIndexMax;
     private long partitionTimestampHi;
     private long sortedTimestamps;
@@ -91,9 +90,6 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
         return oooIndexLo;
     }
 
-    public long getOooIndexMax() {
-        return oooIndexMax;
-    }
 
     public long getOooTimestampMax() {
         return oooTimestampMax;

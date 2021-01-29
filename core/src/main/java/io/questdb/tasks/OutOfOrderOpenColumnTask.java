@@ -25,7 +25,6 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.AppendMemory;
-import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.std.AbstractLockable;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -45,10 +44,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
     private boolean isIndexed;
     private long timestampFd;
     private long timestampMergeIndexAddr;
-    private AppendMemory fixColumn;
-    private AppendMemory varColumn;
-    private ContiguousVirtualMemory oooFixColumn;
-    private ContiguousVirtualMemory oooVarColumn;
+    private AppendMemory srcDataFixColumn;
+    private AppendMemory srcDataVarColumn;
+    private long srcOooFixAddr;
+    private long srcOooFixSize;
+    private long srcOooVarAddr;
+    private long srcOooVarSize;
     private long srcDataMax;
     private long srcOooLo;
     private long srcOooHi;
@@ -69,6 +70,10 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         Misc.free(path);
     }
 
+    public AtomicInteger getColumnCounter() {
+        return columnCounter;
+    }
+
     public CharSequence getColumnName() {
         return columnName;
     }
@@ -81,8 +86,8 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return ff;
     }
 
-    public AppendMemory getFixColumn() {
-        return fixColumn;
+    public AppendMemory getSrcDataFixColumn() {
+        return srcDataFixColumn;
     }
 
     public long getMergeDataHi() {
@@ -103,14 +108,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
 
     public int getMergeType() {
         return mergeType;
-    }
-
-    public ContiguousVirtualMemory getOooFixColumn() {
-        return oooFixColumn;
-    }
-
-    public ContiguousVirtualMemory getOooVarColumn() {
-        return oooVarColumn;
     }
 
     public int getOpenColumnMode() {
@@ -137,12 +134,28 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return srcDataMax;
     }
 
+    public long getSrcOooFixAddr() {
+        return srcOooFixAddr;
+    }
+
+    public long getSrcOooFixSize() {
+        return srcOooFixSize;
+    }
+
     public long getSrcOooHi() {
         return srcOooHi;
     }
 
     public long getSrcOooLo() {
         return srcOooLo;
+    }
+
+    public long getSrcOooVarAddr() {
+        return srcOooVarAddr;
+    }
+
+    public long getSrcOooVarSize() {
+        return srcOooVarSize;
     }
 
     public long getSuffixHi() {
@@ -169,16 +182,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return txn;
     }
 
-    public AppendMemory getVarColumn() {
-        return varColumn;
+    public AppendMemory getSrcDataVarColumn() {
+        return srcDataVarColumn;
     }
 
     public boolean isIndexed() {
         return isIndexed;
-    }
-
-    public AtomicInteger getColumnCounter() {
-        return columnCounter;
     }
 
     public void of(
@@ -191,10 +200,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
             boolean isIndexed,
             long timestampFd,
             long timestampMergeIndexAddr,
-            AppendMemory fixColumn,
-            AppendMemory varColumn,
-            ContiguousVirtualMemory oooFixColumn,
-            ContiguousVirtualMemory oooVarColumn,
+            AppendMemory srcDataFixColumn,
+            AppendMemory srcDataVarColumn,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
             CharSequence path,
             long srcOooLo,
             long srcOooHi,
@@ -221,10 +232,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         this.isIndexed = isIndexed;
         this.timestampFd = timestampFd;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
-        this.fixColumn = fixColumn;
-        this.varColumn = varColumn;
-        this.oooFixColumn = oooFixColumn;
-        this.oooVarColumn = oooVarColumn;
+        this.srcDataFixColumn = srcDataFixColumn;
+        this.srcDataVarColumn = srcDataVarColumn;
+        this.srcOooFixAddr = srcOooFixAddr;
+        this.srcOooFixSize = srcOooFixSize;
+        this.srcOooVarAddr = srcOooVarAddr;
+        this.srcOooVarSize = srcOooVarSize;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
         this.srcDataMax = srcDataMax;

@@ -151,7 +151,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             Files.close(dskVFd);
             Files.close(dskVFd);
 
-            if (columnCounter.decrementAndGet() == 0) {
+            if (columnCounter.decrementAndGet() == 0 && mergeIndexAddr != 0) {
                 Vect.freeMergedIndex(mergeIndexAddr);
             }
         }
