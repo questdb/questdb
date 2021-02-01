@@ -143,7 +143,7 @@ public class TimestampFormatUtils {
         return referenceYear;
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmm
+    // YYYY-MM-DDThh:mm:ss.mmmZ
     public static long parseTimestamp(CharSequence seq) throws NumericException {
         return parseTimestamp(seq, 0, seq.length());
     }

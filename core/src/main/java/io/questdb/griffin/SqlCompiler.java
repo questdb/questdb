@@ -764,7 +764,14 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         alterTableDropColumn(tableNamePosition, writer);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        alterTableDropPartition(writer);
+//                        alterTableDropOrAttachPartition(writer);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+                    }
+                } else if (SqlKeywords.isAttachKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+//                        alterTableAttachPartition(writer);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
@@ -799,7 +806,7 @@ public class SqlCompiler implements Closeable {
                     }
 
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'add' or 'drop' or 'rename' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'attach' or 'rename' expected");
                 }
             } catch (CairoException e) {
                 LOG.info().$("could not alter table [table=").$(tableName).$(", ex=").$((Sinkable) e).$();
@@ -1032,11 +1039,11 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableDropPartition(TableWriter writer) throws SqlException {
+    private void alterTableDropOrAttachPartition(TableWriter writer, boolean isDrop) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
-            alterTableDropPartitionByList(writer);
+//            alterTableDropOrAttachPartitionByList(writer, isDrop);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
@@ -1057,7 +1064,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void alterTableDropPartitionByList(TableWriter writer) throws SqlException {
+    private void alterTableDropOrAttachPartitionByList(TableWriter writer) throws SqlException {
         do {
             CharSequence tok = expectToken(lexer, "partition name");
             if (Chars.equals(tok, ',')) {
