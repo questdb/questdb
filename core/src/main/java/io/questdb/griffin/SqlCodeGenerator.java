@@ -904,7 +904,7 @@ public class SqlCodeGenerator implements Mutable {
             @NotNull IntList columnIndexes
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
-        if (intrinsicModel.hasIntervals()) {
+        if (intrinsicModel.hasIntervalFilters()) {
             dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.getIntervalModel(), timestampIndex);
         } else {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
@@ -2334,7 +2334,7 @@ public class SqlCodeGenerator implements Mutable {
                 // below code block generates index-based filter
 
                 final boolean intervalHitsOnlyOnePartition;
-                if (intrinsicModel.hasIntervals()) {
+                if (intrinsicModel.hasIntervalFilters()) {
                     RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.getIntervalModel();
                     dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intervalModel, readerTimestampIndex);
                     switch (reader.getPartitionedBy()) {
@@ -2509,7 +2509,7 @@ public class SqlCodeGenerator implements Mutable {
                 if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null) {
                     final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                     final int orderByAdviceSize = orderByAdvice.size();
-                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervals()) {
+                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {
                         // we can only deal with 'order by symbol, timestamp' at best
                         // skip this optimisation if order by is more extensive
                         final int columnIndex = myMeta.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);

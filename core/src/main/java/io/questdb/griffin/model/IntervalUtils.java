@@ -32,17 +32,116 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 public final class IntervalUtils {
+    public static final int LO_INDEX = 0;
+    public static final int HI_INDEX = 1;
+    public static final int OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX = 2;
+    public static final int PERIOD_COUNT_INDEX = 3;
+    public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
 
-    public static long getIntervalHi(LongList intervals, int pos) {
-        return intervals.getQuick((pos << 1) + 1);
+    public static void addHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
+        addHiLoInterval(lo, hi, period, periodType, periodCount, 0, operation, out);
     }
 
-    public static long getIntervalLo(LongList intervals, int pos) {
-        return intervals.getQuick(pos << 1);
+    public static void addHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, int adjustment, short operation, LongList out) {
+        out.add(lo);
+        out.add(hi);
+        out.add(Numbers.encodeLowHighInts(
+                Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
+                adjustment));
+        out.add(Numbers.encodeLowHighInts(period, periodCount));
     }
 
-    public static long parseCCPartialDate(CharSequence seq) throws NumericException {
-        return parseCCPartialDate(seq, 0, seq.length());
+    public static void addHiLoInterval(long lo, long hi, int adjustment, short operation, LongList out) {
+        addHiLoInterval(lo, hi, 0, (char) 0, 1, adjustment, operation, out);
+    }
+
+    public static void addHiLoInterval(long lo, long hi, short operation, LongList out) {
+        addHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+    }
+
+    public static void apply(LongList temp, long lo, long hi, int period, char periodType, int count) {
+        temp.add(lo);
+        temp.add(hi);
+        if (count > 1) {
+            switch (periodType) {
+                case 'y':
+                    addYearIntervals(period, count, temp);
+                    break;
+                case 'M':
+                    addMonthInterval(period, count, temp);
+                    break;
+                case 'h':
+                    addMillisInterval(period * Timestamps.HOUR_MICROS, count, temp);
+                    break;
+                case 'm':
+                    addMillisInterval(period * Timestamps.MINUTE_MICROS, count, temp);
+                    break;
+                case 's':
+                    addMillisInterval(period * Timestamps.SECOND_MICROS, count, temp);
+                    break;
+                case 'd':
+                    addMillisInterval(period * Timestamps.DAY_MICROS, count, temp);
+                    break;
+            }
+        }
+    }
+
+    public static void applyLastEncodedIntervalEx(LongList intervals) {
+        int index = intervals.size() - 4;
+        long lo = getEncodedPeriodLo(intervals, index);
+        long hi = getEncodedPeriodHi(intervals, index);
+        int period = getEncodedPeriod(intervals, index);
+        char periodType = getEncodedPeriodType(intervals, index);
+        int count = getEncodedPeriodCount(intervals, index);
+
+        intervals.truncateTo(index);
+        if (periodType == 0) {
+            intervals.extendAndSet(index + 1, hi);
+            intervals.extendAndSet(index, lo);
+            return;
+        }
+        apply(intervals, lo, hi, period, periodType, count);
+    }
+
+    public static int getEncodedAdjustment(LongList intervals, int index) {
+        return Numbers.decodeHighInt(
+                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX));
+    }
+
+    public static short getEncodedOperation(LongList intervals, int index) {
+        return Numbers.decodeLowShort(
+                Numbers.decodeLowInt(
+                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
+                )
+        );
+    }
+
+    public static int getEncodedPeriod(LongList intervals, int index) {
+        return Numbers.decodeLowInt(
+                intervals.getQuick(index + PERIOD_COUNT_INDEX)
+        );
+    }
+
+    public static int getEncodedPeriodCount(LongList intervals, int index) {
+        return Numbers.decodeHighInt(
+                intervals.getQuick(index + PERIOD_COUNT_INDEX));
+    }
+
+    public static long getEncodedPeriodHi(LongList out, int index) {
+        return out.getQuick(index + HI_INDEX);
+    }
+
+    public static long getEncodedPeriodLo(LongList out, int index) {
+        return out.getQuick(index + LO_INDEX);
+    }
+
+    public static char getEncodedPeriodType(LongList intervals, int index) {
+        int pts = Numbers.decodeHighShort(
+                Numbers.decodeLowInt(
+                        intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)
+                )
+        );
+        return (char) (pts - (int) Short.MIN_VALUE);
     }
 
     public static long parseCCPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
@@ -139,8 +238,8 @@ public final class IntervalUtils {
         return ts;
     }
 
-    public static long parseFloorPartialDate(CharSequence seq) throws NumericException {
-        return parseFloorPartialDate(seq, 0, seq.length());
+    public static long parseCCPartialDate(CharSequence seq) throws NumericException {
+        return parseCCPartialDate(seq, 0, seq.length());
     }
 
     public static long parseFloorPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
@@ -237,95 +336,104 @@ public final class IntervalUtils {
         return ts;
     }
 
+    public static long parseFloorPartialDate(CharSequence seq) throws NumericException {
+        return parseFloorPartialDate(seq, 0, seq.length());
+    }
+
+    public static void subtract(LongList intervals, int divider) {
+        IntervalUtils.invert(intervals, divider);
+        IntervalUtils.intersectInplace(intervals, divider);
+    }
+
     /**
-     * Intersects two lists of intervals and returns result list. Both lists are expected
-     * to be chronologically ordered and result list will be ordered as well.
+     * Intersects two lists of intervals compacted in one list in place.
+     * Intervals to be chronologically ordered and result list will be ordered as well.
+     * <p>
+     * Treat a as 2 lists,
+     * a: first from 0 to divider
+     * b: from divider to the end of list
      *
-     * @param a   list of intervals
-     * @param b   list of intervals
-     * @param out intersection target
+     * @param concatenatedIntervals 2 lists of intervals concatenated in 1
      */
-    static void intersect(LongList a, LongList b, LongList out) {
-        final int sizeA = a.size() / 2;
-        final int sizeB = b.size() / 2;
-        int intervalA = 0;
-        int intervalB = 0;
+    static void intersectInplace(LongList concatenatedIntervals, int dividerIndex) {
+        final int sizeA = dividerIndex / 2;
+        final int sizeB = sizeA + (concatenatedIntervals.size() - dividerIndex) / 2;
+        int aLower = 0;
 
-        while (intervalA != sizeA && intervalB != sizeB) {
+        int intervalB = sizeA;
+        int writePoint = 0;
 
-            long aLo = getIntervalLo(a, intervalA);
-            long aHi = getIntervalHi(a, intervalA);
+        int aUpperSize = sizeB;
+        int aUpper = sizeB;
 
-            long bLo = getIntervalLo(b, intervalB);
-            long bHi = getIntervalHi(b, intervalB);
+        while ((aLower < sizeA || aUpper < aUpperSize) && intervalB < sizeB) {
 
-            // a fully above b
+            int intervalA = aUpper < aUpperSize ? aUpper : aLower;
+            long aLo = concatenatedIntervals.getQuick(intervalA * 2);
+            long aHi = concatenatedIntervals.getQuick(intervalA * 2 + 1);
+
+            long bLo = concatenatedIntervals.getQuick(intervalB * 2);
+            long bHi = concatenatedIntervals.getQuick(intervalB * 2 + 1);
+
             if (aHi < bLo) {
+                // a fully above b
                 // a loses
-                intervalA++;
-            } else if (getIntervalLo(a, intervalA) > getIntervalHi(b, intervalB)) {
+                if (aUpper < aUpperSize) {
+                    aUpper++;
+                } else {
+                    aLower++;
+                }
+            } else if (aLo > bHi) {
                 // a fully below b
                 // b loses
                 intervalB++;
             } else {
-
-                append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
-
                 if (aHi < bHi) {
                     // b hanging lower than a
                     // a loses
-                    intervalA++;
+                    if (aUpper < aUpperSize) {
+                        aUpper++;
+                    } else {
+                        aLower++;
+                    }
                 } else {
                     // otherwise a lower than b
                     // a loses
                     intervalB++;
                 }
+
+                assert writePoint <= aLower || writePoint >= sizeA;
+                if (writePoint == aLower && aLower < sizeA) {
+                    // We cannot keep A position, it will be overwritten, hence intervalB++; is not possible
+                    // Copy a point to A area instead
+                    concatenatedIntervals.add(concatenatedIntervals.getQuick(writePoint * 2));
+                    concatenatedIntervals.add(concatenatedIntervals.getQuick(writePoint * 2 + 1));
+                    aUpperSize = concatenatedIntervals.size() / 2;
+                    aLower++;
+                }
+
+                writePoint = append(concatenatedIntervals, writePoint, Math.max(aLo, bLo), Math.min(aHi, bHi));
             }
         }
+
+        concatenatedIntervals.truncateTo(2 * writePoint);
     }
 
-
-    public static void apply(LongList temp, long lo, long hi, int period, char periodType, int count) {
-        append(temp, lo, hi);
-        if (count > 1) {
-            switch (periodType) {
-                case 'y':
-                    addYearIntervals(period, count, temp);
-                    break;
-                case 'M':
-                    addMonthInterval(period, count, temp);
-                    break;
-                case 'h':
-                    addMillisInterval(period * Timestamps.HOUR_MICROS, count, temp);
-                    break;
-                case 'm':
-                    addMillisInterval(period * Timestamps.MINUTE_MICROS, count, temp);
-                    break;
-                case 's':
-                    addMillisInterval(period * Timestamps.SECOND_MICROS, count, temp);
-                    break;
-                case 'd':
-                    addMillisInterval(period * Timestamps.DAY_MICROS, count, temp);
-                    break;
-            }
-        }
-    }
-
-    static void append(LongList list, long lo, long hi) {
-        int n = list.size();
-        if (n > 0) {
-            long prevHi = list.getQuick(n - 1) + 1;
+    static int append(LongList list, int writePoint, long lo, long hi) {
+        if (writePoint > 0) {
+            long prevHi = list.getQuick(2 * writePoint - 1) + 1;
             if (prevHi >= lo) {
-                list.setQuick(n - 1, hi);
-                return;
+                list.setQuick(2 * writePoint - 1, hi);
+                return writePoint;
             }
         }
 
-        list.add(lo);
-        list.add(hi);
+        list.extendAndSet(2 * writePoint + 1, hi);
+        list.extendAndSet(2 * writePoint, lo);
+        return writePoint + 1;
     }
 
-    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, Interval out) throws SqlException {
+    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, short operation, LongList out) throws SqlException {
         char type = seq.charAt(lim - 1);
         int period;
         try {
@@ -334,15 +442,18 @@ public final class IntervalUtils {
             throw SqlException.$(position, "Range not a number");
         }
         try {
-            parseInterval(seq, lo, p, out);
-            out.of(out.lo, Timestamps.addPeriod(out.hi, type, period));
+            int index = out.size();
+            parseInterval(seq, lo, p, operation, out);
+            long low = getEncodedPeriodLo(out, index);
+            long hi = getEncodedPeriodHi(out, index);
+            replaceHiLoInterval(low, Timestamps.addPeriod(hi, type, period), operation, out);
             return;
         } catch (NumericException ignore) {
             // try date instead
         }
         try {
             long loMillis = TimestampFormatUtils.tryParse(seq, lo, p);
-            out.of(loMillis, Timestamps.addPeriod(loMillis, type, period));
+            addHiLoInterval(loMillis, Timestamps.addPeriod(loMillis, type, period), operation, out);
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
@@ -352,11 +463,12 @@ public final class IntervalUtils {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
+        int writePoint = k / 2;
 
         for (int i = 0, n = count - 1; i < n; i++) {
             lo += period;
             hi += period;
-            append(out, lo, hi);
+            writePoint = append(out, writePoint, lo, hi);
         }
     }
 
@@ -364,11 +476,12 @@ public final class IntervalUtils {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
+        int writePoint = k / 2;
 
         for (int i = 0, n = count - 1; i < n; i++) {
             lo = Timestamps.addMonths(lo, period);
             hi = Timestamps.addMonths(hi, period);
-            append(out, lo, hi);
+            writePoint = append(out, writePoint, lo, hi);
         }
     }
 
@@ -376,11 +489,12 @@ public final class IntervalUtils {
         int k = out.size();
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
+        int writePoint = k / 2;
 
         for (int i = 0, n = count - 1; i < n; i++) {
             lo = Timestamps.addYear(lo, period);
             hi = Timestamps.addYear(hi, period);
-            append(out, lo, hi);
+            writePoint = append(out, writePoint, lo, hi);
         }
     }
 
@@ -413,25 +527,41 @@ public final class IntervalUtils {
      * @param intervals collection of intervals
      */
     static void invert(LongList intervals) {
+        invert(intervals, 0);
+    }
+
+    /**
+     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     *
+     * @param intervals collection of intervals
+     */
+    static void invert(LongList intervals, int startIndex) {
         long last = Long.MIN_VALUE;
         int n = intervals.size();
-        for (int i = 0; i < n; i += 2) {
+        int writeIndex = startIndex;
+        for (int i = startIndex; i < n; i += 2) {
             final long lo = intervals.getQuick(i);
             final long hi = intervals.getQuick(i + 1);
-            intervals.setQuick(i, last);
-            intervals.setQuick(i + 1, lo - 1);
+            if (lo > last) {
+                intervals.setQuick(writeIndex, last);
+                intervals.setQuick(writeIndex + 1, lo - 1);
+                writeIndex += 2;
+            }
             last = hi + 1;
         }
-        intervals.extendAndSet(n + 1, Long.MAX_VALUE);
-        intervals.extendAndSet(n, last);
+
+        // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
+        if (last != Long.MIN_VALUE) {
+            intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);
+            intervals.extendAndSet(writeIndex, last);
+            writeIndex += 2;
+        }
+
+        intervals.truncateTo(writeIndex);
     }
 
-    static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, Interval temp, LongList out) throws SqlException {
-        parseIntervalEx(seq, lo, lim, position, temp);
-        apply(out, temp.lo, temp.hi, temp.period, temp.periodType, temp.count);
-    }
-
-    static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, Interval out) throws SqlException {
+    static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+        int writeIndex = out.size();
         int[] pos = new int[3];
         int p = -1;
         for (int i = lo; i < lim; i++) {
@@ -447,7 +577,7 @@ public final class IntervalUtils {
             case -1:
                 // no semicolons, just date part, which can be interval in itself
                 try {
-                    parseInterval(seq, lo, lim, out);
+                    parseInterval(seq, lo, lim, operation, out);
                     break;
                 } catch (NumericException ignore) {
                     // this must be a date then?
@@ -455,14 +585,14 @@ public final class IntervalUtils {
 
                 try {
                     long millis = TimestampFormatUtils.tryParse(seq, lo, lim);
-                    out.of(millis, millis);
+                    addHiLoInterval(millis, millis, operation, out);
                     break;
                 } catch (NumericException e) {
                     throw SqlException.$(position, "Not a date");
                 }
             case 0:
                 // single semicolon, expect period format after date
-                parseRange(seq, lo, pos[0], lim, position, out);
+                parseRange(seq, lo, pos[0], lim, position, operation, out);
                 break;
             case 2:
                 // 2018-01-10T10:30:00.000Z;30m;2d;2
@@ -480,9 +610,12 @@ public final class IntervalUtils {
                     throw SqlException.$(position, "Count not a number");
                 }
 
-                parseRange(seq, lo, pos[0], pos[1], position, out);
+                parseRange(seq, lo, pos[0], pos[1], position, operation, out);
                 char type = seq.charAt(pos[2] - 1);
-                out.of(out.lo, out.hi, period, type, count);
+                long low = getEncodedPeriodLo(out, writeIndex);
+                long hi = getEncodedPeriodHi(out, writeIndex);
+
+                replaceHiLoInterval(low, hi, period, type, count, operation, out);
                 switch (type) {
                     case 'y':
                     case 'M':
@@ -500,7 +633,21 @@ public final class IntervalUtils {
         }
     }
 
-    static void parseInterval(CharSequence seq, int pos, int lim, Interval out) throws NumericException {
+    private static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
+        int lastIndex = out.size() - 4;
+        out.setQuick(lastIndex, lo);
+        out.setQuick(lastIndex + HI_INDEX, hi);
+        out.setQuick(lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX, Numbers.encodeLowHighInts(
+                Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
+                0));
+        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
+    }
+
+    private static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
+        replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+    }
+
+    static void parseInterval(CharSequence seq, int pos, int lim, short operation, LongList out) throws NumericException {
         if (lim - pos < 4) {
             throw NumericException.INSTANCE;
         }
@@ -531,23 +678,25 @@ public final class IntervalUtils {
                                 throw NumericException.INSTANCE;
                             } else {
                                 // seconds
-                                out.of(Timestamps.yearMicros(year, l)
+                                addHiLoInterval(Timestamps.yearMicros(year, l)
+                                                + Timestamps.monthOfYearMicros(month, l)
+                                                + (day - 1) * Timestamps.DAY_MICROS
+                                                + hour * Timestamps.HOUR_MICROS
+                                                + min * Timestamps.MINUTE_MICROS
+                                                + sec * Timestamps.SECOND_MICROS,
+                                        Timestamps.yearMicros(year, l)
                                                 + Timestamps.monthOfYearMicros(month, l)
                                                 + (day - 1) * Timestamps.DAY_MICROS
                                                 + hour * Timestamps.HOUR_MICROS
                                                 + min * Timestamps.MINUTE_MICROS
                                                 + sec * Timestamps.SECOND_MICROS
-                                        , Timestamps.yearMicros(year, l)
-                                                + Timestamps.monthOfYearMicros(month, l)
-                                                + (day - 1) * Timestamps.DAY_MICROS
-                                                + hour * Timestamps.HOUR_MICROS
-                                                + min * Timestamps.MINUTE_MICROS
-                                                + sec * Timestamps.SECOND_MICROS
-                                                + 999999);
+                                                + 999999,
+                                        operation,
+                                        out);
                             }
                         } else {
                             // minute
-                            out.of(Timestamps.yearMicros(year, l)
+                            addHiLoInterval(Timestamps.yearMicros(year, l)
                                             + Timestamps.monthOfYearMicros(month, l)
                                             + (day - 1) * Timestamps.DAY_MICROS
                                             + hour * Timestamps.HOUR_MICROS
@@ -558,11 +707,13 @@ public final class IntervalUtils {
                                             + hour * Timestamps.HOUR_MICROS
                                             + min * Timestamps.MINUTE_MICROS
                                             + 59 * Timestamps.SECOND_MICROS
-                                            + 999999);
+                                            + 999999,
+                                    operation,
+                                    out);
                         }
                     } else {
                         // year + month + day + hour
-                        out.of(Timestamps.yearMicros(year, l)
+                        addHiLoInterval(Timestamps.yearMicros(year, l)
                                         + Timestamps.monthOfYearMicros(month, l)
                                         + (day - 1) * Timestamps.DAY_MICROS
                                         + hour * Timestamps.HOUR_MICROS,
@@ -572,11 +723,13 @@ public final class IntervalUtils {
                                         + hour * Timestamps.HOUR_MICROS
                                         + 59 * Timestamps.MINUTE_MICROS
                                         + 59 * Timestamps.SECOND_MICROS
-                                        + 999999);
+                                        + 999999,
+                                operation,
+                                out);
                     }
                 } else {
                     // year + month + day
-                    out.of(Timestamps.yearMicros(year, l)
+                    addHiLoInterval(Timestamps.yearMicros(year, l)
                                     + Timestamps.monthOfYearMicros(month, l)
                                     + (day - 1) * Timestamps.DAY_MICROS,
                             Timestamps.yearMicros(year, l)
@@ -585,34 +738,35 @@ public final class IntervalUtils {
                                     + 23 * Timestamps.HOUR_MICROS
                                     + 59 * Timestamps.MINUTE_MICROS
                                     + 59 * Timestamps.SECOND_MICROS
-                                    + 999999);
+                                    + 999999,
+                            operation,
+                            out);
                 }
             } else {
                 // year + month
-                out.of(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l),
+                addHiLoInterval(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l),
                         Timestamps.yearMicros(year, l)
                                 + Timestamps.monthOfYearMicros(month, l)
                                 + (Timestamps.getDaysPerMonth(month, l) - 1) * Timestamps.DAY_MICROS
                                 + 23 * Timestamps.HOUR_MICROS
                                 + 59 * Timestamps.MINUTE_MICROS
                                 + 59 * Timestamps.SECOND_MICROS
-                                + 999999);
+                                + 999999,
+                        operation,
+                        out);
             }
         } else {
             // year
-            out.of(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l),
+            addHiLoInterval(Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l),
                     Timestamps.yearMicros(year, l)
                             + Timestamps.monthOfYearMicros(12, l)
                             + (Timestamps.getDaysPerMonth(12, l) - 1) * Timestamps.DAY_MICROS
                             + 23 * Timestamps.HOUR_MICROS
                             + 59 * Timestamps.MINUTE_MICROS
                             + 59 * Timestamps.SECOND_MICROS
-                            + 999999);
+                            + 999999,
+                    operation,
+                    out);
         }
-    }
-
-    @FunctionalInterface
-    public interface IntervalSetAdd {
-        void add(long lo, long hi);
     }
 }

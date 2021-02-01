@@ -44,7 +44,7 @@ public class IntrinsicModel implements Mutable {
     public ExpressionNode filter;
     public int intrinsicValue = UNDEFINED;
     public QueryModel keySubQuery;
-    private final DynamicIntervalModel intervalModel = new DynamicIntervalModel();
+    private final RuntimeIntervalModelBuilder runtimeIntervalBuilder = new RuntimeIntervalModelBuilder();
 
     @Override
     public void clear() {
@@ -53,7 +53,7 @@ public class IntrinsicModel implements Mutable {
         keyExcludedValues.clear();
         keyValuePositions.clear();
         keyExcludedValuePositions.clear();
-        intervalModel.clear();
+        runtimeIntervalBuilder.clear();
         filter = null;
         intrinsicValue = UNDEFINED;
         keySubQuery = null;
@@ -87,49 +87,50 @@ public class IntrinsicModel implements Mutable {
     }
 
     public RuntimeIntrinsicIntervalModel getIntervalModel() {
-        return intervalModel.getIntervalModel();
+        return runtimeIntervalBuilder.build();
     }
 
-    public boolean hasIntervals() {
-        return intervalModel.hasIntervals();
+    public boolean hasIntervalFilters() {
+        return runtimeIntervalBuilder.hasIntervalFilters();
     }
 
     public void intersectEmpty() {
-        intervalModel.intersectEmpty();
+        runtimeIntervalBuilder.intersectEmpty();
         intrinsicValue = FALSE;
     }
 
     public void intersectEquals(Function function) {
-        intervalModel.intersectEquals(function);
-        if (intervalModel.isEmptySet()) intrinsicValue = FALSE;
+        runtimeIntervalBuilder.intersectEquals(function);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
     public void intersectIntervals(long lo, long hi) {
-        intervalModel.intersectIntervals(lo, hi);
-        if (intervalModel.isEmptySet()) intrinsicValue = FALSE;
+        runtimeIntervalBuilder.intersect(lo, hi);
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        intervalModel.intersectIntervals(seq, lo, lim, position);
-        if (intervalModel.isEmptySet()) intrinsicValue = FALSE;
+        runtimeIntervalBuilder.intersectIntervals(seq, lo, lim, position);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
-    public void intersectIntervals(long low, Function function, int funcAdjust) {
-        intervalModel.intersectIntervals(low, function, funcAdjust);
+    public void intersectIntervals(long lo, Function function, int funcAdjust) {
+        runtimeIntervalBuilder.intersect(lo, function, funcAdjust);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
     public void intersectIntervals(Function function, long hi, int funcAdjust) {
-        intervalModel.intersectIntervals(function, hi, funcAdjust);
+        runtimeIntervalBuilder.intersect(function, hi, funcAdjust);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
     public void subtractIntervals(long lo, long hi) {
-        intervalModel.subtractIntervals(lo, hi);
-        if (intervalModel.isEmptySet()) intrinsicValue = FALSE;
+        runtimeIntervalBuilder.subtractInterval(lo, hi);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        intervalModel.subtractIntervals(seq, lo, lim, position);
-        if (intervalModel.isEmptySet()) intrinsicValue = FALSE;
+        runtimeIntervalBuilder.subtractIntervals(seq, lo, lim, position);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
     @Override

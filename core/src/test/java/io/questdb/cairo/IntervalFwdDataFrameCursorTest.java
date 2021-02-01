@@ -26,8 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.model.StaticIntervalsModel;
-import io.questdb.griffin.model.StaticRuntimeIntrinsicIntervalModel;
+import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -214,7 +213,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             TableReader reader = new TableReader(configuration, "x");
-            IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(new StaticRuntimeIntrinsicIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
+            IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(new RuntimeIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
             cursor.of(reader, null);
             cursor.close();
             Assert.assertFalse(reader.isOpen());
@@ -430,7 +429,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                     timestampIndex = reader.getMetadata().getTimestampIndex();
                 }
                 final TableReaderRecord record = new TableReaderRecord();
-                final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", 0, new StaticRuntimeIntrinsicIntervalModel(intervals), timestampIndex);
+                final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", 0, new RuntimeIntervalModel(intervals), timestampIndex);
                 try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, null)) {
 
                     // assert that there is nothing to start with
@@ -634,7 +633,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             try (TableReader reader = new TableReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
                 IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(
-                        new StaticRuntimeIntrinsicIntervalModel(IntervalFwdDataFrameCursorTest.intervals),
+                        new RuntimeIntervalModel(IntervalFwdDataFrameCursorTest.intervals),
                         reader.getMetadata().getTimestampIndex());
                 cursor.of(reader, null);
                 record.of(reader);

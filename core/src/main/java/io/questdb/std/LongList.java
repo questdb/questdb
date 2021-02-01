@@ -312,6 +312,11 @@ public class LongList implements Mutable, LongVec {
         return that;
     }
 
+    public void truncateTo(int size) {
+        assert size <= pos && size > -1;
+        pos = size;
+    }
+
     public void zero(int value) {
         Arrays.fill(buffer, 0, pos, value);
     }

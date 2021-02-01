@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.model.StaticRuntimeIntrinsicIntervalModel;
+import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -200,7 +200,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             TableReader reader = new TableReader(configuration, "x");
             IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
-                    new StaticRuntimeIntrinsicIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
+                    new RuntimeIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
             cursor.of(reader, null);
             cursor.close();
             Assert.assertFalse(reader.isOpen());
@@ -395,7 +395,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                         engine,
                         "x",
                         0,
-                        new StaticRuntimeIntrinsicIntervalModel(intervals),
+                        new RuntimeIntervalModel(intervals),
                         timestampIndex);
                 try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, null)) {
 
@@ -600,7 +600,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             try (TableReader reader = new TableReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
                 IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
-                        new StaticRuntimeIntrinsicIntervalModel(IntervalBwdDataFrameCursorTest.intervals),
+                        new RuntimeIntervalModel(IntervalBwdDataFrameCursorTest.intervals),
                         reader.getMetadata().getTimestampIndex());
                 cursor.of(reader, null);
                 record.of(reader);

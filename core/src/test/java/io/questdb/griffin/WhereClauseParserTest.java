@@ -262,7 +262,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testBetweenInFunctionOfThreeArgs() throws Exception {
         IntrinsicModel m = modelOf("func(2, timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z', 'abc')");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "'abc''2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetween2func");
     }
 
@@ -665,7 +665,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testFilterOrInterval() throws Exception {
         IntrinsicModel m = modelOf("bid > 100 or timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampin100bid>or");
     }
 
@@ -748,7 +748,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalGreater5() throws Exception {
         IntrinsicModel m = noTimestampModelOf("timestamp > '2014-01-01T15:30:00.000Z'");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         TestUtils.assertEquals("'2014-01-01T15:30:00.000Z'timestamp>", toRpn(m.filter));
     }
 
@@ -767,7 +767,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalLessNoTimestamp() throws Exception {
         IntrinsicModel m = noTimestampModelOf("timestamp < '2014-01-01T15:30:00.000Z'");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         TestUtils.assertEquals("'2014-01-01T15:30:00.000Z'timestamp<", toRpn(m.filter));
     }
 
@@ -909,7 +909,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testLessNonConstant() throws SqlException {
         IntrinsicModel m = modelOf("timestamp < x");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         TestUtils.assertEquals("xtimestamp<", toRpn(m.filter));
     }
@@ -917,7 +917,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testLessNonConstant2() throws SqlException {
         IntrinsicModel m = modelOf("x < timestamp");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         TestUtils.assertEquals("timestampx<", toRpn(m.filter));
     }
@@ -982,7 +982,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testLiteralInInterval() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', c)");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "c'2014-01-01T12:30:00.000Z'timestampin");
     }
 
@@ -1033,14 +1033,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testNestedFunctionTest() throws Exception {
         IntrinsicModel m = modelOf("substr(parse(x, 1, 3), 2, 4)");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "4231xparsesubstr");
     }
 
     @Test
     public void testNoIntrinsics() throws Exception {
         IntrinsicModel m = modelOf("a > 10 or b > 20");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         Assert.assertNull(m.keyColumn);
         assertFilter(m, "20b>10a>or");
     }
@@ -1415,7 +1415,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoBetweenIntervalsForDoubleColumn() throws Exception {
         IntrinsicModel m = modelOf("bid between 5 and 10 ");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "105bidbetween");
     }
 
@@ -1444,7 +1444,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoBetweenIntervalsForIntColumn() throws Exception {
         IntrinsicModel m = modelOf("bidSize between 5 and 10 ");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "105bidSizebetween");
     }
 
@@ -1458,7 +1458,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoBetweenIntervalsWithOr() throws Exception {
         IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' or timestamp between '2014-02-01T12:30:00.000Z' and '2014-02-02T12:30:00.000Z'");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "'2014-02-02T12:30:00.000Z''2014-02-01T12:30:00.000Z'timestampbetween'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetweenor");
     }
 
@@ -1490,6 +1490,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoIntervalSources() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2014-06-20T13:25:00.000Z;10m;2d;5' and timestamp = '2015-06-20T13:25:00.000Z;10m;2d;5'");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         TestUtils.assertEquals("[]", intervalToString(m));
     }
 
@@ -1508,7 +1509,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoIntervalsWithOr() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ( '2014-01-01T12:30:00.000Z' ,  '2014-01-02T12:30:00.000Z') or timestamp in ('2014-02-01T12:30:00.000Z', '2014-02-02T12:30:00.000Z')");
-        Assert.assertFalse(m.hasIntervals());
+        Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "'2014-02-02T12:30:00.000Z''2014-02-01T12:30:00.000Z'timestampin'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampinor");
     }
 
@@ -1611,7 +1612,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     private CharSequence intervalToString(IntrinsicModel model) {
-        if (!model.hasIntervals()) return "";
+        if (!model.hasIntervalFilters()) return "";
         RuntimeIntrinsicIntervalModel sm = model.getIntervalModel();
         return GriffinParserTestUtils.intervalToString(sm.calculateIntervals(sqlExecutionContext));
     }
