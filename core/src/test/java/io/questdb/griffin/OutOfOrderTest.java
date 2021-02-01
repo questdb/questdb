@@ -136,12 +136,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             new WorkerPoolAwareConfiguration() {
                                 @Override
                                 public int[] getWorkerAffinity() {
-                                    return new int[]{0, 2, 4, 6};
+                                    return new int[]{0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30};
                                 }
 
                                 @Override
                                 public int getWorkerCount() {
-                                    return 4;
+                                    return 16;
                                 }
 
                                 @Override
@@ -159,7 +159,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
-//                    pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
 
                     pool.start(LOG);
 

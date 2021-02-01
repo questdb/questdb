@@ -34,11 +34,14 @@ import io.questdb.std.Vect;
 import io.questdb.tasks.OutOfOrderCopyTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTask> {
 
+    public static final AtomicLong count_down_calls = new AtomicLong();
+    public static final AtomicLong copy_calls = new AtomicLong(0);
     private final CairoConfiguration configuration;
 
     public OutOfOrderCopyJob(MessageBus messageBus) {
@@ -81,6 +84,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             boolean isIndexed,
             SOUnboundedCountDownLatch doneLatch
     ) {
+        copy_calls.incrementAndGet();
+
         switch (blockType) {
             case OO_BLOCK_MERGE:
                 oooMergeCopy(
@@ -153,6 +158,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 if (mergeIndexAddr != 0) {
                     Vect.freeMergedIndex(mergeIndexAddr);
                 }
+                count_down_calls.incrementAndGet();
                 doneLatch.countDown();
             }
         }
@@ -212,7 +218,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcHi,
                         dstFixAddr,
                         dstFixOffset,
-                        ColumnType.pow2SizeOf(columnType)
+                        ColumnType.pow2SizeOf(Math.abs(columnType))
                 );
                 break;
         }
@@ -596,12 +602,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         // copy task on stack so that publisher has fighting chance of
         // publishing all it has to the queue
 
-        final boolean locked = task.tryLock();
-        if (locked) {
-            copy(task, cursor, subSeq);
-        } else {
-            subSeq.done(cursor);
-        }
+//        final boolean locked = task.tryLock();
+//        if (locked) {
+        copy(task, cursor, subSeq);
+//        } else {
+//            subSeq.done(cursor);
+//        }
 
         return true;
     }

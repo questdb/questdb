@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
@@ -38,12 +40,15 @@ import io.questdb.tasks.OutOfOrderOpenColumnTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrderOpenColumnTask> {
 
+    public static final AtomicLong call_count = new AtomicLong();
+    public static final AtomicLong parts_emitted = new AtomicLong();
     private final CairoConfiguration configuration;
     private final RingQueue<OutOfOrderCopyTask> outboundQueue;
     private final Sequence outboundPubSeq;
@@ -94,6 +99,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             AppendMemory srcDataVarColumn,
             SOUnboundedCountDownLatch doneLatch
     ) {
+        call_count.incrementAndGet();
+
         final Path path = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp);
         final int plen = path.length();
@@ -260,9 +267,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         throw CairoException.instance(ff.errno()).put("could not mmap [file=").put(path).put(", fd=").put(fd).put(", size=").put(size).put(']');
     }
 
+    private static final Log LOG = LogFactory.getLog(OutOfOrderOpenColumnJob.class);
     private static long openReadWriteOrFail(FilesFacade ff, Path path) {
         final long fd = ff.openRW(path);
         if (fd != -1) {
+            LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
@@ -403,6 +412,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 break;
         }
 
+        parts_emitted.incrementAndGet();
         publishCopyTask(
                 configuration,
                 outboundQueue,
@@ -755,16 +765,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         outboundPubSeq.done(cursor);
     }
 
-    public static void appendTxnToPath(Path path, long txn) {
-        path.put("-n-").put(txn);
-    }
-
-    private static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        if (ff.mkdirs(path, mkDirMode) != 0) {
-            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
-    }
-
     private static void oooOpenLastPartitionForAppend(
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
@@ -831,6 +831,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 break;
         }
 
+        parts_emitted.incrementAndGet();
         publishCopyTask(
                 configuration,
                 outboundQueue,
@@ -942,12 +943,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcDataVarSize = srcDataFixColumn.getAppendOffset();
                 srcDataVarAddr = mapReadWriteOrFail(ff, path, Math.abs(srcDataVarFd), srcDataVarSize);
 
-                appendTxnToPath(path.trimTo(plen), txn);
+                OutOfOrderUtils.appendTxnToPath(path.trimTo(plen), txn);
                 path.concat(columnName);
                 final int pColNameLen = path.length();
 
                 path.put(FILE_SUFFIX_I).$();
-                createDirsOrFail(ff, path, configuration.getMkDirMode());
+//                OutOfOrderUtils.createDirsOrFail(ff, path, configuration.getMkDirMode());
                 dstFixFd = openReadWriteOrFail(ff, path);
                 dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax) * Long.BYTES;
                 truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
@@ -955,7 +956,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 path.trimTo(pColNameLen);
                 path.put(FILE_SUFFIX_D).$();
-                createDirsOrFail(ff, path, configuration.getMkDirMode());
+//                OutOfOrderUtils.createDirsOrFail(ff, path, configuration.getMkDirMode());
                 dstVarFd = openReadWriteOrFail(ff, path);
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
@@ -994,16 +995,16 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 break;
             default:
                 srcDataFixFd = -srcDataFixColumn.getFd();
-                final int shl = ColumnType.pow2SizeOf(columnType);
+                final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
                 dFile(path.trimTo(plen), columnName);
                 srcDataFixSize = srcDataFixColumn.getAppendOffset();
                 srcDataFixAddr = mapReadWriteOrFail(ff, path, -srcDataFixFd, srcDataFixSize);
 
-                appendTxnToPath(path.trimTo(plen), txn);
+                OutOfOrderUtils.appendTxnToPath(path.trimTo(plen), txn);
                 final int pDirNameLen = path.length();
 
                 path.concat(columnName).put(FILE_SUFFIX_D).$();
-                createDirsOrFail(ff, path, configuration.getMkDirMode());
+//                OutOfOrderUtils.createDirsOrFail(ff, path, configuration.getMkDirMode());
 
                 dstFixFd = openReadWriteOrFail(ff, path);
                 dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax) << shl;
@@ -1160,7 +1161,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 );
                 srcDataVarAddr = mapReadWriteOrFail(ff, path, srcDataVarFd, srcDataVarSize);
 
-                appendTxnToPath(path.trimTo(plen), txn);
+                OutOfOrderUtils.appendTxnToPath(path.trimTo(plen), txn);
                 oooSetPathAndEnsureDir(ff, path, columnName, FILE_SUFFIX_I, configuration.getMkDirMode());
 
                 dstFixFd = openReadWriteOrFail(ff, path);
@@ -1168,7 +1169,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
                 dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
 
-                appendTxnToPath(path.trimTo(plen), txn);
+                OutOfOrderUtils.appendTxnToPath(path.trimTo(plen), txn);
                 oooSetPathAndEnsureDir(ff, path, columnName, FILE_SUFFIX_D, configuration.getMkDirMode());
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 dstVarFd = openReadWriteOrFail(ff, path);
@@ -1222,11 +1223,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dFile(path.trimTo(plen), columnName);
                 srcDataFixAddr = mapReadWriteOrFail(ff, path, Math.abs(srcDataFixFd), srcDataFixSize);
 
-                appendTxnToPath(path.trimTo(plen), txn);
+                OutOfOrderUtils.appendTxnToPath(path.trimTo(plen), txn);
                 final int pDirNameLen = path.length();
 
                 path.concat(columnName).put(FILE_SUFFIX_D).$();
-                createDirsOrFail(ff, path, configuration.getMkDirMode());
+//                OutOfOrderUtils.createDirsOrFail(ff, path, configuration.getMkDirMode());
 
                 dstFixFd = openReadWriteOrFail(ff, path);
                 dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax) << shl;
@@ -1369,6 +1370,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 break;
         }
 
+        parts_emitted.incrementAndGet();
         publishCopyTask(
                 configuration,
                 outboundQueue,
@@ -1409,7 +1411,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     }
 
     private static void oooSetPathAndEnsureDir(FilesFacade ff, Path path, CharSequence columnName, CharSequence suffix, int mkDirMode) {
-        createDirsOrFail(ff, path.concat(columnName).put(suffix).$(), mkDirMode);
+        path.concat(columnName).put(suffix).$();
     }
 
     private static void publishMultiCopyTasks(
@@ -1458,6 +1460,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             SOUnboundedCountDownLatch doneLatch
     ) {
         partCounter.set(partCount);
+        parts_emitted.addAndGet(partCount);
         switch (prefixType) {
             case OO_BLOCK_OO:
                 publishCopyTask(
@@ -1711,7 +1714,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnCounter,
                         partCounter,
                         columnType,
-                        prefixType,
+                        suffixType,
                         0,
                         srcDataFixFd,
                         srcDataFixAddr,
@@ -1753,12 +1756,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         // copy task on stack so that publisher has fighting chance of
         // publishing all it has to the queue
 
-        final boolean locked = task.tryLock();
-        if (locked) {
-            openColumn(task, cursor, subSeq);
-        } else {
-            subSeq.done(cursor);
-        }
+//        final boolean locked = task.tryLock();
+//        if (locked) {
+        openColumn(task, cursor, subSeq);
+//        } else {
+//            subSeq.done(cursor);
+//        }
 
         return true;
     }

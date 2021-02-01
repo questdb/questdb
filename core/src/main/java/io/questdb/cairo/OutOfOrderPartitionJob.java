@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
@@ -36,6 +38,7 @@ import io.questdb.tasks.OutOfOrderOpenColumnTask;
 import io.questdb.tasks.OutOfOrderPartitionTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.readPartitionSize;
@@ -43,6 +46,7 @@ import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderPartitionTask> {
 
+    private static final Log LOG = LogFactory.getLog(OutOfOrderPartitionJob.class);
     private final CairoConfiguration configuration;
     private final RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue;
     private final Sequence openColumnPubSeq;
@@ -58,44 +62,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         this.copyTaskPubSeq = messageBus.getOutOfOrderCopyPubSequence();
     }
 
-    private static long oooMapTimestampRO(FilesFacade ff, long fd, long size) {
-        final long address = ff.mmap(fd, size, 0, Files.MAP_RO);
-        if (address == FilesFacade.MAP_FAILED) {
-            throw CairoException.instance(ff.errno())
-                    .put("Could not mmap ")
-                    .put(" [size=").put(size)
-                    .put(", fd=").put(fd)
-                    .put(", memUsed=").put(Unsafe.getMemUsed())
-                    .put(", fileLen=").put(ff.length(fd))
-                    .put(']');
-        }
-        return address;
-    }
-
-    private static long oooCreateMergeIndex(
-            long srcDataTimestampAddr,
-            long mergedTimestamps,
-            long mergeDataLo,
-            long mergeDataHi,
-            long mergeOOOLo,
-            long mergeOOOHi
-    ) {
-        // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
-        // have to go back and find data rows we need to move accordingly
-        final long indexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
-        final long indexStruct = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
-        final long index = Unsafe.malloc(indexSize);
-        Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
-        Unsafe.getUnsafe().putLong(indexStruct, index);
-        Unsafe.getUnsafe().putLong(indexStruct + Long.BYTES, mergeDataHi - mergeDataLo + 1);
-        Unsafe.getUnsafe().putLong(indexStruct + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
-        Unsafe.getUnsafe().putLong(indexStruct + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
-        final long result = Vect.mergeLongIndexesAsc(indexStruct, 2);
-        Unsafe.free(index, indexSize);
-        Unsafe.free(indexStruct, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
-        return result;
-    }
-
+    public static final AtomicLong call_count = new AtomicLong();
     public static void processPartition(
             CairoConfiguration configuration,
             RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
@@ -122,10 +89,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             int timestampIndex,
             SOUnboundedCountDownLatch doneLatch
     ) {
+        call_count.incrementAndGet();
         final Path path = Path.getThreadLocal(pathToTable);
         final long oooPartitionTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
         TableUtils.setPathForPartition(path, partitionBy, oooPartitionTimestampMin);
         // plen has to include partition directory name
+
         final int plen = path.length();
         long timestampFd;
         long dataTimestampLo;
@@ -141,6 +110,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             // - this partition is above min partition of the table
             // - this partition is below max partition of the table
             // pure OOO data copy into new partition
+
+            // todo: handle errors
+            LOG.debug().$("would create [path=").$(path.chopZ().put(Files.SEPARATOR).$()).$(']').$();
+            OutOfOrderUtils.createDirsOrFail(ff, path, configuration.getMkDirMode());
+
             publishOpenColumnTasks(
                     configuration,
                     openColumnTaskOutboundQueue,
@@ -459,9 +433,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     openColumnMode = 2; // oooOpenLastPartitionForAppend
                 }
             } else {
-                // todo: create txn-based directory
-                OutOfOrderOpenColumnJob.appendTxnToPath(path.trimTo(plen), txn);
-                ff.mkdirs(path, configuration.getMkDirMode());
+                OutOfOrderUtils.appendTxnToPath(path.trimTo(plen), txn);
+                // todo: handle errors
+                OutOfOrderUtils.createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
                 if (timestampFd > -1) {
                     openColumnMode = 3; // oooOpenMidPartitionForMerge
                 } else {
@@ -504,6 +478,44 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     doneLatch
             );
         }
+    }
+
+    private static long oooMapTimestampRO(FilesFacade ff, long fd, long size) {
+        final long address = ff.mmap(fd, size, 0, Files.MAP_RO);
+        if (address == FilesFacade.MAP_FAILED) {
+            throw CairoException.instance(ff.errno())
+                    .put("Could not mmap ")
+                    .put(" [size=").put(size)
+                    .put(", fd=").put(fd)
+                    .put(", memUsed=").put(Unsafe.getMemUsed())
+                    .put(", fileLen=").put(ff.length(fd))
+                    .put(']');
+        }
+        return address;
+    }
+
+    private static long oooCreateMergeIndex(
+            long srcDataTimestampAddr,
+            long mergedTimestamps,
+            long mergeDataLo,
+            long mergeDataHi,
+            long mergeOOOLo,
+            long mergeOOOHi
+    ) {
+        // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
+        // have to go back and find data rows we need to move accordingly
+        final long indexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+        final long indexStruct = Unsafe.malloc(TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+        final long index = Unsafe.malloc(indexSize);
+        Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
+        Unsafe.getUnsafe().putLong(indexStruct, index);
+        Unsafe.getUnsafe().putLong(indexStruct + Long.BYTES, mergeDataHi - mergeDataLo + 1);
+        Unsafe.getUnsafe().putLong(indexStruct + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
+        Unsafe.getUnsafe().putLong(indexStruct + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
+        final long result = Vect.mergeLongIndexesAsc(indexStruct, 2);
+        Unsafe.free(index, indexSize);
+        Unsafe.free(indexStruct, TIMESTAMP_MERGE_ENTRY_BYTES * 2);
+        return result;
     }
 
     private static void publishOpenColumnTaskUncontended(
@@ -617,6 +629,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long sortedTimestampsAddr,
             SOUnboundedCountDownLatch doneLatch
     ) {
+        LOG.debug().$("partition [ts=").$ts(partitionTimestamp).$(']').$();
+
         final long timestampMergeIndexAddr;
         if (mergeType == OO_BLOCK_MERGE) {
             timestampMergeIndexAddr = oooCreateMergeIndex(
@@ -878,12 +892,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         // copy task on stack so that publisher has fighting chance of
         // publishing all it has to the queue
 
-        final boolean locked = task.tryLock();
-        if (locked) {
+//        final boolean locked = task.tryLock();
+//        if (locked) {
             processPartition(task, cursor, subSeq);
-        } else {
-            subSeq.done(cursor);
-        }
+//        } else {
+//            System.out.println("foooooooooooooooooooooooooooooooooooooooooooooooooooooook");
+//            subSeq.done(cursor);
+//        }
 
         return true;
     }

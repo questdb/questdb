@@ -40,6 +40,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -625,7 +626,7 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
 
             if (mergeRowCount > 0) {
-                oooMerge();
+                oooMergeParallel();
             }
 
             if (commitMode != CommitMode.NOSYNC) {
@@ -3437,8 +3438,8 @@ public class TableWriter implements Closeable {
             // todo: we should not need to compile list and then process it, we can perhaps process data before
             //    it hits the list
             final LongList oooPartitions = oooComputePartitions(sortedTimestampsAddr, indexMax, oooTimestampMin, oooTimestampMax);
-            final int affectedPartitionCount = oooPartitions.size() / 2;
-            final int latchCount = (affectedPartitionCount - 1) * metadata.getColumnCount();
+            final int affectedPartitionCount = oooPartitions.size() / 2 - 1;
+            final int latchCount = affectedPartitionCount - 1;
 
             this.oooLatch.reset();
 
@@ -3447,7 +3448,7 @@ public class TableWriter implements Closeable {
                 final long srcOooHi = oooPartitions.getQuick(i * 2);
                 final long partitionTimestampHi = oooPartitions.getQuick(i * 2 + 1);
                 final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
-                long cursor = oooPartitionPubSeq.next();
+                long cursor = oooPartitionPubSeq.nextBully();
                 if (cursor > -1) {
                     OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
                     task.of(
