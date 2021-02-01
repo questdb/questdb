@@ -78,7 +78,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext.getCairoSecurityContext(), executionContext);
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
         } else if (framingSupported) {

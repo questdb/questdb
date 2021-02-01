@@ -430,7 +430,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 final TableReaderRecord record = new TableReaderRecord();
                 final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", 0, new RuntimeIntervalModel(intervals), timestampIndex);
-                try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, null)) {
+                try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
 
                     // assert that there is nothing to start with
                     record.of(cursor.getTableReader());
@@ -477,7 +477,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(AllowAllCairoSecurityContext.INSTANCE, null);
+                    factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }

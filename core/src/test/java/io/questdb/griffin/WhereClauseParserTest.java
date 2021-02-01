@@ -345,6 +345,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNowWithNotIn() throws Exception {
+        currentMicros = 24L * 3600 * 1000 * 1000;
+        try {
+            runWhereIntervalTest0("timestamp not in ('2020-01-01T00:00:00.000000Z', '2020-01-31T23:59:59.999999Z') and now() <= timestamp",
+                    "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
+                            "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+
+    @Test
     public void testConstVsLambda() throws Exception {
         runWhereSymbolTest("ex in (1,2) and sym in (select * from xyz)", "ex in (1,2)");
     }
