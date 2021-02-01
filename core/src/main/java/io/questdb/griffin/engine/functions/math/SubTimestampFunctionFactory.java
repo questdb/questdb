@@ -70,11 +70,11 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
             long l = left.getTimestamp(rec);
             long r = right.getTimestamp(rec);
 
-            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
+            if (l != Numbers.LONG_NaN && r != Numbers.LONG_NaN) {
+                return l - r;
             }
 
-            return l - r;
+            return Numbers.LONG_NaN;
         }
     }
 }

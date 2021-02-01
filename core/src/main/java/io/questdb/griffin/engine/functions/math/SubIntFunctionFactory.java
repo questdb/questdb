@@ -60,11 +60,11 @@ public class SubIntFunctionFactory implements FunctionFactory {
             int l = left.getInt(rec);
             int r = right.getInt(rec);
 
-            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
+            if (l != Numbers.INT_NaN && r != Numbers.INT_NaN) {
+                return l - r;
             }
 
-            return l - r;
+            return Numbers.INT_NaN;
         }
 
         @Override
