@@ -27,51 +27,46 @@ package io.questdb.tasks;
 import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.TableWriterMetadata;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.AbstractLockable;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 
-import java.io.Closeable;
-
-public class OutOfOrderPartitionTask extends AbstractLockable implements Closeable {
-    private final Path path = new Path();
+public class OutOfOrderPartitionTask extends AbstractLockable {
+    private CharSequence pathToTable;
     private long txn;
+    private long srcOooLo;
+    private long srcOooHi;
     private long oooTimestampMax;
-    private long oooIndexLo;
-    private long oooIndexHi;
-    private long lastPartitionIndexMax;
+    private long lastPartitionSize;
     private long partitionTimestampHi;
-    private long sortedTimestamps;
+    private long sortedTimestampsAddr;
     private long tableMaxTimestamp;
     private long tableCeilOfMaxTimestamp;
     private long tableFloorOfMinTimestamp;
     private long tableFloorOfMaxTimestamp;
     private FilesFacade ff;
-    // todo: rename
-    private int rootLen;
     private int partitionBy;
     private int timestampIndex;
     private ObjList<AppendMemory> columns;
     private ObjList<ContiguousVirtualMemory> oooColumns;
     private TableWriterMetadata metadata;
-
-    @Override
-    public void close() {
-        Misc.free(path);
-    }
+    private SOUnboundedCountDownLatch doneLatch;
 
     public ObjList<AppendMemory> getColumns() {
         return columns;
+    }
+
+    public SOUnboundedCountDownLatch getDoneLatch() {
+        return doneLatch;
     }
 
     public FilesFacade getFf() {
         return ff;
     }
 
-    public long getLastPartitionIndexMax() {
-        return lastPartitionIndexMax;
+    public long getLastPartitionSize() {
+        return lastPartitionSize;
     }
 
     public TableWriterMetadata getMetadata() {
@@ -81,15 +76,6 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
     public ObjList<ContiguousVirtualMemory> getOooColumns() {
         return oooColumns;
     }
-
-    public long getOooIndexHi() {
-        return oooIndexHi;
-    }
-
-    public long getOooIndexLo() {
-        return oooIndexLo;
-    }
-
 
     public long getOooTimestampMax() {
         return oooTimestampMax;
@@ -103,12 +89,20 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
         return partitionTimestampHi;
     }
 
-    public Path getPath() {
-        return path;
+    public CharSequence getPathToTable() {
+        return pathToTable;
     }
 
-    public int getRootLen() {
-        return rootLen;
+    public long getSortedTimestampsAddr() {
+        return sortedTimestampsAddr;
+    }
+
+    public long getSrcOooHi() {
+        return srcOooHi;
+    }
+
+    public long getSrcOooLo() {
+        return srcOooLo;
     }
 
     public long getTableCeilOfMaxTimestamp() {
@@ -131,11 +125,49 @@ public class OutOfOrderPartitionTask extends AbstractLockable implements Closeab
         return timestampIndex;
     }
 
-    public long getSortedTimestamps() {
-        return sortedTimestamps;
-    }
-
     public long getTxn() {
         return txn;
+    }
+
+    public void of(
+            CharSequence path,
+            long txn,
+            long srcOooLo,
+            long srcOooHi,
+            long oooTimestampMax,
+            long lastPartitionSize,
+            long partitionTimestampHi,
+            long sortedTimestampsAddr,
+            long tableMaxTimestamp,
+            long tableCeilOfMaxTimestamp,
+            long tableFloorOfMinTimestamp,
+            long tableFloorOfMaxTimestamp,
+            FilesFacade ff,
+            int partitionBy,
+            int timestampIndex,
+            ObjList<AppendMemory> columns,
+            ObjList<ContiguousVirtualMemory> oooColumns,
+            TableWriterMetadata metadata,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
+        this.pathToTable = path;
+        this.txn = txn;
+        this.srcOooLo = srcOooLo;
+        this.srcOooHi = srcOooHi;
+        this.oooTimestampMax = oooTimestampMax;
+        this.lastPartitionSize = lastPartitionSize;
+        this.partitionTimestampHi = partitionTimestampHi;
+        this.sortedTimestampsAddr = sortedTimestampsAddr;
+        this.tableMaxTimestamp = tableMaxTimestamp;
+        this.tableCeilOfMaxTimestamp = tableCeilOfMaxTimestamp;
+        this.tableFloorOfMinTimestamp = tableFloorOfMinTimestamp;
+        this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
+        this.ff = ff;
+        this.partitionBy = partitionBy;
+        this.timestampIndex = timestampIndex;
+        this.columns = columns;
+        this.oooColumns = oooColumns;
+        this.metadata = metadata;
+        this.doneLatch = doneLatch;
     }
 }

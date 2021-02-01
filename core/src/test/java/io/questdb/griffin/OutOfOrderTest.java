@@ -25,10 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.OutOfOrderSortJob;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -160,6 +157,9 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
+//                    pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
 
                     pool.start(LOG);
 

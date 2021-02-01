@@ -24,8 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
@@ -40,13 +41,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 
     private final CairoConfiguration configuration;
 
-    public OutOfOrderCopyJob(
-            RingQueue<OutOfOrderCopyTask> queue,
-            Sequence subSeq,
-            CairoConfiguration configuration
-    ) {
-        super(queue, subSeq);
-        this.configuration = configuration;
+    public OutOfOrderCopyJob(MessageBus messageBus) {
+        super(messageBus.getOutOfOrderCopyQueue(), messageBus.getOutOfOrderCopySubSequence());
+        this.configuration = messageBus.getConfiguration();
     }
 
     public static void copy(
@@ -81,7 +78,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long dstKFd,
             long dskVFd,
             long dstIndexOffset,
-            boolean isIndexed
+            boolean isIndexed,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
@@ -151,8 +149,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             Files.close(dskVFd);
             Files.close(dskVFd);
 
-            if (columnCounter.decrementAndGet() == 0 && mergeIndexAddr != 0) {
-                Vect.freeMergedIndex(mergeIndexAddr);
+            if (columnCounter.decrementAndGet() == 0) {
+                if (mergeIndexAddr != 0) {
+                    Vect.freeMergedIndex(mergeIndexAddr);
+                }
+                doneLatch.countDown();
             }
         }
     }
@@ -548,6 +549,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long dskVFd = task.getDstVFd();
         final long dstIndexOffset = task.getDstIndexOffset();
         final boolean isIndexed = task.isIndexed();
+        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
 
@@ -583,7 +585,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 dstKFd,
                 dskVFd,
                 dstIndexOffset,
-                isIndexed
+                isIndexed,
+                doneLatch
         );
     }
 

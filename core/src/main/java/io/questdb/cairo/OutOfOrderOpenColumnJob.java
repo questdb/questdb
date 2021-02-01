@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -46,28 +48,22 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     private final RingQueue<OutOfOrderCopyTask> outboundQueue;
     private final Sequence outboundPubSeq;
 
-    public OutOfOrderOpenColumnJob(
-            CairoConfiguration configuration,
-            RingQueue<OutOfOrderOpenColumnTask> queue,
-            Sequence subSeq,
-            RingQueue<OutOfOrderCopyTask> outboundQueue,
-            Sequence outboundPubSeq
-    ) {
-        super(queue, subSeq);
-        this.configuration = configuration;
-        this.outboundQueue = outboundQueue;
-        this.outboundPubSeq = outboundPubSeq;
+    public OutOfOrderOpenColumnJob(MessageBus messageBus) {
+        super(messageBus.getOutOfOrderOpenColumnQueue(), messageBus.getOutOfOrderOpenColumnSubSequence());
+        this.configuration = messageBus.getConfiguration();
+        this.outboundQueue = messageBus.getOutOfOrderCopyQueue();
+        this.outboundPubSeq = messageBus.getOutOfOrderCopyPubSequence();
     }
 
-    public static void copy(
+    public static void openColumn(
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            int mkDirMode,
-            int mode,
+            int openColumnMode,
             FilesFacade ff,
-            Path path,
-            int plen,
+            CharSequence pathToTable,
+            long partitionTimestamp,
+            int partitionBy,
             CharSequence columnName,
             AtomicInteger columnCounter,
             int columnType,
@@ -95,12 +91,17 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long timestampFd,
             boolean isIndexed,
             AppendMemory srcDataFixColumn,
-            AppendMemory srcDataVarColumn
+            AppendMemory srcDataVarColumn,
+            SOUnboundedCountDownLatch doneLatch
     ) {
+        final Path path = Path.getThreadLocal(pathToTable);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp);
+        final int plen = path.length();
+
         // append jobs do not set value of part counter, we do it here for those
         // todo: cache
         final AtomicInteger partCounter = new AtomicInteger(1);
-        switch (mode) {
+        switch (openColumnMode) {
             case 1:
                 oooOpenMidPartitionForAppend(
                         configuration,
@@ -121,7 +122,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooHi,
                         srcDataMax,
                         isIndexed,
-                        timestampFd
+                        timestampFd,
+                        doneLatch
                 );
                 break;
             case 2:
@@ -144,7 +146,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooHi,
                         isIndexed,
                         srcDataFixColumn,
-                        srcDataVarColumn
+                        srcDataVarColumn,
+                        doneLatch
                 );
                 break;
             case 3:
@@ -152,7 +155,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         configuration,
                         outboundQueue,
                         outboundPubSeq,
-                        mkDirMode,
                         ff,
                         path,
                         plen,
@@ -182,7 +184,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         suffixLo,
                         suffixHi,
                         timestampFd,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
             case 4:
@@ -190,7 +193,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         configuration,
                         outboundQueue,
                         outboundPubSeq,
-                        mkDirMode,
                         ff,
                         path,
                         plen,
@@ -221,15 +223,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         suffixHi,
                         isIndexed,
                         srcDataFixColumn,
-                        srcDataVarColumn
+                        srcDataVarColumn,
+                        doneLatch
                 );
                 break;
             case 5:
-                oooOpenNewPartitionForAppend0(
+                oooOpenNewPartitionForAppend(
                         configuration,
                         outboundQueue,
                         outboundPubSeq,
-                        mkDirMode,
                         ff,
                         path,
                         plen,
@@ -243,7 +245,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
         }
@@ -336,7 +339,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooHi,
             long srcDataMax,
             boolean isIndexed,
-            long timestampFd
+            long timestampFd,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         long dstKFd = 0;
         long dstVFd = 0;
@@ -433,7 +437,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstKFd,
                 dstVFd,
                 dstIndexOffset,
-                isIndexed
+                isIndexed,
+                doneLatch
         );
     }
 
@@ -471,7 +476,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
-            boolean isIndexed
+            boolean isIndexed,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         long cursor = outboundPubSeq.next();
         if (cursor > -1) {
@@ -509,7 +515,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     dstVFd,
                     dstIndexOffset,
                     isIndexed,
-                    cursor
+                    cursor,
+                    doneLatch
             );
         } else {
             publishCopyTaskContended(
@@ -547,13 +554,51 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     dstVFd,
                     dstIndexOffset,
                     isIndexed,
-                    cursor
+                    cursor,
+                    doneLatch
             );
         }
 
     }
 
-    private static void publishCopyTaskContended(CairoConfiguration configuration, RingQueue<OutOfOrderCopyTask> outboundQueue, Sequence outboundPubSeq, AtomicInteger columnCounter, AtomicInteger partCounter, int columnType, int blockType, long timestampMergeIndexAddr, long srcDataFixFd, long srcDataFixAddr, long srcDataFixSize, long srcDataVarFd, long srcDataVarAddr, long srcDataVarSize, long srcDataLo, long srcDataHi, long srcOooFixAddr, long srcOooFixSize, long srcOooVarAddr, long srcOooVarSize, long srcOooLo, long srcOooHi, long dstFixFd, long dstFixAddr, long dstFixOffset, long dstFixSize, long dstVarFd, long dstVarAddr, long dstVarOffset, long dstVarSize, long dstKFd, long dstVFd, long dstIndexOffset, boolean isIndexed, long cursor) {
+    private static void publishCopyTaskContended(
+            CairoConfiguration configuration,
+            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            Sequence outboundPubSeq,
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int columnType,
+            int blockType,
+            long timestampMergeIndexAddr,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long srcDataLo,
+            long srcDataHi,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo,
+            long srcOooHi,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarOffset,
+            long dstVarSize,
+            long dstKFd,
+            long dstVFd,
+            long dstIndexOffset,
+            boolean isIndexed,
+            long cursor,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
         while (cursor == -2) {
             cursor = outboundPubSeq.next();
         }
@@ -591,7 +636,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     dstKFd,
                     dstVFd,
                     dstIndexOffset,
-                    isIndexed
+                    isIndexed,
+                    doneLatch
             );
         } else {
             publishCopyTaskUncontended(
@@ -628,12 +674,49 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     dstVFd,
                     dstIndexOffset,
                     isIndexed,
-                    cursor
+                    cursor,
+                    doneLatch
             );
         }
     }
 
-    private static void publishCopyTaskUncontended(RingQueue<OutOfOrderCopyTask> outboundQueue, Sequence outboundPubSeq, AtomicInteger columnCounter, AtomicInteger partCounter, int columnType, int blockType, long timestampMergeIndexAddr, long srcDataFixFd, long srcDataFixAddr, long srcDataFixSize, long srcDataVarFd, long srcDataVarAddr, long srcDataVarSize, long srcDataLo, long srcDataHi, long srcOooFixAddr, long srcOooFixSize, long srcOooVarAddr, long srcOooVarSize, long srcOooLo, long srcOooHi, long dstFixFd, long dstFixAddr, long dstFixOffset, long dstFixSize, long dstVarFd, long dstVarAddr, long dstVarOffset, long dstVarSize, long dstKFd, long dstVFd, long dstIndexOffset, boolean isIndexed, long cursor) {
+    private static void publishCopyTaskUncontended(
+            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            Sequence outboundPubSeq,
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            int columnType,
+            int blockType,
+            long timestampMergeIndexAddr,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long srcDataLo,
+            long srcDataHi,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo,
+            long srcOooHi,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixOffset,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarOffset,
+            long dstVarSize,
+            long dstKFd,
+            long dstVFd,
+            long dstIndexOffset,
+            boolean isIndexed,
+            long cursor,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
         OutOfOrderCopyTask task = outboundQueue.get(cursor);
         task.of(
                 columnCounter,
@@ -666,12 +749,13 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstKFd,
                 dstVFd,
                 dstIndexOffset,
-                isIndexed
+                isIndexed,
+                doneLatch
         );
         outboundPubSeq.done(cursor);
     }
 
-    private static void appendTxnToPath(Path path, long txn) {
+    public static void appendTxnToPath(Path path, long txn) {
         path.put("-n-").put(txn);
     }
 
@@ -700,7 +784,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooHi,
             boolean isIndexed,
             AppendMemory srcDataFixColumn,
-            AppendMemory srcDataVarColumn
+            AppendMemory srcDataVarColumn,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         long dstFixFd;
         long dstFixAddr;
@@ -780,7 +865,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstKFd,
                 dstVFd,
                 dstIndexOffset,
-                isIndexed
+                isIndexed,
+                doneLatch
         );
     }
 
@@ -788,7 +874,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            int mkDirMode,
             FilesFacade ff,
             Path path,
             int plen,
@@ -819,7 +904,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long suffixHi,
             boolean isIndexed,
             AppendMemory srcDataFixColumn,
-            AppendMemory srcDataVarColumn
+            AppendMemory srcDataVarColumn,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         long srcDataFixFd;
         long srcDataFixAddr;
@@ -861,7 +947,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 final int pColNameLen = path.length();
 
                 path.put(FILE_SUFFIX_I).$();
-                createDirsOrFail(ff, path, mkDirMode);
+                createDirsOrFail(ff, path, configuration.getMkDirMode());
                 dstFixFd = openReadWriteOrFail(ff, path);
                 dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax) * Long.BYTES;
                 truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
@@ -869,7 +955,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 path.trimTo(pColNameLen);
                 path.put(FILE_SUFFIX_D).$();
-                createDirsOrFail(ff, path, mkDirMode);
+                createDirsOrFail(ff, path, configuration.getMkDirMode());
                 dstVarFd = openReadWriteOrFail(ff, path);
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
@@ -917,7 +1003,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 final int pDirNameLen = path.length();
 
                 path.concat(columnName).put(FILE_SUFFIX_D).$();
-                createDirsOrFail(ff, path, mkDirMode);
+                createDirsOrFail(ff, path, configuration.getMkDirMode());
 
                 dstFixFd = openReadWriteOrFail(ff, path);
                 dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax) << shl;
@@ -953,7 +1039,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             partCount++;
         }
 
-        publishMultCopyTasks(
+        publishMultiCopyTasks(
                 configuration,
                 outboundQueue,
                 outboundPubSeq,
@@ -995,7 +1081,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVarAppendOffset2,
                 dstKFd,
                 dstVFd,
-                isIndexed
+                isIndexed,
+                doneLatch
         );
     }
 
@@ -1003,7 +1090,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            int mkDirMode,
             FilesFacade ff,
             Path path,
             int plen,
@@ -1033,7 +1119,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long suffixLo,
             long suffixHi,
             long timestampFd,
-            boolean isIndexed
+            boolean isIndexed,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         long srcDataFixFd;
         long srcDataFixAddr;
@@ -1074,7 +1161,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcDataVarAddr = mapReadWriteOrFail(ff, path, srcDataVarFd, srcDataVarSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
-                oooSetPathAndEnsureDir(ff, path, columnName, FILE_SUFFIX_I, mkDirMode);
+                oooSetPathAndEnsureDir(ff, path, columnName, FILE_SUFFIX_I, configuration.getMkDirMode());
 
                 dstFixFd = openReadWriteOrFail(ff, path);
                 dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax) * Long.BYTES;
@@ -1082,7 +1169,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
-                oooSetPathAndEnsureDir(ff, path, columnName, FILE_SUFFIX_D, mkDirMode);
+                oooSetPathAndEnsureDir(ff, path, columnName, FILE_SUFFIX_D, configuration.getMkDirMode());
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 dstVarFd = openReadWriteOrFail(ff, path);
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
@@ -1130,7 +1217,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataFixFd = openReadWriteOrFail(ff, path);
                 }
 
-                final int shl = ColumnType.pow2SizeOf(columnType);
+                final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
                 srcDataFixSize = srcDataMax << shl;
                 dFile(path.trimTo(plen), columnName);
                 srcDataFixAddr = mapReadWriteOrFail(ff, path, Math.abs(srcDataFixFd), srcDataFixSize);
@@ -1139,7 +1226,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 final int pDirNameLen = path.length();
 
                 path.concat(columnName).put(FILE_SUFFIX_D).$();
-                createDirsOrFail(ff, path, mkDirMode);
+                createDirsOrFail(ff, path, configuration.getMkDirMode());
 
                 dstFixFd = openReadWriteOrFail(ff, path);
                 dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax) << shl;
@@ -1176,7 +1263,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 break;
         }
 
-        publishMultCopyTasks(
+        publishMultiCopyTasks(
                 configuration,
                 outboundQueue,
                 outboundPubSeq,
@@ -1218,15 +1305,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVarAppendOffset2,
                 dstKFd,
                 dstVFd,
-                isIndexed
+                isIndexed,
+                doneLatch
         );
     }
 
-    private static void oooOpenNewPartitionForAppend0(
+    private static void oooOpenNewPartitionForAppend(
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
             Sequence outboundPubSeq,
-            int mkDirMode,
             FilesFacade ff,
             Path path,
             int plen,
@@ -1240,7 +1327,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
-            boolean isIndexed
+            boolean isIndexed,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         final long dstFixFd;
         final long dstFixAddr;
@@ -1254,22 +1342,22 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         switch (columnType) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_I, mkDirMode);
+                oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_I, configuration.getMkDirMode());
                 dstFixFd = openReadWriteOrFail(ff, path);
                 truncateToSizeOrFail(ff, path, dstFixFd, (srcOooHi - srcOooLo + 1) * Long.BYTES);
                 dstFixSize = (srcOooHi - srcOooLo + 1) * Long.BYTES;
                 dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
 
-                oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_D, mkDirMode);
+                oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_D, configuration.getMkDirMode());
                 dstVarFd = openReadWriteOrFail(ff, path);
                 dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
                 dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
                 break;
             default:
-                oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_D, mkDirMode);
+                oooSetPathAndEnsureDir(ff, path.trimTo(plen), columnName, FILE_SUFFIX_D, configuration.getMkDirMode());
                 dstFixFd = openReadWriteOrFail(ff, path);
-                dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(columnType);
+                dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
                 truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
                 dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
                 if (isIndexed) {
@@ -1315,7 +1403,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstKFd,
                 dstVFd,
                 0,
-                isIndexed
+                isIndexed,
+                doneLatch
         );
     }
 
@@ -1323,7 +1412,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         createDirsOrFail(ff, path.concat(columnName).put(suffix).$(), mkDirMode);
     }
 
-    private static void publishMultCopyTasks(
+    private static void publishMultiCopyTasks(
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
             Sequence outboundPubSeq,
@@ -1365,7 +1454,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long dstVarAppendOffset2,
             long dstKFd,
             long dstVFd,
-            boolean isIndexed
+            boolean isIndexed,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         partCounter.set(partCount);
         switch (prefixType) {
@@ -1404,7 +1494,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         dstKFd,
                         dstVFd,
                         0,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
             case OO_BLOCK_DATA:
@@ -1442,7 +1533,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         dstKFd,
                         dstVFd,
                         0,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
             default:
@@ -1485,7 +1577,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         dstKFd,
                         dstVFd,
                         0,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
             case OO_BLOCK_DATA:
@@ -1523,7 +1616,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         dstKFd,
                         dstVFd,
                         0,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
             case OO_BLOCK_MERGE:
@@ -1561,7 +1655,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         dstKFd,
                         dstVFd,
                         0,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
             default:
@@ -1604,7 +1699,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         dstKFd,
                         dstVFd,
                         0,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
             case OO_BLOCK_DATA:
@@ -1642,7 +1738,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         dstKFd,
                         dstVFd,
                         0,
-                        isIndexed
+                        isIndexed,
+                        doneLatch
                 );
                 break;
             default:
@@ -1667,9 +1764,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     }
 
     private void openColumn(OutOfOrderOpenColumnTask task, long cursor, Sequence subSeq) {
-        final int mode = task.getOpenColumnMode();
-        final Path path = task.getPath();
-        final int plen = path.length();
+        final int openColumnMode = task.getOpenColumnMode();
+        final CharSequence pathToTable = task.getPathToTable();
+        final long partitionTimestamp = task.getPartitionTimestamp();
+        final int partitionBy = task.getPartitionBy();
         final int columnType = task.getColumnType();
         final CharSequence columnName = task.getColumnName();
         final FilesFacade ff = task.getFf();
@@ -1684,7 +1782,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
         final long srcOooVarAddr = task.getSrcOooVarAddr();
-        final long srcOooVarSize = task.getSrcOooFixSize();
+        final long srcOooVarSize = task.getSrcOooVarSize();
         final long mergeOOOLo = task.getMergeOOOLo();
         final long mergeOOOHi = task.getMergeOOOHi();
         final long mergeDataLo = task.getMergeDataLo();
@@ -1699,18 +1797,19 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long suffixHi = task.getSuffixHi();
         final int mergeType = task.getMergeType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
 
-        copy(
+        openColumn(
                 configuration,
                 outboundQueue,
                 outboundPubSeq,
-                configuration.getMkDirMode(),
-                mode,
+                openColumnMode,
                 ff,
-                path,
-                plen,
+                pathToTable,
+                partitionTimestamp,
+                partitionBy,
                 columnName,
                 columnCounter,
                 columnType,
@@ -1738,7 +1837,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 timestampFd,
                 isIndexed,
                 srcDataFixColumn,
-                srcDataVarColumn
+                srcDataVarColumn,
+                doneLatch
         );
     }
 }

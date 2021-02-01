@@ -34,10 +34,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.OutOfOrderPartitionTask;
-import io.questdb.tasks.OutOfOrderSortTask;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.tasks.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -2485,7 +2482,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public SPSequence getOutOfOrderSortPubSeq() {
+        public MPSequence getOutOfOrderSortPubSeq() {
             return null;
         }
 
@@ -2500,7 +2497,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public SPSequence getOutOfOrderPartitionPubSeq() {
+        public MPSequence getOutOfOrderPartitionPubSeq() {
             return null;
         }
 
@@ -2511,6 +2508,36 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         @Override
         public MCSequence getOutOfOrderPartitionSubSeq() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getOutOfOrderCopyPubSequence() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<OutOfOrderCopyTask> getOutOfOrderCopyQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getOutOfOrderCopySubSequence() {
+            return null;
+        }
+
+        @Override
+        public MPSequence getOutOfOrderOpenColumnPubSequence() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<OutOfOrderOpenColumnTask> getOutOfOrderOpenColumnQueue() {
+            return null;
+        }
+
+        @Override
+        public MCSequence getOutOfOrderOpenColumnSubSequence() {
             return null;
         }
     }

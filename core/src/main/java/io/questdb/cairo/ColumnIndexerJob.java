@@ -32,7 +32,7 @@ import io.questdb.tasks.ColumnIndexerTask;
 public class ColumnIndexerJob extends AbstractQueueConsumerJob<ColumnIndexerTask> {
 
     public ColumnIndexerJob(MessageBus messageBus) {
-        super(messageBus.getIndexerQueue(), messageBus.getOutOfOrderSortSubSeq());
+        super(messageBus.getIndexerQueue(), messageBus.getIndexerSubSequence());
     }
 
     protected boolean doRun(int workerId, long cursor) {

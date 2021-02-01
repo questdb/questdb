@@ -25,16 +25,16 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.AppendMemory;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.AbstractLockable;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
 
-import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closeable {
-    private final Path path = new Path();
+public class OutOfOrderOpenColumnTask extends AbstractLockable {
+    private CharSequence pathToTable;
+    private long partitionTimestamp;
+    private int partitionBy;
     private FilesFacade ff;
     private AtomicInteger columnCounter;
     private long txn;
@@ -64,11 +64,7 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
     private int suffixType;
     private long suffixLo;
     private long suffixHi;
-
-    @Override
-    public void close() {
-        Misc.free(path);
-    }
+    private SOUnboundedCountDownLatch doneLatch;
 
     public AtomicInteger getColumnCounter() {
         return columnCounter;
@@ -82,12 +78,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return columnType;
     }
 
-    public FilesFacade getFf() {
-        return ff;
+    public SOUnboundedCountDownLatch getDoneLatch() {
+        return doneLatch;
     }
 
-    public AppendMemory getSrcDataFixColumn() {
-        return srcDataFixColumn;
+    public FilesFacade getFf() {
+        return ff;
     }
 
     public long getMergeDataHi() {
@@ -114,8 +110,16 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return openColumnMode;
     }
 
-    public Path getPath() {
-        return path;
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
+    public long getPartitionTimestamp() {
+        return partitionTimestamp;
+    }
+
+    public CharSequence getPathToTable() {
+        return pathToTable;
     }
 
     public long getPrefixHi() {
@@ -130,8 +134,16 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return prefixType;
     }
 
+    public AppendMemory getSrcDataFixColumn() {
+        return srcDataFixColumn;
+    }
+
     public long getSrcDataMax() {
         return srcDataMax;
+    }
+
+    public AppendMemory getSrcDataVarColumn() {
+        return srcDataVarColumn;
     }
 
     public long getSrcOooFixAddr() {
@@ -182,34 +194,28 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         return txn;
     }
 
-    public AppendMemory getSrcDataVarColumn() {
-        return srcDataVarColumn;
-    }
-
     public boolean isIndexed() {
         return isIndexed;
     }
 
     public void of(
-            FilesFacade ff,
-            AtomicInteger columnCounter,
-            long txn,
             int openColumnMode,
+            FilesFacade ff,
+            CharSequence pathToTable,
+            long partitionTimestamp,
+            int partitionBy,
             CharSequence columnName,
+            AtomicInteger columnCounter,
             int columnType,
-            boolean isIndexed,
-            long timestampFd,
             long timestampMergeIndexAddr,
-            AppendMemory srcDataFixColumn,
-            AppendMemory srcDataVarColumn,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
             long srcOooVarSize,
-            CharSequence path,
             long srcOooLo,
             long srcOooHi,
             long srcDataMax,
+            long txn,
             int prefixType,
             long prefixLo,
             long prefixHi,
@@ -220,20 +226,22 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
             long mergeOOOHi,
             int suffixType,
             long suffixLo,
-            long suffixHi
+            long suffixHi,
+            long timestampFd,
+            boolean isIndexed,
+            AppendMemory srcDataFixColumn,
+            AppendMemory srcDataVarColumn,
+            SOUnboundedCountDownLatch doneLatch
     ) {
-        // todo: copy path
-        this.ff = ff;
-        this.columnCounter = columnCounter;
-        this.txn = txn;
         this.openColumnMode = openColumnMode;
+        this.ff = ff;
+        this.pathToTable = pathToTable;
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionBy = partitionBy;
+        this.columnCounter = columnCounter;
         this.columnName = columnName;
         this.columnType = columnType;
-        this.isIndexed = isIndexed;
-        this.timestampFd = timestampFd;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
-        this.srcDataFixColumn = srcDataFixColumn;
-        this.srcDataVarColumn = srcDataVarColumn;
         this.srcOooFixAddr = srcOooFixAddr;
         this.srcOooFixSize = srcOooFixSize;
         this.srcOooVarAddr = srcOooVarAddr;
@@ -241,6 +249,7 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
         this.srcDataMax = srcDataMax;
+        this.txn = txn;
         this.prefixType = prefixType;
         this.prefixLo = prefixLo;
         this.prefixHi = prefixHi;
@@ -252,5 +261,10 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable implements Closea
         this.suffixType = suffixType;
         this.suffixLo = suffixLo;
         this.suffixHi = suffixHi;
+        this.timestampFd = timestampFd;
+        this.isIndexed = isIndexed;
+        this.srcDataFixColumn = srcDataFixColumn;
+        this.srcDataVarColumn = srcDataVarColumn;
+        this.doneLatch = doneLatch;
     }
 }

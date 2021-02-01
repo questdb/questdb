@@ -24,6 +24,7 @@
 
 package io.questdb.tasks;
 
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.AbstractLockable;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -60,6 +61,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long dstVFd;
     private long dstIndexOffset;
     private boolean isIndexed;
+    private SOUnboundedCountDownLatch doneLatch;
 
     public int getBlockType() {
         return blockType;
@@ -71,6 +73,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public SOUnboundedCountDownLatch getDoneLatch() {
+        return doneLatch;
     }
 
     public long getDstFixAddr() {
@@ -216,7 +222,8 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
-            boolean isIndexed
+            boolean isIndexed,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         this.columnCounter = columnCounter;
         this.partCounter = partCounter;
@@ -249,5 +256,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.dstVFd = dstVFd;
         this.dstIndexOffset = dstIndexOffset;
         this.isIndexed = isIndexed;
+        this.doneLatch = doneLatch;
     }
 }

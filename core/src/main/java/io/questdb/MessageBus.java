@@ -27,19 +27,20 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
 import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
-import io.questdb.mp.SPSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.OutOfOrderPartitionTask;
-import io.questdb.tasks.OutOfOrderSortTask;
-import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.tasks.*;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public interface MessageBus extends Closeable {
+    @Override
+    default void close() {
+        Misc.free(getOutOfOrderPartitionQueue());
+    }
+
     CairoConfiguration getConfiguration();
 
     Sequence getIndexerPubSequence();
@@ -48,13 +49,25 @@ public interface MessageBus extends Closeable {
 
     Sequence getIndexerSubSequence();
 
-    SPSequence getOutOfOrderPartitionPubSeq();
+    MPSequence getOutOfOrderCopyPubSequence();
+
+    RingQueue<OutOfOrderCopyTask> getOutOfOrderCopyQueue();
+
+    MCSequence getOutOfOrderCopySubSequence();
+
+    MPSequence getOutOfOrderOpenColumnPubSequence();
+
+    RingQueue<OutOfOrderOpenColumnTask> getOutOfOrderOpenColumnQueue();
+
+    MCSequence getOutOfOrderOpenColumnSubSequence();
+
+    MPSequence getOutOfOrderPartitionPubSeq();
 
     RingQueue<OutOfOrderPartitionTask> getOutOfOrderPartitionQueue();
 
     MCSequence getOutOfOrderPartitionSubSeq();
 
-    SPSequence getOutOfOrderSortPubSeq();
+    MPSequence getOutOfOrderSortPubSeq();
 
     RingQueue<OutOfOrderSortTask> getOutOfOrderSortQueue();
 
@@ -77,9 +90,4 @@ public interface MessageBus extends Closeable {
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
     Sequence getVectorAggregateSubSequence();
-
-    @Override
-    default void close() {
-        Misc.free(getOutOfOrderPartitionQueue());
-    }
 }
