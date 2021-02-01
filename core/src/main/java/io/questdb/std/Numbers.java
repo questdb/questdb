@@ -515,7 +515,7 @@ public final class Numbers {
     }
 
     public static short decodeHighShort(int val) {
-        return (short) (val >> (short)16);
+        return (short) (val >> 16);
     }
 
     public static int decodeHighInt(long val) {

@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SubTimestampFunctionFactory implements FunctionFactory {
@@ -55,11 +56,6 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return left.getTimestamp(rec) - right.getTimestamp(rec);
-        }
-
-        @Override
         public Function getLeft() {
             return left;
         }
@@ -67,6 +63,18 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            long l = left.getTimestamp(rec);
+            long r = right.getTimestamp(rec);
+
+            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN) {
+                return Numbers.INT_NaN;
+            }
+
+            return l - r;
         }
     }
 }

@@ -38,21 +38,42 @@ public final class IntervalUtils {
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
 
-    public static void addHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
-        addHiLoInterval(lo, hi, period, periodType, periodCount, 0, operation, out);
+    public static void addHiLoInterval(
+            long lo,
+            long hi,
+            int period,
+            char periodType,
+            int periodCount,
+            short operation,
+            LongList out) {
+        addHiLoInterval(lo, hi, period, periodType, periodCount, (short) 0, (short) 0, operation, out);
     }
 
-    public static void addHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, int adjustment, short operation, LongList out) {
+    public static void addHiLoInterval(
+            long lo,
+            long hi,
+            int period,
+            char periodType,
+            int periodCount,
+            short adjustment,
+            short dynamicIndicator,
+            short operation,
+            LongList out) {
         out.add(lo);
         out.add(hi);
         out.add(Numbers.encodeLowHighInts(
                 Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
-                adjustment));
+                Numbers.encodeLowHighShorts(adjustment, dynamicIndicator)));
         out.add(Numbers.encodeLowHighInts(period, periodCount));
     }
 
-    public static void addHiLoInterval(long lo, long hi, int adjustment, short operation, LongList out) {
-        addHiLoInterval(lo, hi, 0, (char) 0, 1, adjustment, operation, out);
+    public static void addHiLoInterval(long lo,
+                                       long hi,
+                                       short adjustment,
+                                       short dynamicIndicator,
+                                       short operation,
+                                       LongList out) {
+        addHiLoInterval(lo, hi, 0, (char) 0, 1, adjustment, dynamicIndicator, operation, out);
     }
 
     public static void addHiLoInterval(long lo, long hi, short operation, LongList out) {
@@ -97,15 +118,20 @@ public final class IntervalUtils {
         intervals.truncateTo(index);
         if (periodType == 0) {
             intervals.extendAndSet(index + 1, hi);
-            intervals.extendAndSet(index, lo);
+            intervals.setQuick(index, lo);
             return;
         }
         apply(intervals, lo, hi, period, periodType, count);
     }
 
-    public static int getEncodedAdjustment(LongList intervals, int index) {
-        return Numbers.decodeHighInt(
-                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX));
+    public static short getEncodedAdjustment(LongList intervals, int index) {
+        return Numbers.decodeLowShort(Numbers.decodeHighInt(
+                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));
+    }
+
+    public static short getEncodedDynamicIndicator(LongList intervals, int index) {
+        return Numbers.decodeHighShort(Numbers.decodeHighInt(
+                intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));
     }
 
     public static short getEncodedOperation(LongList intervals, int index) {
@@ -429,7 +455,7 @@ public final class IntervalUtils {
         }
 
         list.extendAndSet(2 * writePoint + 1, hi);
-        list.extendAndSet(2 * writePoint, lo);
+        list.setQuick(2 * writePoint, lo);
         return writePoint + 1;
     }
 
@@ -553,7 +579,7 @@ public final class IntervalUtils {
         // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
         if (last != Long.MIN_VALUE) {
             intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);
-            intervals.extendAndSet(writeIndex, last);
+            intervals.setQuick(writeIndex, last);
             writeIndex += 2;
         }
 

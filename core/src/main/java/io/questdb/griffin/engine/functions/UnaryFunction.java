@@ -52,6 +52,6 @@ public interface UnaryFunction extends Function {
     }
 
     default boolean isRuntimeConstant() {
-        return getArg().isRuntimeConstant() || getArg().isConstant();
+        return getArg().isRuntimeConstant();
     }
 }

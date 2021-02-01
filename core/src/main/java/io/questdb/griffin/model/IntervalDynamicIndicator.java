@@ -24,13 +24,9 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.LongList;
-
-import java.io.Closeable;
-
-public interface RuntimeIntrinsicIntervalModel extends Closeable {
-    LongList calculateIntervals(SqlExecutionContext sqlContext);
-
-    boolean allIntervalsHitOnePartition(int partitionBy);
+public final class IntervalDynamicIndicator {
+    public final static short NONE = 0;
+    public final static short IS_LO_DYNAMIC = 0x1;
+    public final static short IS_HI_DYNAMIC = 0x2;
+    public final static short IS_LO_HI_DYNAMIC = IS_LO_DYNAMIC | IS_HI_DYNAMIC;
 }

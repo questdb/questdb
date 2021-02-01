@@ -47,7 +47,6 @@ import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -905,7 +904,7 @@ public class SqlCodeGenerator implements Mutable {
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.getIntervalModel(), timestampIndex);
+            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
         } else {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
         }
@@ -2335,22 +2334,9 @@ public class SqlCodeGenerator implements Mutable {
 
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {
-                    RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.getIntervalModel();
+                    RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
                     dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intervalModel, readerTimestampIndex);
-                    switch (reader.getPartitionedBy()) {
-                        case PartitionBy.DAY:
-                            intervalHitsOnlyOnePartition = intervalModel.isFocused(Timestamps.FLOOR_DD);
-                            break;
-                        case PartitionBy.MONTH:
-                            intervalHitsOnlyOnePartition = intervalModel.isFocused(Timestamps.FLOOR_MM);
-                            break;
-                        case PartitionBy.YEAR:
-                            intervalHitsOnlyOnePartition = intervalModel.isFocused(Timestamps.FLOOR_YYYY);
-                            break;
-                        default:
-                            intervalHitsOnlyOnePartition = true;
-                            break;
-                    }
+                    intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
                 } else {
                     dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
                     intervalHitsOnlyOnePartition = false;

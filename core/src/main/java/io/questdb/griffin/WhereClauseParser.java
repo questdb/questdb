@@ -456,8 +456,8 @@ final class WhereClauseParser implements Mutable {
         return false;
     }
 
-    private static int adjustComparison(boolean equalsTo, boolean isLo) {
-        return equalsTo ? 0 : isLo ? 1 : -1;
+    private static short adjustComparison(boolean equalsTo, boolean isLo) {
+        return equalsTo ? 0 : isLo ? (short) 1 : (short) -1;
     }
 
     private boolean analyzeListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, ExpressionNode node) {

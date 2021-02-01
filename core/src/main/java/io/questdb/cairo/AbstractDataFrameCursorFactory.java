@@ -50,4 +50,8 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
                 tableVersion
         );
     }
+
+    @Override
+    public void close() {
+    }
 }

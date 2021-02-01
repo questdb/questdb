@@ -24,14 +24,15 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-import static io.questdb.griffin.model.RuntimeIntervalModelBuilder.DYNAMIC_LO_HI;
 
 public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     // These 2 are incoming model
@@ -73,7 +74,20 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
-    public boolean isFocused(Timestamps.TimestampFloorMethod floorMethod) {
+    public boolean allIntervalsHitOnePartition(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return allIntervalsHitOnePartition(Timestamps.FLOOR_DD);
+            case PartitionBy.MONTH:
+                return allIntervalsHitOnePartition(Timestamps.FLOOR_MM);
+            case PartitionBy.YEAR:
+                return allIntervalsHitOnePartition(Timestamps.FLOOR_YYYY);
+            default:
+                return true;
+        }
+    }
+
+    private boolean allIntervalsHitOnePartition(Timestamps.TimestampFloorMethod floorMethod) {
         if (!isStatic()) return false;
 
         long floor = floorMethod.floor(intervals.getQuick(0));
@@ -85,12 +99,18 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         return true;
     }
 
+    @Override
+    public void close() {
+        Misc.freeObjList(dynamicRangeList);
+    }
+
     private void addEvaluateDynamicIntervals(LongList outIntervals, SqlExecutionContext sqlContext) {
-        int dynamicStart = intervals.size() - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+        int size = intervals.size();
+        int dynamicStart = size - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
         int dynamicIndex = 0;
 
-        for (int i = dynamicStart; i < intervals.size(); i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
-            Function dynamicFunction = dynamicRangeList.get(dynamicIndex++);
+        for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
+            Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
             short operation = IntervalUtils.getEncodedOperation(intervals, i);
             int divider = outIntervals.size();
 
@@ -101,7 +121,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             } else {
                 long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
                 long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
-                int adjustment = IntervalUtils.getEncodedAdjustment(intervals, i);
+                short adjustment = IntervalUtils.getEncodedAdjustment(intervals, i);
+                short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
+
                 dynamicFunction.init(null, sqlContext);
                 long dynamicValue = dynamicFunction.getTimestamp(null);
                 if (dynamicValue == Long.MIN_VALUE) {
@@ -110,16 +132,15 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     return;
                 }
 
-                if (operation == IntervalOperation.INTERSECT_EQUALS) {
-                    hi = lo = dynamicValue;
-                } else if (hi == DYNAMIC_LO_HI) {
+                if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
                     hi = dynamicValue + adjustment;
-                } else {
+                }
+                if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
                     lo = dynamicValue + adjustment;
                 }
 
                 outIntervals.extendAndSet(divider + 1, hi);
-                outIntervals.extendAndSet(divider, lo);
+                outIntervals.setQuick(divider, lo);
             }
 
             if (i > 0) {
@@ -127,7 +148,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 // if this is first element and no pre-calculated static intervals exist
                 switch (operation) {
                     case IntervalOperation.INTERSECT:
-                    case IntervalOperation.INTERSECT_EQUALS:
                         IntervalUtils.intersectInplace(outIntervals, divider);
                         break;
                     case IntervalOperation.SUBTRACT:

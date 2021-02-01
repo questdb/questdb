@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
@@ -40,13 +39,12 @@ import io.questdb.std.ObjList;
  * When first interval involving function is added all data starts to be encoded in 4 longs in staticPeriods
  * 0: lo (long)
  * 1: hi (long)
- * 2: operation (short), period type (short), adjustment (int)
+ * 2: operation (short), period type (short), adjustment (short), dynamicIndicator (short)
  * 3: period (int), count (int)
  * <p>
  * and the index when it happens stored in pureStaticCount
  */
 public class RuntimeIntervalModelBuilder implements Mutable {
-    public static final long DYNAMIC_LO_HI = Numbers.INT_NaN + 2;
     // All data needed to re-evaluate intervals
     // is stored in 2 lists - ListLong and List of functions
     // ListLongs has STATIC_LONGS_PER_DYNAMIC_INTERVAL entries per 1 dynamic interval
@@ -70,18 +68,18 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return intervalApplied;
     }
 
-    public void intersect(long lo, Function hi, int adjustment) {
+    public void intersect(long lo, Function hi, short adjustment) {
         if (isEmptySet()) return;
 
-        IntervalUtils.addHiLoInterval(lo, DYNAMIC_LO_HI, adjustment, IntervalOperation.INTERSECT, staticIntervals);
+        IntervalUtils.addHiLoInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(hi);
         intervalApplied = true;
     }
 
-    public void intersect(Function lo, long hi, int adjustment) {
+    public void intersect(Function lo, long hi, short adjustment) {
         if (isEmptySet()) return;
 
-        IntervalUtils.addHiLoInterval(DYNAMIC_LO_HI, hi, adjustment, IntervalOperation.INTERSECT, staticIntervals);
+        IntervalUtils.addHiLoInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(lo);
         intervalApplied = true;
     }
@@ -109,7 +107,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void intersectEquals(Function function) {
         if (isEmptySet()) return;
 
-        IntervalUtils.addHiLoInterval(DYNAMIC_LO_HI, DYNAMIC_LO_HI, IntervalOperation.INTERSECT_EQUALS, staticIntervals);
+        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
         dynamicRangeList.add(function);
         intervalApplied = true;
     }
