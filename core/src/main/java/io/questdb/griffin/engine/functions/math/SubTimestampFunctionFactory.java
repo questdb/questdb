@@ -22,50 +22,59 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.date;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class NowFunctionFactory implements FunctionFactory {
-
+public class SubTimestampFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "now()";
+        return "-(Nl)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(position);
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends TimestampFunction implements Function {
-        private SqlExecutionContext context;
+    private static class Func extends TimestampFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public Func(int position) {
+        public Func(int position, Function left, Function right) {
             super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
 
         @Override
         public long getTimestamp(Record rec) {
-            return context.getNow();
-        }
+            long l = left.getTimestamp(rec);
+            long r = right.getTimestamp(rec);
 
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            executionContext.initNow();
-            context = executionContext;
-        }
+            if (l != Numbers.LONG_NaN && r != Numbers.LONG_NaN) {
+                return l - r;
+            }
 
-        @Override
-        public boolean isRuntimeConstant() {
-            return true;
+            return Numbers.LONG_NaN;
         }
     }
 }

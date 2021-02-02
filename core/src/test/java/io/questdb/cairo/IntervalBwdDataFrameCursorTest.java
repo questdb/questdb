@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -198,8 +199,9 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             TableReader reader = new TableReader(configuration, "x");
-            IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
-            cursor.of(reader);
+            IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
+                    new RuntimeIntervalModel(intervals), reader.getMetadata().getTimestampIndex());
+            cursor.of(reader, null);
             cursor.close();
             Assert.assertFalse(reader.isOpen());
             cursor.close();
@@ -389,8 +391,13 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     timestampIndex = reader.getMetadata().getTimestampIndex();
                 }
                 final TableReaderRecord record = new TableReaderRecord();
-                final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(engine, "x", 0, intervals, timestampIndex);
-                try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE)) {
+                final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
+                        engine,
+                        "x",
+                        0,
+                        new RuntimeIntervalModel(intervals),
+                        timestampIndex);
+                try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
 
                     // assert that there is nothing to start with
                     record.of(cursor.getTableReader());
@@ -437,7 +444,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(AllowAllCairoSecurityContext.INSTANCE);
+                    factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }
@@ -592,8 +599,10 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             try (TableReader reader = new TableReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
-                IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(IntervalBwdDataFrameCursorTest.intervals, reader.getMetadata().getTimestampIndex());
-                cursor.of(reader);
+                IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
+                        new RuntimeIntervalModel(IntervalBwdDataFrameCursorTest.intervals),
+                        reader.getMetadata().getTimestampIndex());
+                cursor.of(reader, null);
                 record.of(reader);
 
                 assertEquals(expected, record, cursor);

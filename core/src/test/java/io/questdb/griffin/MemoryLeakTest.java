@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 

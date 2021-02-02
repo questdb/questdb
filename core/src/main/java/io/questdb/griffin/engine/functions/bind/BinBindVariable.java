@@ -47,4 +47,9 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
     public long getBinLen(Record rec) {
         return value == null ? TableUtils.NULL_LEN : value.length();
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

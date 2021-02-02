@@ -22,33 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-
-class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
-    int value;
-
-    IntBindVariable() {
-        super(0);
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return value;
-    }
-
-    @Override
-    public void clear() {
-        this.value = Numbers.INT_NaN;
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
+public final class IntervalDynamicIndicator {
+    public final static short NONE = 0;
+    public final static short IS_LO_DYNAMIC = 0x1;
+    public final static short IS_HI_DYNAMIC = 0x2;
+    public final static short IS_LO_HI_DYNAMIC = IS_LO_DYNAMIC | IS_HI_DYNAMIC;
 }
