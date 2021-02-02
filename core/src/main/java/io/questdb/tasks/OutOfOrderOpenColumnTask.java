@@ -33,7 +33,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class OutOfOrderOpenColumnTask extends AbstractLockable {
     private CharSequence pathToTable;
-    private long partitionTimestamp;
     private int partitionBy;
     private FilesFacade ff;
     private AtomicInteger columnCounter;
@@ -53,6 +52,9 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
     private long srcDataMax;
     private long srcOooLo;
     private long srcOooHi;
+    private long srcOooMax;
+    private long oooTimestampLo;
+    private long oooTimestampHi;
     private int prefixType;
     private long prefixLo;
     private long prefixHi;
@@ -106,16 +108,20 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         return mergeType;
     }
 
+    public long getOooTimestampHi() {
+        return oooTimestampHi;
+    }
+
+    public long getOooTimestampLo() {
+        return oooTimestampLo;
+    }
+
     public int getOpenColumnMode() {
         return openColumnMode;
     }
 
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public long getPartitionTimestamp() {
-        return partitionTimestamp;
     }
 
     public CharSequence getPathToTable() {
@@ -162,6 +168,10 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         return srcOooLo;
     }
 
+    public long getSrcOooMax() {
+        return srcOooMax;
+    }
+
     public long getSrcOooVarAddr() {
         return srcOooVarAddr;
     }
@@ -202,7 +212,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
             int openColumnMode,
             FilesFacade ff,
             CharSequence pathToTable,
-            long partitionTimestamp,
             int partitionBy,
             CharSequence columnName,
             AtomicInteger columnCounter,
@@ -214,6 +223,9 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampLo,
+            long oooTimestampHi,
             long srcDataMax,
             long txn,
             int prefixType,
@@ -236,7 +248,7 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         this.openColumnMode = openColumnMode;
         this.ff = ff;
         this.pathToTable = pathToTable;
-        this.partitionTimestamp = partitionTimestamp;
+        this.oooTimestampLo = oooTimestampLo;
         this.partitionBy = partitionBy;
         this.columnCounter = columnCounter;
         this.columnName = columnName;
@@ -248,6 +260,7 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         this.srcOooVarSize = srcOooVarSize;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
+        this.srcOooMax = srcOooMax;
         this.srcDataMax = srcDataMax;
         this.txn = txn;
         this.prefixType = prefixType;
@@ -266,5 +279,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         this.srcDataFixColumn = srcDataFixColumn;
         this.srcDataVarColumn = srcDataVarColumn;
         this.doneLatch = doneLatch;
+        this.oooTimestampHi = oooTimestampHi;
     }
 }

@@ -26,12 +26,14 @@ package io.questdb.tasks;
 
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.AbstractLockable;
+import io.questdb.std.FilesFacade;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class OutOfOrderCopyTask extends AbstractLockable {
     private AtomicInteger columnCounter;
     private AtomicInteger partCounter;
+    private FilesFacade ff;
     private int columnType;
     private int blockType;
     private long timestampMergeIndexAddr;
@@ -43,12 +45,15 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcDataVarSize;
     private long srcDataLo;
     private long srcDataHi;
+    private long srcDataMax;
     private long srcOooFixAddr;
     private long srcOooFixSize;
     private long srcOooVarAddr;
     private long srcOooVarSize;
     private long srcOooLo;
     private long srcOooHi;
+    private long srcOooMax;
+    private long oooTimestampHi;
     private long dstFixFd;
     private long dstFixAddr;
     private long dstFixOffset;
@@ -62,6 +67,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long dstIndexOffset;
     private boolean isIndexed;
     private SOUnboundedCountDownLatch doneLatch;
+    private long timestampFd;
 
     public int getBlockType() {
         return blockType;
@@ -123,8 +129,16 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return dstVarSize;
     }
 
+    public FilesFacade getFf() {
+        return ff;
+    }
+
     public AtomicInteger getPartCounter() {
         return partCounter;
+    }
+
+    public long getOooTimestampHi() {
+        return oooTimestampHi;
     }
 
     public long getSrcDataFixAddr() {
@@ -145,6 +159,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
 
     public long getSrcDataLo() {
         return srcDataLo;
+    }
+
+    public long getSrcDataMax() {
+        return srcDataMax;
     }
 
     public long getSrcDataVarAddr() {
@@ -175,12 +193,20 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return srcOooLo;
     }
 
+    public long getSrcOooMax() {
+        return srcOooMax;
+    }
+
     public long getSrcOooVarAddr() {
         return srcOooVarAddr;
     }
 
     public long getSrcOooVarSize() {
         return srcOooVarSize;
+    }
+
+    public long getTimestampFd() {
+        return timestampFd;
     }
 
     public long getTimestampMergeIndexAddr() {
@@ -194,6 +220,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     public void of(
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
+            FilesFacade ff,
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
@@ -205,12 +232,15 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcDataVarSize,
             long srcDataLo,
             long srcDataHi,
+            long srcDataMax,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampHi,
             long dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
@@ -223,10 +253,12 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long dstVFd,
             long dstIndexOffset,
             boolean isIndexed,
+            long timestampFd,
             SOUnboundedCountDownLatch doneLatch
     ) {
         this.columnCounter = columnCounter;
         this.partCounter = partCounter;
+        this.ff = ff;
         this.columnType = columnType;
         this.blockType = blockType;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
@@ -238,12 +270,15 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcDataVarSize = srcDataVarSize;
         this.srcDataLo = srcDataLo;
         this.srcDataHi = srcDataHi;
+        this.srcDataMax = srcDataMax;
         this.srcOooFixAddr = srcOooFixAddr;
         this.srcOooFixSize = srcOooFixSize;
         this.srcOooVarAddr = srcOooVarAddr;
         this.srcOooVarSize = srcOooVarSize;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
+        this.srcOooMax = srcOooMax;
+        this.oooTimestampHi = oooTimestampHi;
         this.dstFixFd = dstFixFd;
         this.dstFixAddr = dstFixAddr;
         this.dstFixOffset = dstFixOffset;
@@ -257,5 +292,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.dstIndexOffset = dstIndexOffset;
         this.isIndexed = isIndexed;
         this.doneLatch = doneLatch;
+        this.timestampFd = timestampFd;
     }
 }

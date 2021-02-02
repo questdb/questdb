@@ -3113,7 +3113,7 @@ public class TableWriter implements Closeable {
                                 // is, or used to be, active for the writer. So we have to close existing files so that
                                 // rename on Windows does not fall flat.
                                 closeAppendMemoryNoTruncate(false);
-                                Misc.freeObjList(denseIndexers);
+                                Misc.freeObjList(this.denseIndexers);
 
                                 // we also indicate that "active" partition has to be reloaded
                                 // after rename
@@ -3155,9 +3155,9 @@ public class TableWriter implements Closeable {
                 final long partitionSize = dataIndexMax + indexHi - indexLo + 1;
                 if (indexHi + 1 < indexMax || partitionTimestampHi < floorMaxTimestamp) {
 
-                    fixedRowCount += partitionSize;
+                    this.fixedRowCount += partitionSize;
                     if (partitionTimestampHi < floorMaxTimestamp) {
-                        fixedRowCount -= dataIndexMax;
+                        this.fixedRowCount -= dataIndexMax;
                     }
 
                     // We just updated non-last partition. It is possible that this partition
@@ -3168,38 +3168,38 @@ public class TableWriter implements Closeable {
                     // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
 
                     boolean missing = true;
-                    long x = txPendingPartitionSizes.getAppendOffset() / 16;
+                    long x = this.txPendingPartitionSizes.getAppendOffset() / 16;
                     for (long l = 0; l < x; l++) {
-                        long ts = txPendingPartitionSizes.getLong(l * 16 + Long.BYTES);
+                        long ts = this.txPendingPartitionSizes.getLong(l * 16 + Long.BYTES);
                         if (ts == partitionTimestampHi) {
-                            fixedRowCount -= txPendingPartitionSizes.getLong(l * 16);
-                            txPendingPartitionSizes.putLong(l * 16, partitionSize);
+                            this.fixedRowCount -= this.txPendingPartitionSizes.getLong(l * 16);
+                            this.txPendingPartitionSizes.putLong(l * 16, partitionSize);
                             missing = false;
                             break;
                         }
                     }
 
                     if (missing) {
-                        txPartitionCount++;
-                        txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
+                        this.txPartitionCount++;
+                        this.txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
                     }
 
                     if (indexHi + 1 >= indexMax) {
                         // no more out of order data and we just pre-pended data to existing
                         // partitions
-                        minTimestamp = oooTimestampMin;
+                        this.minTimestamp = oooTimestampMin;
                         // when we exit here we need to rollback transientRowCount we've been incrementing
                         // while adding out-of-order data
-                        transientRowCount = transientRowCountBeforeOutOfOrder;
+                        this.transientRowCount = transientRowCountBeforeOutOfOrder;
                         break;
                     }
                 } else {
-                    transientRowCount = partitionSize;
+                    this.transientRowCount = partitionSize;
                     // Compute max timestamp as maximum of out of order data and
                     // data in existing partition.
                     // When partition is new, the data timestamp is MIN_LONG
-                    maxTimestamp = Math.max(getTimestampIndexValue(mergedTimestamps, indexHi), dataTimestampHi);
-                    minTimestamp = Math.min(minTimestamp, oooTimestampMin);
+                    this.maxTimestamp = Math.max(getTimestampIndexValue(mergedTimestamps, indexHi), dataTimestampHi);
+                    this.minTimestamp = Math.min(this.minTimestamp, oooTimestampMin);
                     break;
                 }
             }
@@ -3424,9 +3424,9 @@ public class TableWriter implements Closeable {
             // partition actual data "lo" and "hi" (dataLo, dataHi)
             // out of order "lo" and "hi" (indexLo, indexHi)
 
-            final long indexMax = mergeRowCount;
+            final long srcOooMax = mergeRowCount;
             final long oooTimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
-            final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, indexMax - 1);
+            final long oooTimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
             final long tableFloorOfMinTimestamp = timestampFloorMethod.floor(minTimestamp);
             final long tableFloorOfMaxTimestamp = timestampFloorMethod.floor(maxTimestamp);
             final long tableCeilOfMaxTimestamp = ceilMaxTimestamp();
@@ -3436,7 +3436,7 @@ public class TableWriter implements Closeable {
 
             // todo: we should not need to compile list and then process it, we can perhaps process data before
             //    it hits the list
-            final LongList oooPartitions = oooComputePartitions(sortedTimestampsAddr, indexMax, oooTimestampMin, oooTimestampMax);
+            final LongList oooPartitions = oooComputePartitions(sortedTimestampsAddr, srcOooMax, oooTimestampMin, oooTimestampMax);
             final int affectedPartitionCount = oooPartitions.size() / 2 - 1;
             final int latchCount = affectedPartitionCount - 1;
 
@@ -3455,6 +3455,7 @@ public class TableWriter implements Closeable {
                             txn,
                             srcOooLo,
                             srcOooHi,
+                            srcOooMax,
                             oooTimestampMax,
                             lastPartitionSize,
                             partitionTimestampHi,
@@ -3486,6 +3487,7 @@ public class TableWriter implements Closeable {
                             oooColumns,
                             srcOooLo,
                             srcOooHi,
+                            srcOooMax,
                             txn,
                             sortedTimestampsAddr,
                             lastPartitionSize,

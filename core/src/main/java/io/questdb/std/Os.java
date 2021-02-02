@@ -56,7 +56,7 @@ public final class Os {
         ObjList<Path> paths = Chars.splitLpsz(args);
         int n = paths.size();
         try {
-            long argv = Unsafe.malloc((n + 1) * 8);
+            long argv = Unsafe.malloc((n + 1) * 8L);
             try {
                 long p = argv;
                 for (int i = 0; i < n; i++) {

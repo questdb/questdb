@@ -37,6 +37,7 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
     private long txn;
     private long srcOooLo;
     private long srcOooHi;
+    private long srcOooMax;
     private long oooTimestampMax;
     private long lastPartitionSize;
     private long partitionTimestampHi;
@@ -105,6 +106,10 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
         return srcOooLo;
     }
 
+    public long getSrcOooMax() {
+        return srcOooMax;
+    }
+
     public long getTableCeilOfMaxTimestamp() {
         return tableCeilOfMaxTimestamp;
     }
@@ -134,6 +139,7 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
             long txn,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
             long oooTimestampMax,
             long lastPartitionSize,
             long partitionTimestampHi,
@@ -154,6 +160,7 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
         this.txn = txn;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
+        this.srcOooMax = srcOooMax;
         this.oooTimestampMax = oooTimestampMax;
         this.lastPartitionSize = lastPartitionSize;
         this.partitionTimestampHi = partitionTimestampHi;
