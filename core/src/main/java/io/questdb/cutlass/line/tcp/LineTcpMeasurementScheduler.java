@@ -89,7 +89,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final CairoConfiguration cairoConfiguration;
     private final MillisecondClock milliClock;
     private final RingQueue<LineTcpMeasurementEvent> queue;
-    private final Lock tableUpdateDetailsLock = new SimpleLock();
+    private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsByTableName;
     private final CharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsByTableName;
     private final int[] loadByThread;
@@ -225,11 +225,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 } finally {
                     pubSeq.done(seq);
                     if (tableUpdateDetails.nUpdates.incrementAndGet() > nUpdatesPerLoadRebalance) {
-                        if (tableUpdateDetailsLock.tryLock()) {
+                        if (tableUpdateDetailsLock.writeLock().tryLock()) {
                             try {
                                 loadRebalance();
                             } finally {
-                                tableUpdateDetailsLock.unlock();
+                                tableUpdateDetailsLock.writeLock().unlock();
                             }
                         }
                     }
@@ -240,9 +240,19 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private TableUpdateDetails startNewMeasurementEvent(NewLineProtoParser protoParser) {
-        tableUpdateDetailsLock.lock();
-        TableUpdateDetails tableUpdateDetails;
+        tableUpdateDetailsLock.readLock().lock();
         int keyIndex;
+        try {
+            keyIndex = tableUpdateDetailsByTableName.keyIndex(protoParser.getMeasurementName());
+            if (keyIndex < 0) {
+                return tableUpdateDetailsByTableName.valueAt(keyIndex);
+            }
+        } finally {
+            tableUpdateDetailsLock.readLock().unlock();
+        }
+
+        TableUpdateDetails tableUpdateDetails;
+        tableUpdateDetailsLock.writeLock().lock();
         try {
             keyIndex = tableUpdateDetailsByTableName.keyIndex(protoParser.getMeasurementName());
             if (keyIndex < 0) {
@@ -268,7 +278,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
             return tableUpdateDetails;
         } finally {
-            tableUpdateDetailsLock.unlock();
+            tableUpdateDetailsLock.writeLock().unlock();
         }
     }
 
@@ -738,7 +748,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (nUncommitted == 0) {
                 long localLastMeasurementReceivedEpochMs = lastMeasurementReceivedEpochMs;
                 if ((milliClock.getTicks() - localLastMeasurementReceivedEpochMs) >= minIdleMsBeforeWriterRelease) {
-                    tableUpdateDetailsLock.lock();
+                    tableUpdateDetailsLock.writeLock().lock();
                     try {
                         if (localLastMeasurementReceivedEpochMs == lastMeasurementReceivedEpochMs && null != writer) {
                             LOG.info().$("releasing writer, its been idle since ").$ts(localLastMeasurementReceivedEpochMs * 1_000).$(" [tableName=").$(tableName).$(']').$();
@@ -751,7 +761,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
                         }
                     } finally {
-                        tableUpdateDetailsLock.unlock();
+                        tableUpdateDetailsLock.writeLock().unlock();
                     }
                 }
                 return;
@@ -1081,42 +1091,5 @@ class LineTcpMeasurementScheduler implements Closeable {
             this.protoParser = protoParser;
             return this;
         }
-    }
-
-    private static class SimpleLock implements Lock {
-        private final AtomicBoolean locked = new AtomicBoolean();
-
-        @Override
-        public void lock() {
-            while (!locked.compareAndSet(false, true)) {
-                LockSupport.parkNanos(10);
-            }
-        }
-
-        @Override
-        public void lockInterruptibly() throws InterruptedException {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean tryLock() {
-            return locked.compareAndSet(false, true);
-        }
-
-        @Override
-        public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void unlock() {
-            locked.set(false);
-        }
-
-        @Override
-        public Condition newCondition() {
-            throw new UnsupportedOperationException();
-        }
-
     }
 }

@@ -115,7 +115,16 @@ public class SimpleReadWriteLock implements ReadWriteLock {
 
         @Override
         public boolean tryLock() {
-            throw new UnsupportedOperationException();
+            if (!lock.compareAndSet(false, true)) {
+                return false;
+            }
+            int n = nReaders.addAndGet(MAX_READERS);
+            if (n == MAX_READERS) {
+                return true;
+            }
+            nReaders.addAndGet(-MAX_READERS);
+            lock.set(false);
+            return false;
         }
 
         @Override
