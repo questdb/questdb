@@ -399,123 +399,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
     }
 
-    private interface EntityValueRowWriter {
-        long write(long bufPos, byte entityType, Row row, int columnIndex, FloatingDirectCharSink charSink, TableWriter writer, SymbolCache symCache);
-    }
-
-    private static final EntityValueRowWriter SYMBOL_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink, writer, symCache) -> {
-        if (entityType == NewLineProtoParser.ENTITY_TYPE_CACHED_TAG) {
-            int symIndex = Unsafe.getUnsafe().getInt(bufPos);
-            bufPos += Integer.BYTES;
-            row.putSymIndex(columnIndex, symIndex);
-            return bufPos;
-        }
-
-        if (entityType == NewLineProtoParser.ENTITY_TYPE_TAG) {
-            int len = Unsafe.getUnsafe().getInt(bufPos);
-            bufPos += Integer.BYTES;
-            long hi = bufPos + 2 * len;
-            charSink.asCharSequence(bufPos, hi);
-            int symIndex = writer.getSymbolIndex(columnIndex, charSink);
-            symCache.put(charSink.toString(), symIndex);
-            row.putSymIndex(columnIndex, symIndex);
-            return hi;
-        }
-        throw CairoException.instance(0).put("expected a line protocol tag [entityType=").put(entityType).put(']');
-    };
-
-    private static final EntityValueRowWriter INTEGER_TO_LONG_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink, writer, symCache) -> {
-        if (entityType != NewLineProtoParser.ENTITY_TYPE_INTEGER) {
-            throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
-        }
-        long v = Unsafe.getUnsafe().getLong(bufPos);
-        bufPos += Long.BYTES;
-        row.putLong(columnIndex, v);
-        return bufPos;
-    };
-
-    private static final EntityValueRowWriter INTEGER_TO_SHORT_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink, writer, symCache) -> {
-        if (entityType != NewLineProtoParser.ENTITY_TYPE_INTEGER) {
-            throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
-        }
-        long v = Unsafe.getUnsafe().getLong(bufPos);
-        bufPos += Long.BYTES;
-        if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
-            throw CairoException.instance(0).put("line protocol integer is out of short bounds [columnIndex=").put(columnIndex).put(", v=").put(v).put(']');
-        }
-        row.putShort(columnIndex, (short) v);
-        return bufPos;
-    };
-
-    private static final EntityValueRowWriter INTEGER_TO_TIMESTAMP_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink, writer, symCache) -> {
-        if (entityType != NewLineProtoParser.ENTITY_TYPE_INTEGER) {
-            throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
-        }
-        long v = Unsafe.getUnsafe().getLong(bufPos);
-        bufPos += Long.BYTES;
-        row.putTimestamp(columnIndex, v);
-        return bufPos;
-    };
-
-    private static final EntityValueRowWriter FLOAT_TO_DOUBLE_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink, writer, symCache) -> {
-        if (entityType != NewLineProtoParser.ENTITY_TYPE_FLOAT) {
-            throw CairoException.instance(0).put("expected a line protocol float [entityType=").put(entityType).put(']');
-        }
-        double v = Unsafe.getUnsafe().getDouble(bufPos);
-        bufPos += Double.BYTES;
-        row.putDouble(columnIndex, v);
-        return bufPos;
-    };
-
-    private static final EntityValueRowWriter LONG256_ENTITY_VALUE_WRITER = (bufPos, entityType, row, columnIndex, charSink, writer, symCache) -> {
-        if (entityType != NewLineProtoParser.ENTITY_TYPE_LONG256) {
-            throw CairoException.instance(0).put("expected a line protocol long256 [entityType=").put(entityType).put(']');
-        }
-        int len = Unsafe.getUnsafe().getInt(bufPos);
-        bufPos += Integer.BYTES;
-        long hi = bufPos + 2 * len;
-        charSink.asCharSequence(bufPos, hi);
-        row.putLong256(columnIndex, charSink);
-        return hi;
-    };
-
-    private static final EntityValueRowWriter resolveRowWriter(int columnType, byte entityType) {
-        switch (entityType) {
-            case NewLineProtoParser.ENTITY_TYPE_TAG:
-                if (columnType == ColumnType.SYMBOL) {
-                    return SYMBOL_ENTITY_VALUE_WRITER;
-                }
-                break;
-            case NewLineProtoParser.ENTITY_TYPE_INTEGER:
-                if (columnType == ColumnType.LONG) {
-                    return INTEGER_TO_LONG_ENTITY_VALUE_WRITER;
-                }
-                if (columnType == ColumnType.TIMESTAMP) {
-                    return INTEGER_TO_TIMESTAMP_ENTITY_VALUE_WRITER;
-                }
-                if (columnType == ColumnType.SHORT) {
-                    return INTEGER_TO_SHORT_ENTITY_VALUE_WRITER;
-                }
-                break;
-            case NewLineProtoParser.ENTITY_TYPE_FLOAT:
-                if (columnType == ColumnType.DOUBLE) {
-                    return FLOAT_TO_DOUBLE_ENTITY_VALUE_WRITER;
-                }
-                break;
-            case NewLineProtoParser.ENTITY_TYPE_LONG256:
-                if (columnType == ColumnType.LONG256) {
-                    return LONG256_ENTITY_VALUE_WRITER;
-                }
-                break;
-            case NewLineProtoParser.ENTITY_TYPE_CACHED_TAG:
-                if (columnType == ColumnType.SYMBOL) {
-                    return SYMBOL_ENTITY_VALUE_WRITER;
-                }
-                break;
-        }
-        throw CairoException.instance(0).put("line prototol entity type cannot be mapped to column type [entityType=").put(entityType).put(", columnType=").put(columnType).put(']');
-    }
-
     private class LineTcpMeasurementEvent implements Closeable {
         private final MicrosecondClock clock;
         private final LineProtoTimestampAdapter timestampAdapter;
@@ -702,15 +585,15 @@ class LineTcpMeasurementScheduler implements Closeable {
                             // Cannot create a column with an open row, writer will commit when a column is created
                             row.cancel();
                             row = null;
-                            int columnType = DEFAULT_COLUMN_TYPES[entityType];
+                            int colType = DEFAULT_COLUMN_TYPES[entityType];
                             if (TableUtils.isValidColumnName(job.charSink)) {
                                 colIndex = writer.getMetadata().getColumnCount();
-                                writer.addColumn(job.charSink, columnType);
+                                writer.addColumn(job.charSink, colType);
                                 tableUpdateDetails.symCacheByColumnIndexLock.writeLock().lock();
                                 try {
                                     tableUpdateDetails.symCacheByColumnIndex.extendPos(colIndex);
                                     SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
-                                    if (columnType == ColumnType.SYMBOL && null == symCache) {
+                                    if (colType == ColumnType.SYMBOL && null == symCache) {
                                         symCache = new SymbolCache();
                                         tableUpdateDetails.symCacheByColumnIndex.setQuick(colIndex, symCache);
                                     }
@@ -731,13 +614,79 @@ class LineTcpMeasurementScheduler implements Closeable {
                             continue;
                         }
                     }
-                    EntityValueRowWriter valueWriter = getValueWriter(writer, colIndex, entityType);
-                    tableUpdateDetails.symCacheByColumnIndexLock.readLock().lock();
-                    try {
-                        SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
-                        bufPos = valueWriter.write(bufPos, entityType, row, colIndex, job.floatingCharSink, writer, symCache);
-                    } finally {
-                        tableUpdateDetails.symCacheByColumnIndexLock.readLock().unlock();
+
+                    switch (entityType) {
+                        case NewLineProtoParser.ENTITY_TYPE_TAG: {
+                            tableUpdateDetails.symCacheByColumnIndexLock.readLock().lock();
+                            try {
+                                SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
+                                int len = Unsafe.getUnsafe().getInt(bufPos);
+                                bufPos += Integer.BYTES;
+                                long hi = bufPos + 2 * len;
+                                job.floatingCharSink.asCharSequence(bufPos, hi);
+                                int symIndex = writer.getSymbolIndex(colIndex, job.floatingCharSink);
+                                symCache.put(job.floatingCharSink.toString(), symIndex);
+                                row.putSymIndex(colIndex, symIndex);
+                                bufPos = hi;
+                            } finally {
+                                tableUpdateDetails.symCacheByColumnIndexLock.readLock().unlock();
+                            }
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_CACHED_TAG: {
+                            int symIndex = Unsafe.getUnsafe().getInt(bufPos);
+                            bufPos += Integer.BYTES;
+                            row.putSymIndex(colIndex, symIndex);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_INTEGER: {
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            long v = Unsafe.getUnsafe().getLong(bufPos);
+                            bufPos += Long.BYTES;
+                            switch (colType) {
+                                case ColumnType.LONG:
+                                    row.putLong(colIndex, v);
+                                    break;
+
+                                case ColumnType.SHORT:
+                                    if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
+                                        throw CairoException.instance(0).put("line protocol integer is out of short bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                    }
+                                    row.putShort(colIndex, (short) v);
+                                    break;
+
+                                case ColumnType.TIMESTAMP:
+                                    row.putTimestamp(colIndex, v);
+                                    break;
+
+                                default:
+
+                                    throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
+                            }
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_FLOAT: {
+                            double v = Unsafe.getUnsafe().getDouble(bufPos);
+                            bufPos += Double.BYTES;
+                            row.putDouble(colIndex, v);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_LONG256: {
+                            int len = Unsafe.getUnsafe().getInt(bufPos);
+                            bufPos += Integer.BYTES;
+                            long hi = bufPos + 2 * len;
+                            job.floatingCharSink.asCharSequence(bufPos, hi);
+                            row.putLong256(colIndex, job.floatingCharSink);
+                            bufPos = hi;
+                            break;
+                        }
+
+                        default:
+                            throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
                     }
                 }
                 row.append();
@@ -748,16 +697,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                     row.cancel();
                 }
             }
-        }
-
-        private EntityValueRowWriter getValueWriter(TableWriter writer, int colIndex, byte entityType) {
-            EntityValueRowWriter valueWriter = tableUpdateDetails.valueWriters.size() > colIndex ? tableUpdateDetails.valueWriters.get(colIndex) : null;
-            if (null == valueWriter) {
-                int columnType = writer.getMetadata().getColumnType(colIndex);
-                valueWriter = resolveRowWriter(columnType, entityType);
-                tableUpdateDetails.valueWriters.extendAndSet(colIndex, valueWriter);
-            }
-            return valueWriter;
         }
 
         boolean isRebalanceEvent() {
@@ -775,7 +714,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final ThreadLocal<ThreadLocalDetails> refLocalDetails = ThreadLocal.withInitial(() -> {
             return new ThreadLocalDetails();
         });
-        private final ObjList<EntityValueRowWriter> valueWriters = new ObjList<>();
         private boolean assignedToJob = false;
         private long lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
         private final ReadWriteLock symCacheByColumnIndexLock = new SimpleReadWriteLock();
@@ -807,7 +745,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             writer.close();
                             writer = null;
                             tableUpdateDetailsByTableName.remove(tableName);
-                            valueWriters.clear();
                             clearSymbolCaches();
                             idleTableUpdateDetailsByTableName.put(tableName, this);
                             version++;
@@ -873,8 +810,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         @Override
         public void close() throws IOException {
             if (threadId != Integer.MIN_VALUE) {
-                Misc.freeObjList(valueWriters);
-                valueWriters.clear();
                 if (null != writer) {
                     if (nUncommitted > 0) {
                         writer.commit();
