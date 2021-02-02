@@ -27,12 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import org.jetbrains.annotations.NotNull;
@@ -682,6 +677,23 @@ class LineTcpMeasurementScheduler implements Closeable {
                             double v = Unsafe.getUnsafe().getDouble(bufPos);
                             bufPos += Double.BYTES;
                             row.putDouble(colIndex, v);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_BOOLEAN: {
+                            byte b = Unsafe.getUnsafe().getByte(bufPos);
+                            bufPos += Byte.BYTES;
+                            row.putBool(colIndex, b == 1);
+                            break;
+                        }
+
+                        case NewLineProtoParser.ENTITY_TYPE_STRING: {
+                            int len = Unsafe.getUnsafe().getInt(bufPos);
+                            bufPos += Integer.BYTES;
+                            long hi = bufPos + 2 * len;
+                            job.floatingCharSink.asCharSequence(bufPos, hi);
+                            row.putStr(colIndex, job.floatingCharSink);
+                            bufPos = hi;
                             break;
                         }
 

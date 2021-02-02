@@ -1200,6 +1200,62 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testBooleans() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-eastcoast raining=true 1465839830100400200\n" +
+                    "weather,location=us-midwest raining=false 1465839830100400200\n" +
+                    "weather,location=us-midwest raining=f 1465839830100500200\n" +
+                    "weather,location=us-midwest raining=t 1465839830102300200\n" +
+                    "weather,location=us-eastcoast raining=T 1465839830102400200\n" +
+                    "weather,location=us-eastcoast raining=F 1465839830102400200\n" +
+                    "weather,location=us-westcost raining=False 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\training\ttimestamp\n" +
+                    "us-eastcoast\ttrue\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\tfalse\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\tfalse\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-midwest\ttrue\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\ttrue\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\tfalse\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\tfalse\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testStrings() throws Exception {
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-eastcoast raining=\"true\" 1465839830100400200\n" +
+                    "weather,location=us-midwest raining=\"false\" 1465839830100400200\n" +
+                    "weather,location=us-midwest raining=\"f\" 1465839830100500200\n" +
+                    "weather,location=us-midwest raining=\"t\" 1465839830102300200\n" +
+                    "weather,location=us-eastcoast raining=\"T\" 1465839830102400200\n" +
+                    "weather,location=us-eastcoast raining=\"F\" 1465839830102400200\n" +
+                    "weather,location=us-westcost raining=\"False\" 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\training\ttimestamp\n" +
+                    "us-eastcoast\ttrue\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\tfalse\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\tf\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-midwest\tt\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\tT\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\tF\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\tFalse\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
     private void addTable() {
         try (
                 @SuppressWarnings("resource")
