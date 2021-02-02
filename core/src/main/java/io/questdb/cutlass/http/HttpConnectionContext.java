@@ -123,6 +123,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         }
         this.pendingRetry = false;
         this.receivedBytes = 0;
+        LOG.debug().$("closed").$();
     }
 
     @Override
@@ -618,7 +619,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     @Override
     public void fail(HttpRequestProcessorSelector selector, HttpException e) {
-        LOG.info().$("Failed to retry query [fd=").$(fd).$(']').$();
+        LOG.info().$("failed to retry query [fd=").$(fd).$(']').$();
         HttpRequestProcessor processor = getHttpRequestProcessor(selector);
         fail(e, processor);
     }
@@ -630,19 +631,19 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         } catch (PeerDisconnectedException peerDisconnectedException) {
             dispatcher.disconnect(this);
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
-            LOG.info().$("Peer is slow to receive failed to retry response [fd=").$(fd).$(']').$();
+            LOG.info().$("peer is slow to receive failed to retry response [fd=").$(fd).$(']').$();
             processor.parkRequest(this);
             resumeProcessor = processor;
             dispatcher.registerChannel(this, IOOperation.WRITE);
         } catch (ServerDisconnectException serverDisconnectException) {
-            LOG.info().$("Failed query result cannot be delivered. Kicked out [fd=").$(fd).$(']').$();
+            LOG.info().$("failed query result cannot be delivered. Kicked out [fd=").$(fd).$(']').$();
             dispatcher.disconnect(this);
         }
     }
 
     private void doFail(HttpException e, HttpRequestProcessor processor) throws
             PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
-        LOG.info().$("Failing client query with: ").$(e.getMessage()).$();
+        LOG.info().$("failing client query with: ").$(e.getMessage()).$();
         processor.failRequest(this, e);
         clear();
         dispatcher.disconnect(this);

@@ -139,4 +139,9 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
             sink.put(value);
         }
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

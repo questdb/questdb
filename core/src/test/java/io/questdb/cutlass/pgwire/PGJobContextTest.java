@@ -38,14 +38,12 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyManager;
@@ -55,11 +53,13 @@ import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Date;
 import java.sql.*;
-import java.util.Arrays;
-import java.util.GregorianCalendar;
-import java.util.Properties;
-import java.util.TimeZone;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
+import java.util.stream.Stream;
 
 import static io.questdb.std.Numbers.hexDigits;
 import static org.junit.Assert.assertTrue;
@@ -67,6 +67,20 @@ import static org.junit.Assert.assertTrue;
 public class PGJobContextTest extends AbstractGriffinTest {
 
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
+    private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
+    private static final int count = 200;
+    private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
+    private static List<Object[]> datesArr;
+
+    @BeforeClass
+    public static void init() {
+        final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
+        formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
+        final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
+                .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
+                .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
+        datesArr = dates.collect(Collectors.toList());
+    }
 
     @Before
     public void setUp3() {
@@ -1059,6 +1073,80 @@ nodejs code:
     }
 
     @Test
+    public void testInvalidateWriterBetweenInserts() throws Exception {
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table test_batch(id long,val int)");
+                }
+                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_batch(id,val) values(?,?)")) {
+                    batchInsert.setLong(1, 0L);
+                    batchInsert.setInt(2, 1);
+                    batchInsert.addBatch();
+
+                    batchInsert.clearParameters();
+                    batchInsert.setLong(1, 1L);
+                    batchInsert.setInt(2, 2);
+                    batchInsert.addBatch();
+
+                    batchInsert.clearParameters();
+                    batchInsert.setLong(1, 2L);
+                    batchInsert.setInt(2, 3);
+                    batchInsert.addBatch();
+
+                    int[] a = batchInsert.executeBatch();
+                    Assert.assertEquals(3, a.length);
+                    Assert.assertEquals(1, a[0]);
+                    Assert.assertEquals(1, a[1]);
+                    Assert.assertEquals(1, a[2]);
+
+
+                    compiler.compile("create table spot1 as (select * from test_batch)", sqlExecutionContext);
+                    compiler.compile("drop table test_batch", sqlExecutionContext);
+                    compiler.compile("rename table spot1 to test_batch", sqlExecutionContext);
+
+                    batchInsert.setLong(1, 0L);
+                    batchInsert.setInt(2, 1);
+                    batchInsert.addBatch();
+
+                    batchInsert.clearParameters();
+                    batchInsert.setLong(1, 1L);
+                    batchInsert.setInt(2, 2);
+                    batchInsert.addBatch();
+
+                    batchInsert.clearParameters();
+                    batchInsert.setLong(1, 2L);
+                    batchInsert.setInt(2, 3);
+                    batchInsert.addBatch();
+
+                    a = batchInsert.executeBatch();
+                    Assert.assertEquals(3, a.length);
+                    Assert.assertEquals(1, a[0]);
+                    Assert.assertEquals(1, a[1]);
+                    Assert.assertEquals(1, a[2]);
+
+                }
+
+                StringSink sink = new StringSink();
+                String expected = "id[BIGINT],val[INTEGER]\n" +
+                        "0,1\n" +
+                        "1,2\n" +
+                        "2,3\n" +
+                        "0,1\n" +
+                        "1,2\n" +
+                        "2,3\n";
+                Statement statement = connection.createStatement();
+                ResultSet rs = statement.executeQuery("select * from test_batch");
+                assertResultSet(expected, sink, rs);
+            }
+        });
+    }
+
+    @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -1900,50 +1988,109 @@ nodejs code:
     }
 
     @Test
-    public void testPythonInsertSelectHex() throws Exception {
-        String script = ">0000000804d2162f\n" +
-                "<4e\n" +
-                ">0000002100030000757365720061646d696e006461746162617365007164620000\n" +
-                "<520000000800000003\n" +
-                ">700000000a717565737400\n" +
-                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
-                ">510000001b53455420646174657374796c6520544f202749534f2700\n" +
-                "<4300000008534554005a0000000549\n" +
-                ">510000000a424547494e00\n" +
-                "<430000000a424547494e005a0000000554\n" +
-                ">510000005c435245415445205441424c45204946204e4f542045584953545320747261646573202874732054494d455354414d502c206e616d6520535452494e472c2076616c756520494e54292074696d657374616d70287473293b00\n" +
-                "<43000000074f4b005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383335383439273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383431343837273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383432313035273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383432353134273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383432393439273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383433333739273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383433383237273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383434333138273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383434373833273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383435323833273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
-                "<430000000f494e5345525420302031005a0000000554\n" +
-                ">510000000b434f4d4d495400\n" +
-                "<430000000b434f4d4d4954005a0000000549\n" +
-                ">510000000a424547494e00\n" +
-                "<430000000a424547494e005a0000000554\n" +
-                ">510000001a53454c454354202a2046524f4d207472616465733b00\n" +
-                "<540000004a00037473000000000000010000045a0008ffffffff00006e616d650000000000000200000413ffffffffffff000076616c756500000000000003000000170004ffffffff0000440000003500030000001a323032312d30312d32342030353a30313a31312e3833353834390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834313438370000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323130350000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323531340000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323934390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834333337390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834333832370000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834343331380000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834343738330000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834353238330000000670792d61626300000003313233430000000e53454c454354203130005a0000000554\n" +
-                ">5800000004\n";
-        assertHexScript(NetworkFacadeImpl.INSTANCE,
-                script,
-                new DefaultPGWireConfiguration()
-        );
+    public void testPreparedStatementWithBindVariablesOnDifferentConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                        statement.execute();
+                    }
+                    queryTimestampsInRange(connection, 7);
+                }
+
+                try (final Connection connection = getConnection(false, false)) {
+                    queryTimestampsInRange(connection, 7);
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
+                }
+
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                        statement.execute();
+                    }
+                    queryTimestampsInRange(connection, 7);
+                }
+
+                boolean caught = false;
+                try (final Connection connection = getConnection(false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
+                        sink.clear();
+                        statement.setString(1, "abcd");
+                        statement.setString(2, "abdc");
+                        statement.executeQuery();
+                    } catch (PSQLException ex) {
+                        caught = true;
+                        Assert.assertEquals("ERROR: could not parse [value='abcd', as=TIMESTAMP, index=0]\n  Position: 1", ex.getMessage());
+                    }
+//                    try(PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+//                        statement.execute();
+//                    }
+                }
+
+                try (final Connection connection = getConnection(false, false);
+                     PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                    statement.execute();
+                }
+                Assert.assertTrue("Exception is not thrown", caught);
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementWithBindVariablesTimestampRange() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, false)
+            ) {
+                try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                    statement.execute();
+                }
+
+                queryTimestampsInRange(connection, 7);
+
+                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                    statement.execute();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementWithNowFunction() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            "create table xts (ts timestamp) timestamp(ts)")) {
+                        statement.execute();
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(now())")) {
+                        for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                            statement.execute();
+                        }
+                    }
+
+                    queryTimestampsInRange(connection, 7);
+
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
+                } finally {
+                    currentMicros = -1;
+                }
+            }
+        });
     }
 
     @Test
@@ -1994,6 +2141,53 @@ nodejs code:
     }
 
     @Test
+    public void testPythonInsertSelectHex() throws Exception {
+        String script = ">0000000804d2162f\n" +
+                "<4e\n" +
+                ">0000002100030000757365720061646d696e006461746162617365007164620000\n" +
+                "<520000000800000003\n" +
+                ">700000000a717565737400\n" +
+                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638005a0000000549\n" +
+                ">510000001b53455420646174657374796c6520544f202749534f2700\n" +
+                "<4300000008534554005a0000000549\n" +
+                ">510000000a424547494e00\n" +
+                "<430000000a424547494e005a0000000554\n" +
+                ">510000005c435245415445205441424c45204946204e4f542045584953545320747261646573202874732054494d455354414d502c206e616d6520535452494e472c2076616c756520494e54292074696d657374616d70287473293b00\n" +
+                "<43000000074f4b005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383335383439273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383431343837273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383432313035273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383432353134273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383432393439273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383433333739273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383433383237273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383434333138273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383434373833273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">51000000840a2020202020202020494e5345525420494e544f20747261646573202874732c206e616d652c2076616c7565290a202020202020202056414c554553202827323032312d30312d32345430353a30313a31312e383435323833273a3a74696d657374616d702c202770792d616263272c20313233293b0a202020202020202000\n" +
+                "<430000000f494e5345525420302031005a0000000554\n" +
+                ">510000000b434f4d4d495400\n" +
+                "<430000000b434f4d4d4954005a0000000549\n" +
+                ">510000000a424547494e00\n" +
+                "<430000000a424547494e005a0000000554\n" +
+                ">510000001a53454c454354202a2046524f4d207472616465733b00\n" +
+                "<540000004a00037473000000000000010000045a0008ffffffff00006e616d650000000000000200000413ffffffffffff000076616c756500000000000003000000170004ffffffff0000440000003500030000001a323032312d30312d32342030353a30313a31312e3833353834390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834313438370000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323130350000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323531340000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834323934390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834333337390000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834333832370000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834343331380000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834343738330000000670792d61626300000003313233440000003500030000001a323032312d30312d32342030353a30313a31312e3834353238330000000670792d61626300000003313233430000000e53454c454354203130005a0000000554\n" +
+                ">5800000004\n";
+        assertHexScript(NetworkFacadeImpl.INSTANCE,
+                script,
+                new DefaultPGWireConfiguration()
+        );
+    }
+
+    @Test
     public void testRegularBatchInsertMethod() throws Exception {
 
         assertMemoryLeak(() -> {
@@ -2028,80 +2222,6 @@ nodejs code:
 
                 StringSink sink = new StringSink();
                 String expected = "id[BIGINT],val[INTEGER]\n" +
-                        "0,1\n" +
-                        "1,2\n" +
-                        "2,3\n";
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery("select * from test_batch");
-                assertResultSet(expected, sink, rs);
-            }
-        });
-    }
-
-    @Test
-    public void testInvalidateWriterBetweenInserts() throws Exception {
-
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table test_batch(id long,val int)");
-                }
-                try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_batch(id,val) values(?,?)")) {
-                    batchInsert.setLong(1, 0L);
-                    batchInsert.setInt(2, 1);
-                    batchInsert.addBatch();
-
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 1L);
-                    batchInsert.setInt(2, 2);
-                    batchInsert.addBatch();
-
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 2L);
-                    batchInsert.setInt(2, 3);
-                    batchInsert.addBatch();
-
-                    int[] a = batchInsert.executeBatch();
-                    Assert.assertEquals(3, a.length);
-                    Assert.assertEquals(1, a[0]);
-                    Assert.assertEquals(1, a[1]);
-                    Assert.assertEquals(1, a[2]);
-
-
-                    compiler.compile("create table spot1 as (select * from test_batch)", sqlExecutionContext);
-                    compiler.compile("drop table test_batch", sqlExecutionContext);
-                    compiler.compile("rename table spot1 to test_batch", sqlExecutionContext);
-
-                    batchInsert.setLong(1, 0L);
-                    batchInsert.setInt(2, 1);
-                    batchInsert.addBatch();
-
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 1L);
-                    batchInsert.setInt(2, 2);
-                    batchInsert.addBatch();
-
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 2L);
-                    batchInsert.setInt(2, 3);
-                    batchInsert.addBatch();
-
-                    a = batchInsert.executeBatch();
-                    Assert.assertEquals(3, a.length);
-                    Assert.assertEquals(1, a[0]);
-                    Assert.assertEquals(1, a[1]);
-                    Assert.assertEquals(1, a[2]);
-
-                }
-
-                StringSink sink = new StringSink();
-                String expected = "id[BIGINT],val[INTEGER]\n" +
-                        "0,1\n" +
-                        "1,2\n" +
-                        "2,3\n" +
                         "0,1\n" +
                         "1,2\n" +
                         "2,3\n";
@@ -2878,6 +2998,27 @@ nodejs code:
                 return "xyz";
             }
         };
+    }
+
+    private void queryTimestampsInRange(Connection connection, int hoursInterval) throws SQLException, IOException {
+        try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
+            ResultSet rs = null;
+            for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * hoursInterval) {
+                sink.clear();
+                statement.setTimestamp(1, new Timestamp(micros));
+                statement.setTimestamp(2, new Timestamp(micros));
+                statement.executeQuery();
+                rs = statement.executeQuery();
+
+                long finalMicros = micros;
+                String expected = datesArr.stream().filter(arr -> (long) arr[0] <= (finalMicros - DAY_MICROS) && (long) arr[0] >= (finalMicros - 2 * DAY_MICROS))
+                        .map(arr -> arr[1] + "\n")
+                        .collect(Collectors.joining());
+
+                assertResultSet("ts[TIMESTAMP]\n" + expected, sink, rs);
+            }
+            rs.close();
+        }
     }
 
     private void testAllTypesSelect(boolean simple) throws Exception {

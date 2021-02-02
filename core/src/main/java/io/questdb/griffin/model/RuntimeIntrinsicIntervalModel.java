@@ -22,33 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.LongList;
 
-class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
-    int value;
+import java.io.Closeable;
 
-    IntBindVariable() {
-        super(0);
-    }
+public interface RuntimeIntrinsicIntervalModel extends Closeable {
+    LongList calculateIntervals(SqlExecutionContext sqlContext);
 
-    @Override
-    public int getInt(Record rec) {
-        return value;
-    }
-
-    @Override
-    public void clear() {
-        this.value = Numbers.INT_NaN;
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
+    boolean allIntervalsHitOnePartition(int partitionBy);
 }

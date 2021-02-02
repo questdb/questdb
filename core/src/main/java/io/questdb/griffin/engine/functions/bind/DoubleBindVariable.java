@@ -45,4 +45,9 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     public void clear() {
         value = Double.NaN;
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

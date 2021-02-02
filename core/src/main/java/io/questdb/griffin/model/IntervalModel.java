@@ -22,33 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.griffin.model;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.std.Mutable;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 
-class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
-    int value;
+public interface IntervalModel {
+    boolean hasIntervals();
 
-    IntBindVariable() {
-        super(0);
-    }
+    void intersectEmpty();
 
-    @Override
-    public int getInt(Record rec) {
-        return value;
-    }
+    void intersectIntervals(long lo, long hi);
 
-    @Override
-    public void clear() {
-        this.value = Numbers.INT_NaN;
-    }
+    void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;
 
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
+    void subtractIntervals(long lo, long hi);
+
+    void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;
+
+    boolean isEmptySet();
 }

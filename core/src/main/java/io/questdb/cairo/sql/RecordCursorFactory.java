@@ -25,10 +25,12 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public interface RecordCursorFactory extends Closeable {
+public interface RecordCursorFactory extends Closeable, Sinkable {
     @Override
     default void close() {
     }
@@ -49,5 +51,9 @@ public interface RecordCursorFactory extends Closeable {
 
     default boolean supportPageFrameCursor() {
         return false;
+    }
+
+    default void toSink(CharSink sink) {
+        throw new UnsupportedOperationException();
     }
 }

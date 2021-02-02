@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -49,6 +51,9 @@ public class AbstractCairoTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
+    protected static long currentMicros = -1;
+    protected static MicrosecondClock testMicrosClock =
+            () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
 
     @BeforeClass
     public static void setUp() throws IOException {
@@ -58,7 +63,12 @@ public class AbstractCairoTest {
         // created mid-test
         LOG.info().$("begin").$();
         root = temp.newFolder("dbRoot").getAbsolutePath();
-        configuration = new DefaultCairoConfiguration(root);
+        configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return testMicrosClock;
+            }
+        };
     }
 
     @Before

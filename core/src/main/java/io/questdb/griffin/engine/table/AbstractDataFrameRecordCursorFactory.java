@@ -42,9 +42,7 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(
-                executionContext.getCairoSecurityContext()
-        );
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
         try {
             return getCursorInstance(dataFrameCursor, executionContext);
         } catch (CairoException e) {

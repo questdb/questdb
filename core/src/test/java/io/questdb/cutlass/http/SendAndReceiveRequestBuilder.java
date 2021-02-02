@@ -144,6 +144,7 @@ public class SendAndReceiveRequestBuilder {
                     listener.onReceived(received);
                 }
             } else if (n < 0) {
+                LOG.error().$("server disconnected").$();
                 disconnected = true;
                 break;
             } else {
@@ -167,7 +168,7 @@ public class SendAndReceiveRequestBuilder {
                 expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
                 actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
             }
-            TestUtils.assertEquals(actual.length() > 0 ? "" : "Server disconnected", expected, actual);
+            TestUtils.assertEquals(disconnected ? "Server disconnected": null, expected, actual);
 
         } else {
             System.out.println("actual");

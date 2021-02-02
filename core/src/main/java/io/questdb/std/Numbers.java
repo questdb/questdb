@@ -514,6 +514,10 @@ public final class Numbers {
         return Integer.compare(anotherBits, thisBits);                          // (0.0, -0.0) or (NaN, !NaN)
     }
 
+    public static short decodeHighShort(int val) {
+        return (short) (val >> 16);
+    }
+
     public static int decodeHighInt(long val) {
         return (int) (val >> 32);
     }
@@ -522,8 +526,16 @@ public final class Numbers {
         return (int) (val & 0xffffffffL);
     }
 
+    public static short decodeLowShort(int val) {
+        return (short) (val & 0xffff);
+    }
+
     public static long encodeLowHighInts(int low, int high) {
         return ((Integer.toUnsignedLong(high)) << 32L) | Integer.toUnsignedLong(low);
+    }
+
+    public static int encodeLowHighShorts(short low, short high) {
+        return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
     public static int hexToDecimal(int c) throws NumericException {
