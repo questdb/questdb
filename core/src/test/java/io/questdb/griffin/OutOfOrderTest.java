@@ -47,6 +47,8 @@ import java.net.URL;
 
 public class OutOfOrderTest extends AbstractGriffinTest {
 
+    private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+
     @Before
     public void setUp3() {
         configuration = new DefaultCairoConfiguration(root) {
@@ -70,8 +72,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         SharedRandom.RANDOM.set(new Rnd());
     }
-
-    private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
 
     @Test
     public void testBench() throws Exception {
@@ -136,12 +136,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             new WorkerPoolAwareConfiguration() {
                                 @Override
                                 public int[] getWorkerAffinity() {
-                                    return new int[]{0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30};
+                                    return new int[]{0, 2, 4, 6, 8, 10};
                                 }
 
                                 @Override
                                 public int getWorkerCount() {
-                                    return 16;
+                                    return 6;
                                 }
 
                                 @Override
@@ -256,6 +256,9 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
 
                     pool.start(LOG);
 
@@ -277,23 +280,23 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                             "select" +
                             " cast(x as int) i," +
                             " rnd_symbol('msft','ibm', 'googl') sym," +
-                                    " round(rnd_double(0)*100, 3) amt," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                    " rnd_boolean() b," +
-                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) ik," +
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(500000000000L,100000000L) ts," +
-                                    " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n," +
-                                    " rnd_char() t" +
-                                    " from long_sequence(500)" +
-                                    "), index(sym) timestamp (ts) partition by DAY",
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(500000000000L,100000000L) ts," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_char() t" +
+                            " from long_sequence(500)" +
+                            "), index(sym) timestamp (ts) partition by DAY",
                             sqlExecutionContext
                     );
 
@@ -590,12 +593,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     );
 
                     // create third table, which will contain both X and 1AM
-            assertOutOfOrderDataConsistency(
-                    "create table y as (x union all middle)",
-                    "insert into x select * from middle",
-                    "/oo/testPartitionedDataMergeData.txt"
-            );
-            assertIndexResultAgainstFile("/oo/testPartitionedDataMergeData_Index.txt");
+                    assertOutOfOrderDataConsistency(
+                            "create table y as (x union all middle)",
+                            "insert into x select * from middle",
+                            "/oo/testPartitionedDataMergeData.txt"
+                    );
+                    assertIndexResultAgainstFile("/oo/testPartitionedDataMergeData_Index.txt");
                 }
         );
     }

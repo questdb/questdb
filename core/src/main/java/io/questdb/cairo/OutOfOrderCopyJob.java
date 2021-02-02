@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
@@ -34,14 +36,11 @@ import io.questdb.std.Vect;
 import io.questdb.tasks.OutOfOrderCopyTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTask> {
 
-    public static final AtomicLong count_down_calls = new AtomicLong();
-    public static final AtomicLong copy_calls = new AtomicLong(0);
     private final CairoConfiguration configuration;
 
     public OutOfOrderCopyJob(MessageBus messageBus) {
@@ -79,13 +78,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             int columnType,
             long mergeIndexAddr,
             long dstKFd,
-            long dskVFd,
+            long dstVFd,
             long dstIndexOffset,
             boolean isIndexed,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        copy_calls.incrementAndGet();
-
         switch (blockType) {
             case OO_BLOCK_MERGE:
                 oooMergeCopy(
@@ -142,7 +139,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         if (partCounter.decrementAndGet() == 0) {
             // todo: pool indexer
             if (isIndexed) {
-                updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dskVFd, dstIndexOffset);
+//                updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
             }
 
             // unmap memory
@@ -151,14 +148,20 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
             unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
 
-            Files.close(dskVFd);
-            Files.close(dskVFd);
+            if (dstKFd > 0) {
+                LOG.debug().$("closed [fd=").$(dstKFd).$(']').$();
+                Files.close(dstKFd);
+            }
+
+            if (dstVFd > 0) {
+                LOG.debug().$("closed [fd=").$(dstKFd).$(']').$();
+                Files.close(dstVFd);
+            }
 
             if (columnCounter.decrementAndGet() == 0) {
                 if (mergeIndexAddr != 0) {
                     Vect.freeMergedIndex(mergeIndexAddr);
                 }
-                count_down_calls.incrementAndGet();
                 doneLatch.countDown();
             }
         }
@@ -304,12 +307,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long dstVarOffset
 
     ) {
-        final long lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+        final long lo = OutOfOrderUtils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
         final long hi;
         if (srcHi + 1 == srcFixSize / Long.BYTES) {
             hi = srcVarSize;
         } else {
-            hi = Unsafe.getUnsafe().getLong(srcFixAddr + (srcHi + 1) * Long.BYTES);
+            hi = OutOfOrderUtils.findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
         }
         // copy this before it changes
         final long dest = dstVarAddr + dstVarOffset;
@@ -493,12 +496,15 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
+    private static final Log LOG = LogFactory.getLog(OutOfOrderCopyJob.class);
+
     private static void unmapAndClose(long dstFixFd, long dstFixAddr, long dstFixSize) {
         if (dstFixAddr != 0 && dstFixSize != 0) {
             Files.munmap(dstFixAddr, dstFixSize);
         }
 
         if (dstFixFd > 0) {
+            LOG.debug().$("closed [fd=").$(dstFixFd).$(']').$();
             Files.close(dstFixFd);
         }
     }

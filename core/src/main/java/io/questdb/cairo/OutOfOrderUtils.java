@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public final class OutOfOrderUtils {
@@ -37,5 +38,38 @@ public final class OutOfOrderUtils {
         if (ff.mkdirs(path, mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
+    }
+
+    static long getVarColumnLength(
+            long srcLo,
+            long srcHi,
+            long srcFixAddr,
+            long srcFixSize,
+            long srcVarSize
+    ) {
+        final long lo = OutOfOrderUtils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
+        final long hi;
+        if (srcHi + 1 == srcFixSize / Long.BYTES) {
+            hi = srcVarSize;
+        } else {
+            hi = OutOfOrderUtils.findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
+        }
+        return hi - lo;
+    }
+
+    static long findVarOffset(long srcFixAddr, long srcLo, long srcHi, long srcVarSize) {
+        long lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+        if (lo > -1) {
+            return lo;
+        }
+
+        while (++srcLo < srcHi) {
+            lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+            if (lo > -1) {
+                return lo;
+            }
+        }
+
+        return srcVarSize;
     }
 }

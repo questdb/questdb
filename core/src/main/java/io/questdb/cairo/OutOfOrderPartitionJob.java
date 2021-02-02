@@ -652,24 +652,32 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             final int colOffset = TableWriter.getPrimaryColumnIndex(i);
             final boolean notTheTimestamp = i != timestampIndex;
             final int columnType = metadata.getColumnType(i);
-            final ContiguousVirtualMemory srcOooFixColumn = oooColumns.getQuick(colOffset);
-            final ContiguousVirtualMemory srcOooVarColumn = oooColumns.getQuick(colOffset + 1);
+            final ContiguousVirtualMemory oooMem1 = oooColumns.getQuick(colOffset);
+            final ContiguousVirtualMemory oooMem2 = oooColumns.getQuick(colOffset + 1);
             final AppendMemory mem1 = columns.getQuick(colOffset);
             final AppendMemory mem2 = columns.getQuick(colOffset + 1);
             final AppendMemory srcDataFixMemory;
             final AppendMemory srcDataVarMemory;
+            final long srcOooFixAddr;
+            final long srcOooFixSize;
+            final long srcOooVarAddr;
+            final long srcOooVarSize;
             if (columnType != ColumnType.STRING && columnType != ColumnType.BINARY) {
                 srcDataFixMemory = mem1;
                 srcDataVarMemory = mem2;
+                srcOooFixAddr = oooMem1.addressOf(0);
+                srcOooFixSize = oooMem1.getAppendOffset();
+                srcOooVarAddr = 0;
+                srcOooVarSize = 0;
             } else {
                 srcDataFixMemory = mem2;
                 srcDataVarMemory = mem1;
+                srcOooFixAddr = oooMem2.addressOf(0);
+                srcOooFixSize = oooMem2.getAppendOffset();
+                srcOooVarAddr = oooMem1.addressOf(0);
+                srcOooVarSize = oooMem1.getAppendOffset();
             }
 
-            final long srcOooFixAddr = srcOooFixColumn.addressOf(0);
-            final long srcOooFixSize = srcOooFixColumn.getAppendOffset();
-            final long srcOooVarAddr = srcOooVarColumn == null ? 0 : srcOooVarColumn.addressOf(0);
-            final long srcOooVarSize = srcOooVarColumn == null ? 0 : srcOooVarColumn.getAppendOffset();
             final CharSequence columnName = metadata.getColumnName(i);
             final boolean isIndexed = metadata.isColumnIndexed(i);
 

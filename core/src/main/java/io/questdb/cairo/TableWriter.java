@@ -40,7 +40,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -3448,7 +3447,7 @@ public class TableWriter implements Closeable {
                 final long srcOooHi = oooPartitions.getQuick(i * 2);
                 final long partitionTimestampHi = oooPartitions.getQuick(i * 2 + 1);
                 final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
-                long cursor = oooPartitionPubSeq.nextBully();
+                long cursor = oooPartitionPubSeq.next();
                 if (cursor > -1) {
                     OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
                     task.of(
