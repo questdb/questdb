@@ -46,4 +46,9 @@ class TimestampBindVariable extends TimestampFunction implements ScalarFunction,
     public long getTimestamp(Record rec) {
         return value;
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

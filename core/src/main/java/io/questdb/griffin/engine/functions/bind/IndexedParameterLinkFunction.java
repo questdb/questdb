@@ -183,4 +183,9 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         assert base != null;
         return base;
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

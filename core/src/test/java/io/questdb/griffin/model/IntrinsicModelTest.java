@@ -219,8 +219,9 @@ public class IntrinsicModelTest {
     public void testInvert() throws SqlException {
         final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
         LongList out = new LongList();
-        IntrinsicModel.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out);
-        IntrinsicModel.invert(out);
+        IntervalUtils.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedIntervalEx(out);
+        IntervalUtils.invert(out);
         TestUtils.assertEquals("[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
                 intervalToString(out));
     }
@@ -348,32 +349,36 @@ public class IntrinsicModelTest {
 
     private static void assertShortInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
-        IntrinsicModel.parseIntervalEx(interval, 0, interval.length(), 0, out);
+        IntervalUtils.parseIntervalEx(interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedIntervalEx(out);
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 
     private void assertDateCeil(String expected, String value) throws NumericException {
         sink.clear();
-        long t = IntrinsicModel.parseCCPartialDate(value);
+        long t = IntervalUtils.parseCCPartialDate(value);
         TimestampFormatUtils.appendDateTimeUSec(sink, t);
         TestUtils.assertEquals(expected, sink);
     }
 
     private void assertDateFloor(String expected, String value) throws NumericException {
         sink.clear();
-        long t = IntrinsicModel.parseFloorPartialDate(value);
+        long t = IntervalUtils.parseFloorPartialDate(value);
         TimestampFormatUtils.appendDateTimeUSec(sink, t);
         TestUtils.assertEquals(expected, sink);
     }
 
     private void assertIntersect(String expected) {
-        IntrinsicModel.intersect(a, b, out);
+        out.add(a);
+        out.add(b);
+        IntervalUtils.intersectInplace(out, a.size());
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 
     private void assertIntervalError(String interval) {
         try {
-            IntrinsicModel.parseIntervalEx(interval, 0, interval.length(), 0, out);
+            IntervalUtils.parseIntervalEx(interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+            IntervalUtils.applyLastEncodedIntervalEx(out);
             Assert.fail();
         } catch (SqlException ignore) {
         }

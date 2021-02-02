@@ -38,7 +38,6 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public interface SqlExecutionContext extends Closeable {
 
@@ -77,6 +76,10 @@ public interface SqlExecutionContext extends Closeable {
             boolean isOrdered,
             boolean baseSupportsRandomAccess
     );
+
+    void initNow();
+
+    long getNow();
 
     @Override
     default void close(){

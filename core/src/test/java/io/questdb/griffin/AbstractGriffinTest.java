@@ -35,10 +35,7 @@ import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.*;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
@@ -383,7 +380,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
-        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
+        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null);
     }
 
     protected static void printSqlResult(
@@ -395,9 +392,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr,
             boolean expectSize,
-            boolean sizeCanBeVariable
+            boolean sizeCanBeVariable,
+            CharSequence expectedPlan
     ) throws SqlException {
-        RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        RecordCursorFactory factory = cc.getRecordCursorFactory();
+        if (expectedPlan != null) {
+            sink.clear();
+            factory.toSink(sink);
+            TestUtils.assertEquals(expectedPlan, sink);
+        }
         try {
             assertTimestamp(expectedTimestamp, factory);
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
@@ -446,9 +450,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 compiler.compile(ddl, sqlExecutionContext);
             }
             if (verify != null) {
-                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
             }
-            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
         });
     }
 

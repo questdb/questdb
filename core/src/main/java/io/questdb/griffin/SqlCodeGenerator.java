@@ -47,7 +47,6 @@ import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -904,8 +903,8 @@ public class SqlCodeGenerator implements Mutable {
             @NotNull IntList columnIndexes
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
-        if (intrinsicModel.intervals != null) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals, timestampIndex);
+        if (intrinsicModel.hasIntervalFilters()) {
+            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
         } else {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
         }
@@ -916,6 +915,18 @@ public class SqlCodeGenerator implements Mutable {
         if (listColumnFilterA.size() == 1) {
             final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
             final boolean indexed = metadata.isColumnIndexed(latestByIndex);
+
+            if (metadata.getColumnType(latestByIndex) != ColumnType.SYMBOL) {
+                return new LatestByAllFilteredRecordCursorFactory(
+                        metadata,
+                        configuration,
+                        dataFrameCursorFactory,
+                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                        keyTypes,
+                        filter,
+                        columnIndexes
+                );
+            }
 
             if (intrinsicModel.keyColumn != null) {
                 // key column must always be the same as latest by column
@@ -2265,13 +2276,25 @@ public class SqlCodeGenerator implements Mutable {
             final String tableName = reader.getTableName();
 
             if (whereClause != null) {
+                CharSequence preferredKeyColumn = null;
+
+                if (listColumnFilterA.size() == 1) {
+                    final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+
+                    if (myMeta.getColumnType(latestByIndex) == ColumnType.SYMBOL) {
+                        preferredKeyColumn = latestBy.getQuick(0).token;
+                    }
+                }
 
                 final IntrinsicModel intrinsicModel = whereClauseParser.extract(
                         model,
                         whereClause,
                         readerMeta,
-                        latestByColumnCount > 0 ? latestBy.getQuick(0).token : null,
-                        readerTimestampIndex
+                        preferredKeyColumn,
+                        readerTimestampIndex,
+                        functionParser,
+                        myMeta,
+                        executionContext
                 );
 
                 // intrinsic parser can collapse where clause when removing parts it can replace
@@ -2310,22 +2333,10 @@ public class SqlCodeGenerator implements Mutable {
                 // below code block generates index-based filter
 
                 final boolean intervalHitsOnlyOnePartition;
-                if (intrinsicModel.intervals != null) {
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals, readerTimestampIndex);
-                    switch (reader.getPartitionedBy()) {
-                        case PartitionBy.DAY:
-                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_DD);
-                            break;
-                        case PartitionBy.MONTH:
-                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_MM);
-                            break;
-                        case PartitionBy.YEAR:
-                            intervalHitsOnlyOnePartition = isFocused(intrinsicModel.intervals, Timestamps.FLOOR_YYYY);
-                            break;
-                        default:
-                            intervalHitsOnlyOnePartition = true;
-                            break;
-                    }
+                if (intrinsicModel.hasIntervalFilters()) {
+                    RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
+                    dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intervalModel, readerTimestampIndex);
+                    intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
                 } else {
                     dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
                     intervalHitsOnlyOnePartition = false;
@@ -2484,7 +2495,7 @@ public class SqlCodeGenerator implements Mutable {
                 if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null) {
                     final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                     final int orderByAdviceSize = orderByAdvice.size();
-                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.intervals != null) {
+                    if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {
                         // we can only deal with 'order by symbol, timestamp' at best
                         // skip this optimisation if order by is more extensive
                         final int columnIndex = myMeta.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
@@ -2638,16 +2649,6 @@ public class SqlCodeGenerator implements Mutable {
             return timestampIndex;
         }
         return metadata.getTimestampIndex();
-    }
-
-    private boolean isFocused(LongList intervals, Timestamps.TimestampFloorMethod floorMethod) {
-        long floor = floorMethod.floor(intervals.getQuick(0));
-        for (int i = 1, n = intervals.size(); i < n; i++) {
-            if (floor != floorMethod.floor(intervals.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {

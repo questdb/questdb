@@ -70,11 +70,11 @@ public class SubLongFunctionFactory implements FunctionFactory {
             long l = left.getLong(rec);
             long r = right.getLong(rec);
 
-            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l != Numbers.LONG_NaN && r != Numbers.LONG_NaN) {
+                return l - r;
             }
 
-            return l - r;
+            return Numbers.LONG_NaN;
         }
     }
 }
