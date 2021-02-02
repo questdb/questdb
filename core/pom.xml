@@ -356,7 +356,7 @@
                                     <executable>${java.home}/bin/jlink</executable>
                                     <arguments>
                                         <argument>--module-path</argument>
-                                        <argument>${project.build.outputDirectory}</argument>
+                                        <argument>${project.build.directory}/questdb-${project.version}.jar</argument>
                                         <argument>--add-modules</argument>
                                         <argument>io.questdb,jdk.crypto.ec</argument>
                                         <argument>--output</argument>
