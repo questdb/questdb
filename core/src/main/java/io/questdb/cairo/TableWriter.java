@@ -1087,6 +1087,10 @@ public class TableWriter implements Closeable {
         }
     }
 
+    public int getSymbolIndex(int columnIndex, CharSequence symValue) {
+        return symbolMapWriters.getQuick(columnIndex).put(symValue);
+    }
+
     /**
      * Eagerly sets up writer instance. Otherwise writer will initialize lazily. Invoking this method could improve
      * performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
@@ -4923,6 +4927,11 @@ public class TableWriter implements Closeable {
 
         public void putSym(int index, char value) {
             getPrimaryColumn(index).putInt(symbolMapWriters.getQuick(index).put(value));
+            notNull(index);
+        }
+
+        public void putSymIndex(int index, int symIndex) {
+            getPrimaryColumn(index).putInt(symIndex);
             notNull(index);
         }
 

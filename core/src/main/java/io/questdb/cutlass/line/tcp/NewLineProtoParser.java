@@ -50,7 +50,8 @@ public class NewLineProtoParser implements Closeable {
     public static final byte ENTITY_TYPE_STRING = 3;
     public static final byte ENTITY_TYPE_BOOLEAN = 4;
     public static final byte ENTITY_TYPE_LONG256 = 5;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_LONG256 + 1;
+    public static final byte ENTITY_TYPE_CACHED_TAG = 6;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_CACHED_TAG + 1;
 
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
