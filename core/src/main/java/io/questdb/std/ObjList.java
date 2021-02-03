@@ -40,6 +40,13 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     @SuppressWarnings("unchecked")
+    public ObjList(ObjList<T> other) {
+        this.buffer = (T[]) new Object[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
+        setPos(other.size());
+        System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
+    }
+
+    @SuppressWarnings("unchecked")
     public ObjList(int capacity) {
         this.buffer = (T[]) new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
     }

@@ -129,6 +129,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubLongFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory,
 //                    # '/' operator,
             io.questdb.griffin.engine.functions.math.DivDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.DivLongFunctionFactory,

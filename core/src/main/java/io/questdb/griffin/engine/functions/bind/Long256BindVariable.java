@@ -72,4 +72,9 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
     public void clear() {
         value.copyFrom(Long256Impl.NULL_LONG256);
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }
