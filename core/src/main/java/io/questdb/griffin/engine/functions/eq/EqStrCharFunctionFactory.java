@@ -27,20 +27,24 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
+public class EqStrCharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(SA)";
+    }
+
+    @Override
+    public boolean isBoolean() {
+        return true;
     }
 
     @Override
@@ -56,32 +60,30 @@ public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory imp
         if (strFunc.isConstant() && !charFunc.isConstant()) {
             CharSequence str = strFunc.getStr(null);
             if (str == null || str.length() != 1) {
-                return new BooleanConstant(position, isNegated);
+                return new NegatedAwareBooleanConstantFunc(position);
             }
-            return new ConstStrFunc(position, charFunc, str.charAt(0), isNegated);
+            return new ConstStrFunc(position, charFunc, str.charAt(0));
         }
 
         if (!strFunc.isConstant() && charFunc.isConstant()) {
-            return new ConstChrFunc(position, strFunc, charFunc.getChar(null), isNegated);
+            return new ConstChrFunc(position, strFunc, charFunc.getChar(null));
         }
 
         if (strFunc.isConstant() && charFunc.isConstant()) {
-            return new BooleanConstant(position, isNegated != Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));
+            return new ConstStrConstChrFunc(position, Chars.equalsNc(strFunc.getStr(null), charFunc.getChar(null)));
         }
 
-        return new Func(position, strFunc, charFunc, isNegated);
+        return new Func(position, strFunc, charFunc);
     }
 
-    private static class ConstChrFunc extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    private static class ConstChrFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function strFunc;
         private final char chrConst;
 
-        public ConstChrFunc(int position, Function strFunc, char chrConst, boolean isNegated) {
+        public ConstChrFunc(int position, Function strFunc, char chrConst) {
             super(position);
             this.strFunc = strFunc;
             this.chrConst = chrConst;
-            this.isNegated = isNegated;
         }
 
         @Override
@@ -91,20 +93,18 @@ public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory imp
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != Chars.equalsNc(strFunc.getStr(rec), chrConst);
+            return negated != Chars.equalsNc(strFunc.getStr(rec), chrConst);
         }
     }
 
-    private static class ConstStrFunc extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function chrFunc;
         private final char chrConst;
 
-        public ConstStrFunc(int position, Function chrFunc, char chrConst, boolean isNegated) {
+        public ConstStrFunc(int position, Function chrFunc, char chrConst) {
             super(position);
             this.chrFunc = chrFunc;
             this.chrConst = chrConst;
-            this.isNegated = isNegated;
         }
 
         @Override
@@ -114,20 +114,44 @@ public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory imp
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (chrFunc.getChar(rec) == chrConst);
+            return negated != (chrFunc.getChar(rec) == chrConst);
         }
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
-        private final boolean isNegated;
+    private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
+        private final boolean equals;
+
+        public ConstStrConstChrFunc(int position, boolean equals) {
+            super(position);
+            this.equals = equals;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != equals;
+        }
+    }
+
+    private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
+
+        public NegatedAwareBooleanConstantFunc(int position) {
+            super(position);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated;
+        }
+    }
+
+    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function strFunc;
         private final Function chrFunc;
 
-        public Func(int position, Function strFunc, Function chrFunc, boolean isNegated) {
+        public Func(int position, Function strFunc, Function chrFunc) {
             super(position);
             this.strFunc = strFunc;
             this.chrFunc = chrFunc;
-            this.isNegated = isNegated;
         }
 
         @Override
@@ -142,7 +166,7 @@ public class EqStrCharFunctionFactory extends AbstractBooleanFunctionFactory imp
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
+            return negated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
         }
     }
 }

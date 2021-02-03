@@ -29,17 +29,15 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class EqIntStrCFunctionFactory implements FunctionFactory {
+public class EqTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "=(Is)";
+        return "=(NN)";
     }
 
     @Override
@@ -49,47 +47,32 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        try {
-            final CharSequence value = args.getQuick(1).getStr(null);
-            if (value == null) {
-                return new Func(position, args.getQuick(0), Numbers.INT_NaN);
-            }
-            return new Func(position, args.getQuick(0), Numbers.parseInt(value));
-        } catch (NumericException e) {
-            return new NegatedAwareBooleanConstantFunc(args.getQuick(1).getPosition());
-        }
+        return new EqTimestampFunction(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends NegatableBooleanFunction implements UnaryFunction {
+    private static class EqTimestampFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
-        private final int right;
+        private final Function right;
 
-        public Func(int position, Function left, int right) {
+        public EqTimestampFunction(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
         }
 
         @Override
-        public Function getArg() {
+        public boolean getBool(Record rec) {
+            return negated != (left.getTimestamp(rec) == right.getTimestamp(rec));
+        }
+
+        @Override
+        public Function getLeft() {
             return left;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (left.getInt(rec) == right);
-        }
-    }
-
-    private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
-
-        public NegatedAwareBooleanConstantFunc(int position) {
-            super(position);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated;
+        public Function getRight() {
+            return right;
         }
     }
 }

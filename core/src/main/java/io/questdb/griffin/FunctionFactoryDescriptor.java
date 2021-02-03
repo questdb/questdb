@@ -196,6 +196,27 @@ public class FunctionFactoryDescriptor {
         return openBraceIndex;
     }
 
+    public static String createSignatureWithSwappedArgs(String name, String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        StringBuilder signatureBuilder = new StringBuilder(name);
+        signatureBuilder.append('(');
+        for (int i = signature.length() - 2; i > openBraceIndex; i--) {
+            char curr = signature.charAt(i);
+            if (curr == '[') {
+                signatureBuilder.append("[]");
+            } else if (curr != ']') {
+                signatureBuilder.append(curr);
+            }
+        }
+        signatureBuilder.append(')');
+        return signatureBuilder.toString();
+    }
+
+    public static String createSignature(String name, String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        return name + signature.substring(openBraceIndex);
+    }
+
     public int getArgTypeMask(int index) {
         int arrayIndex = index / 2;
         long mask = argTypes[arrayIndex];

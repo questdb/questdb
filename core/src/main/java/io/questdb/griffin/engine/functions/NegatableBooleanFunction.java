@@ -22,12 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.functions;
 
-public abstract class AbstractBooleanFunctionFactory {
-    protected boolean isNegated = false;
+public abstract class NegatableBooleanFunction extends BooleanFunction {
+    protected boolean negated = false;
 
-    public void setNegated(boolean isNegated) {
-        this.isNegated = isNegated;
+    public NegatableBooleanFunction(int position) {
+        super(position);
+    }
+
+    void setNegated(boolean negated) {
+        this.negated = negated;
     }
 }
