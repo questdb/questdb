@@ -32,6 +32,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 
@@ -61,7 +62,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             AtomicInteger partCounter,
             FilesFacade ff,
             CharSequence pathToTable,
+            int columnType,
             int blockType,
+            long timestampMergeIndexAddr,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -90,8 +93,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long dstVarAddr,
             long dstVarOffset,
             long dstVarSize,
-            int columnType,
-            long timestampMergeIndexAddr,
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
@@ -236,6 +237,23 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 ff.close(timestampFd);
             }
 
+            final Path path = Path.getThreadLocal(pathToTable);
+            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), oooTimestampHi);
+            final int plen = path.length();
+
+            path.$();
+            final Path other = Path.getThreadLocal2(path).put("x-").put(tableWriter.getTxn()).$();
+            boolean renamed;
+            if (renamed = ff.rename(path, other)) {
+                OutOfOrderUtils.appendTxnToPath(other.trimTo(plen), tableWriter.getTxn());
+                renamed = ff.rename(other.$(), path);
+            }
+
+            if (!renamed) {
+                throw CairoException.instance(ff.errno())
+                        .put("could not rename [from=").put(other)
+                        .put(", to=").put(path).put(']');
+            }
             LOG.info().$("will rename").$();
 
 /*
@@ -695,7 +713,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final AtomicInteger partCounter = task.getPartCounter();
         final FilesFacade ff = task.getFf();
         final CharSequence pathToTable = task.getPathToTable();
+        final int columnType = task.getColumnType();
         final int blockType = task.getBlockType();
+        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
         final long srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
         final long srcDataFixSize = task.getSrcDataFixSize();
@@ -724,8 +744,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long dstVarAddr = task.getDstVarAddr();
         final long dstVarOffset = task.getDstVarOffset();
         final long dstVarSize = task.getDstVarSize();
-        final int columnType = task.getColumnType();
-        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
         final long dstKFd = task.getDstKFd();
         final long dskVFd = task.getDstVFd();
         final long dstIndexOffset = task.getDstIndexOffset();
@@ -745,7 +763,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 partCounter,
                 ff,
                 pathToTable,
+                columnType,
                 blockType,
+                timestampMergeIndexAddr,
                 srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixSize,
@@ -774,8 +794,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 dstVarAddr,
                 dstVarOffset,
                 dstVarSize,
-                columnType,
-                timestampMergeIndexAddr,
                 dstKFd,
                 dskVFd,
                 dstIndexOffset,

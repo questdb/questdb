@@ -693,6 +693,10 @@ public class TableWriter implements Closeable {
         return structureVersion;
     }
 
+    public long getTxn() {
+        return txn;
+    }
+
     public boolean inTransaction() {
         return txPartitionCount > 1 || transientRowCount != txPrevTransientRowCount;
     }
@@ -1074,24 +1078,6 @@ public class TableWriter implements Closeable {
         }
 
         LOG.info().$("truncated [name=").$(name).$(']').$();
-    }
-
-    void closeActivePartition() {
-        closeAppendMemoryNoTruncate(false);
-        Misc.freeObjList(denseIndexers);
-        // we also indicate that "active" partition has to be reloaded
-        // after rename
-//        reopenLastPartition = true;
-    }
-
-    void updateActivePartitionDetails(long minTimestamp, long maxTimestamp, long transientRowCount) {
-        this.transientRowCount = transientRowCount;
-        // Compute max timestamp as maximum of out of order data and
-        // data in existing partition.
-        // When partition is new, the data timestamp is MIN_LONG
-        this.maxTimestamp = maxTimestamp;
-        this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
-
     }
 
     public void updateMetadataVersion() {
@@ -1535,6 +1521,14 @@ public class TableWriter implements Closeable {
             return;
         }
         throw new CairoError("Table '" + name.toString() + "' is distressed");
+    }
+
+    void closeActivePartition() {
+        closeAppendMemoryNoTruncate(false);
+        Misc.freeObjList(denseIndexers);
+        // we also indicate that "active" partition has to be reloaded
+        // after rename
+//        reopenLastPartition = true;
     }
 
     private void closeAppendMemoryNoTruncate(boolean truncate) {
@@ -3563,38 +3557,6 @@ public class TableWriter implements Closeable {
         transientRowCountBeforeOutOfOrder = 0;
     }
 
-    void updatePartitionSize(long partitionTimestamp, long partitionSize, long tableFloorOfMaxTimestamp, long srcDataMax) {
-        this.fixedRowCount += partitionSize;
-        if (partitionTimestamp < tableFloorOfMaxTimestamp) {
-            this.fixedRowCount -= srcDataMax;
-        }
-
-        // We just updated non-last partition. It is possible that this partition
-        // has already been updated by transaction or out of order logic was the only
-        // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
-        // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
-        // (it has been incremented before out-of-order logic kicked in) and
-        // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
-
-        boolean missing = true;
-        long x = this.txPendingPartitionSizes.getAppendOffset() / 16;
-        for (long l = 0; l < x; l++) {
-            long ts = this.txPendingPartitionSizes.getLong(l * 16 + Long.BYTES);
-            if (ts == partitionTimestamp) {
-                this.fixedRowCount -= this.txPendingPartitionSizes.getLong(l * 16);
-                this.txPendingPartitionSizes.putLong(l * 16, partitionSize);
-                missing = false;
-                break;
-            }
-        }
-
-        if (missing) {
-            this.txPartitionCount++;
-            this.txPendingPartitionSizes.putLong128(partitionSize, partitionTimestamp);
-        }
-
-    }
-
     private void oooOpenDestIndexFiles(long[] mergeStruct, Path path, int plen, int columnIndex, int fixColumnStructOffset) {
         if (metadata.isColumnIndexed(columnIndex)) {
             oooDoOpenIndexFiles(path, mergeStruct, plen, columnIndex, fixColumnStructOffset);
@@ -5180,6 +5142,16 @@ public class TableWriter implements Closeable {
         throw new CairoError(cause);
     }
 
+    void updateActivePartitionDetails(long minTimestamp, long maxTimestamp, long transientRowCount) {
+        this.transientRowCount = transientRowCount;
+        // Compute max timestamp as maximum of out of order data and
+        // data in existing partition.
+        // When partition is new, the data timestamp is MIN_LONG
+        this.maxTimestamp = maxTimestamp;
+        this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
+
+    }
+
     private void updateIndexes() {
         if (indexCount == 0 || avoidIndexOnCommit) {
             avoidIndexOnCommit = false;
@@ -5297,6 +5269,38 @@ public class TableWriter implements Closeable {
         this.prevMaxTimestamp = maxTimestamp;
         this.maxTimestamp = timestamp;
         this.timestampSetter.accept(timestamp);
+    }
+
+    void updatePartitionSize(long partitionTimestamp, long partitionSize, long tableFloorOfMaxTimestamp, long srcDataMax) {
+        this.fixedRowCount += partitionSize;
+        if (partitionTimestamp < tableFloorOfMaxTimestamp) {
+            this.fixedRowCount -= srcDataMax;
+        }
+
+        // We just updated non-last partition. It is possible that this partition
+        // has already been updated by transaction or out of order logic was the only
+        // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
+        // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
+        // (it has been incremented before out-of-order logic kicked in) and
+        // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
+
+        boolean missing = true;
+        long x = this.txPendingPartitionSizes.getAppendOffset() / 16;
+        for (long l = 0; l < x; l++) {
+            long ts = this.txPendingPartitionSizes.getLong(l * 16 + Long.BYTES);
+            if (ts == partitionTimestamp) {
+                this.fixedRowCount -= this.txPendingPartitionSizes.getLong(l * 16);
+                this.txPendingPartitionSizes.putLong(l * 16, partitionSize);
+                missing = false;
+                break;
+            }
+        }
+
+        if (missing) {
+            this.txPartitionCount++;
+            this.txPendingPartitionSizes.putLong128(partitionSize, partitionTimestamp);
+        }
+
     }
 
     private void validateSwapMeta(CharSequence columnName) {
