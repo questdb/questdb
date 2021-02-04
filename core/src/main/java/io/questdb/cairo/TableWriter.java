@@ -49,6 +49,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.function.LongConsumer;
 
+import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TableWriter implements Closeable {
@@ -106,7 +107,7 @@ public class TableWriter implements Closeable {
     private final LongList indexSequences = new LongList();
     private final MessageBus messageBus;
     private final boolean parallelIndexerEnabled;
-    private final LongHashSet removedPartitions = new LongHashSet();
+    private final LongHashSet attachedPartitions = new LongHashSet();
     private final Timestamps.TimestampFloorMethod timestampFloorMethod;
     private final Timestamps.TimestampAddMethod timestampAddMethod;
     private final int defaultCommitMode;
@@ -119,6 +120,7 @@ public class TableWriter implements Closeable {
     private final LongList partitionListByTimestamp = new LongList();
     private final LongList partitionsToDrop = new LongList();
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
+    private boolean saveAttachedPartitionList;
     private final boolean outOfOrderEnabled;
     private ContiguousVirtualMemory tmpShuffleIndex;
     private ContiguousVirtualMemory tmpShuffleData;
@@ -295,9 +297,9 @@ public class TableWriter implements Closeable {
 
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
+            loadAttachedPartitions();
             configureAppendPosition();
             purgeUnusedPartitions();
-            loadRemovedPartitions();
         } catch (CairoException e) {
             LOG.error().$("could not open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             doClose(false);
@@ -546,6 +548,103 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
     }
 
+//    public int attachPartition(long timestamp) {
+//        try {
+//            path.chopZ();
+//            metadata.getTimestampIndex()
+//            return attachPartition(readPartitionMinTimestamp(timestamp, path.chopZ(), metadata.getTimestampIndex()), readPartitionMaxTimestamp(timestamp));
+//        } finally {
+//            path.trimTo(rootLen);
+//        }
+//    }
+
+    // public int attachPartition(long minPartitionTimestamp, long maxPartitionTimestamp) {
+    public int attachPartition(long timestamp) {
+        if (partitionBy == PartitionBy.NONE) {
+            return TABLE_NOT_PARTITIONED;
+        }
+
+        // Partitioned table must have a timestamp
+        if (metadata.getTimestampIndex() < 0) {
+            LOG.error()
+                    .$("partitioned table does not have timestamp column [path=").$(path)
+                    .$(']').$();
+            return TABLE_NOT_PARTITIONED;
+        }
+        CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
+        if (attachedPartitions.contains(timestamp)) {
+            LOG.info().$("partition is re-attached after delete [path=").$(path).$(']').$();
+        }
+
+        if (metadata.getSymbolMapCount() > 0) {
+            return TABLE_HAS_SYMBOLS;
+        }
+
+        if (timestampFloorMethod.floor(timestamp) == getPartitionLo(maxTimestamp)) {
+            LOG.error()
+                    .$("cannot attach active partition [path=").$(path)
+                    .$(", maxTimestamp=").$ts(maxTimestamp)
+                    .$(']').$();
+            return CANNOT_ATTACH_ACTIVE_PARTITION;
+        }
+
+        try {
+            setPathForPartition(path.concat(configuration.getPartitionMountDir()), partitionBy, timestamp);
+            if (ff.exists(path.$())) {
+                // find out if we are attaching min partition
+                final long minPartitionTimestamp = readFileOffset(ff, path.chopZ(), timestampCol, tempMem8b, 8);
+                long nextMinTimestamp = minTimestamp;
+                if (getPartitionLo(minPartitionTimestamp) < getPartitionLo(nextMinTimestamp)) {
+                    nextMinTimestamp = minPartitionTimestamp;
+                }
+                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
+
+                int symbolWriterCount = denseSymbolMapWriters.size();
+                int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
+
+                long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
+                txMem.putLong(TX_OFFSET_TXN, txn);
+                Unsafe.getUnsafe().storeFence();
+
+                final long partitionVersion = txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1;
+                txMem.jumpTo(getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
+                txMem.putLong(timestamp);
+
+                txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionVersion);
+                txMem.putInt(getPartitionTableSizeOffset(symbolWriterCount), partitionTableSize + 1);
+
+                if (nextMinTimestamp != minTimestamp) {
+                    txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, nextMinTimestamp);
+                    minTimestamp = nextMinTimestamp;
+                }
+
+                // decrement row count
+                txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT) + partitionSize);
+
+                Unsafe.getUnsafe().storeFence();
+                // txn check
+                txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
+
+                if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
+                    LOG.info().$("partition directory delete is postponed [path=").$(path).$(']').$();
+                }
+
+                fixedRowCount += partitionSize;
+
+                LOG.info().$("partition attached [path=").$(path).$(']').$();
+            } else {
+                LOG.error().$("cannot attach missing partition [path=").$(path).$(']').$();
+                return CANNOT_ATTACH_MISSING_PARTITION;
+            }
+
+        } finally {
+            path.trimTo(rootLen);
+        }
+
+
+        return StatusCode.OK;
+    }
+
     public void changeCacheFlag(int columnIndex, boolean cache) {
         checkDistressed();
 
@@ -619,8 +718,14 @@ public class TableWriter implements Closeable {
             txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
 
             // store symbol counts
-            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            int symCount = denseSymbolMapWriters.size();
+            for (int i = 0; i < symCount; i++) {
                 txMem.putInt(getSymbolWriterIndexOffset(i), denseSymbolMapWriters.getQuick(i).getSymbolCount());
+            }
+
+            if (saveAttachedPartitionList) {
+                saveAttachedPartitionsToTx(symCount);
+                saveAttachedPartitionList = false;
             }
 
             Unsafe.getUnsafe().storeFence();
@@ -791,11 +896,11 @@ public class TableWriter implements Closeable {
 
     public boolean removePartition(long timestamp) {
 
-        if (partitionBy == PartitionBy.NONE || timestamp < timestampFloorMethod.floor(minTimestamp) || timestamp > maxTimestamp) {
+        if (partitionBy == PartitionBy.NONE || timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
             return false;
         }
 
-        if (timestampFloorMethod.floor(timestamp) == timestampFloorMethod.floor(maxTimestamp)) {
+        if (getPartitionLo(timestamp) == getPartitionLo(maxTimestamp)) {
             LOG.error()
                     .$("cannot remove active partition [path=").$(path)
                     .$(", maxTimestamp=").$ts(maxTimestamp)
@@ -803,7 +908,7 @@ public class TableWriter implements Closeable {
             return false;
         }
 
-        if (removedPartitions.contains(timestamp)) {
+        if (!attachedPartitions.contains(timestamp)) {
             LOG.error().$("partition is already marked for delete [path=").$(path).$(']').$();
             return false;
         }
@@ -820,7 +925,7 @@ public class TableWriter implements Closeable {
             // find out if we are removing min partition
 
             final long nextMinTimestamp;
-            if (timestampFloorMethod.floor(timestamp) == timestampFloorMethod.floor(minTimestamp)) {
+            if (getPartitionLo(timestamp) == getPartitionLo(minTimestamp)) {
                 nextMinTimestamp = getNextMinTimestamp(timestampFloorMethod, timestampAddMethod);
             } else {
                 nextMinTimestamp = minTimestamp;
@@ -837,18 +942,12 @@ public class TableWriter implements Closeable {
                 final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
 
                 int symbolWriterCount = denseSymbolMapWriters.size();
-                int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
-
                 long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
                 txMem.putLong(TX_OFFSET_TXN, txn);
                 Unsafe.getUnsafe().storeFence();
 
                 final long partitionVersion = txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1;
-                txMem.jumpTo(getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
-                txMem.putLong(timestamp);
-
                 txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionVersion);
-                txMem.putInt(getPartitionTableSizeOffset(symbolWriterCount), partitionTableSize + 1);
 
                 if (nextMinTimestamp != minTimestamp) {
                     txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, nextMinTimestamp);
@@ -858,6 +957,9 @@ public class TableWriter implements Closeable {
                 // decrement row count
                 txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT) - partitionSize);
 
+                attachedPartitions.remove(timestamp);
+                saveAttachedPartitionsToTx(symbolWriterCount);
+
                 Unsafe.getUnsafe().storeFence();
                 // txn check
                 txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
@@ -866,7 +968,6 @@ public class TableWriter implements Closeable {
                     LOG.info().$("partition directory delete is postponed [path=").$(path).$(']').$();
                 }
 
-                removedPartitions.add(timestamp);
                 fixedRowCount -= partitionSize;
 
                 LOG.info().$("partition marked for delete [path=").$(path).$(']').$();
@@ -1036,7 +1137,7 @@ public class TableWriter implements Closeable {
         fixedRowCount = 0;
         txn++;
         txPartitionCount = 1;
-
+        attachedPartitions.clear();
         resetTxn(txMem, metadata.getSymbolMapCount(), txn, ++dataVersion);
         try {
             removeTodoFile();
@@ -1100,6 +1201,10 @@ public class TableWriter implements Closeable {
         } finally {
             r.cancel();
         }
+    }
+
+    private long getPartitionLo(long timestamp) {
+        return timestampFloorMethod.floor(timestamp);
     }
 
     private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
@@ -1416,17 +1521,20 @@ public class TableWriter implements Closeable {
 
         // when symbol column is removed partition table has to be moved up
         // to do that we just write partition table behind symbol writer table
-
         if (oldCount != count) {
-            int n = removedPartitions.size();
-            txMem.putInt(getPartitionTableSizeOffset(count), n);
-            for (int i = 0; i < n; i++) {
-                txMem.putLong(getPartitionTableIndexOffset(count, i), removedPartitions.get(i));
-            }
+            saveAttachedPartitionsToTx(count);
         }
 
         Unsafe.getUnsafe().storeFence();
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
+    }
+
+    private void saveAttachedPartitionsToTx(int symCount) {
+        int n = attachedPartitions.size();
+        txMem.putInt(getPartitionTableSizeOffset(symCount), n);
+        for (int i = 0; i < n; i++) {
+            txMem.putLong(getPartitionTableIndexOffset(symCount, i), attachedPartitions.get(i));
+        }
     }
 
     void cancelRow() {
@@ -2224,7 +2332,7 @@ public class TableWriter implements Closeable {
 
     private long getTxEofOffset() {
         if (metadata != null) {
-            return getTxMemSize(metadata.getSymbolMapCount(), removedPartitions.size());
+            return getTxMemSize(metadata.getSymbolMapCount(), attachedPartitions.size());
         } else {
             return ff.length(txMem.getFd());
         }
@@ -2322,12 +2430,12 @@ public class TableWriter implements Closeable {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
 
-    private void loadRemovedPartitions() {
+    private void loadAttachedPartitions() {
         int symbolWriterCount = denseSymbolMapWriters.size();
         int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
         if (partitionTableSize > 0) {
             for (int i = 0; i < partitionTableSize; i++) {
-                removedPartitions.add(txMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
+                attachedPartitions.add(txMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
             }
         }
     }
@@ -3037,6 +3145,7 @@ public class TableWriter implements Closeable {
                     if (missing) {
                         txPartitionCount++;
                         txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
+                        checkAddAttachedPartition(partitionTimestampHi);
                     }
 
                     if (indexHi + 1 >= indexMax) {
@@ -3723,6 +3832,8 @@ public class TableWriter implements Closeable {
                     indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
                 }
             }
+
+            checkAddAttachedPartition(timestamp);
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
             path.trimTo(rootLen);
@@ -3806,9 +3917,11 @@ public class TableWriter implements Closeable {
     }
 
     private void recoverOpenColumnFailure(CharSequence columnName) {
+        final int index = columnCount - 1;
         removeMetaFile();
         removeLastColumn();
         recoverFromSwapRenameFailure(columnName);
+        removeSymbolMapWriter(index);
     }
 
     private void releaseLock(boolean distressed) {
@@ -4152,15 +4265,16 @@ public class TableWriter implements Closeable {
             long maxTimestamp = this.maxTimestamp;
             try {
                 final long tsLimit = timestampFloorMethod.floor(this.maxTimestamp);
-                for (long ts = minTimestamp; ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
+                for (long ts = getPartitionLo(minTimestamp); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
                     path.trimTo(rootLen);
                     setStateForTimestamp(path, ts, false);
                     int p = path.length();
-                    if (ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
-                        actualSize += TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
-                        lastTimestamp = ts;
-                    } else {
-                        if (removedPartitions.excludes(ts)) {
+
+                    if (attachedPartitions.contains(ts)) {
+                        if (ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
+                            actualSize += TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
+                            lastTimestamp = ts;
+                        } else {
                             LOG.info().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
                         }
                     }
@@ -4695,6 +4809,17 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void checkAddAttachedPartition(long timestamp) {
+        if (partitionBy != PartitionBy.NONE) {
+            long partitionTs = getPartitionLo(timestamp);
+            int keyIndex = attachedPartitions.keyIndex(partitionTs);
+            if (keyIndex > -1) {
+                attachedPartitions.addAt(keyIndex, partitionTs);
+                saveAttachedPartitionList = true;
+            }
+        }
+    }
+
     @FunctionalInterface
     private interface ShuffleOutOfOrderDataInternal {
         void shuffle(long pSrc, long pDest, long pIndex, long count);
@@ -4773,6 +4898,9 @@ public class TableWriter implements Closeable {
                 return newRow0(timestamp);
             }
             updateMaxTimestamp(timestamp);
+
+            // Add new partition to _tx attached partition list
+            checkAddAttachedPartition(timestamp);
             return row;
         }
 

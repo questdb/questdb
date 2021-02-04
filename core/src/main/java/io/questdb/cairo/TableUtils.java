@@ -241,8 +241,8 @@ public final class TableUtils {
         return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 4L;
     }
 
-    public static long getTxMemSize(int symbolWriterCount, int removedPartitionsCount) {
-        return getPartitionTableIndexOffset(symbolWriterCount, removedPartitionsCount);
+    public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsCount) {
+        return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsCount);
     }
 
     public static boolean isValidColumnName(CharSequence seq) {
@@ -633,6 +633,61 @@ public final class TableUtils {
 
                 try {
                     if (ff.read(fd, tempMem8b, 8, 0) != 8) {
+                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    }
+                    return Unsafe.getUnsafe().getLong(tempMem8b);
+                } finally {
+                    ff.close(fd);
+                }
+            } else {
+                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    static long readFileOffset(FilesFacade ff, Path path, CharSequence timestampCol, long offset, long tempMem8b) {
+        int plen = path.length();
+        try {
+            if (ff.exists(path.concat(timestampCol))) {
+                long fd = ff.openRO(path);
+                if (fd == -1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
+                }
+
+                try {
+                    if (ff.read(fd, tempMem8b, 8, offset) != 8) {
+                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    }
+                    return Unsafe.getUnsafe().getLong(tempMem8b);
+                } finally {
+                    ff.close(fd);
+                }
+            } else {
+                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    static long readPartitionMaxTimestamp(FilesFacade ff, Path path, CharSequence timestampCol, long tempMem8b) {
+        int plen = path.length();
+        try {
+            if (ff.exists(path.concat(timestampCol))) {
+                long fd = ff.openRO(path);
+                if (fd == -1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
+                }
+
+                try {
+                    if (ff.read(fd, tempMem8b, 8, 8L) != 8) {
+                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    }
+                    long offset = Unsafe.getUnsafe().getLong(tempMem8b);
+
+                    if (ff.read(fd, tempMem8b, 8, 8L * offset) != 8) {
                         throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
                     }
                     return Unsafe.getUnsafe().getLong(tempMem8b);

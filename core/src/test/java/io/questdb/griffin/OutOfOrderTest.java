@@ -31,6 +31,8 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -44,6 +46,8 @@ import java.io.File;
 import java.net.URL;
 
 public class OutOfOrderTest extends AbstractGriffinTest {
+
+    private final static Log LOG = LogFactory.getLog(AbstractGriffinTest.class);
 
     @Before
     public void setUp3() {
@@ -1921,6 +1925,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     }
 
                     String expected = Chars.toString(sink);
+
+                    LOG.info().$("====================================").$();
 
                     compiler.compile("insert into x select * from (top union all bottom)", sqlExecutionContext);
 

@@ -65,7 +65,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
-    private final LongHashSet removedPartitions = new LongHashSet();
+    private final LongHashSet attachedPartitions = new LongHashSet();
     private LongList columnTops;
     private ObjList<ReadOnlyColumn> columns;
     private ObjList<BitmapIndexReader> bitmapIndexes;
@@ -563,27 +563,17 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void closeRemovedPartitions() {
-        for (int i = 0, n = removedPartitions.size(); i < n; i++) {
-            final long timestamp = removedPartitions.get(i);
-
-            int partitionIndex = getPartitionCountBetweenTimestamps(prevMinTimestamp, timestamp);
-            if (partitionIndex > -1) {
-                if (partitionIndex < partitionCount) {
-                    if (getPartitionRowCount(partitionIndex) != -1) {
-                        // this is an open partition
-                        int base = getColumnBase(partitionIndex);
-                        for (int k = 0; k < columnCount; k++) {
-                            closeColumn(base, k);
-                        }
-                        partitionRowCounts.setQuick(partitionIndex, -1);
+        final int openPartitionSize = partitionRowCounts.size();
+        for (int partitionIndex = 0; partitionIndex < openPartitionSize; partitionIndex++) {
+            final long rowCount = partitionRowCounts.get(partitionIndex);
+            if (rowCount > -1) {
+                final long timestamp = timestampAddMethod.calculate(prevMinTimestamp, partitionIndex);
+                if (!attachedPartitions.contains(timestamp)) {
+                    int base = getColumnBase(partitionIndex);
+                    for (int k = 0; k < columnCount; k++) {
+                        closeColumn(base, k);
                     }
-                    // partition has not yet been opened
-                } else {
-                    LOG.error()
-                            .$("partition index is out of range [partitionIndex=").$(partitionIndex)
-                            .$(", partitionCount=").$(partitionCount)
-                            .$(", timestamp=").$ts(timestamp)
-                            .$(']').$();
+                    partitionRowCounts.setQuick(partitionIndex, -1);
                 }
             }
         }
@@ -824,11 +814,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private long openPartition0(int partitionIndex) {
-        // is this table is partitioned?
+        // is this table partitioned?
         if (timestampAddMethod != null
-                && removedPartitions.contains(timestampAddMethod.calculate(
-                minTimestamp, partitionIndex
-        ))) {
+                && !attachedPartitions.contains(
+                timestampAddMethod.calculate(minTimestamp, partitionIndex))) {
             return -1;
         }
 
@@ -977,12 +966,12 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 txMem.grow(TableUtils.getPartitionTableIndexOffset(symbolMapCount, 0));
 
-                this.removedPartitions.clear();
+                this.attachedPartitions.clear();
                 int partitionTableSize = txMem.getInt(TableUtils.getPartitionTableSizeOffset(symbolMapCount));
                 if (partitionTableSize > 0) {
                     txMem.grow(TableUtils.getPartitionTableIndexOffset(symbolMapCount, partitionTableSize));
                     for (int i = 0; i < partitionTableSize; i++) {
-                        this.removedPartitions.add(txMem.getLong(TableUtils.getPartitionTableIndexOffset(symbolMapCount, i)));
+                        this.attachedPartitions.add(txMem.getLong(TableUtils.getPartitionTableIndexOffset(symbolMapCount, i)));
                     }
                 }
 

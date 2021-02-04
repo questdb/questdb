@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -42,6 +44,8 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 
 public class AlterTableAttachPartition extends AbstractGriffinTest {
+    private final static Log LOG = LogFactory.getLog(AlterTableAttachPartition.class);
+    private final static int DIR_MODE = 509;
 
     @Test
     public void testAttachePartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
@@ -60,7 +64,9 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
                         .col("l", ColumnType.LONG));
 
                 try (Path p1 = new Path().of(configuration.getRoot()).concat(src.getName()).concat("2020-01-01").$();
-                     Path p2 = new Path().of(configuration.getRoot()).concat(dst.getName()).concat("2020-01-01").$()) {
+                     Path mount = new Path().of(configuration.getRoot()).concat(dst.getName()).concat("mount").$();
+                     Path p2 = new Path().of(configuration.getRoot()).concat(dst.getName()).concat("mount").concat("2020-01-01").$()) {
+                    Files.mkdir(mount, 0);
                     copyDirectory(p1, p2);
                 }
 
@@ -70,7 +76,8 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
     }
 
     private void copyDirectory(Path from, Path to) throws IOException {
-        Files.mkdir(to, 0);
+        LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
+        Files.mkdir(to, DIR_MODE);
 
         java.nio.file.Path dest = java.nio.file.Path.of(to.toString() + Files.SEPARATOR);
         java.nio.file.Path src = java.nio.file.Path.of(from.toString() + Files.SEPARATOR);
