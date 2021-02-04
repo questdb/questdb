@@ -165,6 +165,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return SymbolTable.VALUE_IS_NULL;
     }
 
+    @Override
     public boolean containsNullValue() {
         return nullValue;
     }

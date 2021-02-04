@@ -48,12 +48,14 @@ public class SymbolMapWriter implements Closeable {
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
     private boolean nullValue = false;
+    private long transientSymbolCountAddr;
 
-    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
+    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount, long transientSymbolCountAddr) {
         final int plen = path.length();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
             final long mapPageSize = ff.getMapPageSize();
+            this.transientSymbolCountAddr = transientSymbolCountAddr;
 
             // this constructor does not create index. Index must exist
             // and we use "offset" file to store "header"
@@ -177,6 +179,7 @@ public class SymbolMapWriter implements Closeable {
         indexWriter.rollbackValues(keyToOffset(symbolCount));
         offsetMem.jumpTo(keyToOffset(symbolCount));
         jumpCharMemToSymbolCount(symbolCount);
+        Unsafe.getUnsafe().putInt(transientSymbolCountAddr, symbolCount);
         if (cache != null) {
             cache.clear();
         }
@@ -235,7 +238,10 @@ public class SymbolMapWriter implements Closeable {
         long offsetOffset = offsetMem.getAppendOffset();
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
-        return offsetToKey(offsetOffset);
+        int symIndex = offsetToKey(offsetOffset);
+        Unsafe.getUnsafe().storeFence();
+        Unsafe.getUnsafe().putInt(transientSymbolCountAddr, symIndex);
+        return symIndex;
     }
 
     public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {

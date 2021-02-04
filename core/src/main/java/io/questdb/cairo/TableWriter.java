@@ -620,7 +620,11 @@ public class TableWriter implements Closeable {
 
             // store symbol counts
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                txMem.putInt(getSymbolWriterIndexOffset(i), denseSymbolMapWriters.getQuick(i).getSymbolCount());
+                long offset = getSymbolWriterIndexOffset(i);
+                int symCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
+                txMem.putInt(offset, symCount);
+                offset += Integer.BYTES;
+                txMem.putInt(offset, symCount);
             }
 
             Unsafe.getUnsafe().storeFence();
@@ -1415,7 +1419,11 @@ public class TableWriter implements Closeable {
         final int oldCount = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, count);
         for (int i = 0; i < count; i++) {
-            txMem.putInt(getSymbolWriterIndexOffset(i), denseSymbolMapWriters.getQuick(i).getSymbolCount());
+            int symbolCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
+            long offset = getSymbolWriterIndexOffset(i);
+            txMem.putInt(offset, symbolCount);
+            offset += Integer.BYTES;
+            txMem.putInt(offset, symbolCount);
         }
 
         // when symbol column is removed partition table has to be moved up
@@ -1659,11 +1667,13 @@ public class TableWriter implements Closeable {
 
             if (type == ColumnType.SYMBOL) {
                 assert nextSymbolCountOffset < getSymbolWriterIndexOffset(expectedMapWriters);
+                long transientSymbolCountAddr = txMem.addressOf(TableUtils.getSymbolWriterTransientIndexOffset(i));
                 // keep symbol map writers list sparse for ease of access
-                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), metadata.getColumnName(i), txMem.getInt(nextSymbolCountOffset));
+                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), metadata.getColumnName(i), txMem.getInt(nextSymbolCountOffset),
+                        transientSymbolCountAddr);
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
-                nextSymbolCountOffset += 4;
+                nextSymbolCountOffset += 8;
             }
 
             if (metadata.isColumnIndexed(i)) {
@@ -2012,7 +2022,8 @@ public class TableWriter implements Closeable {
 
     private void createSymbolMapWriter(CharSequence name, int symbolCapacity, boolean symbolCacheFlag) {
         SymbolMapWriter.createSymbolMapFiles(ff, ddlMem, path, name, symbolCapacity, symbolCacheFlag);
-        SymbolMapWriter w = new SymbolMapWriter(configuration, path, name, 0);
+        long transientSymbolCountAddr = txMem.addressOf(TableUtils.getSymbolWriterTransientIndexOffset(columnCount));
+        SymbolMapWriter w = new SymbolMapWriter(configuration, path, name, 0, transientSymbolCountAddr);
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }

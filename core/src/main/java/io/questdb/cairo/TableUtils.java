@@ -238,7 +238,11 @@ public final class TableUtils {
     }
 
     public static long getSymbolWriterIndexOffset(int index) {
-        return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 4L;
+        return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 8L;
+    }
+
+    public static long getSymbolWriterTransientIndexOffset(int index) {
+        return getSymbolWriterIndexOffset(index) + Integer.BYTES;
     }
 
     public static long getTxMemSize(int symbolWriterCount, int removedPartitionsCount) {
@@ -325,7 +329,10 @@ public final class TableUtils {
 
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
-            txMem.putInt(getSymbolWriterIndexOffset(i), 0);
+            long offset = getSymbolWriterIndexOffset(i);
+            txMem.putInt(offset, 0);
+            offset += Integer.BYTES;
+            txMem.putInt(offset, 0);
         }
 
         Unsafe.getUnsafe().storeFence();
