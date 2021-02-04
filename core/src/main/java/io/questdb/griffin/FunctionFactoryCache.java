@@ -69,7 +69,7 @@ public class FunctionFactoryCache {
                                 FunctionFactory greaterThan = createSwappingFactory(">", factory);
                                 // `a < b` == `b > a`
                                 addFactoryToList(factories, greaterThan);
-                                // `b > a` == `b <= a`
+                                // `b > a` == !(`b <= a`)
                                 addFactoryToList(factories, createNegatingFactory("<=", greaterThan));
                                 break;
                         }

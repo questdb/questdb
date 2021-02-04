@@ -31,14 +31,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.FunctionFactoryDescriptor.createSignature;
+import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureName;
 
 public class NegatingFunctionFactory implements FunctionFactory {
     private final String signature;
     private final FunctionFactory delegate;
 
     public NegatingFunctionFactory(String name, FunctionFactory delegate) throws SqlException {
-        this.signature = createSignature(name, delegate.getSignature());
+        this.signature = replaceSignatureName(name, delegate.getSignature());
         this.delegate = delegate;
     }
 

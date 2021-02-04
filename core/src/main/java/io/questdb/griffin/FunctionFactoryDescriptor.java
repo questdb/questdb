@@ -25,6 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 
 public class FunctionFactoryDescriptor {
     private static final int ARRAY_MASK = 1 << 31;
@@ -196,25 +198,29 @@ public class FunctionFactoryDescriptor {
         return openBraceIndex;
     }
 
-    public static String createSignatureWithSwappedArgs(String name, String signature) throws SqlException {
+    public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
         int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringBuilder signatureBuilder = new StringBuilder(name);
-        signatureBuilder.append('(');
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(name);
+        signatureBuilder.put('(');
         for (int i = signature.length() - 2; i > openBraceIndex; i--) {
             char curr = signature.charAt(i);
             if (curr == '[') {
-                signatureBuilder.append("[]");
+                signatureBuilder.put("[]");
             } else if (curr != ']') {
-                signatureBuilder.append(curr);
+                signatureBuilder.put(curr);
             }
         }
-        signatureBuilder.append(')');
+        signatureBuilder.put(')');
         return signatureBuilder.toString();
     }
 
-    public static String createSignature(String name, String signature) throws SqlException {
+    public static String replaceSignatureName(String name, String signature) throws SqlException {
         int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        return name + signature.substring(openBraceIndex);
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(name);
+        signatureBuilder.put(signature, openBraceIndex, signature.length());
+        return signatureBuilder.toString();
     }
 
     public int getArgTypeMask(int index) {

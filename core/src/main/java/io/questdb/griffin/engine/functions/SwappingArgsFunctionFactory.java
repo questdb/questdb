@@ -31,14 +31,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.FunctionFactoryDescriptor.createSignatureWithSwappedArgs;
+import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureNameAndSwapArgs;
 
 public class SwappingArgsFunctionFactory implements FunctionFactory {
     private final String signature;
     private final FunctionFactory delegate;
 
     public SwappingArgsFunctionFactory(String name, FunctionFactory delegate) throws SqlException {
-        this.signature = createSignatureWithSwappedArgs(name, delegate.getSignature());
+        this.signature = replaceSignatureNameAndSwapArgs(name, delegate.getSignature());
         this.delegate = delegate;
     }
 
