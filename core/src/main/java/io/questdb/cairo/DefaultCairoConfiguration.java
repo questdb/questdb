@@ -194,11 +194,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getPartitionMountDir() {
-        return "mount";
-    }
-
-    @Override
     public long getSpinLockTimeoutUs() {
         return 1000000;
     }

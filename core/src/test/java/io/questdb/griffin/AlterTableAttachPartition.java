@@ -28,14 +28,19 @@ import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -45,10 +50,10 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 public class AlterTableAttachPartition extends AbstractGriffinTest {
     private final static Log LOG = LogFactory.getLog(AlterTableAttachPartition.class);
-    private final static int DIR_MODE = 509;
+    private int DIR_MODE = configuration.getMkDirMode();
 
     @Test
-    public void testAttachePartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
+    public void testAttachPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
@@ -63,21 +68,29 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                try (Path p1 = new Path().of(configuration.getRoot()).concat(src.getName()).concat("2020-01-01").$();
-                     Path mount = new Path().of(configuration.getRoot()).concat(dst.getName()).concat("mount").$();
-                     Path p2 = new Path().of(configuration.getRoot()).concat(dst.getName()).concat("mount").concat("2020-01-01").$()) {
-                    Files.mkdir(mount, 0);
-                    copyDirectory(p1, p2);
-                }
-
+                backupRoot = temp.newFolder("backup").getAbsolutePath();
+                copyPartitionToBackup(src.getName(), "2020-01-01", dst.getName());
                 compiler.compile("ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01';", sqlExecutionContext);
+
+                TestUtils.assertEquals(
+                        "cnt\n" +
+                                "0\n",
+                        executeSql("with " +
+                                "t2 as (select 1 as id, count() as cnt from dst)\n" +
+                                ", t1 as (select 1 as id, count() as cnt from src WHERE ts='2020-01-01')\n" +
+                                "select t1.cnt - t2.cnt as cnt\n" +
+                                "from t2 cross join t1"
+                        )
+                );
             }
         });
     }
 
     private void copyDirectory(Path from, Path to) throws IOException {
         LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
-        Files.mkdir(to, DIR_MODE);
+        if (Files.mkdir(to, DIR_MODE) != 0) {
+            Assert.fail("Cannot create " + to.toString() + ". Error: " + Os.errno());
+        }
 
         java.nio.file.Path dest = java.nio.file.Path.of(to.toString() + Files.SEPARATOR);
         java.nio.file.Path src = java.nio.file.Path.of(from.toString() + Files.SEPARATOR);
@@ -90,6 +103,23 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
                         e.printStackTrace();
                     }
                 });
+    }
+
+    private void copyPartitionToBackup(String src, String partitionFolder, String dst) throws IOException {
+        try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(partitionFolder).$();
+             Path backup = new Path().of(configuration.getBackupRoot())) {
+
+            int backupLen = backup.length();
+            Files.mkdir(backup.$(), DIR_MODE);
+            backup.trimTo(backupLen);
+
+            if (Files.mkdir(backup.concat(dst).$(), DIR_MODE) != 0) {
+                Assert.fail("Cannot create " + backup.toString() + ". Error: " + Os.errno());
+            }
+
+            backup.trimTo(backupLen);
+            copyDirectory(p1, backup.concat(dst).concat(partitionFolder).$());
+        }
     }
 
     private void createSequentialDailyPartitionTable(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {
@@ -132,5 +162,16 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
             sql.append(" timestamp(" + timestampCol + ") Partition By DAY");
         }
         compiler.compile(sql.toString(), sqlExecutionContext);
+    }
+
+    private CharSequence executeSql(String sql) throws SqlException {
+        try (RecordCursorFactory rcf = compiler.compile(sql
+                , sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = rcf.getCursor(sqlExecutionContext)) {
+                sink.clear();
+                printer.print(cursor, rcf.getMetadata(), true);
+                return sink;
+            }
+        }
     }
 }

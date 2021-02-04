@@ -27,7 +27,8 @@ package io.questdb.cairo;
 public final class StatusCode {
     public final static int OK = 0;
     public final static int TABLE_NOT_PARTITIONED = 1;
-    public final static int TABLE_HAS_SYMBOLS = 1;
-    public final static int CANNOT_ATTACH_ACTIVE_PARTITION = 1;
-    public final static int CANNOT_ATTACH_MISSING_PARTITION = 1;
+    public final static int TABLE_HAS_SYMBOLS = 2;
+    public final static int ATTACH_ROOT_NOT_CONFIGURED = 3;
+    public final static int CANNOT_ATTACH_MISSING_PARTITION = 4;
+    public final static int RENAME_DIRECTORY_OS_CALL_FAILED = 5;
 }

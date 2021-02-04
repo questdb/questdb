@@ -1093,8 +1093,7 @@ public class SqlCompiler implements Closeable {
                     }
                     break;
                 case PartitionAction.ATTACH:
-                    int status = writer.attachPartition(timestamp);
-                    if (status != 0) {
+                    if (writer.attachPartition(timestamp) != StatusCode.OK) {
                         throw SqlException.$(lexer.lastTokenPosition(), "could not attach partition '").put(unquoted).put('\'');
                     }
                     break;
@@ -1104,7 +1103,7 @@ public class SqlCompiler implements Closeable {
 
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null) {
+            if (tok == null || Chars.equals(tok, ';')) {
                 break;
             }
 

@@ -94,8 +94,6 @@ public interface CairoConfiguration {
 
     int getBackupMkDirMode();
 
-    CharSequence getPartitionMountDir();
-
     long getSpinLockTimeoutUs();
 
     int getSqlCharacterStoreCapacity();

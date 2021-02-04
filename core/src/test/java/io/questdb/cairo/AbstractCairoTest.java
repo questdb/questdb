@@ -49,6 +49,7 @@ public class AbstractCairoTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
+    protected static CharSequence backupRoot;
 
     @BeforeClass
     public static void setUp() throws IOException {
@@ -58,7 +59,12 @@ public class AbstractCairoTest {
         // created mid-test
         LOG.info().$("begin").$();
         root = temp.newFolder("dbRoot").getAbsolutePath();
-        configuration = new DefaultCairoConfiguration(root);
+        configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public CharSequence getBackupRoot() {
+                return backupRoot;
+            }
+        };
     }
 
     @Before

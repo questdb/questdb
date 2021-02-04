@@ -80,6 +80,7 @@ public class TableWriter implements Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
     private final Path other;
+    private final Path attachPath;
     private final LongList refs = new LongList();
     private final Row row = new Row();
     private final int rootLen;
@@ -215,6 +216,9 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.path = new Path().of(root).concat(name);
         this.other = new Path().of(root).concat(name);
+        this.attachPath = configuration.getBackupRoot() != null
+                ? new Path().of(configuration.getBackupRoot()).concat(name)
+                : null;
         this.name = Chars.toString(name);
         this.rootLen = path.length();
         if (null == messageBus) {
@@ -548,18 +552,12 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
     }
 
-//    public int attachPartition(long timestamp) {
-//        try {
-//            path.chopZ();
-//            metadata.getTimestampIndex()
-//            return attachPartition(readPartitionMinTimestamp(timestamp, path.chopZ(), metadata.getTimestampIndex()), readPartitionMaxTimestamp(timestamp));
-//        } finally {
-//            path.trimTo(rootLen);
-//        }
-//    }
-
-    // public int attachPartition(long minPartitionTimestamp, long maxPartitionTimestamp) {
     public int attachPartition(long timestamp) {
+        if (attachPath == null) {
+            LOG.error().$("directory to attach partitions from is not configured, attach statement fails");
+            return ATTACH_ROOT_NOT_CONFIGURED;
+        }
+
         if (partitionBy == PartitionBy.NONE) {
             return TABLE_NOT_PARTITIONED;
         }
@@ -573,31 +571,33 @@ public class TableWriter implements Closeable {
         }
         CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
         if (attachedPartitions.contains(timestamp)) {
-            LOG.info().$("partition is re-attached after delete [path=").$(path).$(']').$();
+            LOG.info().$("partition is already attached [path=").$(path).$(']').$();
         }
 
         if (metadata.getSymbolMapCount() > 0) {
             return TABLE_HAS_SYMBOLS;
         }
 
-        if (timestampFloorMethod.floor(timestamp) == getPartitionLo(maxTimestamp)) {
-            LOG.error()
-                    .$("cannot attach active partition [path=").$(path)
-                    .$(", maxTimestamp=").$ts(maxTimestamp)
-                    .$(']').$();
-            return CANNOT_ATTACH_ACTIVE_PARTITION;
-        }
-
+        int attachRootLen = attachPath.length();
         try {
-            setPathForPartition(path.concat(configuration.getPartitionMountDir()), partitionBy, timestamp);
-            if (ff.exists(path.$())) {
-                // find out if we are attaching min partition
-                final long minPartitionTimestamp = readFileOffset(ff, path.chopZ(), timestampCol, tempMem8b, 8);
-                long nextMinTimestamp = minTimestamp;
-                if (getPartitionLo(minPartitionTimestamp) < getPartitionLo(nextMinTimestamp)) {
-                    nextMinTimestamp = minPartitionTimestamp;
+            setPathForPartition(attachPath, partitionBy, timestamp);
+            setPathForPartition(path, partitionBy, timestamp);
+            if (ff.exists(attachPath.$())) {
+                int renameStatus = TableUtils.moveFolder(ff, attachPath, path, true);
+                if (renameStatus != 0) {
+                    LOG.error().$("moving directory to attache partition failed [from=").
+                            $(attachPath).$(", to=").$(path).$(", errno=").$(renameStatus).$();
+                    return RENAME_DIRECTORY_OS_CALL_FAILED;
                 }
+
+                // find out lo, hi ranges of partition attached
                 final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
+                readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem8b, partitionSize);
+                long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem8b);
+                long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem8b + 8);
+
+                long nextMinTimestamp = Math.min(minPartitionTimestamp, minTimestamp);
+                long nextMaxTimestamp = Math.max(maxPartitionTimestamp, maxTimestamp);
 
                 int symbolWriterCount = denseSymbolMapWriters.size();
                 int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
@@ -613,22 +613,29 @@ public class TableWriter implements Closeable {
                 txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionVersion);
                 txMem.putInt(getPartitionTableSizeOffset(symbolWriterCount), partitionTableSize + 1);
 
-                if (nextMinTimestamp != minTimestamp) {
+                if (nextMinTimestamp < minTimestamp) {
                     txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, nextMinTimestamp);
                     minTimestamp = nextMinTimestamp;
+                }
+                if (nextMaxTimestamp > maxTimestamp) {
+                    txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, nextMaxTimestamp);
+                    maxTimestamp = nextMinTimestamp;
+                    transientRowCount = partitionSize;
+                    txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
                 }
 
                 // decrement row count
                 txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT) + partitionSize);
 
+                // save attached partitions
+                checkAddAttachedPartition(minPartitionTimestamp);
+                if (saveAttachedPartitionList) {
+                    saveAttachedPartitionsToTx(symbolWriterCount);
+                }
+
                 Unsafe.getUnsafe().storeFence();
                 // txn check
                 txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-
-                if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
-                    LOG.info().$("partition directory delete is postponed [path=").$(path).$(']').$();
-                }
-
                 fixedRowCount += partitionSize;
 
                 LOG.info().$("partition attached [path=").$(path).$(']').$();
@@ -639,6 +646,7 @@ public class TableWriter implements Closeable {
 
         } finally {
             path.trimTo(rootLen);
+            attachPath.trimTo(attachRootLen);
         }
 
 
@@ -2136,6 +2144,7 @@ public class TableWriter implements Closeable {
             Misc.free(txPendingPartitionSizes);
             Misc.free(ddlMem);
             Misc.free(other);
+            Misc.free(attachPath);
             Misc.free(tmpShuffleData);
             Misc.free(tmpShuffleIndex);
             Misc.free(timestampSearchColumn);
