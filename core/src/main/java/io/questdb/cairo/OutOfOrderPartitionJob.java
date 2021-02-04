@@ -25,17 +25,16 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderOpenColumnTask;
 import io.questdb.tasks.OutOfOrderPartitionTask;
+import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -51,6 +50,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     private final Sequence openColumnPubSeq;
     private final RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue;
     private final Sequence copyTaskPubSeq;
+    private final RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue;
+    private final MPSequence updPartitionSizePubSeq;
 
     public OutOfOrderPartitionJob(MessageBus messageBus) {
         super(messageBus.getOutOfOrderPartitionQueue(), messageBus.getOutOfOrderPartitionSubSeq());
@@ -59,6 +60,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         this.openColumnPubSeq = messageBus.getOutOfOrderOpenColumnPubSequence();
         this.copyTaskOutboundQueue = messageBus.getOutOfOrderCopyQueue();
         this.copyTaskPubSeq = messageBus.getOutOfOrderCopyPubSequence();
+        this.updPartitionSizeQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
+        this.updPartitionSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
     }
 
     public static void processPartition(
@@ -67,25 +70,24 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             Sequence openColumnPubSeq,
             RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             CharSequence pathToTable,
-            TableWriterMetadata metadata,
+            int partitionBy,
             ObjList<AppendMemory> columns,
             ObjList<ContiguousVirtualMemory> oooColumns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
-            long txn,
+            long oooTimestampMin, long oooTimestampMax, long oooTimestampHi, long txn,
             long sortedTimestampsAddr,
             long lastPartitionSize,
-            long oooTimestampHi,
-            long oooTimestampMax,
             long tableCeilOfMaxTimestamp,
             long tableFloorOfMinTimestamp,
             long tableFloorOfMaxTimestamp,
             long tableMaxTimestamp,
-            int partitionBy,
-            int timestampIndex,
+            TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         final Path path = Path.getThreadLocal(pathToTable);
@@ -93,6 +95,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo);
         // plen has to include partition directory name
 
+        final RecordMetadata metadata = tableWriter.getMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
         final int plen = path.length();
         long timestampFd;
         long dataTimestampLo;
@@ -119,16 +123,17 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     openColumnPubSeq,
                     copyTaskOutboundQueue,
                     copyTaskPubSeq,
+                    updPartitionSizeTaskQueue,
+                    updPartitionSizePubSeq,
                     ff,
                     txn,
-                    metadata,
                     columns,
                     oooColumns,
                     pathToTable,
-                    partitionBy,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
+                    oooTimestampMin,
                     oooTimestampLo,
                     oooTimestampHi,
                     // below parameters are unused by this type of append
@@ -144,10 +149,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     0,
                     0,
                     0,
+                    0,
+                    tableFloorOfMaxTimestamp,
                     5, //oooOpenNewPartitionForAppend
                     -1,  // timestamp fd
                     timestampIndex,
                     sortedTimestampsAddr,
+                    tableWriter,
                     doneLatch
             );
         } else {
@@ -449,14 +457,20 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     openColumnPubSeq,
                     copyTaskOutboundQueue,
                     copyTaskPubSeq,
+                    updPartitionSizeTaskQueue,
+                    updPartitionSizePubSeq,
                     ff,
                     txn,
-                    metadata,
                     columns,
                     oooColumns,
                     pathToTable,
-                    partitionBy, srcOooLo, srcOooHi, srcOooMax, oooTimestampLo,
-                    oooTimestampHi, prefixType,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    oooTimestampMin,
+                    oooTimestampLo,
+                    oooTimestampHi,
+                    prefixType,
                     prefixLo,
                     prefixHi,
                     mergeType,
@@ -468,10 +482,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     suffixLo,
                     suffixHi,
                     srcDataMax,
+                    dataTimestampHi,
+                    tableFloorOfMaxTimestamp,
                     openColumnMode,
                     timestampFd,
                     timestampIndex,
                     sortedTimestampsAddr,
+                    tableWriter,
                     doneLatch
             );
         }
@@ -522,7 +539,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             int openColumnMode,
             FilesFacade ff,
             CharSequence pathToTable,
-            int partitionBy,
             CharSequence columnName,
             AtomicInteger columnCounter,
             int columnType,
@@ -534,9 +550,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
+            long oooTimestampMin,
             long oooTimestampLo,
             long oooTimestampHi,
             long srcDataMax,
+            long dataTimestampHi,
+            long tableFloorOfMaxTimestamp,
             long txn,
             int prefixType,
             long prefixLo,
@@ -553,6 +572,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long timestampFd,
             AppendMemory srcDataFixMemory,
             AppendMemory srcDataVarMemory,
+            TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         final OutOfOrderOpenColumnTask openColumnTask = openColumnTaskOutboundQueue.get(cursor);
@@ -560,7 +580,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 openColumnMode,
                 ff,
                 pathToTable,
-                partitionBy,
                 columnName,
                 columnCounter,
                 columnType,
@@ -572,9 +591,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 srcOooLo,
                 srcOooHi,
                 srcOooMax,
+                oooTimestampMin,
                 oooTimestampLo,
                 oooTimestampHi,
                 srcDataMax,
+                dataTimestampHi,
+                tableFloorOfMaxTimestamp,
                 txn,
                 prefixType,
                 prefixLo,
@@ -591,6 +613,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 isIndexed,
                 srcDataFixMemory,
                 srcDataVarMemory,
+                tableWriter,
                 doneLatch
         );
         openColumnPubSeq.done(cursor);
@@ -602,16 +625,17 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             Sequence openColumnPubSeq,
             RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             long txn,
-            TableWriterMetadata metadata,
             ObjList<AppendMemory> columns,
             ObjList<ContiguousVirtualMemory> oooColumns,
             CharSequence pathToTable,
-            int partitionBy,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
+            long oooTimestampMin,
             long oooTimestampLo,
             long oooTimestampHi,
             int prefixType,
@@ -626,10 +650,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixLo,
             long suffixHi,
             long srcDataMax,
+            long dataTimestampHi,
+            long tableFloorOfMaxTimestamp,
             int openColumnMode,
             long timestampFd,
             int timestampIndex,
             long sortedTimestampsAddr,
+            TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
@@ -648,6 +675,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             timestampMergeIndexAddr = 0;
         }
 
+        final RecordMetadata metadata = tableWriter.getMetadata();
         final int columnCount = metadata.getColumnCount();
         // todo: cache
         final AtomicInteger columnCounter = new AtomicInteger(columnCount);
@@ -694,8 +722,23 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         openColumnMode,
                         ff,
                         pathToTable,
-                        partitionBy, columnName, columnCounter, notTheTimestamp ? columnType : -columnType, timestampMergeIndexAddr, srcOooFixAddr, srcOooFixSize, srcOooVarAddr, srcOooVarSize, srcOooLo, srcOooHi, srcOooMax, oooTimestampLo,
-                        oooTimestampHi, srcDataMax,
+                        columnName,
+                        columnCounter,
+                        notTheTimestamp ? columnType : -columnType,
+                        timestampMergeIndexAddr,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampLo,
+                        oooTimestampHi,
+                        srcDataMax,
+                        dataTimestampHi,
+                        tableFloorOfMaxTimestamp,
                         txn,
                         prefixType,
                         prefixLo,
@@ -709,9 +752,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         suffixLo,
                         suffixHi,
                         isIndexed,
-                        notTheTimestamp ? -1 : timestampFd,
+                        timestampFd,
                         srcDataFixMemory,
                         srcDataVarMemory,
+                        tableWriter,
                         doneLatch
                 );
             } else {
@@ -721,12 +765,29 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         openColumnPubSeq,
                         copyTaskOutboundQueue,
                         copyTaskPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
                         cursor,
                         openColumnMode,
                         ff,
                         pathToTable,
-                        partitionBy, columnName, columnCounter, notTheTimestamp ? columnType : -columnType, timestampMergeIndexAddr, srcOooFixAddr, srcOooFixSize, srcOooVarAddr, srcOooVarSize, srcOooLo, srcOooHi, srcOooMax, oooTimestampLo,
-                        oooTimestampHi, srcDataMax,
+                        columnName,
+                        columnCounter,
+                        notTheTimestamp ? columnType : -columnType,
+                        timestampMergeIndexAddr,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampLo,
+                        oooTimestampHi,
+                        dataTimestampHi,
+                        tableFloorOfMaxTimestamp,
+                        srcDataMax,
                         txn,
                         prefixType,
                         prefixLo,
@@ -739,10 +800,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         suffixType,
                         suffixLo,
                         suffixHi,
-                        notTheTimestamp ? -1 : timestampFd,
+                        timestampFd,
                         isIndexed,
                         srcDataFixMemory,
                         srcDataVarMemory,
+                        tableWriter,
                         doneLatch
                 );
             }
@@ -755,11 +817,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             Sequence openColumnPubSeq,
             RingQueue<OutOfOrderCopyTask> copyTaskOutboundQueue,
             Sequence copyTaskPubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
             long cursor,
             int openColumnMode,
             FilesFacade ff,
             CharSequence pathToTable,
-            int partitionBy,
             CharSequence columnName,
             AtomicInteger columnCounter,
             int columnType,
@@ -771,8 +834,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
+            long oooTimestampMin,
             long oooTimestampLo,
             long oooTimestampHi,
+            long dataTimestampHi,
+            long tableFloorOfMaxTimestamp,
             long srcDataMax,
             long txn,
             int prefixType,
@@ -790,6 +856,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             boolean isIndexed,
             AppendMemory srcDataFixMemory,
             AppendMemory srcDataVarMemory,
+            TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         while (cursor == -2) {
@@ -804,7 +871,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     openColumnMode,
                     ff,
                     pathToTable,
-                    partitionBy,
                     columnName,
                     columnCounter,
                     columnType,
@@ -816,9 +882,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
+                    oooTimestampMin,
                     oooTimestampLo,
                     oooTimestampHi,
                     srcDataMax,
+                    dataTimestampHi,
+                    tableFloorOfMaxTimestamp,
                     txn,
                     prefixType,
                     prefixLo,
@@ -835,6 +904,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     timestampFd,
                     srcDataFixMemory,
                     srcDataVarMemory,
+                    tableWriter,
                     doneLatch
             );
         } else {
@@ -842,10 +912,11 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     configuration,
                     copyTaskOutboundQueue,
                     copyTaskPubSeq,
+                    updPartitionSizeTaskQueue,
+                    updPartitionSizePubSeq,
                     openColumnMode,
                     ff,
                     pathToTable,
-                    partitionBy,
                     columnName,
                     columnCounter,
                     columnType,
@@ -857,9 +928,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
+                    oooTimestampMin,
                     oooTimestampLo,
                     oooTimestampHi,
                     srcDataMax,
+                    dataTimestampHi,
+                    tableFloorOfMaxTimestamp,
                     txn,
                     prefixType,
                     prefixLo,
@@ -877,6 +951,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     isIndexed,
                     srcDataFixMemory,
                     srcDataVarMemory,
+                    tableWriter,
                     doneLatch
             );
         }
@@ -890,7 +965,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
 //        final boolean locked = task.tryLock();
 //        if (locked) {
-            processPartition(task, cursor, subSeq);
+        processPartition(task, cursor, subSeq);
 //        } else {
 //            System.out.println("foooooooooooooooooooooooooooooooooooooooooooooooooooooook");
 //            subSeq.done(cursor);
@@ -900,28 +975,28 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     }
 
     private void processPartition(OutOfOrderPartitionTask task, long cursor, Sequence subSeq) {
+        final FilesFacade ff = task.getFf();
         // find "current" partition boundary in the out of order data
         // once we know the boundary we can move on to calculating another one
         // srcOooHi is index inclusive of value
+        final CharSequence pathToTable = task.getPathToTable();
+        final int partitionBy = task.getPartitionBy();
+        final ObjList<AppendMemory> columns = task.getColumns();
+        final ObjList<ContiguousVirtualMemory> oooColumns = task.getOooColumns();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooMax = task.getSrcOooMax();
-        final long lastPartitionSize = task.getLastPartitionSize();
-        final long partitionTimestampHi = task.getPartitionTimestampHi();
+        final long oooTimestampMin = task.getOooTimestampMin();
         final long oooTimestampMax = task.getOooTimestampMax();
-        final FilesFacade ff = task.getFf();
+        final long oooTimestampHi = task.getOooTimestampHi();
+        final long txn = task.getTxn();
+        final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
+        final long lastPartitionSize = task.getLastPartitionSize();
         final long tableCeilOfMaxTimestamp = task.getTableCeilOfMaxTimestamp();
         final long tableFloorOfMinTimestamp = task.getTableFloorOfMinTimestamp();
         final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
         final long tableMaxTimestamp = task.getTableMaxTimestamp();
-        final ObjList<AppendMemory> columns = task.getColumns();
-        final ObjList<ContiguousVirtualMemory> oooColumns = task.getOooColumns();
-        final TableWriterMetadata metadata = task.getMetadata();
-        final CharSequence path = task.getPathToTable();
-        final int partitionBy = task.getPartitionBy();
-        final int timestampIndex = task.getTimestampIndex();
-        final long sortedTimestampsAddr = task.getSortedTimestampsAddr();
-        final long txn = task.getTxn();
+        final TableWriter tableWriter = task.getTableWriter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
@@ -932,25 +1007,27 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 openColumnPubSeq,
                 copyTaskOutboundQueue,
                 copyTaskPubSeq,
+                updPartitionSizeQueue,
+                updPartitionSizePubSeq,
                 ff,
-                path,
-                metadata,
+                pathToTable,
+                partitionBy,
                 columns,
                 oooColumns,
                 srcOooLo,
                 srcOooHi,
                 srcOooMax,
+                oooTimestampMin,
+                oooTimestampMax,
+                oooTimestampHi,
                 txn,
                 sortedTimestampsAddr,
                 lastPartitionSize,
-                partitionTimestampHi,
-                oooTimestampMax,
                 tableCeilOfMaxTimestamp,
                 tableFloorOfMinTimestamp,
                 tableFloorOfMaxTimestamp,
                 tableMaxTimestamp,
-                partitionBy,
-                timestampIndex,
+                tableWriter,
                 doneLatch
         );
     }

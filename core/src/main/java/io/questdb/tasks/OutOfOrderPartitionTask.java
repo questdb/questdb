@@ -26,32 +26,32 @@ package io.questdb.tasks;
 
 import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.ContiguousVirtualMemory;
-import io.questdb.cairo.TableWriterMetadata;
+import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.AbstractLockable;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 
 public class OutOfOrderPartitionTask extends AbstractLockable {
+    private FilesFacade ff;
     private CharSequence pathToTable;
-    private long txn;
+    private int partitionBy;
+    private ObjList<AppendMemory> columns;
+    private ObjList<ContiguousVirtualMemory> oooColumns;
     private long srcOooLo;
     private long srcOooHi;
     private long srcOooMax;
+    private long oooTimestampMin;
     private long oooTimestampMax;
-    private long lastPartitionSize;
-    private long partitionTimestampHi;
+    private long oooTimestampHi;
+    private long txn;
     private long sortedTimestampsAddr;
-    private long tableMaxTimestamp;
+    private long lastPartitionSize;
     private long tableCeilOfMaxTimestamp;
     private long tableFloorOfMinTimestamp;
     private long tableFloorOfMaxTimestamp;
-    private FilesFacade ff;
-    private int partitionBy;
-    private int timestampIndex;
-    private ObjList<AppendMemory> columns;
-    private ObjList<ContiguousVirtualMemory> oooColumns;
-    private TableWriterMetadata metadata;
+    private long tableMaxTimestamp;
+    private TableWriter tableWriter;
     private SOUnboundedCountDownLatch doneLatch;
 
     public ObjList<AppendMemory> getColumns() {
@@ -70,24 +70,24 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
         return lastPartitionSize;
     }
 
-    public TableWriterMetadata getMetadata() {
-        return metadata;
-    }
-
     public ObjList<ContiguousVirtualMemory> getOooColumns() {
         return oooColumns;
+    }
+
+    public long getOooTimestampHi() {
+        return oooTimestampHi;
     }
 
     public long getOooTimestampMax() {
         return oooTimestampMax;
     }
 
-    public int getPartitionBy() {
-        return partitionBy;
+    public long getOooTimestampMin() {
+        return oooTimestampMin;
     }
 
-    public long getPartitionTimestampHi() {
-        return partitionTimestampHi;
+    public int getPartitionBy() {
+        return partitionBy;
     }
 
     public CharSequence getPathToTable() {
@@ -126,8 +126,8 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
         return tableMaxTimestamp;
     }
 
-    public int getTimestampIndex() {
-        return timestampIndex;
+    public TableWriter getTableWriter() {
+        return tableWriter;
     }
 
     public long getTxn() {
@@ -135,25 +135,25 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
     }
 
     public void of(
+            FilesFacade ff,
             CharSequence path,
-            long txn,
+            int partitionBy,
+            ObjList<AppendMemory> columns,
+            ObjList<ContiguousVirtualMemory> oooColumns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
+            long oooTimestampMin,
             long oooTimestampMax,
-            long lastPartitionSize,
-            long partitionTimestampHi,
+            long oooTimestampHi,
+            long txn,
             long sortedTimestampsAddr,
-            long tableMaxTimestamp,
+            long lastPartitionSize,
             long tableCeilOfMaxTimestamp,
             long tableFloorOfMinTimestamp,
             long tableFloorOfMaxTimestamp,
-            FilesFacade ff,
-            int partitionBy,
-            int timestampIndex,
-            ObjList<AppendMemory> columns,
-            ObjList<ContiguousVirtualMemory> oooColumns,
-            TableWriterMetadata metadata,
+            long tableMaxTimestamp,
+            TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         this.pathToTable = path;
@@ -161,9 +161,10 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;
+        this.oooTimestampMin = oooTimestampMin;
         this.oooTimestampMax = oooTimestampMax;
+        this.oooTimestampHi = oooTimestampHi;
         this.lastPartitionSize = lastPartitionSize;
-        this.partitionTimestampHi = partitionTimestampHi;
         this.sortedTimestampsAddr = sortedTimestampsAddr;
         this.tableMaxTimestamp = tableMaxTimestamp;
         this.tableCeilOfMaxTimestamp = tableCeilOfMaxTimestamp;
@@ -171,10 +172,9 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
         this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.ff = ff;
         this.partitionBy = partitionBy;
-        this.timestampIndex = timestampIndex;
         this.columns = columns;
         this.oooColumns = oooColumns;
-        this.metadata = metadata;
+        this.tableWriter = tableWriter;
         this.doneLatch = doneLatch;
     }
 }

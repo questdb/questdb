@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -46,6 +43,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.OutOfOrderPartitionTask;
 import io.questdb.tasks.OutOfOrderSortTask;
+import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -1076,6 +1074,24 @@ public class TableWriter implements Closeable {
         }
 
         LOG.info().$("truncated [name=").$(name).$(']').$();
+    }
+
+    void closeActivePartition() {
+        closeAppendMemoryNoTruncate(false);
+        Misc.freeObjList(denseIndexers);
+        // we also indicate that "active" partition has to be reloaded
+        // after rename
+//        reopenLastPartition = true;
+    }
+
+    void updateActivePartitionDetails(long minTimestamp, long maxTimestamp, long transientRowCount) {
+        this.transientRowCount = transientRowCount;
+        // Compute max timestamp as maximum of out of order data and
+        // data in existing partition.
+        // When partition is new, the data timestamp is MIN_LONG
+        this.maxTimestamp = maxTimestamp;
+        this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
+
     }
 
     public void updateMetadataVersion() {
@@ -3399,7 +3415,6 @@ public class TableWriter implements Closeable {
 
     private void oooMergeParallel() {
         final int timestampIndex = metadata.getTimestampIndex();
-        boolean reopenLastPartition = false;
         try {
 
             // we may need to re-use file descriptors when this partition is the "current" one
@@ -3445,31 +3460,31 @@ public class TableWriter implements Closeable {
             for (int i = 1; i < affectedPartitionCount; i++) {
                 final long srcOooLo = oooPartitions.getQuick(i * 2 - 2) + 1;
                 final long srcOooHi = oooPartitions.getQuick(i * 2);
-                final long partitionTimestampHi = oooPartitions.getQuick(i * 2 + 1);
+                final long oooTimestampHi = oooPartitions.getQuick(i * 2 + 1);
                 final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
                 long cursor = oooPartitionPubSeq.next();
                 if (cursor > -1) {
                     OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
                     task.of(
+                            ff,
                             path,
-                            txn,
+                            partitionBy,
+                            columns,
+                            oooColumns,
                             srcOooLo,
                             srcOooHi,
                             srcOooMax,
+                            oooTimestampMin,
                             oooTimestampMax,
-                            lastPartitionSize,
-                            partitionTimestampHi,
+                            oooTimestampHi,
+                            txn,
                             sortedTimestampsAddr,
-                            tableMaxTimestamp,
+                            lastPartitionSize,
                             tableCeilOfMaxTimestamp,
                             tableFloorOfMinTimestamp,
                             tableFloorOfMaxTimestamp,
-                            ff,
-                            partitionBy,
-                            timestampIndex,
-                            columns,
-                            oooColumns,
-                            metadata,
+                            tableMaxTimestamp,
+                            this,
                             this.oooLatch
                     );
                     oooPartitionPubSeq.done(cursor);
@@ -3480,31 +3495,51 @@ public class TableWriter implements Closeable {
                             messageBus.getOutOfOrderOpenColumnPubSequence(),
                             messageBus.getOutOfOrderCopyQueue(),
                             messageBus.getOutOfOrderCopyPubSequence(),
+                            messageBus.getOutOfOrderUpdPartitionSizeQueue(),
+                            messageBus.getOutOfOrderUpdPartitionSizePubSequence(),
                             ff,
                             path,
-                            metadata,
+                            partitionBy,
                             columns,
                             oooColumns,
                             srcOooLo,
                             srcOooHi,
                             srcOooMax,
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            oooTimestampHi,
                             txn,
                             sortedTimestampsAddr,
                             lastPartitionSize,
-                            partitionTimestampHi,
-                            oooTimestampMax,
                             tableCeilOfMaxTimestamp,
                             tableFloorOfMinTimestamp,
                             tableFloorOfMaxTimestamp,
                             tableMaxTimestamp,
-                            partitionBy,
-                            timestampIndex,
+                            this,
                             oooLatch
                     );
                 }
             }
+            final SCSequence updSizeSeq = messageBus.getOutOfOrderUpdPartitionSizeSubSequence();
+            final RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
 
-            oooLatch.await(latchCount);
+            while (oooLatch.getCount() > -latchCount) {
+                long cursor = updSizeSeq.next();
+                if (cursor > -1) {
+                    try {
+                        OutOfOrderUpdPartitionSizeTask task = updSizeQueue.get(cursor);
+                        updatePartitionSize(
+                                task.getPartitionTimestamp(),
+                                task.getPartitionSize(),
+                                task.getTableFloorOfMaxTimestamp(),
+                                task.getSrcDataMax()
+                        );
+                    } finally {
+                        updSizeSeq.done(cursor);
+                    }
+                }
+            }
+
         } finally {
             path.trimTo(rootLen);
             this.mergeRowCount = 0;
@@ -3515,7 +3550,7 @@ public class TableWriter implements Closeable {
         //
         // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
         // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
-        if (reopenLastPartition) {
+        if (columns.getQuick(0).isClosed()) {
             openPartition(maxTimestamp);
             populateDenseIndexerList();
         }
@@ -3526,6 +3561,38 @@ public class TableWriter implements Closeable {
         row.activeNullSetters = nullSetters;
         timestampSetter = prevTimestampSetter;
         transientRowCountBeforeOutOfOrder = 0;
+    }
+
+    void updatePartitionSize(long partitionTimestamp, long partitionSize, long tableFloorOfMaxTimestamp, long srcDataMax) {
+        this.fixedRowCount += partitionSize;
+        if (partitionTimestamp < tableFloorOfMaxTimestamp) {
+            this.fixedRowCount -= srcDataMax;
+        }
+
+        // We just updated non-last partition. It is possible that this partition
+        // has already been updated by transaction or out of order logic was the only
+        // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
+        // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
+        // (it has been incremented before out-of-order logic kicked in) and
+        // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
+
+        boolean missing = true;
+        long x = this.txPendingPartitionSizes.getAppendOffset() / 16;
+        for (long l = 0; l < x; l++) {
+            long ts = this.txPendingPartitionSizes.getLong(l * 16 + Long.BYTES);
+            if (ts == partitionTimestamp) {
+                this.fixedRowCount -= this.txPendingPartitionSizes.getLong(l * 16);
+                this.txPendingPartitionSizes.putLong(l * 16, partitionSize);
+                missing = false;
+                break;
+            }
+        }
+
+        if (missing) {
+            this.txPartitionCount++;
+            this.txPendingPartitionSizes.putLong128(partitionSize, partitionTimestamp);
+        }
+
     }
 
     private void oooOpenDestIndexFiles(long[] mergeStruct, Path path, int plen, int columnIndex, int fixColumnStructOffset) {

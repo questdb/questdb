@@ -2540,5 +2540,20 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         public MCSequence getOutOfOrderOpenColumnSubSequence() {
             return null;
         }
+
+        @Override
+        public MPSequence getOutOfOrderUpdPartitionSizePubSequence() {
+            return null;
+        }
+
+        @Override
+        public RingQueue<OutOfOrderUpdPartitionSizeTask> getOutOfOrderUpdPartitionSizeQueue() {
+            return null;
+        }
+
+        @Override
+        public SCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
+            return null;
+        }
     }
 }

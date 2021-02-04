@@ -25,6 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.AppendMemory;
+import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.AbstractLockable;
 import io.questdb.std.FilesFacade;
@@ -33,7 +34,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class OutOfOrderOpenColumnTask extends AbstractLockable {
     private CharSequence pathToTable;
-    private int partitionBy;
     private FilesFacade ff;
     private AtomicInteger columnCounter;
     private long txn;
@@ -50,9 +50,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
     private long srcOooVarAddr;
     private long srcOooVarSize;
     private long srcDataMax;
+    private long dataTimestampHi;
+    private long tableFloorOfMaxTimestamp;
     private long srcOooLo;
     private long srcOooHi;
     private long srcOooMax;
+    private long oooTimestampMin;
     private long oooTimestampLo;
     private long oooTimestampHi;
     private int prefixType;
@@ -66,6 +69,7 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
     private int suffixType;
     private long suffixLo;
     private long suffixHi;
+    private TableWriter tableWriter;
     private SOUnboundedCountDownLatch doneLatch;
 
     public AtomicInteger getColumnCounter() {
@@ -78,6 +82,10 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public long getDataTimestampHi() {
+        return dataTimestampHi;
     }
 
     public SOUnboundedCountDownLatch getDoneLatch() {
@@ -116,12 +124,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         return oooTimestampLo;
     }
 
-    public int getOpenColumnMode() {
-        return openColumnMode;
+    public long getOooTimestampMin() {
+        return oooTimestampMin;
     }
 
-    public int getPartitionBy() {
-        return partitionBy;
+    public int getOpenColumnMode() {
+        return openColumnMode;
     }
 
     public CharSequence getPathToTable() {
@@ -192,6 +200,14 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         return suffixType;
     }
 
+    public long getTableFloorOfMaxTimestamp() {
+        return tableFloorOfMaxTimestamp;
+    }
+
+    public TableWriter getTableWriter() {
+        return tableWriter;
+    }
+
     public long getTimestampFd() {
         return timestampFd;
     }
@@ -212,7 +228,6 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
             int openColumnMode,
             FilesFacade ff,
             CharSequence pathToTable,
-            int partitionBy,
             CharSequence columnName,
             AtomicInteger columnCounter,
             int columnType,
@@ -224,9 +239,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
+            long oooTimestampMin,
             long oooTimestampLo,
             long oooTimestampHi,
             long srcDataMax,
+            long dataTimestampHi,
+            long tableFloorOfMaxTimestamp,
             long txn,
             int prefixType,
             long prefixLo,
@@ -243,13 +261,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
             boolean isIndexed,
             AppendMemory srcDataFixColumn,
             AppendMemory srcDataVarColumn,
+            TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
         this.openColumnMode = openColumnMode;
         this.ff = ff;
         this.pathToTable = pathToTable;
-        this.oooTimestampLo = oooTimestampLo;
-        this.partitionBy = partitionBy;
         this.columnCounter = columnCounter;
         this.columnName = columnName;
         this.columnType = columnType;
@@ -261,7 +278,12 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;
+        this.oooTimestampMin = oooTimestampMin;
+        this.oooTimestampLo = oooTimestampLo;
+        this.oooTimestampHi = oooTimestampHi;
         this.srcDataMax = srcDataMax;
+        this.dataTimestampHi = dataTimestampHi;
+        this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.txn = txn;
         this.prefixType = prefixType;
         this.prefixLo = prefixLo;
@@ -278,7 +300,7 @@ public class OutOfOrderOpenColumnTask extends AbstractLockable {
         this.isIndexed = isIndexed;
         this.srcDataFixColumn = srcDataFixColumn;
         this.srcDataVarColumn = srcDataVarColumn;
+        this.tableWriter = tableWriter;
         this.doneLatch = doneLatch;
-        this.oooTimestampHi = oooTimestampHi;
     }
 }

@@ -50,6 +50,14 @@ public class AppendMemory extends VirtualMemory {
     }
 
     @Override
+    public long getPageAddress(int page) {
+        if (page == mappedPage) {
+            return pageAddress;
+        }
+        return -1;
+    }
+
+    @Override
     protected long mapWritePage(int page) {
         releaseCurrentPage();
         return pageAddress = mapPage(page);
@@ -73,8 +81,31 @@ public class AppendMemory extends VirtualMemory {
         }
     }
 
+    public void ensureFileSize(int page) {
+        long target = pageOffset(page + 1);
+        if (ff.length(fd) < target && !ff.allocate(fd, target)) {
+            throw CairoException.instance(ff.errno()).put("Appender resize failed fd=").put(fd).put(", size=").put(target);
+        }
+    }
+
     public long getFd() {
         return fd;
+    }
+
+    public boolean isClosed() {
+        return fd == -1;
+    }
+
+    public long mapPage(int page) {
+        ensureFileSize(page);
+        long offset = pageOffset(page);
+        long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
+        if (address != -1) {
+            mappedPage = page;
+            return address;
+        }
+        mappedPage = -1;
+        throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
     }
 
     public final void of(FilesFacade ff, LPSZ name, long pageSize) {
@@ -160,32 +191,5 @@ public class AppendMemory extends VirtualMemory {
             release(0, pageAddress);
             pageAddress = 0;
         }
-    }
-
-    @Override
-    public long getPageAddress(int page) {
-        if (page == mappedPage) {
-            return pageAddress;
-        }
-        return -1;
-    }
-
-    public void ensureFileSize(int page) {
-        long target = pageOffset(page + 1);
-        if (ff.length(fd) < target && !ff.allocate(fd, target)) {
-            throw CairoException.instance(ff.errno()).put("Appender resize failed fd=").put(fd).put(", size=").put(target);
-        }
-    }
-
-    public long mapPage(int page) {
-        ensureFileSize(page);
-        long offset = pageOffset(page);
-        long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
-        if (address != -1) {
-            mappedPage = page;
-            return address;
-        }
-        mappedPage = -1;
-        throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
     }
 }

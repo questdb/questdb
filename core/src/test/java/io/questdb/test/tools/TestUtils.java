@@ -183,8 +183,8 @@ public final class TestUtils {
         long mem = Unsafe.getMemUsed();
         long fileCount = Files.getOpenFileCount();
         runnable.run();
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
         Assert.assertEquals(fileCount, Files.getOpenFileCount());
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {

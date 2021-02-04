@@ -27,11 +27,13 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.mp.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.OutOfOrderCopyTask;
+import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -39,18 +41,26 @@ import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTask> {
 
+    private static final Log LOG = LogFactory.getLog(OutOfOrderCopyJob.class);
     private final CairoConfiguration configuration;
+    private final RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue;
+    private final MPSequence updPartitionSizePubSeq;
 
     public OutOfOrderCopyJob(MessageBus messageBus) {
         super(messageBus.getOutOfOrderCopyQueue(), messageBus.getOutOfOrderCopySubSequence());
         this.configuration = messageBus.getConfiguration();
+        this.updPartitionSizeQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
+        this.updPartitionSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
     }
 
     public static void copy(
             CairoConfiguration configuration,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
             FilesFacade ff,
+            CharSequence pathToTable,
             int blockType,
             long srcDataFixFd,
             long srcDataFixAddr,
@@ -61,6 +71,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataLo,
             long srcDataHi,
             long srcDataMax,
+            long dataTimestampHi,
+            long tableFloorOfMaxTimestamp,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -68,6 +80,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
+            long oooTimestampMin,
             long oooTimestampHi,
             long dstFixFd,
             long dstFixAddr,
@@ -78,19 +91,21 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long dstVarOffset,
             long dstVarSize,
             int columnType,
-            long mergeIndexAddr,
+            long timestampMergeIndexAddr,
             long dstKFd,
             long dstVFd,
             long dstIndexOffset,
             boolean isIndexed,
-            SOUnboundedCountDownLatch doneLatch,
-            long timestampFd
+            long timestampFd,
+            boolean partitionMutates,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch
     ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
                 oooMergeCopy(
                         columnType,
-                        mergeIndexAddr,
+                        timestampMergeIndexAddr,
                         srcDataFixAddr,
                         srcDataVarAddr,
                         srcDataLo,
@@ -162,20 +177,28 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             }
 
             if (columnCounter.decrementAndGet() == 0) {
-
                 // last part of the last column
-//                touchPartition(
-//                        ff,
-//                        srcOooLo,
-//                        srcOooHi,
-//                        srcOooMax,
-//                        oooTimestampHi,
-//                        srcDataMax,
-//                        mergeIndexAddr,
-//                        timestampFd
-//                );
-                if (mergeIndexAddr != 0) {
-                    Vect.freeMergedIndex(mergeIndexAddr);
+                touchPartition(
+                        ff,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        pathToTable,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampHi,
+                        srcDataMax,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        timestampMergeIndexAddr,
+                        timestampFd,
+                        partitionMutates,
+                        tableWriter
+                );
+
+                if (timestampMergeIndexAddr != 0) {
+                    Vect.freeMergedIndex(timestampMergeIndexAddr);
                 }
                 doneLatch.countDown();
             }
@@ -184,6 +207,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 
     private static void touchPartition(
             FilesFacade ff,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue,
+            MPSequence updPartitionPubSeq,
+            CharSequence pathToTable,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -193,26 +219,26 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long mergeIndexAddr,
-            long timestampFd
+            long timestampFd,
+            boolean partitionMutates,
+            TableWriter tableWriter
     ) {
-/*
-        if (prefixType != OO_BLOCK_NONE || mergeType != OO_BLOCK_NONE) {
+        if (partitionMutates) {
             if (timestampFd < 0) {
                 // timestampFd negative indicates that we are reusing existing file descriptor
                 // as opposed to opening file by name. This also indicated that "this" partition
-                // is, or used to be, active for the writer. So we have to close existing files so that
+                // is, or used to be, active for the writer. So we have to close existing files so thatT
                 // rename on Windows does not fall flat.
-                closeAppendMemoryNoTruncate(false);
-                Misc.freeObjList(denseIndexers);
-
-                // we also indicate that "active" partition has to be reloaded
-                // after rename
-                reopenLastPartition = true;
+                tableWriter.closeActivePartition();
             } else {
                 // this timestamp column was opened by file name
                 // so we can close it as not needed (and to enable table rename on Windows)
                 ff.close(timestampFd);
             }
+
+            LOG.info().$("will rename").$();
+
+/*
             // rename after we closed all FDs associated with source partition
             path.trimTo(plen).$();
             other.of(path).put("x-").put(txn).$();
@@ -231,10 +257,22 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         .put("could not rename [from=").put(path)
                         .put(", to=").put(other).put(']');
             }
+*/
         }
 
         final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
         if (srcOooHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
+            LOG.info().$("update partition row count").$();
+            final long cursor = updPartitionPubSeq.nextBully();
+            OutOfOrderUpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
+            task.of(
+                    oooTimestampHi,
+                    partitionSize,
+                    tableFloorOfMaxTimestamp,
+                    srcDataMax
+            );
+            updPartitionPubSeq.done(cursor);
+/*
 
             this.fixedRowCount += partitionSize;
             if (oooTimestampHi < tableFloorOfMaxTimestamp) {
@@ -264,25 +302,32 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 this.txPartitionCount++;
                 this.txPendingPartitionSizes.putLong128(partitionSize, oooTimestampHi);
             }
+*/
 
             if (srcOooHi + 1 >= srcOooMax) {
+                LOG.info().$("strange one").$();
+/*
                 // no more out of order data and we just pre-pended data to existing
                 // partitions
                 this.minTimestamp = oooTimestampMin;
                 // when we exit here we need to rollback transientRowCount we've been incrementing
                 // while adding out-of-order data
                 this.transientRowCount = this.transientRowCountBeforeOutOfOrder;
-                break;
+*/
+                tableWriter.updateActivePartitionDetails(
+                        oooTimestampMin,
+                        dataTimestampHi,
+                        partitionSize
+                );
             }
         } else {
-            this.transientRowCount = partitionSize;
-            // Compute max timestamp as maximum of out of order data and
-            // data in existing partition.
-            // When partition is new, the data timestamp is MIN_LONG
-            this.maxTimestamp = Math.max(getTimestampIndexValue(mergeIndexAddr, srcOooHi), dataTimestampHi);
-            this.minTimestamp = Math.min(this.minTimestamp, oooTimestampMin);
+            // this was taking max between existing timestamp and ooo
+            tableWriter.updateActivePartitionDetails(
+                    oooTimestampMin,
+                    dataTimestampHi,
+                    partitionSize
+            );
         }
-*/
     }
 
     private static void copyFromTimestampIndex(
@@ -614,8 +659,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    private static final Log LOG = LogFactory.getLog(OutOfOrderCopyJob.class);
-
     private static void unmapAndClose(long dstFixFd, long dstFixAddr, long dstFixSize) {
         if (dstFixAddr != 0 && dstFixSize != 0) {
             Files.munmap(dstFixAddr, dstFixSize);
@@ -651,6 +694,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final AtomicInteger columnCounter = task.getColumnCounter();
         final AtomicInteger partCounter = task.getPartCounter();
         final FilesFacade ff = task.getFf();
+        final CharSequence pathToTable = task.getPathToTable();
         final int blockType = task.getBlockType();
         final long srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
@@ -661,6 +705,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcDataLo = task.getSrcDataLo();
         final long srcDataMax = task.getSrcDataMax();
         final long srcDataHi = task.getSrcDataHi();
+        final long dataTimestampHi = task.getDataTimestampHi();
+        final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
         final long srcOooVarAddr = task.getSrcOooVarAddr();
@@ -668,6 +714,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooMax = task.getSrcOooMax();
+        final long oooTimestampMin = task.getOooTimestampMin();
+        final long oooTimestampHi = task.getOooTimestampHi();
         final long dstFixFd = task.getDstFixFd();
         final long dstFixAddr = task.getDstFixAddr();
         final long dstFixOffset = task.getDstFixOffset();
@@ -677,22 +725,26 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long dstVarOffset = task.getDstVarOffset();
         final long dstVarSize = task.getDstVarSize();
         final int columnType = task.getColumnType();
-        final long mergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
         final long dstKFd = task.getDstKFd();
         final long dskVFd = task.getDstVFd();
         final long dstIndexOffset = task.getDstIndexOffset();
         final boolean isIndexed = task.isIndexed();
-        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
         final long timestampFd = task.getTimestampFd();
-        final long oooTimestampHi = task.getOooTimestampHi();
+        final boolean partitionMutates = task.isPartitionMutates();
+        final TableWriter tableWriter = task.getTableWriter();
+        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
         subSeq.done(cursor);
 
         copy(
                 configuration,
+                updPartitionSizeQueue,
+                updPartitionSizePubSeq,
                 columnCounter,
                 partCounter,
                 ff,
+                pathToTable,
                 blockType,
                 srcDataFixFd,
                 srcDataFixAddr,
@@ -703,6 +755,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcDataLo,
                 srcDataHi,
                 srcDataMax,
+                dataTimestampHi,
+                tableFloorOfMaxTimestamp,
                 srcOooFixAddr,
                 srcOooFixSize,
                 srcOooVarAddr,
@@ -710,6 +764,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcOooLo,
                 srcOooHi,
                 srcOooMax,
+                oooTimestampMin,
                 oooTimestampHi,
                 dstFixFd,
                 dstFixAddr,
@@ -720,13 +775,15 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 dstVarOffset,
                 dstVarSize,
                 columnType,
-                mergeIndexAddr,
+                timestampMergeIndexAddr,
                 dstKFd,
                 dskVFd,
                 dstIndexOffset,
                 isIndexed,
-                doneLatch,
-                timestampFd
+                timestampFd,
+                partitionMutates,
+                tableWriter,
+                doneLatch
         );
     }
 

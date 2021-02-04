@@ -26,10 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -61,6 +58,10 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<OutOfOrderCopyTask> outOfOrderCopyQueue;
     private final MPSequence outOfOrderCopyPubSeq;
     private final MCSequence outOfOrderCopySubSeq;
+
+    private final RingQueue<OutOfOrderUpdPartitionSizeTask> outOfOrderUpdPartitionSizeQueue;
+    private final MPSequence outOfOrderUpdPartitionSizePubSeq;
+    private final SCSequence outOfOrderUpdPartitionSizeSubSeq;
 
     private final CairoConfiguration configuration;
 
@@ -101,6 +102,11 @@ public class MessageBusImpl implements MessageBus {
         this.outOfOrderCopyPubSeq = new MPSequence(this.outOfOrderCopyQueue.getCapacity());
         this.outOfOrderCopySubSeq = new MCSequence(this.outOfOrderCopyQueue.getCapacity());
         outOfOrderCopyPubSeq.then(outOfOrderCopySubSeq).then(outOfOrderCopyPubSeq);
+
+        this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, 1024);
+        this.outOfOrderUpdPartitionSizePubSeq = new MPSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
+        this.outOfOrderUpdPartitionSizeSubSeq = new SCSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity(), NullWaitStrategy.INSTANCE);
+        outOfOrderUpdPartitionSizePubSeq.then(outOfOrderUpdPartitionSizeSubSeq).then(outOfOrderUpdPartitionSizePubSeq);
     }
 
     @Override
@@ -211,5 +217,20 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getOutOfOrderOpenColumnSubSequence() {
         return outOfOrderOpenColumnSubSeq;
+    }
+
+    @Override
+    public MPSequence getOutOfOrderUpdPartitionSizePubSequence() {
+        return outOfOrderUpdPartitionSizePubSeq;
+    }
+
+    @Override
+    public RingQueue<OutOfOrderUpdPartitionSizeTask> getOutOfOrderUpdPartitionSizeQueue() {
+        return outOfOrderUpdPartitionSizeQueue;
+    }
+
+    @Override
+    public SCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
+        return outOfOrderUpdPartitionSizeSubSeq;
     }
 }
