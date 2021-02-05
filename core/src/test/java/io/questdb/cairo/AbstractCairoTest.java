@@ -83,21 +83,8 @@ public class AbstractCairoTest {
 
     @After
     public void tearDown0() {
-        try (Path path = new Path().of(root)) {
-            Files.rmdir(path.$());
-        }
-    }
-
-    protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
-        sink.clear();
-        printer.print(cursor, metadata, header);
-        TestUtils.assertEquals(expected, sink);
-    }
-
-    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
-        assertOnce(expected, cursor, metadata, header);
-        cursor.toTop();
-        assertOnce(expected, cursor, metadata, header);
+        Path path = Path.getThreadLocal(root);
+        Files.rmdir(path.$());
     }
 
     protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
@@ -112,5 +99,17 @@ public class AbstractCairoTest {
             printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
             TestUtils.assertEquals(expected, sink);
         }
+    }
+
+    protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
+        sink.clear();
+        printer.print(cursor, metadata, header);
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
+        assertOnce(expected, cursor, metadata, header);
+        cursor.toTop();
+        assertOnce(expected, cursor, metadata, header);
     }
 }

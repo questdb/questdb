@@ -39,23 +39,6 @@ public final class Unsafe {
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
 
-    static {
-        try {
-            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-            theUnsafe.setAccessible(true);
-            UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
-
-            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
-            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
-
-            LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
-            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
-
-        } catch (Exception e) {
-            throw new FatalError(e);
-        }
-    }
-
     private Unsafe() {
     }
 
@@ -143,5 +126,22 @@ public final class Unsafe {
 
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
+    }
+
+    static {
+        try {
+            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            theUnsafe.setAccessible(true);
+            UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
+
+            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
+            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
+
+            LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
+            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
+
+        } catch (Exception e) {
+            throw new FatalError(e);
+        }
     }
 }

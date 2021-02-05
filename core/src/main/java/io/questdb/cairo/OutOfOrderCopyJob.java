@@ -28,10 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
@@ -158,7 +155,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         if (partCounter.decrementAndGet() == 0) {
             // todo: pool indexer
             if (isIndexed) {
-//                updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
+                // dstKFd & dstVFd are closed by the indexer
+                updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
             }
 
             // unmap memory
@@ -166,17 +164,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
             unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
             unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
-
-            if (dstKFd > 0) {
-                LOG.debug().$("closed [fd=").$(dstKFd).$(']').$();
-                Files.close(dstKFd);
-            }
-
-            if (dstVFd > 0) {
-                LOG.debug().$("closed [fd=").$(dstKFd).$(']').$();
-                Files.close(dstVFd);
-            }
-
             if (columnCounter.decrementAndGet() == 0) {
                 // last part of the last column
                 touchPartition(
@@ -280,7 +267,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 
         final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
         if (srcOooHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
-            LOG.info().$("update partition row count").$();
             final long cursor = updPartitionPubSeq.nextBully();
             OutOfOrderUpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
             task.of(
@@ -334,7 +320,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 */
                 tableWriter.updateActivePartitionDetails(
                         oooTimestampMin,
-                        dataTimestampHi,
+                        Math.max(dataTimestampHi, oooTimestampHi),
                         partitionSize
                 );
             }
@@ -342,7 +328,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             // this was taking max between existing timestamp and ooo
             tableWriter.updateActivePartitionDetails(
                     oooTimestampMin,
-                    dataTimestampHi,
+                    Math.max(dataTimestampHi, oooTimestampHi),
                     partitionSize
             );
         }
@@ -698,11 +684,10 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     ) {
         try (BitmapIndexWriter w = new BitmapIndexWriter()) {
             long row = dstIndexOffset / Integer.BYTES;
-
             w.of(configuration, dstKFd, dskVFd, row == 0);
-
             final long count = dstFixSize / Integer.BYTES;
             for (; row < count; row++) {
+                assert row * Integer.BYTES < dstFixSize;
                 w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row);
             }
         }

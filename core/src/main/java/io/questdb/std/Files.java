@@ -44,17 +44,16 @@ public final class Files {
 
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
 
-    static {
-        Os.init();
-        UTF_8 = StandardCharsets.UTF_8;
-        PAGE_SIZE = getPageSize();
-        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
-    }
-
     private Files() {
     } // Prevent construction.
 
+    public native static boolean allocate(long fd, long size);
+
     public native static long append(long fd, long address, long len);
+
+    public static void bumpFileCount() {
+        OPEN_FILE_COUNT.incrementAndGet();
+    }
 
     public static int close(long fd) {
         int res = close0(fd);
@@ -70,8 +69,6 @@ public final class Files {
         return lpsz != null && exists0(lpsz.address());
     }
 
-    private static native boolean exists0(long lpsz);
-
     public native static void findClose(long findPtr);
 
     public static long findFirst(LPSZ lpsz) {
@@ -83,6 +80,8 @@ public final class Files {
     public native static int findNext(long findPtr);
 
     public native static int findType(long findPtr);
+
+    public static native int fsync(long fd);
 
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.address());
@@ -106,36 +105,31 @@ public final class Files {
 
     public static native int lock(long fd);
 
-    public static native int msync(long addr, long len, boolean async);
-
-    public static native int fsync(long fd);
-
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.address(), mode);
     }
 
     public static int mkdirs(LPSZ path, int mode) {
-        try (Path pp = new Path()) {
-            for (int i = 0, n = path.length(); i < n; i++) {
-                char c = path.charAt(i);
-                if (c == File.separatorChar) {
+        Path pp = Path.getThreadLocal2("");
+        for (int i = 0, n = path.length(); i < n; i++) {
+            char c = path.charAt(i);
+            if (c == File.separatorChar) {
 
-                    if (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':') {
-                        pp.put(c);
-                        continue;
-                    }
-
-                    pp.$();
-                    if (pp.length() > 0 && !Files.exists(pp)) {
-                        int r = Files.mkdir(pp, mode);
-                        if (r != 0) {
-                            return r;
-                        }
-                    }
-                    pp.chopZ();
+                if (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':') {
+                    pp.put(c);
+                    continue;
                 }
-                pp.put(c);
+
+                pp.$();
+                if (pp.length() > 0 && !Files.exists(pp)) {
+                    int r = Files.mkdir(pp, mode);
+                    if (r != 0) {
+                        return r;
+                    }
+                }
+                pp.chopZ();
             }
+            pp.put(c);
         }
         return 0;
     }
@@ -156,6 +150,8 @@ public final class Files {
         }
         return address;
     }
+
+    public static native int msync(long addr, long len, boolean async);
 
     public static void munmap(long address, long len) {
         if (address != 0 && munmap0(address, len) != -1) {
@@ -185,10 +181,6 @@ public final class Files {
             bumpFileCount();
         }
         return fd;
-    }
-
-    public static void bumpFileCount() {
-        OPEN_FILE_COUNT.incrementAndGet();
     }
 
     public native static long read(long fd, long address, long len, long offset);
@@ -256,9 +248,9 @@ public final class Files {
 
     public native static boolean truncate(long fd, long size);
 
-    public native static boolean allocate(long fd, long size);
-
     public native static long write(long fd, long address, long len, long offset);
+
+    private static native boolean exists0(long lpsz);
 
     native static int close0(long fd);
 
@@ -302,4 +294,11 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     private static native boolean rename(long lpszOld, long lpszNew);
+
+    static {
+        Os.init();
+        UTF_8 = StandardCharsets.UTF_8;
+        PAGE_SIZE = getPageSize();
+        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
+    }
 }

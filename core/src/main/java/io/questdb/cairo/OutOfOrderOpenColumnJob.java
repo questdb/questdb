@@ -438,7 +438,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 final int shl = ColumnType.pow2SizeOf(columnType);
                 dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax) << shl;
                 dstFixOffset = srcDataMax << shl;
-                if (timestampFd > 0) {
+                if (columnType < 0 && timestampFd > 0) {
                     dstFixFd = -timestampFd;
                     truncateToSizeOrFail(ff, null, -dstFixFd, dstFixSize);
                     dstFixAddr = mapReadWriteOrFail(ff, null, -dstFixFd, dstFixSize);
@@ -1413,7 +1413,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 break;
             default:
-                if (timestampFd > 0) {
+                if (columnType < 0 && timestampFd > 0) {
                     // ensure timestamp srcDataFixFd is always negative, we will close it externally
                     srcDataFixFd = -timestampFd;
                 } else {

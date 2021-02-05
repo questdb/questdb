@@ -35,7 +35,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -75,8 +77,9 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testBench() throws Exception {
+        Path.PATH.get();
+        Path.PATH2.get();
         assertMemoryLeak(() -> {
-
                     // create table with roughly 2AM data
                     compiler.compile(
                             "create table x as (" +
@@ -167,6 +170,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
                     } finally {
                         pool.halt();
+                        System.out.println("Allocs after: " + Unsafe.getMallocCount());
                     }
                 }
         );
@@ -174,6 +178,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testBench2() throws Exception {
+        Path.PATH.get();
+        Path.PATH2.get();
         assertMemoryLeak(() -> {
 
                     // create table with roughly 2AM data
