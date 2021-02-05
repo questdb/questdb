@@ -25,6 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
+import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -35,8 +37,6 @@ public class FunctionFactoryCache {
     static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
     private static final Log LOG = LogFactory.getLog(FunctionFactoryCache.class);
     private final CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> booleanFactories = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> commutativeBooleanFactories = new CharSequenceObjHashMap<>();
     private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
     private final CharSequenceHashSet cursorFunctionNames = new CharSequenceHashSet();
 
@@ -48,25 +48,29 @@ public class FunctionFactoryCache {
                 try {
                     final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
                     final String name = descriptor.getName();
-                    addFactoryToList(factories, name, descriptor);
+                    addFactoryToList(factories, descriptor);
 
                     // Add != counterparts to equality function factories
-                    if (factory instanceof AbstractBooleanFunctionFactory) {
+                    if (factory.isBoolean()) {
                         switch (name) {
                             case "=":
-                                addFactory(booleanFactories, "!=", descriptor);
-                                addFactory(booleanFactories, "<>", descriptor);
+                                addFactoryToList(factories, createNegatingFactory("!=", factory));
+                                addFactoryToList(factories, createNegatingFactory("<>", factory));
+                                if (descriptor.getArgTypeMask(0) != descriptor.getArgTypeMask(1)) {
+                                    FunctionFactory swappingFactory = createSwappingFactory("=", factory);
+                                    addFactoryToList(factories, swappingFactory);
+                                    addFactoryToList(factories, createNegatingFactory("!=", swappingFactory));
+                                    addFactoryToList(factories, createNegatingFactory("<>", swappingFactory));
+                                }
                                 break;
                             case "<":
                                 // `a < b` == `a >= b`
-                                addFactory(booleanFactories, ">=", descriptor);
-                                if (descriptor.getArgTypeMask(0) == descriptor.getArgTypeMask(1)) {
-                                    // `a < b` == `b > a`
-                                    addFactory(commutativeBooleanFactories, ">", descriptor);
-                                    // `a < b` == `b > a` == `b <= a`
-                                    addFactory(booleanFactories, "<=", descriptor);
-                                    addFactory(commutativeBooleanFactories, "<=", descriptor);
-                                }
+                                addFactoryToList(factories, createNegatingFactory(">=", factory));
+                                FunctionFactory greaterThan = createSwappingFactory(">", factory);
+                                // `a < b` == `b > a`
+                                addFactoryToList(factories, greaterThan);
+                                // `b > a` == !(`b <= a`)
+                                addFactoryToList(factories, createNegatingFactory("<=", greaterThan));
                                 break;
                         }
                     } else if (factory.isGroupBy()) {
@@ -81,6 +85,14 @@ public class FunctionFactoryCache {
         }
     }
 
+    private FunctionFactory createNegatingFactory(String name, FunctionFactory factory) throws SqlException {
+        return new NegatingFunctionFactory(name, factory);
+    }
+
+    private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
+        return new SwappingArgsFunctionFactory(name, factory);
+    }
+
     public ObjList<FunctionFactoryDescriptor> getOverloadList(CharSequence token) {
         return factories.get(token);
     }
@@ -89,25 +101,16 @@ public class FunctionFactoryCache {
         return cursorFunctionNames.contains(name);
     }
 
-    public boolean isFlipped(CharSequence token) {
-        return commutativeBooleanFactories.get(token) != null;
-    }
-
     public boolean isGroupBy(CharSequence name) {
         return groupByFunctionNames.contains(name);
     }
 
-    public boolean isNegated(CharSequence token) {
-        return booleanFactories.keyIndex(token) < 0;
+    private void addFactoryToList(CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
+        addFactoryToList(list, new FunctionFactoryDescriptor(factory));
     }
 
-    // Add a descriptor to `factories` and optionally `extraList`
-    private void addFactory(CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> extraList, String name, FunctionFactoryDescriptor descriptor) {
-        addFactoryToList(factories, name, descriptor);
-        addFactoryToList(extraList, name, descriptor);
-    }
-
-    private void addFactoryToList(CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, String name, FunctionFactoryDescriptor descriptor) {
+    private void addFactoryToList(CharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {
+        String name = descriptor.getName();
         int index = list.keyIndex(name);
         ObjList<FunctionFactoryDescriptor> overload;
         if (index < 0) {

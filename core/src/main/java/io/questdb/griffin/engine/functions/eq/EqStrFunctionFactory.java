@@ -27,19 +27,23 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 
-public class EqStrFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
+public class EqStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(SS)";
+    }
+
+    @Override
+    public boolean isBoolean() {
+        return true;
     }
 
     @Override
@@ -53,34 +57,32 @@ public class EqStrFunctionFactory extends AbstractBooleanFunctionFactory impleme
         Function b = args.getQuick(1);
 
         if (a.isConstant() && !b.isConstant()) {
-            return createHalfConstantFunc(position, a, b, isNegated);
+            return createHalfConstantFunc(position, a, b);
         }
 
         if (!a.isConstant() && b.isConstant()) {
-            return createHalfConstantFunc(position, b, a, isNegated);
+            return createHalfConstantFunc(position, b, a);
         }
 
-        return new Func(position, a, b, isNegated);
+        return new Func(position, a, b);
     }
 
-    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc, boolean isNegated) {
+    private Function createHalfConstantFunc(int position, Function constFunc, Function varFunc) {
         CharSequence constValue = constFunc.getStr(null);
 
         if (constValue == null) {
-            return new NullCheckFunc(position, varFunc, isNegated);
+            return new NullCheckFunc(position, varFunc);
         }
 
-        return new ConstCheckFunc(position, varFunc, constValue, isNegated);
+        return new ConstCheckFunc(position, varFunc, constValue);
     }
 
-    private static class NullCheckFunc extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
-        public NullCheckFunc(int position, Function arg, boolean isNegated) {
+        public NullCheckFunc(int position, Function arg) {
             super(position);
             this.arg = arg;
-            this.isNegated = isNegated;
         }
 
         @Override
@@ -90,20 +92,18 @@ public class EqStrFunctionFactory extends AbstractBooleanFunctionFactory impleme
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (arg.getStrLen(rec) == -1L);
+            return negated != (arg.getStrLen(rec) == -1L);
         }
     }
 
-    private static class ConstCheckFunc extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequence constant;
 
-        public ConstCheckFunc(int position, Function arg, CharSequence constant, boolean isNegated) {
+        public ConstCheckFunc(int position, Function arg, CharSequence constant) {
             super(position);
             this.arg = arg;
             this.constant = constant;
-            this.isNegated = isNegated;
         }
 
         @Override
@@ -113,20 +113,18 @@ public class EqStrFunctionFactory extends AbstractBooleanFunctionFactory impleme
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != Chars.equalsNc(constant, arg.getStr(rec));
+            return negated != Chars.equalsNc(constant, arg.getStr(rec));
         }
     }
 
-    private static class Func extends BooleanFunction implements BinaryFunction {
-        private final boolean isNegated;
+    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public Func(int position, Function left, Function right, boolean isNegated) {
+        public Func(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
-            this.isNegated = isNegated;
         }
 
         @Override
@@ -148,10 +146,10 @@ public class EqStrFunctionFactory extends AbstractBooleanFunctionFactory impleme
             final CharSequence b = right.getStrB(rec);
 
             if (a == null) {
-                return isNegated != (b == null);
+                return negated != (b == null);
             }
 
-            return isNegated != Chars.equalsNc(a, b);
+            return negated != Chars.equalsNc(a, b);
         }
     }
 }
