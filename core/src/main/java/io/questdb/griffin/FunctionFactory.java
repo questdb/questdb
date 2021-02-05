@@ -67,6 +67,8 @@ public interface FunctionFactory {
 
     default boolean isCursor() { return false; }
 
+    default boolean isBoolean() { return false; }
+
     Function newInstance(
             @Transient ObjList<Function> args,
             int position,

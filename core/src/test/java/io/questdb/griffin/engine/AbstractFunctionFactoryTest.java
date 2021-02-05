@@ -68,7 +68,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         return callCustomised(false, true, args);
     }
 
+    protected Invocation callBySignature(String signature, Object... args) throws SqlException {
+        return callCustomised(signature, false, true, args);
+    }
+
     protected Invocation callCustomised(boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
+        return callCustomised(null, forceConstant, argTypeFromSig, args);
+    }
+
+    private Invocation callCustomised(String signature, boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
         setUp2();
         toShortRefs = 0;
         toByteRefs = 0;
@@ -76,7 +84,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         toDateRefs = 0;
 
         final FunctionFactory functionFactory = getFactory0();
-        final String signature = functionFactory.getSignature();
+        if (signature == null) {
+            signature = functionFactory.getSignature();
+        }
 
         // validate signature first
         final int pos = FunctionFactoryDescriptor.validateSignatureAndGetNameSeparator(signature);
