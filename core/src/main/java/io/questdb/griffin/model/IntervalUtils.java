@@ -673,7 +673,7 @@ public final class IntervalUtils {
         replaceHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
     }
 
-    static void parseInterval(CharSequence seq, int pos, int lim, short operation, LongList out) throws NumericException {
+    public static void parseInterval(CharSequence seq, int pos, int lim, short operation, LongList out) throws NumericException {
         if (lim - pos < 4) {
             throw NumericException.INSTANCE;
         }
