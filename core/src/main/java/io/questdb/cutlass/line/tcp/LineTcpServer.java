@@ -66,15 +66,18 @@ public class LineTcpServer implements Closeable {
                 contextFactory);
         this.dedicatedPools = dedicatedPools;
         ioWorkerPool.assign(dispatcher);
-        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, writerWorkerPool);
-        for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
+        int nIOWorkers = ioWorkerPool.getWorkerCount();
+        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, writerWorkerPool, nIOWorkers);
+        for (int i = 0; i < nIOWorkers; i++) {
+            final int j = i;
             ioWorkerPool.assign(i, new Job() {
                 // Context blocked on LineTcpMeasurementScheduler queue
+                private final int workerId = j;
                 private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
                 private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
 
                 private void onRequest(int operation, LineTcpConnectionContext context) {
-                    if (handleIO(context)) {
+                    if (handleIO(context, workerId)) {
                         busyContexts.add(context);
                         LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
                     }
@@ -82,10 +85,11 @@ public class LineTcpServer implements Closeable {
 
                 @Override
                 public boolean run(int workerId) {
+                    assert this.workerId == workerId;
                     boolean busy = false;
                     while (busyContexts.size() > 0) {
                         LineTcpConnectionContext busyContext = busyContexts.getQuick(0);
-                        if (handleIO(busyContext)) {
+                        if (handleIO(busyContext, workerId)) {
                             break;
                         }
                         LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();
@@ -149,9 +153,9 @@ public class LineTcpServer implements Closeable {
         Misc.free(dispatcher);
     }
 
-    private boolean handleIO(LineTcpConnectionContext context) {
+    private boolean handleIO(LineTcpConnectionContext context, int workerId) {
         if (!context.invalid()) {
-            switch (context.handleIO()) {
+            switch (context.handleIO(workerId)) {
                 case NEEDS_READ:
                     context.getDispatcher().registerChannel(context, IOOperation.READ);
                     return false;

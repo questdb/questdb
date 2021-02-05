@@ -46,6 +46,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private int symbolCapacity;
     private boolean nullValue;
 
+    public SymbolMapReaderImpl() {
+    }
+
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         of(configuration, path, name, symbolCount);
     }

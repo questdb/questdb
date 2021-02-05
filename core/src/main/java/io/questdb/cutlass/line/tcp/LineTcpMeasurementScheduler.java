@@ -47,7 +47,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
@@ -64,6 +63,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -94,6 +94,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final long maintenanceJobHysteresisInMs;
     private final long minIdleMsBeforeWriterRelease;
     private final int defaultPartitionBy;
+    private final int nIOWorkers;
     private Sequence pubSeq;
     private int nLoadCheckCycles = 0;
     private int nRebalances = 0;
@@ -105,7 +106,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool writerWorkerPool
+            WorkerPool writerWorkerPool,
+            int nIOWorkers
     ) {
         this.engine = engine;
         this.securityContext = lineConfiguration.getCairoSecurityContext();
@@ -151,6 +153,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         maintenanceJobHysteresisInMs = lineConfiguration.getMaintenanceJobHysteresisInMs();
         defaultPartitionBy = lineConfiguration.getDefaultPartitionBy();
         minIdleMsBeforeWriterRelease = lineConfiguration.getMinIdleMsBeforeWriterRelease();
+        this.nIOWorkers = nIOWorkers;
     }
 
     @Override
@@ -191,11 +194,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-            loadByThread[stats.threadId] += stats.nUpdates.get();
+            loadByThread[stats.writerThreadId] += stats.nUpdates.get();
         }
     }
 
-    boolean tryCommitNewEvent(NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
+    boolean tryCommitNewEvent(NewLineProtoParser protoParser, FloatingDirectCharSink charSink, int workerId) {
         TableUpdateDetails tableUpdateDetails;
         try {
             tableUpdateDetails = startNewMeasurementEvent(protoParser);
@@ -214,7 +217,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 try {
                     LineTcpMeasurementEvent event = queue.get(seq);
                     event.threadId = INCOMPLETE_EVENT_ID;
-                    TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.startNewMeasumentEvent();
+                    TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.startNewMeasumentEvent(workerId);
                     event.createMeasurementEvent(tableUpdateDetails, localDetails, protoParser, charSink);
                     return true;
                 } finally {
@@ -346,7 +349,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             String leastLoadedTableName = null;
             for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                 TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-                if (stats.threadId == highestLoadedThreadId && stats.nUpdates.get() > 0) {
+                if (stats.writerThreadId == highestLoadedThreadId && stats.nUpdates.get() > 0) {
                     nTables++;
                     if (stats.nUpdates.get() < lowestLoad) {
                         lowestLoad = stats.nUpdates.get();
@@ -379,7 +382,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     LineTcpMeasurementEvent event = queue.get(seq);
                     event.threadId = INCOMPLETE_EVENT_ID;
                     event.createRebalanceEvent(fromThreadId, toThreadId, tableToMove);
-                    tableToMove.threadId = toThreadId;
+                    tableToMove.writerThreadId = toThreadId;
                     LOG.info()
                             .$("rebalance cycle, requesting table move [cycle=").$(nLoadCheckCycles)
                             .$(", nRebalances=").$(++nRebalances)
@@ -483,7 +486,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
                         }
 
-                        int symIndex = tableUpdateDetails.getSymbolIndex(colIndex, floatingCharSink);
+                        int symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, floatingCharSink);
                         if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
                             bufPos = tmpBufPos;
                             Unsafe.getUnsafe().putByte(bufPos, NewLineProtoParser.ENTITY_TYPE_CACHED_TAG);
@@ -549,7 +552,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 }
             }
-            threadId = tableUpdateDetails.threadId;
+            threadId = tableUpdateDetails.writerThreadId;
         }
 
         @SuppressWarnings("resource")
@@ -594,20 +597,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             if (TableUtils.isValidColumnName(job.charSink)) {
                                 colIndex = writer.getMetadata().getColumnCount();
                                 writer.addColumn(job.charSink, colType);
-                                tableUpdateDetails.symCacheByColumnIndexLock.writeLock().lock();
-                                try {
-                                    tableUpdateDetails.symCacheByColumnIndex.extendPos(colIndex);
-                                    SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
-                                    if (colType == ColumnType.SYMBOL && null == symCache) {
-                                        symCache = new SymbolCache();
-                                        tableUpdateDetails.symCacheByColumnIndex.setQuick(colIndex, symCache);
-                                    }
-                                    if (null != symCache) {
-                                        symCache.clear();
-                                    }
-                                } finally {
-                                    tableUpdateDetails.symCacheByColumnIndexLock.writeLock().unlock();
-                                }
                             } else {
                                 throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
                                         .put(", columnName=").put(job.charSink).put(']');
@@ -622,20 +611,13 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                     switch (entityType) {
                         case NewLineProtoParser.ENTITY_TYPE_TAG: {
-                            tableUpdateDetails.symCacheByColumnIndexLock.readLock().lock();
-                            try {
-                                SymbolCache symCache = tableUpdateDetails.symCacheByColumnIndex.getQuick(colIndex);
-                                int len = Unsafe.getUnsafe().getInt(bufPos);
-                                bufPos += Integer.BYTES;
-                                long hi = bufPos + 2 * len;
-                                job.floatingCharSink.asCharSequence(bufPos, hi);
-                                int symIndex = writer.getSymbolIndex(colIndex, job.floatingCharSink);
-                                symCache.put(job.floatingCharSink.toString(), symIndex);
-                                row.putSymIndex(colIndex, symIndex);
-                                bufPos = hi;
-                            } finally {
-                                tableUpdateDetails.symCacheByColumnIndexLock.readLock().unlock();
-                            }
+                            int len = Unsafe.getUnsafe().getInt(bufPos);
+                            bufPos += Integer.BYTES;
+                            long hi = bufPos + 2 * len;
+                            job.floatingCharSink.asCharSequence(bufPos, hi);
+                            int symIndex = writer.getSymbolIndex(colIndex, job.floatingCharSink);
+                             row.putSymIndex(colIndex, symIndex);
+                            bufPos = hi;
                             break;
                         }
 
@@ -728,24 +710,23 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     private class TableUpdateDetails implements Closeable {
         private final String tableName;
-        private int threadId = Integer.MIN_VALUE;
+        private int writerThreadId = Integer.MIN_VALUE;
         private final AtomicInteger nUpdates = new AtomicInteger(); // Number of updates since the last load rebalance
         private int version = 0;
         private TableWriter writer;
         private int nUncommitted = 0;
-        private final ThreadLocal<ThreadLocalDetails> refLocalDetails = ThreadLocal.withInitial(() -> {
-            return new ThreadLocalDetails();
-        });
+        private final ThreadLocalDetails[] localDetailsArray;
         private boolean assignedToJob = false;
         private long lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
-        private final ReadWriteLock symCacheByColumnIndexLock = new SimpleReadWriteLock();
-        private final ObjList<SymbolCache> symCacheByColumnIndex;
 
-        private TableUpdateDetails(String tableName, int threadId) {
+        private TableUpdateDetails(String tableName, int writerThreadId) {
             super();
             this.tableName = tableName;
-            this.threadId = threadId;
-            this.symCacheByColumnIndex = new ObjList<>();
+            this.writerThreadId = writerThreadId;
+            localDetailsArray = new ThreadLocalDetails[nIOWorkers];
+            for (int n = 0; n < nIOWorkers; n++) {
+                localDetailsArray[n] = new ThreadLocalDetails();
+            }
         }
 
         void handleRowAppended() {
@@ -767,7 +748,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             writer.close();
                             writer = null;
                             tableUpdateDetailsByTableName.remove(tableName);
-                            clearSymbolCaches();
                             idleTableUpdateDetailsByTableName.put(tableName, this);
                             version++;
                             lastMeasurementReceivedEpochMs = Long.MAX_VALUE;
@@ -785,25 +765,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         TableWriter getWriter() {
             if (null == writer) {
                 writer = engine.getWriter(securityContext, tableName);
-                symCacheByColumnIndexLock.writeLock().lock();
-                try {
-                    RecordMetadata metaData = writer.getMetadata();
-                    symCacheByColumnIndex.extendPos(metaData.getColumnCount());
-                    for (int n = 0, sz = metaData.getColumnCount(); n < sz; n++) {
-                        SymbolCache symCache = symCacheByColumnIndex.get(n);
-                        if (metaData.getColumnType(n) == ColumnType.SYMBOL) {
-                            if (null == symCache) {
-                                symCache = new SymbolCache();
-                                symCacheByColumnIndex.setQuick(n, symCache);
-                            }
-                        }
-                        if (null != symCache) {
-                            symCache.clear();
-                        }
-                    }
-                } finally {
-                    symCacheByColumnIndexLock.writeLock().unlock();
-                }
             }
             return writer;
         }
@@ -819,11 +780,13 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        ThreadLocalDetails startNewMeasumentEvent() {
-            ThreadLocalDetails localDetails = refLocalDetails.get();
+        ThreadLocalDetails startNewMeasumentEvent(int workerId) {
+            ThreadLocalDetails localDetails = localDetailsArray[workerId];
+            // Note that the version is incremented by writer thread when the writer is released
+            // The writer will only be released after an idle period
+            // As long as this period is greater than the time it takes to clear the event queue then we will always pick up the new version
             if (version != localDetails.version) {
-                localDetails.columnIndexByName.clear();
-                localDetails.version = version;
+                localDetails.updateVersion(version);
             }
             lastMeasurementReceivedEpochMs = milliClock.getTicks();
             return localDetails;
@@ -831,7 +794,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         @Override
         public void close() throws IOException {
-            if (threadId != Integer.MIN_VALUE) {
+            if (writerThreadId != Integer.MIN_VALUE) {
                 if (null != writer) {
                     if (nUncommitted > 0) {
                         writer.commit();
@@ -839,46 +802,31 @@ class LineTcpMeasurementScheduler implements Closeable {
                     writer.close();
                     writer = null;
                 }
-                threadId = Integer.MIN_VALUE;
+                for (int n = 0; n < nIOWorkers; n++) {
+                    localDetailsArray[n].close();
+                    localDetailsArray[n] = null;
+                }
+                writerThreadId = Integer.MIN_VALUE;
             }
         }
 
-        int getSymbolIndex(int colIndex, CharSequence symValue) {
-            SymbolCache symCache;
-            symCacheByColumnIndexLock.readLock().lock();
-            try {
-                if (colIndex >= 0 && symCacheByColumnIndex.size() > colIndex) {
-                    symCache = symCacheByColumnIndex.getQuick(colIndex);
-                } else {
-                    return SymbolTable.VALUE_NOT_FOUND;
-                }
-            } finally {
-                symCacheByColumnIndexLock.readLock().unlock();
-            }
-            if (null != symCache) {
-                return symCache.getSymIndex(symValue);
+        int getSymbolIndex(ThreadLocalDetails localDetails, int colIndex, CharSequence symValue) {
+            if (colIndex >= 0) {
+                return localDetails.getSymbolIndex(colIndex, symValue);
             }
             return SymbolTable.VALUE_NOT_FOUND;
         }
 
-        private void clearSymbolCaches() {
-            symCacheByColumnIndexLock.writeLock().lock();
-            try {
-                for (int n = 0, sz = symCacheByColumnIndex.size(); n < sz; n++) {
-                    SymbolCache symCache = symCacheByColumnIndex.get(n);
-                    if (null != symCache) {
-                        symCache.clear();
-                    }
-                }
-            } finally {
-                symCacheByColumnIndexLock.writeLock().unlock();
+        private class ThreadLocalDetails implements Closeable {
+            private final Path path = new Path();
+            private final ObjIntHashMap<CharSequence> columnIndexByName = new ObjIntHashMap<>();
+            private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
+            private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
+            private int version;
+
+            ThreadLocalDetails() {
+                version = 0;
             }
-
-        }
-
-        private class ThreadLocalDetails {
-            private int version = 0;
-            private final CharSequenceIntHashMap columnIndexByName = new CharSequenceIntHashMap();
 
             int getColumnIndex(CharSequence colName) {
                 int colIndex = columnIndexByName.get(colName);
@@ -897,6 +845,49 @@ class LineTcpMeasurementScheduler implements Closeable {
                     }
                 }
                 return colIndex;
+            }
+
+            int getSymbolIndex(int colIndex, CharSequence symValue) {
+                SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(colIndex);
+                if (null == symCache) {
+                    symCache = addSymbolCache(colIndex);
+                }
+                return symCache.getSymIndex(symValue);
+            }
+
+            private SymbolCache addSymbolCache(int colIndex) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    path.of(cairoConfiguration.getRoot()).concat(tableName);
+                    SymbolCache symCache;
+                    if (unusedSymbolCaches.size() > 0) {
+                        symCache = unusedSymbolCaches.get(unusedSymbolCaches.size() - 1);
+                        unusedSymbolCaches.remove(unusedSymbolCaches.size() - 1);
+                    } else {
+                        symCache = new SymbolCache();
+                    }
+                    symCache.of(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), colIndex);
+                    symbolCacheByColumnIndex.extendAndSet(colIndex, symCache);
+                    return symCache;
+                }
+            }
+
+            private void updateVersion(int newVersion) {
+                columnIndexByName.clear();
+                for (int n = 0, sz = symbolCacheByColumnIndex.size(); n < sz; n++) {
+                    SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
+                    if (null != symCache) {
+                        symCache.clear();
+                        unusedSymbolCaches.add(symCache);
+                    }
+                    symbolCacheByColumnIndex.clear();
+                }
+                this.version = newVersion;
+            }
+
+            @Override
+            public void close() throws IOException {
+                Misc.freeObjList(symbolCacheByColumnIndex);
+                path.close();
             }
         }
     }

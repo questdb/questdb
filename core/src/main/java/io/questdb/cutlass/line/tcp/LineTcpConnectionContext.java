@@ -140,19 +140,19 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return peerDisconnected;
     }
 
-    IOContextResult handleIO() {
+    IOContextResult handleIO(int workerId) {
         read();
-        return parseMeasurements();
+        return parseMeasurements(workerId);
     }
 
-    protected final IOContextResult parseMeasurements() {
+    protected final IOContextResult parseMeasurements(int workerId) {
         while (true) {
             try {
                 ParseResult rc = goodMeasurement ? protoParser.parseMeasurement(recvBufPos) : protoParser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (!scheduler.tryCommitNewEvent(protoParser, charSink)) {
+                            if (!scheduler.tryCommitNewEvent(protoParser, charSink, workerId)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.info().$('[').$(fd).$("] queue full, consider increasing queue size or number of writer jobs").$();

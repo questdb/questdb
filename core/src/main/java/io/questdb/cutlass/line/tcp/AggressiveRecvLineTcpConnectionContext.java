@@ -6,11 +6,11 @@ public class AggressiveRecvLineTcpConnectionContext extends LineTcpConnectionCon
     }
 
     @Override
-    IOContextResult handleIO() {
+    IOContextResult handleIO(int workerId) {
         IOContextResult rc;
         read();
         do {
-            rc = parseMeasurements();
+            rc = parseMeasurements(workerId);
         } while (rc == IOContextResult.NEEDS_READ && read());
         return rc;
     }

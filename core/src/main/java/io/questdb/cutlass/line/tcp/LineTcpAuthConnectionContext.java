@@ -81,9 +81,9 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @Override
-    IOContextResult handleIO() {
+    IOContextResult handleIO(int workerId) {
         if (authenticated) {
-            return super.handleIO();
+            return super.handleIO(workerId);
         }
         return handleAuth();
     }
