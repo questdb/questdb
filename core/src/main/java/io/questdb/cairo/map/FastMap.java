@@ -37,7 +37,7 @@ public class FastMap implements Map {
     private static final HashFunction DEFAULT_HASH = Hash::hashMem;
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final double loadFactor;
-    private final Key key = new Key();
+    private final Key key;
     private final FastMapValue value;
     private final FastMapValue value2;
     private final FastMapValue value3;
@@ -65,7 +65,7 @@ public class FastMap implements Map {
                    double loadFactor,
                    int maxResizes
     ) {
-        this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
+        this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, true);
     }
 
     public FastMap(int pageSize,
@@ -75,7 +75,18 @@ public class FastMap implements Map {
                    double loadFactor,
                    int maxResizes
     ) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, true);
+    }
+
+    public FastMap(int pageSize,
+                   @Transient @NotNull ColumnTypes keyTypes,
+                   @Transient @Nullable ColumnTypes valueTypes,
+                   int keyCapacity,
+                   double loadFactor,
+                   int maxResizes,
+                   boolean caseSensitive
+    ) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, caseSensitive);
     }
 
     FastMap(int pageSize,
@@ -85,6 +96,18 @@ public class FastMap implements Map {
             double loadFactor,
             HashFunction hashFunction,
             int maxResizes
+    ) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, true);
+    }
+
+    FastMap(int pageSize,
+            @Transient ColumnTypes keyTypes,
+            @Transient ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            HashFunction hashFunction,
+            int maxResizes,
+            boolean caseSensitive
 
     ) {
         assert pageSize > 3;
@@ -104,6 +127,7 @@ public class FastMap implements Map {
         this.hashFunction = hashFunction;
         this.nResizes = 0;
         this.maxResizes = maxResizes;
+        this.key = caseSensitive ? new Key() : new CaseInsensitiveKey();
 
         int[] valueOffsets;
         int offset = 4;
@@ -376,7 +400,7 @@ public class FastMap implements Map {
 
     public class Key implements MapKey {
         private long startAddress;
-        private long appendAddress;
+        protected long appendAddress;
         private int len;
         private long nextColOffset;
 
@@ -600,7 +624,7 @@ public class FastMap implements Map {
             putLong(value);
         }
 
-        private void checkSize(int size) {
+        protected void checkSize(int size) {
             if (appendAddress + size > kLimit) {
                 resize(size);
             }
@@ -610,20 +634,61 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress));
         }
 
-        private void putNull() {
+        protected void putNull() {
             checkSize(4);
             Unsafe.getUnsafe().putInt(appendAddress, TableUtils.NULL_LEN);
             appendAddress += 4;
             writeOffset();
         }
 
-        private void writeOffset() {
+        protected void writeOffset() {
             long len = appendAddress - startAddress;
             if (len > Integer.MAX_VALUE) {
                 throw CairoException.instance(0).put("row data is too large");
             }
             Unsafe.getUnsafe().putInt(nextColOffset, (int) len);
             nextColOffset += 4;
+        }
+    }
+
+    public class CaseInsensitiveKey extends Key {
+        @Override
+        public void putChar(char value) {
+            checkSize(Character.BYTES);
+            Unsafe.getUnsafe().putChar(appendAddress, Character.toLowerCase(value));
+            appendAddress += Character.BYTES;
+            writeOffset();
+        }
+
+        @Override
+        public void putStr(CharSequence value) {
+            if (value == null) {
+                putNull();
+                return;
+            }
+
+            int len = value.length();
+            checkSize((len << 1) + 4);
+            Unsafe.getUnsafe().putInt(appendAddress, len);
+            appendAddress += 4;
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putChar(appendAddress + (i << 1), Character.toLowerCase(value.charAt(i)));
+            }
+            appendAddress += len << 1;
+            writeOffset();
+        }
+
+        @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+            int len = hi - lo;
+            checkSize((len << 1) + 4);
+            Unsafe.getUnsafe().putInt(appendAddress, len);
+            appendAddress += 4;
+            for (int i = lo; i < hi; i++) {
+                Unsafe.getUnsafe().putChar(appendAddress + ((i - lo) << 1), Character.toLowerCase(value.charAt(i)));
+            }
+            appendAddress += len << 1;
+            writeOffset();
         }
     }
 }

@@ -46,7 +46,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
     private int refCount;
 
     public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
-        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes());
+        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), false);
         this.timestampIndex = -1;
         this.columnCount = 0;
         this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
