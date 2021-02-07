@@ -56,6 +56,8 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcOooVarSize;
     private long srcOooLo;
     private long srcOooHi;
+    private long srcOooPartitionLo;
+    private long srcOooPartitionHi;
     private long srcOooMax;
     private long oooTimestampMin;
     private long oooTimestampHi;
@@ -216,6 +218,14 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return srcOooMax;
     }
 
+    public long getSrcOooPartitionHi() {
+        return srcOooPartitionHi;
+    }
+
+    public long getSrcOooPartitionLo() {
+        return srcOooPartitionLo;
+    }
+
     public long getSrcOooVarAddr() {
         return srcOooVarAddr;
     }
@@ -273,6 +283,8 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
             long srcOooMax,
             long oooTimestampMin,
             long oooTimestampHi,
@@ -317,6 +329,8 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcOooVarSize = srcOooVarSize;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
+        this.srcOooPartitionLo = srcOooPartitionLo;
+        this.srcOooPartitionHi = srcOooPartitionHi;
         this.srcOooMax = srcOooMax;
         this.oooTimestampMin = oooTimestampMin;
         this.oooTimestampHi = oooTimestampHi;

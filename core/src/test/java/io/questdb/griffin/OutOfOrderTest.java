@@ -35,7 +35,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -73,12 +72,14 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         bindVariableService.clear();
 
         SharedRandom.RANDOM.set(new Rnd());
+
+        // instantiate these paths so that they are not included in memory leak test
+        Path.PATH.get();
+        Path.PATH2.get();
     }
 
     @Test
     public void testBench() throws Exception {
-        Path.PATH.get();
-        Path.PATH2.get();
         assertMemoryLeak(() -> {
                     // create table with roughly 2AM data
                     compiler.compile(
@@ -89,7 +90,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " round(rnd_double(0)*100, 3) amt," +
                                     " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                                     " rnd_boolean() b," +
-//                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                                     " rnd_double(2) d," +
                                     " rnd_float(2) e," +
                                     " rnd_short(10,1024) f," +
@@ -98,8 +99,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_sequence(10000000000,1000000L) ts," +
                                     " rnd_byte(2,50) l," +
-//                                    " rnd_bin(10, 20, 2) m," +
-//                                    " rnd_str(5,16,2) n," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000000)" +
                                     "), index(sym) timestamp (ts) partition by DAY",
@@ -116,7 +117,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " round(rnd_double(0)*100, 3) amt," +
                                     " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                                     " rnd_boolean() b," +
-//                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                                     " rnd_double(2) d," +
                                     " rnd_float(2) e," +
                                     " rnd_short(10,1024) f," +
@@ -125,8 +126,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_sequence(3000000000l,100000000L) ts," + // mid partition for "x"
                                     " rnd_byte(2,50) l," +
-//                                    " rnd_bin(10, 20, 2) m," +
-//                                    " rnd_str(5,16,2) n," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000000)" +
                                     ")",
@@ -170,7 +171,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
                     } finally {
                         pool.halt();
-                        System.out.println("Allocs after: " + Unsafe.getMallocCount());
                     }
                 }
         );
@@ -191,7 +191,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " round(rnd_double(0)*100, 3) amt," +
                                     " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                                     " rnd_boolean() b," +
-//                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                                     " rnd_double(2) d," +
                                     " rnd_float(2) e," +
                                     " rnd_short(10,1024) f," +
@@ -200,8 +200,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_sequence(10000000000,100000L) ts," +
                                     " rnd_byte(2,50) l," +
-//                                    " rnd_bin(10, 20, 2) m," +
-//                                    " rnd_str(5,16,2) n," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000000)" +
                                     "), index(sym) timestamp (ts) partition by DAY",
@@ -218,7 +218,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " round(rnd_double(0)*100, 3) amt," +
                                     " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                                     " rnd_boolean() b," +
-//                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                                     " rnd_double(2) d," +
                                     " rnd_float(2) e," +
                                     " rnd_short(10,1024) f," +
@@ -227,8 +227,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                                     " rnd_long() j," +
                                     " timestamp_sequence(3000000000l,100000L) ts," + // mid partition for "x"
                                     " rnd_byte(2,50) l," +
-//                                    " rnd_bin(10, 20, 2) m," +
-//                                    " rnd_str(5,16,2) n," +
+                                    " rnd_bin(10, 20, 2) m," +
+                                    " rnd_str(5,16,2) n," +
                                     " rnd_char() t" +
                                     " from long_sequence(1000000)" +
                                     ")",
@@ -1990,6 +1990,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 printer.print(cursor, factory.getMetadata(), true);
             }
         }
+
+        System.out.println(sink);
 
         URL url = OutOfOrderTest.class.getResource(resourceName);
         Assert.assertNotNull(url);

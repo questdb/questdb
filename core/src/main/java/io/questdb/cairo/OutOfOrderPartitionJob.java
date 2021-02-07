@@ -510,7 +510,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
     private static long oooCreateMergeIndex(
             long srcDataTimestampAddr,
-            long mergedTimestamps,
+            long sortedTimestampsAddr,
             long mergeDataLo,
             long mergeDataHi,
             long mergeOOOLo,
@@ -524,7 +524,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
         Unsafe.getUnsafe().putLong(indexStruct, index);
         Unsafe.getUnsafe().putLong(indexStruct + Long.BYTES, mergeDataHi - mergeDataLo + 1);
-        Unsafe.getUnsafe().putLong(indexStruct + 2 * Long.BYTES, mergedTimestamps + mergeOOOLo * 16);
+        Unsafe.getUnsafe().putLong(indexStruct + 2 * Long.BYTES, sortedTimestampsAddr + mergeOOOLo * 16);
         Unsafe.getUnsafe().putLong(indexStruct + 3 * Long.BYTES, mergeOOOHi - mergeOOOLo + 1);
         final long result = Vect.mergeLongIndexesAsc(indexStruct, 2);
         Unsafe.free(index, indexSize);
@@ -942,7 +942,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     mergeOOOLo,
                     mergeOOOHi,
                     mergeDataLo,
-                    mergeDataHi,
                     mergeDataHi,
                     suffixType,
                     suffixLo,

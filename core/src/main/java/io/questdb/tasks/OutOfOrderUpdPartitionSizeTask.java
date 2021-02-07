@@ -25,36 +25,43 @@
 package io.questdb.tasks;
 
 public class OutOfOrderUpdPartitionSizeTask {
-    private long partitionTimestamp;
-    private long partitionSize;
-    private long tableFloorOfMaxTimestamp;
+    private long oooTimestampHi;
+    private long srcOooPartitionLo;
+    private long srcOooPartitionHi;
     private long srcDataMax;
+    private long dataTimestampHi;
 
-    public void of(
-            long partitionTimestamp,
-            long partitionSize,
-            long tableFloorOfMaxTimestamp,
-            long srcDataMax
-    ) {
-        this.partitionTimestamp = partitionTimestamp;
-        this.partitionSize = partitionSize;
-        this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
-        this.srcDataMax = srcDataMax;
+    public long getDataTimestampHi() {
+        return dataTimestampHi;
     }
 
-    public long getPartitionTimestamp() {
-        return partitionTimestamp;
-    }
-
-    public long getPartitionSize() {
-        return partitionSize;
-    }
-
-    public long getTableFloorOfMaxTimestamp() {
-        return tableFloorOfMaxTimestamp;
+    public long getOooTimestampHi() {
+        return oooTimestampHi;
     }
 
     public long getSrcDataMax() {
         return srcDataMax;
+    }
+
+    public long getSrcOooPartitionHi() {
+        return srcOooPartitionHi;
+    }
+
+    public long getSrcOooPartitionLo() {
+        return srcOooPartitionLo;
+    }
+
+    public void of(
+            long oooTimestampHi,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
+            long srcDataMax,
+            long dataTimestampHi
+    ) {
+        this.oooTimestampHi = oooTimestampHi;
+        this.srcOooPartitionLo = srcOooPartitionLo;
+        this.srcOooPartitionHi = srcOooPartitionHi;
+        this.srcDataMax = srcDataMax;
+        this.dataTimestampHi = dataTimestampHi;
     }
 }

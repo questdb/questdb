@@ -2552,7 +2552,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         @Override
-        public SCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
+        public MCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
             return null;
         }
     }

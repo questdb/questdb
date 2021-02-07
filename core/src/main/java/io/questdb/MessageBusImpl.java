@@ -26,7 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -61,7 +64,7 @@ public class MessageBusImpl implements MessageBus {
 
     private final RingQueue<OutOfOrderUpdPartitionSizeTask> outOfOrderUpdPartitionSizeQueue;
     private final MPSequence outOfOrderUpdPartitionSizePubSeq;
-    private final SCSequence outOfOrderUpdPartitionSizeSubSeq;
+    private final MCSequence outOfOrderUpdPartitionSizeSubSeq;
 
     private final CairoConfiguration configuration;
 
@@ -103,9 +106,9 @@ public class MessageBusImpl implements MessageBus {
         this.outOfOrderCopySubSeq = new MCSequence(this.outOfOrderCopyQueue.getCapacity());
         outOfOrderCopyPubSeq.then(outOfOrderCopySubSeq).then(outOfOrderCopyPubSeq);
 
-        this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, 1024);
+        this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, 2048);
         this.outOfOrderUpdPartitionSizePubSeq = new MPSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
-        this.outOfOrderUpdPartitionSizeSubSeq = new SCSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity(), NullWaitStrategy.INSTANCE);
+        this.outOfOrderUpdPartitionSizeSubSeq = new MCSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
         outOfOrderUpdPartitionSizePubSeq.then(outOfOrderUpdPartitionSizeSubSeq).then(outOfOrderUpdPartitionSizePubSeq);
     }
 
@@ -230,7 +233,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public SCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
+    public MCSequence getOutOfOrderUpdPartitionSizeSubSequence() {
         return outOfOrderUpdPartitionSizeSubSeq;
     }
 }

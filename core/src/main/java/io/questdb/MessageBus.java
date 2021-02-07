@@ -26,7 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterTaskHolder;
-import io.questdb.mp.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 
@@ -74,7 +77,8 @@ public interface MessageBus extends Closeable {
 
     RingQueue<OutOfOrderUpdPartitionSizeTask> getOutOfOrderUpdPartitionSizeQueue();
 
-    SCSequence getOutOfOrderUpdPartitionSizeSubSequence();
+    // todo: this should be single consumer sequence, but i had problems using it
+    MCSequence getOutOfOrderUpdPartitionSizeSubSequence();
 
     default Sequence getTableBlockWriterPubSequence() {
         return null;

@@ -32,7 +32,10 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -3514,26 +3517,52 @@ public class TableWriter implements Closeable {
                     );
                 }
             }
-            final SCSequence updSizeSeq = messageBus.getOutOfOrderUpdPartitionSizeSubSequence();
+
+            int updRemaining = affectedPartitionCount - 1;
+            final Sequence updSizeSeq = messageBus.getOutOfOrderUpdPartitionSizeSubSequence();
             final RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
 
-            while (oooLatch.getCount() > -latchCount) {
+            while (updRemaining > 0) {
                 long cursor = updSizeSeq.next();
                 if (cursor > -1) {
-                    try {
-                        OutOfOrderUpdPartitionSizeTask task = updSizeQueue.get(cursor);
+                    final OutOfOrderUpdPartitionSizeTask task = updSizeQueue.get(cursor);
+                    final long oooTimestampHi = task.getOooTimestampHi();
+                    final long srcOooPartitionLo = task.getSrcOooPartitionLo();
+                    final long srcOooPartitionHi = task.getSrcOooPartitionHi();
+                    final long srcDataMax = task.getSrcDataMax();
+                    final long dataTimestampHi = task.getDataTimestampHi();
+
+                    updRemaining--;
+                    updSizeSeq.done(cursor);
+
+                    final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
+                    if (srcOooPartitionHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
+
                         updatePartitionSize(
-                                task.getPartitionTimestamp(),
-                                task.getPartitionSize(),
-                                task.getTableFloorOfMaxTimestamp(),
-                                task.getSrcDataMax()
+                                oooTimestampHi,
+                                partitionSize,
+                                tableFloorOfMaxTimestamp,
+                                srcDataMax
                         );
-                    } finally {
-                        updSizeSeq.done(cursor);
+
+                        if (srcOooPartitionHi + 1 >= srcOooMax) {
+                            // no more out of order data and we just pre-pended data to existing
+                            // partitions
+                            this.minTimestamp = oooTimestampMin;
+                            // when we exit here we need to rollback transientRowCount we've been incrementing
+                            // while adding out-of-order data
+                            this.transientRowCount = this.transientRowCountBeforeOutOfOrder;
+                        }
+                    } else {
+                        updateActivePartitionDetails(
+                                oooTimestampMin,
+                                Math.max(dataTimestampHi, oooTimestampMax),
+                                partitionSize
+                        );
                     }
                 }
             }
-
+            oooLatch.await(latchCount);
         } finally {
             path.trimTo(rootLen);
             this.mergeRowCount = 0;

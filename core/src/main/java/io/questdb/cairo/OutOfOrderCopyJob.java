@@ -28,7 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
@@ -79,6 +82,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
             long srcOooMax,
             long oooTimestampMin,
             long oooTimestampHi,
@@ -117,6 +122,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         dstVarAddr,
                         dstVarOffset
                 );
+                break;
             case OO_BLOCK_OO:
                 oooCopyOOO(
                         columnType,
@@ -171,8 +177,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         updPartitionSizeTaskQueue,
                         updPartitionSizePubSeq,
                         pathToTable,
-                        srcOooLo,
-                        srcOooHi,
+                        srcOooPartitionLo,
+                        srcOooPartitionHi,
                         srcOooMax,
                         oooTimestampMin,
                         oooTimestampHi,
@@ -198,8 +204,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue,
             MPSequence updPartitionPubSeq,
             CharSequence pathToTable,
-            long srcOooLo,
-            long srcOooHi,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
             long srcOooMax,
             long oooTimestampMin, // absolute minimum of OOO timestamp
             long oooTimestampHi, // local (partition bound) maximum of OOO timestamp
@@ -263,19 +269,23 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         .put(", to=").put(other).put(']');
             }
 */
+        } else if (timestampFd > 0) {
+            ff.close(timestampFd);
         }
 
-        final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
-        if (srcOooHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
-            final long cursor = updPartitionPubSeq.nextBully();
-            OutOfOrderUpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
-            task.of(
-                    oooTimestampHi,
-                    partitionSize,
-                    tableFloorOfMaxTimestamp,
-                    srcDataMax
-            );
-            updPartitionPubSeq.done(cursor);
+        final long cursor = updPartitionPubSeq.nextBully();
+        OutOfOrderUpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
+        task.of(
+                oooTimestampHi,
+                srcOooPartitionLo,
+                srcOooPartitionHi,
+                srcDataMax,
+                dataTimestampHi
+        );
+        updPartitionPubSeq.done(cursor);
+
+        final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
+        if (srcOooPartitionHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
 /*
 
             this.fixedRowCount += partitionSize;
@@ -308,7 +318,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             }
 */
 
-            if (srcOooHi + 1 >= srcOooMax) {
+            if (srcOooPartitionHi + 1 >= srcOooMax) {
                 LOG.info().$("strange one").$();
 /*
                 // no more out of order data and we just pre-pended data to existing
@@ -318,19 +328,19 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 // while adding out-of-order data
                 this.transientRowCount = this.transientRowCountBeforeOutOfOrder;
 */
-                tableWriter.updateActivePartitionDetails(
-                        oooTimestampMin,
-                        Math.max(dataTimestampHi, oooTimestampHi),
-                        partitionSize
-                );
+//                tableWriter.updateActivePartitionDetails(
+//                        oooTimestampMin,
+//                        Math.max(dataTimestampHi, oooTimestampHi),
+//                        partitionSize
+//                );
             }
         } else {
             // this was taking max between existing timestamp and ooo
-            tableWriter.updateActivePartitionDetails(
-                    oooTimestampMin,
-                    Math.max(dataTimestampHi, oooTimestampHi),
-                    partitionSize
-            );
+//            tableWriter.updateActivePartitionDetails(
+//                    oooTimestampMin,
+//                    Math.max(dataTimestampHi, oooTimestampHi),
+//                    partitionSize
+//            );
         }
     }
 
@@ -396,6 +406,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
 
     private static void oooCopyFixedSizeCol(long src, long srcLo, long srcHi, long dst, long dstOffset, final int shl) {
         final long len = (srcHi - srcLo + 1) << shl;
+        if (len < 0) {
+            System.out.println("ok");
+        }
         Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst + dstOffset, len);
     }
 
@@ -718,6 +731,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcOooVarSize = task.getSrcOooVarSize();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
+        final long srcOooPartitionLo = task.getSrcOooPartitionLo();
+        final long srcOooPartitionHi = task.getSrcOooPartitionHi();
         final long srcOooMax = task.getSrcOooMax();
         final long oooTimestampMin = task.getOooTimestampMin();
         final long oooTimestampHi = task.getOooTimestampHi();
@@ -768,6 +783,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
+                srcOooPartitionLo,
+                srcOooPartitionHi,
                 srcOooMax,
                 oooTimestampMin,
                 oooTimestampHi,
