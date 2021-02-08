@@ -3522,6 +3522,38 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectAliasTest() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table contact_events as (" +
+                    "  select rnd_symbol(4,4,4,2) _id, " +
+                    "    rnd_symbol(4,4,4,2) contactid, " +
+                    "    CAST(x as Timestamp) timestamp, " +
+                    "    rnd_symbol(4,4,4,2) groupId " +
+                    "  from long_sequence(50)) " +
+                    "timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table contacts as (" +
+                    "  select rnd_symbol(4,4,4,2) _id, " +
+                    "    CAST(x as Timestamp) timestamp, " +
+                    "    rnd_symbol(4,4,4,2) notRealType " +
+                    "  from long_sequence(50)) " +
+                    "timestamp(timestamp)", sqlExecutionContext);
+
+            assertQuery("id\n",
+                    "with\n" +
+                            "eventlist as (select * from contact_events latest by _id order by timestamp)\n" +
+                            ",contactlist as (select * from contacts latest by _id order by timestamp)\n" +
+                            ",c as (select distinct contactid from eventlist where groupId = 'ykom80aRN5AwUcuRp4LJ' except select distinct _id as contactId from contactlist where notRealType = 'bot')\n" +
+                            "select\n" +
+                            "c.contactId as id\n" +
+                            "from\n" +
+                            "c\n" +
+                            "join contactlist on c.contactid = contactlist._id\n",
+                    null, false, false, true);
+        });
+    }
+
+
+    @Test
     public void testTypeMismatchFF() throws Exception {
         testFullFat(this::testTypeMismatch);
     }
