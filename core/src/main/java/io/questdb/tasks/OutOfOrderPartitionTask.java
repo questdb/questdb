@@ -28,11 +28,10 @@ import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.std.AbstractLockable;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 
-public class OutOfOrderPartitionTask extends AbstractLockable {
+public class OutOfOrderPartitionTask {
     private FilesFacade ff;
     private CharSequence pathToTable;
     private int partitionBy;
@@ -40,8 +39,6 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
     private ObjList<ContiguousVirtualMemory> oooColumns;
     private long srcOooLo;
     private long srcOooHi;
-    private long srcOooMax;
-    private long oooTimestampMin;
     private long oooTimestampMax;
     private long oooTimestampHi;
     private long txn;
@@ -82,10 +79,6 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
         return oooTimestampMax;
     }
 
-    public long getOooTimestampMin() {
-        return oooTimestampMin;
-    }
-
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -104,10 +97,6 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
 
     public long getSrcOooLo() {
         return srcOooLo;
-    }
-
-    public long getSrcOooMax() {
-        return srcOooMax;
     }
 
     public long getTableCeilOfMaxTimestamp() {
@@ -142,8 +131,6 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
             ObjList<ContiguousVirtualMemory> oooColumns,
             long srcOooLo,
             long srcOooHi,
-            long srcOooMax,
-            long oooTimestampMin,
             long oooTimestampMax,
             long oooTimestampHi,
             long txn,
@@ -160,8 +147,6 @@ public class OutOfOrderPartitionTask extends AbstractLockable {
         this.txn = txn;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
-        this.srcOooMax = srcOooMax;
-        this.oooTimestampMin = oooTimestampMin;
         this.oooTimestampMax = oooTimestampMax;
         this.oooTimestampHi = oooTimestampHi;
         this.lastPartitionSize = lastPartitionSize;

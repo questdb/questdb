@@ -87,6 +87,14 @@ public class WorkerPool {
         cleaners.getQuick(worker).add(cleaner);
     }
 
+    public void assignCleaner(Closeable cleaner) {
+        assert !running.get();
+
+        for (int i = 0; i < workerCount; i++) {
+            cleaners.getQuick(i).add(cleaner);
+        }
+    }
+
     public int getWorkerCount() {
         return workerCount;
     }

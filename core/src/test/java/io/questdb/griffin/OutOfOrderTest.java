@@ -1991,8 +1991,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             }
         }
 
-        System.out.println(sink);
-
         URL url = OutOfOrderTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
         TestUtils.assertEquals(new File(url.toURI()), sink);

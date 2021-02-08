@@ -38,8 +38,7 @@ import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.TableUtils.dFile;
-import static io.questdb.cairo.TableUtils.readPartitionSize;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderPartitionTask> {
@@ -79,8 +78,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             ObjList<ContiguousVirtualMemory> oooColumns,
             long srcOooLo,
             long srcOooHi,
-            long srcOooMax,
-            long oooTimestampMin, long oooTimestampMax, long oooTimestampHi, long txn,
+            long oooTimestampMax, long oooTimestampHi, long txn,
             long sortedTimestampsAddr,
             long lastPartitionSize,
             long tableCeilOfMaxTimestamp,
@@ -93,12 +91,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final Path path = Path.getThreadLocal(pathToTable);
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
         TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo);
-        // plen has to include partition directory name
-
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
         final int plen = path.length();
-        long timestampFd;
+        long srcTimestampFd;
         long dataTimestampLo;
         long dataTimestampHi;
         long srcDataMax;
@@ -115,7 +111,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
             // todo: handle errors
             LOG.debug().$("would create [path=").$(path.chopZ().put(Files.SEPARATOR).$()).$(']').$();
-            OutOfOrderUtils.createDirsOrFail(ff, path, configuration.getMkDirMode());
+            createDirsOrFail(ff, path, configuration.getMkDirMode());
 
             publishOpenColumnTasks(
                     configuration,
@@ -132,8 +128,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     pathToTable,
                     srcOooLo,
                     srcOooHi,
-                    srcOooMax,
-                    oooTimestampMin,
                     oooTimestampLo,
                     oooTimestampHi,
                     // below parameters are unused by this type of append
@@ -150,9 +144,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     0,
                     0,
                     0,
-                    tableFloorOfMaxTimestamp,
                     5, //oooOpenNewPartitionForAppend
                     -1,  // timestamp fd
+                    0,
+                    0,
                     timestampIndex,
                     sortedTimestampsAddr,
                     tableWriter,
@@ -161,15 +156,15 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         } else {
 
             // out of order is hitting existing partition
-            final long timestampColumnAddr;
-            final long timestampColumnSize;
+            final long srcTimestampAddr;
+            final long srcTimestampSize;
             if (oooTimestampHi == tableCeilOfMaxTimestamp) {
                 dataTimestampHi = tableMaxTimestamp;
                 srcDataMax = lastPartitionSize;
-                timestampColumnSize = srcDataMax * 8L;
+                srcTimestampSize = srcDataMax * 8L;
                 // negative fd indicates descriptor reuse
-                timestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-                timestampColumnAddr = oooMapTimestampRO(ff, -timestampFd, timestampColumnSize);
+                srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
+                srcTimestampAddr = mapRO(ff, -srcTimestampFd, srcTimestampSize);
             } else {
                 long tempMem8b = Unsafe.malloc(Long.BYTES);
                 try {
@@ -177,7 +172,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 } finally {
                     Unsafe.free(tempMem8b, Long.BYTES);
                 }
-                timestampColumnSize = srcDataMax * 8L;
+                srcTimestampSize = srcDataMax * 8L;
                 // out of order data is going into archive partition
                 // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                 // and "high" being newest
@@ -185,14 +180,14 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
 
                 // also track the fd that we need to eventually close
-                timestampFd = ff.openRW(path);
-                if (timestampFd == -1) {
+                srcTimestampFd = ff.openRW(path);
+                if (srcTimestampFd == -1) {
                     throw CairoException.instance(ff.errno()).put("could not open `").put(pathToTable).put('`');
                 }
-                timestampColumnAddr = oooMapTimestampRO(ff, timestampFd, timestampColumnSize);
-                dataTimestampHi = Unsafe.getUnsafe().getLong(timestampColumnAddr + timestampColumnSize - Long.BYTES);
+                srcTimestampAddr = mapRO(ff, srcTimestampFd, srcTimestampSize);
+                dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
             }
-            dataTimestampLo = Unsafe.getUnsafe().getLong(timestampColumnAddr);
+            dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);
 
 
             // create copy jobs
@@ -217,222 +212,218 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixLo = -1;
             long suffixHi = -1;
 
-            try {
-                if (oooTimestampLo < dataTimestampLo) {
+            if (oooTimestampLo < dataTimestampLo) {
+
+                prefixType = OO_BLOCK_OO;
+                prefixLo = srcOooLo;
+                if (dataTimestampLo < oooTimestampMax) {
+
+                    //            +-----+
+                    //            | OOO |
+                    //
+                    //  +------+
+                    //  | data |
+
+                    mergeDataLo = 0;
+                    prefixHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampLo, srcOooLo, srcOooHi, BinarySearch.SCAN_DOWN);
+                    mergeOOOLo = prefixHi + 1;
+                } else {
+                    //            +-----+
+                    //            | OOO |
+                    //            +-----+
+                    //
+                    //  +------+
+                    //  | data |
+                    //
+                    prefixHi = srcOooHi;
+                }
+
+                if (oooTimestampMax >= dataTimestampLo) {
+
+                    //
+                    //  +------+  | OOO |
+                    //  | data |  +-----+
+                    //  |      |
+
+                    if (oooTimestampMax < dataTimestampHi) {
+
+                        // |      | |     |
+                        // |      | | OOO |
+                        // | data | +-----+
+                        // |      |
+                        // +------+
+
+                        mergeType = OO_BLOCK_MERGE;
+                        mergeOOOHi = srcOooHi;
+                        mergeDataHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampMax, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+
+                        suffixLo = mergeDataHi + 1;
+                        suffixType = OO_BLOCK_DATA;
+                        suffixHi = srcDataMax - 1;
+
+                    } else if (oooTimestampMax > dataTimestampHi) {
+
+                        // |      | |     |
+                        // |      | | OOO |
+                        // | data | |     |
+                        // +------+ |     |
+                        //          +-----+
+
+                        mergeDataHi = srcDataMax - 1;
+                        mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi - 1, mergeOOOLo, srcOooHi, BinarySearch.SCAN_DOWN) + 1;
+
+                        if (mergeOOOLo < mergeOOOHi) {
+                            mergeType = OO_BLOCK_MERGE;
+                        } else {
+                            mergeType = OO_BLOCK_DATA;
+                            mergeOOOHi--;
+                        }
+
+                        if (mergeOOOHi < srcOooHi) {
+                            suffixLo = mergeOOOHi + 1;
+                            suffixType = OO_BLOCK_OO;
+                            suffixHi = Math.max(suffixLo, srcOooHi);
+                        } else {
+                            suffixType = OO_BLOCK_NONE;
+                        }
+                    } else {
+
+                        // |      | |     |
+                        // |      | | OOO |
+                        // | data | |     |
+                        // +------+ +-----+
+
+                        mergeType = OO_BLOCK_MERGE;
+                        mergeOOOHi = srcOooHi;
+                        mergeDataHi = srcDataMax - 1;
+                    }
+                } else {
+
+                    //            +-----+
+                    //            | OOO |
+                    //            +-----+
+                    //
+                    //  +------+
+                    //  | data |
+
+                    suffixType = OO_BLOCK_DATA;
+                    suffixLo = 0;
+                    suffixHi = srcDataMax - 1;
+                }
+            } else {
+                if (oooTimestampLo <= dataTimestampLo) {
+                    //            +-----+
+                    //            | OOO |
+                    //            +-----+
+                    //
+                    //  +------+
+                    //  | data |
+                    //
 
                     prefixType = OO_BLOCK_OO;
                     prefixLo = srcOooLo;
-                    if (dataTimestampLo < oooTimestampMax) {
+                    prefixHi = srcOooHi;
 
-                        //            +-----+
-                        //            | OOO |
-                        //
-                        //  +------+
-                        //  | data |
+                    suffixType = OO_BLOCK_DATA;
+                    suffixLo = 0;
+                    suffixHi = srcDataMax - 1;
+                } else {
+                    //   +------+                +------+  +-----+
+                    //   | data |  +-----+       | data |  |     |
+                    //   |      |  | OOO |  OR   |      |  | OOO |
+                    //   |      |  |     |       |      |  |     |
 
-                        mergeDataLo = 0;
-                        prefixHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampLo, srcOooLo, srcOooHi, BinarySearch.SCAN_DOWN);
-                        mergeOOOLo = prefixHi + 1;
-                    } else {
-                        //            +-----+
-                        //            | OOO |
-                        //            +-----+
-                        //
-                        //  +------+
-                        //  | data |
-                        //
-                        prefixHi = srcOooHi;
-                    }
-
-                    if (oooTimestampMax >= dataTimestampLo) {
+                    if (oooTimestampLo <= dataTimestampHi) {
 
                         //
-                        //  +------+  | OOO |
-                        //  | data |  +-----+
-                        //  |      |
+                        // +------+
+                        // |      |
+                        // |      | +-----+
+                        // | data | | OOO |
+                        // +------+
+
+                        prefixType = OO_BLOCK_DATA;
+                        prefixLo = 0;
+                        prefixHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampLo, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                        mergeDataLo = prefixHi + 1;
+                        mergeOOOLo = srcOooLo;
 
                         if (oooTimestampMax < dataTimestampHi) {
 
-                            // |      | |     |
-                            // |      | | OOO |
-                            // | data | +-----+
-                            // |      |
-                            // +------+
-
-                            mergeType = OO_BLOCK_MERGE;
-                            mergeOOOHi = srcOooHi;
-                            mergeDataHi = Vect.binarySearch64Bit(timestampColumnAddr, oooTimestampMax, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
-
-                            suffixLo = mergeDataHi + 1;
-                            suffixType = OO_BLOCK_DATA;
-                            suffixHi = srcDataMax - 1;
-
-                        } else if (oooTimestampMax > dataTimestampHi) {
-
-                            // |      | |     |
-                            // |      | | OOO |
-                            // | data | |     |
-                            // +------+ |     |
-                            //          +-----+
-
-                            mergeDataHi = srcDataMax - 1;
-                            mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi - 1, mergeOOOLo, srcOooHi, BinarySearch.SCAN_DOWN) + 1;
-
-                            if (mergeOOOLo < mergeOOOHi) {
-                                mergeType = OO_BLOCK_MERGE;
-                            } else {
-                                mergeType = OO_BLOCK_DATA;
-                                mergeOOOHi--;
-                            }
-
-                            if (mergeOOOHi < srcOooHi) {
-                                suffixLo = mergeOOOHi + 1;
-                                suffixType = OO_BLOCK_OO;
-                                suffixHi = Math.max(suffixLo, srcOooHi);
-                            } else {
-                                suffixType = OO_BLOCK_NONE;
-                            }
-                        } else {
-
-                            // |      | |     |
-                            // |      | | OOO |
-                            // | data | |     |
-                            // +------+ +-----+
-
-                            mergeType = OO_BLOCK_MERGE;
-                            mergeOOOHi = srcOooHi;
-                            mergeDataHi = srcDataMax - 1;
-                        }
-                    } else {
-
-                        //            +-----+
-                        //            | OOO |
-                        //            +-----+
-                        //
-                        //  +------+
-                        //  | data |
-
-                        suffixType = OO_BLOCK_DATA;
-                        suffixLo = 0;
-                        suffixHi = srcDataMax - 1;
-                    }
-                } else {
-                    if (oooTimestampLo <= dataTimestampLo) {
-                        //            +-----+
-                        //            | OOO |
-                        //            +-----+
-                        //
-                        //  +------+
-                        //  | data |
-                        //
-
-                        prefixType = OO_BLOCK_OO;
-                        prefixLo = srcOooLo;
-                        prefixHi = srcOooHi;
-
-                        suffixType = OO_BLOCK_DATA;
-                        suffixLo = 0;
-                        suffixHi = srcDataMax - 1;
-                    } else {
-                        //   +------+                +------+  +-----+
-                        //   | data |  +-----+       | data |  |     |
-                        //   |      |  | OOO |  OR   |      |  | OOO |
-                        //   |      |  |     |       |      |  |     |
-
-                        if (oooTimestampLo <= dataTimestampHi) {
-
                             //
-                            // +------+
-                            // |      |
                             // |      | +-----+
                             // | data | | OOO |
+                            // |      | +-----+
                             // +------+
 
-                            prefixType = OO_BLOCK_DATA;
-                            prefixLo = 0;
-                            prefixHi = Vect.binarySearch64Bit(timestampColumnAddr, oooTimestampLo, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
-                            mergeDataLo = prefixHi + 1;
-                            mergeOOOLo = srcOooLo;
+                            mergeOOOHi = srcOooHi;
+                            mergeDataHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampMax - 1, mergeDataLo, srcDataMax - 1, BinarySearch.SCAN_DOWN) + 1;
 
-                            if (oooTimestampMax < dataTimestampHi) {
-
-                                //
-                                // |      | +-----+
-                                // | data | | OOO |
-                                // |      | +-----+
-                                // +------+
-
-                                mergeOOOHi = srcOooHi;
-                                mergeDataHi = Vect.binarySearch64Bit(timestampColumnAddr, oooTimestampMax - 1, mergeDataLo, srcDataMax - 1, BinarySearch.SCAN_DOWN) + 1;
-
-                                if (mergeDataLo < mergeDataHi) {
-                                    mergeType = OO_BLOCK_MERGE;
-                                } else {
-                                    // the OO data implodes right between rows of existing data
-                                    // so we will have both data prefix and suffix and the middle bit
-
-                                    // is the out of order
-                                    mergeType = OO_BLOCK_OO;
-                                    mergeDataHi--;
-                                }
-
-                                suffixType = OO_BLOCK_DATA;
-                                suffixLo = mergeDataHi + 1;
-                                suffixHi = srcDataMax - 1;
-                            } else if (oooTimestampMax > dataTimestampHi) {
-
-                                //
-                                // |      | +-----+
-                                // | data | | OOO |
-                                // |      | |     |
-                                // +------+ |     |
-                                //          |     |
-                                //          +-----+
-
-                                mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi, srcOooLo, srcOooHi, BinarySearch.SCAN_UP);
-                                mergeDataHi = srcDataMax - 1;
-
+                            if (mergeDataLo < mergeDataHi) {
                                 mergeType = OO_BLOCK_MERGE;
-                                suffixType = OO_BLOCK_OO;
-                                suffixLo = mergeOOOHi + 1;
-                                suffixHi = srcOooHi;
                             } else {
+                                // the OO data implodes right between rows of existing data
+                                // so we will have both data prefix and suffix and the middle bit
 
-                                //
-                                // |      | +-----+
-                                // | data | | OOO |
-                                // |      | |     |
-                                // +------+ +-----+
-                                //
-
-                                mergeType = OO_BLOCK_MERGE;
-                                mergeOOOHi = srcOooHi;
-                                mergeDataHi = srcDataMax - 1;
+                                // is the out of order
+                                mergeType = OO_BLOCK_OO;
+                                mergeDataHi--;
                             }
+
+                            suffixType = OO_BLOCK_DATA;
+                            suffixLo = mergeDataHi + 1;
+                            suffixHi = srcDataMax - 1;
+                        } else if (oooTimestampMax > dataTimestampHi) {
+
+                            //
+                            // |      | +-----+
+                            // | data | | OOO |
+                            // |      | |     |
+                            // +------+ |     |
+                            //          |     |
+                            //          +-----+
+
+                            mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi, srcOooLo, srcOooHi, BinarySearch.SCAN_UP);
+                            mergeDataHi = srcDataMax - 1;
+
+                            mergeType = OO_BLOCK_MERGE;
+                            suffixType = OO_BLOCK_OO;
+                            suffixLo = mergeOOOHi + 1;
+                            suffixHi = srcOooHi;
                         } else {
 
-                            // +------+
-                            // | data |
-                            // |      |
-                            // +------+
                             //
-                            //           +-----+
-                            //           | OOO |
-                            //           |     |
+                            // |      | +-----+
+                            // | data | | OOO |
+                            // |      | |     |
+                            // +------+ +-----+
                             //
-                            suffixType = OO_BLOCK_OO;
-                            suffixLo = srcOooLo;
-                            suffixHi = srcOooHi;
+
+                            mergeType = OO_BLOCK_MERGE;
+                            mergeOOOHi = srcOooHi;
+                            mergeDataHi = srcDataMax - 1;
                         }
+                    } else {
+
+                        // +------+
+                        // | data |
+                        // |      |
+                        // +------+
+                        //
+                        //           +-----+
+                        //           | OOO |
+                        //           |     |
+                        //
+                        suffixType = OO_BLOCK_OO;
+                        suffixLo = srcOooLo;
+                        suffixHi = srcOooHi;
                     }
                 }
-            } finally {
-                ff.munmap(timestampColumnAddr, timestampColumnSize);
             }
 
             path.trimTo(plen);
             final int openColumnMode;
-            if (prefixType == OO_BLOCK_NONE && mergeType == OO_BLOCK_NONE) {
+            if (prefixType == OO_BLOCK_NONE) {
                 // We do not need to create a copy of partition when we simply need to append
                 // existing the one.
                 if (oooTimestampHi < tableFloorOfMaxTimestamp) {
@@ -441,10 +432,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     openColumnMode = 2; // oooOpenLastPartitionForAppend
                 }
             } else {
-                OutOfOrderUtils.appendTxnToPath(path.trimTo(plen), txn);
+                appendTxnToPath(path.trimTo(plen), txn);
                 // todo: handle errors
-                OutOfOrderUtils.createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
-                if (timestampFd > -1) {
+                createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
+                if (srcTimestampFd > -1) {
                     openColumnMode = 3; // oooOpenMidPartitionForMerge
                 } else {
                     openColumnMode = 4; // oooOpenLastPartitionForMerge
@@ -466,8 +457,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     pathToTable,
                     srcOooLo,
                     srcOooHi,
-                    srcOooMax,
-                    oooTimestampMin,
                     oooTimestampLo,
                     oooTimestampHi,
                     prefixType,
@@ -483,29 +472,16 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     suffixHi,
                     srcDataMax,
                     dataTimestampHi,
-                    tableFloorOfMaxTimestamp,
                     openColumnMode,
-                    timestampFd,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
                     timestampIndex,
                     sortedTimestampsAddr,
                     tableWriter,
                     doneLatch
             );
         }
-    }
-
-    private static long oooMapTimestampRO(FilesFacade ff, long fd, long size) {
-        final long address = ff.mmap(fd, size, 0, Files.MAP_RO);
-        if (address == FilesFacade.MAP_FAILED) {
-            throw CairoException.instance(ff.errno())
-                    .put("Could not mmap timestamp column ")
-                    .put(" [size=").put(size)
-                    .put(", fd=").put(fd)
-                    .put(", memUsed=").put(Unsafe.getMemUsed())
-                    .put(", fileLen=").put(ff.length(fd))
-                    .put(']');
-        }
-        return address;
     }
 
     private static long oooCreateMergeIndex(
@@ -549,13 +525,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
-            long srcOooMax,
-            long oooTimestampMin,
             long oooTimestampLo,
             long oooTimestampHi,
             long srcDataMax,
             long dataTimestampHi,
-            long tableFloorOfMaxTimestamp,
             long txn,
             int prefixType,
             long prefixLo,
@@ -569,7 +542,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixLo,
             long suffixHi,
             boolean isIndexed,
-            long timestampFd,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
             AppendMemory srcDataFixMemory,
             AppendMemory srcDataVarMemory,
             TableWriter tableWriter,
@@ -590,13 +565,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
-                srcOooMax,
-                oooTimestampMin,
                 oooTimestampLo,
                 oooTimestampHi,
                 srcDataMax,
                 dataTimestampHi,
-                tableFloorOfMaxTimestamp,
                 txn,
                 prefixType,
                 prefixLo,
@@ -609,7 +581,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 suffixType,
                 suffixLo,
                 suffixHi,
-                timestampFd,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
                 isIndexed,
                 srcDataFixMemory,
                 srcDataVarMemory,
@@ -634,8 +608,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             CharSequence pathToTable,
             long srcOooLo,
             long srcOooHi,
-            long srcOooMax,
-            long oooTimestampMin,
             long oooTimestampLo,
             long oooTimestampHi,
             int prefixType,
@@ -651,9 +623,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long suffixHi,
             long srcDataMax,
             long dataTimestampHi,
-            long tableFloorOfMaxTimestamp,
             int openColumnMode,
-            long timestampFd,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
             int timestampIndex,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
@@ -664,7 +637,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final long timestampMergeIndexAddr;
         if (mergeType == OO_BLOCK_MERGE) {
             timestampMergeIndexAddr = oooCreateMergeIndex(
-                    columns.getQuick(TableWriter.getPrimaryColumnIndex(timestampIndex)).addressOf(0),
+                    srcTimestampAddr,
                     sortedTimestampsAddr,
                     mergeDataLo,
                     mergeDataHi,
@@ -732,13 +705,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
                         oooTimestampLo,
                         oooTimestampHi,
                         srcDataMax,
                         dataTimestampHi,
-                        tableFloorOfMaxTimestamp,
                         txn,
                         prefixType,
                         prefixLo,
@@ -752,7 +722,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         suffixLo,
                         suffixHi,
                         isIndexed,
-                        timestampFd,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
                         srcDataFixMemory,
                         srcDataVarMemory,
                         tableWriter,
@@ -781,12 +753,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
                         oooTimestampLo,
                         oooTimestampHi,
                         dataTimestampHi,
-                        tableFloorOfMaxTimestamp,
                         srcDataMax,
                         txn,
                         prefixType,
@@ -800,7 +769,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         suffixType,
                         suffixLo,
                         suffixHi,
-                        timestampFd,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
                         isIndexed,
                         srcDataFixMemory,
                         srcDataVarMemory,
@@ -833,12 +804,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
-            long srcOooMax,
-            long oooTimestampMin,
             long oooTimestampLo,
             long oooTimestampHi,
             long dataTimestampHi,
-            long tableFloorOfMaxTimestamp,
             long srcDataMax,
             long txn,
             int prefixType,
@@ -852,7 +820,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             int suffixType,
             long suffixLo,
             long suffixHi,
-            long timestampFd,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
             boolean isIndexed,
             AppendMemory srcDataFixMemory,
             AppendMemory srcDataVarMemory,
@@ -881,13 +851,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcOooVarSize,
                     srcOooLo,
                     srcOooHi,
-                    srcOooMax,
-                    oooTimestampMin,
                     oooTimestampLo,
                     oooTimestampHi,
                     srcDataMax,
                     dataTimestampHi,
-                    tableFloorOfMaxTimestamp,
                     txn,
                     prefixType,
                     prefixLo,
@@ -901,7 +868,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     suffixLo,
                     suffixHi,
                     isIndexed,
-                    timestampFd,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
                     srcDataFixMemory,
                     srcDataVarMemory,
                     tableWriter,
@@ -927,13 +896,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcOooVarSize,
                     srcOooLo,
                     srcOooHi,
-                    srcOooMax,
-                    oooTimestampMin,
                     oooTimestampLo,
                     oooTimestampHi,
                     srcDataMax,
                     dataTimestampHi,
-                    tableFloorOfMaxTimestamp,
                     txn,
                     prefixType,
                     prefixLo,
@@ -946,7 +912,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     suffixType,
                     suffixLo,
                     suffixHi,
-                    timestampFd,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
                     isIndexed,
                     srcDataFixMemory,
                     srcDataVarMemory,
@@ -958,18 +926,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        OutOfOrderPartitionTask task = queue.get(cursor);
-        // copy task on stack so that publisher has fighting chance of
-        // publishing all it has to the queue
-
-//        final boolean locked = task.tryLock();
-//        if (locked) {
-        processPartition(task, cursor, subSeq);
-//        } else {
-//            System.out.println("foooooooooooooooooooooooooooooooooooooooooooooooooooooook");
-//            subSeq.done(cursor);
-//        }
-
+        processPartition(queue.get(cursor), cursor, subSeq);
         return true;
     }
 
@@ -984,8 +941,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final ObjList<ContiguousVirtualMemory> oooColumns = task.getOooColumns();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
-        final long srcOooMax = task.getSrcOooMax();
-        final long oooTimestampMin = task.getOooTimestampMin();
         final long oooTimestampMax = task.getOooTimestampMax();
         final long oooTimestampHi = task.getOooTimestampHi();
         final long txn = task.getTxn();
@@ -1015,8 +970,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 oooColumns,
                 srcOooLo,
                 srcOooHi,
-                srcOooMax,
-                oooTimestampMin,
                 oooTimestampMax,
                 oooTimestampHi,
                 txn,

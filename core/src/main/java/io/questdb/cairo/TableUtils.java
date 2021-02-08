@@ -108,6 +108,10 @@ public final class TableUtils {
     private TableUtils() {
     }
 
+    public static void appendTxnToPath(Path path, long txn) {
+        path.put("-n-").put(txn);
+    }
+
     public static void createTable(
             FilesFacade ff,
             AppendMemory memory,
@@ -645,6 +649,59 @@ public final class TableUtils {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+        if (ff.mkdirs(path, mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+        }
+    }
+
+    static long getVarColumnLength(
+            long srcLo,
+            long srcHi,
+            long srcFixAddr,
+            long srcFixSize,
+            long srcVarSize
+    ) {
+        final long lo = findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
+        final long hi;
+        if (srcHi + 1 == srcFixSize / Long.BYTES) {
+            hi = srcVarSize;
+        } else {
+            hi = findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
+        }
+        return hi - lo;
+    }
+
+    static long findVarOffset(long srcFixAddr, long srcLo, long srcHi, long srcVarSize) {
+        long lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+        if (lo > -1) {
+            return lo;
+        }
+
+        while (++srcLo < srcHi) {
+            lo = Unsafe.getUnsafe().getLong(srcFixAddr + srcLo * Long.BYTES);
+            if (lo > -1) {
+                return lo;
+            }
+        }
+
+        return srcVarSize;
+    }
+
+    static long mapRO(FilesFacade ff, long fd, long size) {
+        final long address = ff.mmap(fd, size, 0, Files.MAP_RO);
+        if (address == FilesFacade.MAP_FAILED) {
+            throw CairoException.instance(ff.errno())
+                    .put("Could not mmap timestamp column ")
+                    .put(" [size=").put(size)
+                    .put(", fd=").put(fd)
+                    .put(", memUsed=").put(Unsafe.getMemUsed())
+                    .put(", fileLen=").put(ff.length(fd))
+                    .put(']');
+        }
+        return address;
     }
 
     static {

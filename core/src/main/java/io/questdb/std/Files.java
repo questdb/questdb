@@ -110,26 +110,27 @@ public final class Files {
     }
 
     public static int mkdirs(LPSZ path, int mode) {
-        Path pp = Path.getThreadLocal2("");
-        for (int i = 0, n = path.length(); i < n; i++) {
-            char c = path.charAt(i);
-            if (c == File.separatorChar) {
+        try (Path pp = new Path()) {
+            for (int i = 0, n = path.length(); i < n; i++) {
+                char c = path.charAt(i);
+                if (c == File.separatorChar) {
 
-                if (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':') {
-                    pp.put(c);
-                    continue;
-                }
-
-                pp.$();
-                if (pp.length() > 0 && !Files.exists(pp)) {
-                    int r = Files.mkdir(pp, mode);
-                    if (r != 0) {
-                        return r;
+                    if (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':') {
+                        pp.put(c);
+                        continue;
                     }
+
+                    pp.$();
+                    if (pp.length() > 0 && !Files.exists(pp)) {
+                        int r = Files.mkdir(pp, mode);
+                        if (r != 0) {
+                            return r;
+                        }
+                    }
+                    pp.chopZ();
                 }
-                pp.chopZ();
+                pp.put(c);
             }
-            pp.put(c);
         }
         return 0;
     }

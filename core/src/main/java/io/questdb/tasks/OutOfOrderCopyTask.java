@@ -49,7 +49,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcDataHi;
     private long srcDataMax;
     private long dataTimestampHi;
-    private long tableFloorOfMaxTimestamp;
     private long srcOooFixAddr;
     private long srcOooFixSize;
     private long srcOooVarAddr;
@@ -58,8 +57,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcOooHi;
     private long srcOooPartitionLo;
     private long srcOooPartitionHi;
-    private long srcOooMax;
-    private long oooTimestampMin;
     private long oooTimestampHi;
     private long dstFixFd;
     private long dstFixAddr;
@@ -73,7 +70,9 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long dstVFd;
     private long dstIndexOffset;
     private boolean isIndexed;
-    private long timestampFd;
+    private long srcTimestampFd;
+    private long srcTimestampAddr;
+    private long srcTimestampSize;
     private boolean partitionMutates;
     private TableWriter tableWriter;
     private SOUnboundedCountDownLatch doneLatch;
@@ -150,10 +149,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return oooTimestampHi;
     }
 
-    public long getOooTimestampMin() {
-        return oooTimestampMin;
-    }
-
     public AtomicInteger getPartCounter() {
         return partCounter;
     }
@@ -214,10 +209,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return srcOooLo;
     }
 
-    public long getSrcOooMax() {
-        return srcOooMax;
-    }
-
     public long getSrcOooPartitionHi() {
         return srcOooPartitionHi;
     }
@@ -234,16 +225,20 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return srcOooVarSize;
     }
 
-    public long getTableFloorOfMaxTimestamp() {
-        return tableFloorOfMaxTimestamp;
+    public long getSrcTimestampAddr() {
+        return srcTimestampAddr;
+    }
+
+    public long getSrcTimestampFd() {
+        return srcTimestampFd;
+    }
+
+    public long getSrcTimestampSize() {
+        return srcTimestampSize;
     }
 
     public TableWriter getTableWriter() {
         return tableWriter;
-    }
-
-    public long getTimestampFd() {
-        return timestampFd;
     }
 
     public long getTimestampMergeIndexAddr() {
@@ -276,7 +271,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcDataHi,
             long srcDataMax,
             long dataTimestampHi,
-            long tableFloorOfMaxTimestamp,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -285,8 +279,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcOooHi,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long srcOooMax,
-            long oooTimestampMin,
             long oooTimestampHi,
             long dstFixFd,
             long dstFixAddr,
@@ -300,7 +292,9 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long dstVFd,
             long dstIndexOffset,
             boolean isIndexed,
-            long timestampFd,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -322,7 +316,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcDataHi = srcDataHi;
         this.srcDataMax = srcDataMax;
         this.dataTimestampHi = dataTimestampHi;
-        this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.srcOooFixAddr = srcOooFixAddr;
         this.srcOooFixSize = srcOooFixSize;
         this.srcOooVarAddr = srcOooVarAddr;
@@ -331,8 +324,6 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcOooHi = srcOooHi;
         this.srcOooPartitionLo = srcOooPartitionLo;
         this.srcOooPartitionHi = srcOooPartitionHi;
-        this.srcOooMax = srcOooMax;
-        this.oooTimestampMin = oooTimestampMin;
         this.oooTimestampHi = oooTimestampHi;
         this.dstFixFd = dstFixFd;
         this.dstFixAddr = dstFixAddr;
@@ -346,7 +337,9 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.dstVFd = dstVFd;
         this.dstIndexOffset = dstIndexOffset;
         this.isIndexed = isIndexed;
-        this.timestampFd = timestampFd;
+        this.srcTimestampFd = srcTimestampFd;
+        this.srcTimestampAddr = srcTimestampAddr;
+        this.srcTimestampSize = srcTimestampSize;
         this.partitionMutates = partitionMutates;
         this.tableWriter = tableWriter;
         this.doneLatch = doneLatch;

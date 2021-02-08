@@ -75,7 +75,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataHi,
             long srcDataMax,
             long dataTimestampHi,
-            long tableFloorOfMaxTimestamp,
             long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
@@ -84,8 +83,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooHi,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long srcOooMax,
-            long oooTimestampMin,
             long oooTimestampHi,
             long dstFixFd,
             long dstFixAddr,
@@ -99,7 +96,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long dstVFd,
             long dstIndexOffset,
             boolean isIndexed,
-            long timestampFd,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
@@ -117,8 +116,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcOooVarAddr,
                         srcOooLo,
                         srcOooHi,
-                        dstFixAddr,
-                        dstFixOffset,
+                        dstFixAddr + dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
@@ -132,8 +130,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
-                        dstFixAddr,
-                        dstFixOffset,
+                        dstFixAddr + dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
@@ -147,8 +144,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcDataVarSize,
                         srcDataLo,
                         srcDataHi,
-                        dstFixAddr,
-                        dstFixOffset,
+                        dstFixAddr + dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
@@ -179,14 +175,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         pathToTable,
                         srcOooPartitionLo,
                         srcOooPartitionHi,
-                        srcOooMax,
-                        oooTimestampMin,
                         oooTimestampHi,
                         srcDataMax,
-                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
-                        timestampMergeIndexAddr,
-                        timestampFd,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
                         partitionMutates,
                         tableWriter
                 );
@@ -206,20 +200,18 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             CharSequence pathToTable,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
-            long srcOooMax,
-            long oooTimestampMin, // absolute minimum of OOO timestamp
             long oooTimestampHi, // local (partition bound) maximum of OOO timestamp
             long srcDataMax,
-            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
-            long mergeIndexAddr,
-            long timestampFd,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter
     ) {
         if (partitionMutates) {
-            if (timestampFd < 0) {
-                // timestampFd negative indicates that we are reusing existing file descriptor
+            if (srcTimestampFd < 0) {
+                // srcTimestampFd negative indicates that we are reusing existing file descriptor
                 // as opposed to opening file by name. This also indicated that "this" partition
                 // is, or used to be, active for the writer. So we have to close existing files so thatT
                 // rename on Windows does not fall flat.
@@ -227,7 +219,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             } else {
                 // this timestamp column was opened by file name
                 // so we can close it as not needed (and to enable table rename on Windows)
-                ff.close(timestampFd);
+                ff.close(srcTimestampFd);
             }
 
             final Path path = Path.getThreadLocal(pathToTable);
@@ -238,7 +230,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             final Path other = Path.getThreadLocal2(path).put("x-").put(tableWriter.getTxn()).$();
             boolean renamed;
             if (renamed = ff.rename(path, other)) {
-                OutOfOrderUtils.appendTxnToPath(other.trimTo(plen), tableWriter.getTxn());
+                TableUtils.appendTxnToPath(other.trimTo(plen), tableWriter.getTxn());
                 renamed = ff.rename(other.$(), path);
             }
 
@@ -247,30 +239,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         .put("could not rename [from=").put(other)
                         .put(", to=").put(path).put(']');
             }
-            LOG.info().$("will rename").$();
+        } else if (srcTimestampFd > 0) {
+            ff.close(srcTimestampFd);
+        }
 
-/*
-            // rename after we closed all FDs associated with source partition
-            path.trimTo(plen).$();
-            other.of(path).put("x-").put(txn).$();
-            if (ff.rename(path, other)) {
-                appendTxnToPath(other.trimTo(plen));
-                if (!ff.rename(other.$(), path)) {
-                    throw CairoException.instance(ff.errno())
-                            .put("could not rename [from=").put(other)
-                            .put(", to=").put(path).put(']');
-                }
-            } else {
-                // todo: we could not move old partition, which means
-                //    we have to rollback all partitions that we moved in this
-                //    transaction
-                throw CairoException.instance(ff.errno())
-                        .put("could not rename [from=").put(path)
-                        .put(", to=").put(other).put(']');
-            }
-*/
-        } else if (timestampFd > 0) {
-            ff.close(timestampFd);
+        if (srcTimestampAddr != 0) {
+            ff.munmap(srcTimestampAddr, srcTimestampSize);
         }
 
         final long cursor = updPartitionPubSeq.nextBully();
@@ -283,82 +257,21 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 dataTimestampHi
         );
         updPartitionPubSeq.done(cursor);
-
-        final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
-        if (srcOooPartitionHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
-/*
-
-            this.fixedRowCount += partitionSize;
-            if (oooTimestampHi < tableFloorOfMaxTimestamp) {
-                this.fixedRowCount -= srcDataMax;
-            }
-
-            // We just updated non-last partition. It is possible that this partition
-            // has already been updated by transaction or out of order logic was the only
-            // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
-            // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
-            // (it has been incremented before out-of-order logic kicked in) and
-            // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
-
-            boolean missing = true;
-            long x = this.txPendingPartitionSizes.getAppendOffset() / 16;
-            for (long l = 0; l < x; l++) {
-                long ts = this.txPendingPartitionSizes.getLong(l * 16 + Long.BYTES);
-                if (ts == oooTimestampHi) {
-                    this.fixedRowCount -= this.txPendingPartitionSizes.getLong(l * 16);
-                    this.txPendingPartitionSizes.putLong(l * 16, partitionSize);
-                    missing = false;
-                    break;
-                }
-            }
-
-            if (missing) {
-                this.txPartitionCount++;
-                this.txPendingPartitionSizes.putLong128(partitionSize, oooTimestampHi);
-            }
-*/
-
-            if (srcOooPartitionHi + 1 >= srcOooMax) {
-                LOG.info().$("strange one").$();
-/*
-                // no more out of order data and we just pre-pended data to existing
-                // partitions
-                this.minTimestamp = oooTimestampMin;
-                // when we exit here we need to rollback transientRowCount we've been incrementing
-                // while adding out-of-order data
-                this.transientRowCount = this.transientRowCountBeforeOutOfOrder;
-*/
-//                tableWriter.updateActivePartitionDetails(
-//                        oooTimestampMin,
-//                        Math.max(dataTimestampHi, oooTimestampHi),
-//                        partitionSize
-//                );
-            }
-        } else {
-            // this was taking max between existing timestamp and ooo
-//            tableWriter.updateActivePartitionDetails(
-//                    oooTimestampMin,
-//                    Math.max(dataTimestampHi, oooTimestampHi),
-//                    partitionSize
-//            );
-        }
     }
 
     private static void copyFromTimestampIndex(
             long src,
             long srcLo,
             long srcHi,
-            long dstAddr,
-            long dstOffset
+            long dstAddr
     ) {
         final int shl = 4;
         final long lo = srcLo << shl;
         final long hi = (srcHi + 1) << shl;
         final long start = src + lo;
-        final long dest = dstAddr + dstOffset;
         final long len = hi - lo;
         for (long l = 0; l < len; l += 16) {
-            Unsafe.getUnsafe().putLong(dest + l / 2, Unsafe.getUnsafe().getLong(start + l));
+            Unsafe.getUnsafe().putLong(dstAddr + l / 2, Unsafe.getUnsafe().getLong(start + l));
         }
     }
 
@@ -371,7 +284,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcLo,
             long srcHi,
             long dstFixAddr,
-            long dstFixOffset,
             long dstVarAddr,
             long dstVarOffset
     ) {
@@ -386,7 +298,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcLo,
                         srcHi,
                         dstFixAddr,
-                        dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
@@ -397,34 +308,31 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcLo,
                         srcHi,
                         dstFixAddr,
-                        dstFixOffset,
                         ColumnType.pow2SizeOf(Math.abs(columnType))
                 );
                 break;
         }
     }
 
-    private static void oooCopyFixedSizeCol(long src, long srcLo, long srcHi, long dst, long dstOffset, final int shl) {
-        final long len = (srcHi - srcLo + 1) << shl;
-        if (len < 0) {
-            System.out.println("ok");
-        }
-        Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst + dstOffset, len);
+    private static void oooCopyFixedSizeCol(long src, long srcLo, long srcHi, long dst, final int shl) {
+        Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst, (srcHi - srcLo + 1) << shl);
     }
 
-    private static void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr, long dstOffset) {
-        final long dst = dstAddr + dstOffset;
+    private static void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr) {
         for (long l = 0; l < mergeIndexSize; l++) {
-            Unsafe.getUnsafe().putLong(dst + l * Long.BYTES, getTimestampIndexValue(mergeIndexAddr, l));
+            Unsafe.getUnsafe().putLong(dstAddr + l * Long.BYTES, getTimestampIndexValue(mergeIndexAddr, l));
         }
     }
 
     private static void oooCopyOOO(
-            int columnType, long srcOooFixAddr,
+            int columnType,
+            long srcOooFixAddr,
             long srcOooFixSize,
             long srcOooVarAddr,
             long srcOooVarSize,
-            long srcOooLo, long srcOooHi, long dstFixAddr, long dstFixOffset,
+            long srcOooLo,
+            long srcOooHi,
+            long dstFixAddr,
             long dstVarAddr,
             long dstVarOffset
     ) {
@@ -442,32 +350,31 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcOooLo,
                         srcOooHi,
                         dstFixAddr,
-                        dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
                 break;
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset, 0);
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 0);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset, 1);
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 1);
                 break;
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset, 2);
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 2);
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.DOUBLE:
             case ColumnType.TIMESTAMP:
-                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset, 3);
+                oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
                 break;
             case -ColumnType.TIMESTAMP:
-                copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, dstFixOffset);
+                copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
                 break;
             default:
                 break;
@@ -482,26 +389,25 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcLo,
             long srcHi,
             long dstFixAddr,
-            long dstFixOffset,
             long dstVarAddr,
             long dstVarOffset
 
     ) {
-        final long lo = OutOfOrderUtils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
+        final long lo = TableUtils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
         final long hi;
         if (srcHi + 1 == srcFixSize / Long.BYTES) {
             hi = srcVarSize;
         } else {
-            hi = OutOfOrderUtils.findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
+            hi = TableUtils.findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
         }
         // copy this before it changes
         final long dest = dstVarAddr + dstVarOffset;
         final long len = hi - lo;
         Unsafe.getUnsafe().copyMemory(srcVarAddr + lo, dest, len);
         if (lo == dstVarOffset) {
-            oooCopyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, dstFixOffset, 3);
+            oooCopyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
         } else {
-            shiftCopyFixedSizeColumnData(lo - dstVarOffset, srcFixAddr, srcLo, srcHi, dstFixAddr, dstFixOffset);
+            shiftCopyFixedSizeColumnData(lo - dstVarOffset, srcFixAddr, srcLo, srcHi, dstFixAddr);
         }
     }
 
@@ -517,7 +423,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooLo,
             long srcOooHi,
             long dstFixAddr,
-            long dstFixOffset,
             long dstVarAddr,
             long dstVarOffset
     ) {
@@ -525,11 +430,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         switch (columnType) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.SHORT:
             case ColumnType.CHAR:
-                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.STRING:
                 oooMergeCopyStrColumn(
@@ -540,7 +445,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcOooFixAddr,
                         srcOooVarAddr,
                         dstFixAddr,
-                        dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
@@ -554,7 +458,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                         srcOooFixAddr,
                         srcOooVarAddr,
                         dstFixAddr,
-                        dstFixOffset,
                         dstVarAddr,
                         dstVarOffset
                 );
@@ -562,16 +465,16 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
-                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.DOUBLE:
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, mergeIndexAddr, rowCount);
+                Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case -ColumnType.TIMESTAMP:
-                oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr, dstFixOffset);
+                oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
                 break;
             default:
                 break;
@@ -586,13 +489,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooFixAddr,
             long srcOooVarAddr,
             long dstFixAddr,
-            long dstFixOffset,
             long dstVarAddr,
             long dstVarOffset
     ) {
         // destination of variable length data
         long destVarOffset = dstVarOffset;
-        final long dstFix = dstFixAddr + dstFixOffset;
 
         // reverse order
         // todo: cache?
@@ -605,7 +506,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             final int bit = (int) (row >>> 63);
             // row number is "row" with high bit removed
             final long rr = row & ~(1L << 63);
-            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, destVarOffset);
+            Unsafe.getUnsafe().putLong(dstFixAddr + l * Long.BYTES, destVarOffset);
             long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
             long addr = srcVar[bit] + offset;
             long len = Unsafe.getUnsafe().getLong(addr);
@@ -627,13 +528,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooFixAddr,
             long srcOooVarAddr,
             long dstFixAddr,
-            long dstFixOffset,
             long dstVarAddr,
             long dstVarOffset
     ) {
         // destination of variable length data
         long destVarOffset = dstVarOffset;
-        final long dstFix = dstFixAddr + dstFixOffset;
 
         // reverse order
         // todo: cache?
@@ -646,7 +545,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             final int bit = (int) (row >>> 63);
             // row number is "row" with high bit removed
             final long rr = row & ~(1L << 63);
-            Unsafe.getUnsafe().putLong(dstFix + l * Long.BYTES, destVarOffset);
+            Unsafe.getUnsafe().putLong(dstFixAddr + l * Long.BYTES, destVarOffset);
             long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
             long addr = srcVar[bit] + offset;
             int len = Unsafe.getUnsafe().getInt(addr);
@@ -662,17 +561,14 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long src,
             long srcLo,
             long srcHi,
-            long dstAddr,
-            long dstOffset
+            long dstAddr
     ) {
-        final int shl = ColumnType.pow2SizeOf(ColumnType.LONG);
-        final long lo = srcLo << shl;
-        final long hi = (srcHi + 1) << shl;
+        final long lo = srcLo * Long.BYTES;
+        final long hi = (srcHi + 1) * Long.BYTES;
         final long slo = src + lo;
-        final long dest = dstAddr + dstOffset;
         final long len = hi - lo;
         for (long o = 0; o < len; o += Long.BYTES) {
-            Unsafe.getUnsafe().putLong(dest + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
+            Unsafe.getUnsafe().putLong(dstAddr + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
         }
     }
 
@@ -724,7 +620,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcDataMax = task.getSrcDataMax();
         final long srcDataHi = task.getSrcDataHi();
         final long dataTimestampHi = task.getDataTimestampHi();
-        final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
         final long srcOooVarAddr = task.getSrcOooVarAddr();
@@ -733,8 +628,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooPartitionLo = task.getSrcOooPartitionLo();
         final long srcOooPartitionHi = task.getSrcOooPartitionHi();
-        final long srcOooMax = task.getSrcOooMax();
-        final long oooTimestampMin = task.getOooTimestampMin();
         final long oooTimestampHi = task.getOooTimestampHi();
         final long dstFixFd = task.getDstFixFd();
         final long dstFixAddr = task.getDstFixAddr();
@@ -748,7 +641,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long dskVFd = task.getDstVFd();
         final long dstIndexOffset = task.getDstIndexOffset();
         final boolean isIndexed = task.isIndexed();
-        final long timestampFd = task.getTimestampFd();
+        final long srcTimestampFd = task.getSrcTimestampFd();
+        final long srcTimestampAddr = task.getSrcTimestampAddr();
+        final long srcTimestampSize = task.getSrcTimestampSize();
         final boolean partitionMutates = task.isPartitionMutates();
         final TableWriter tableWriter = task.getTableWriter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
@@ -776,7 +671,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcDataHi,
                 srcDataMax,
                 dataTimestampHi,
-                tableFloorOfMaxTimestamp,
                 srcOooFixAddr,
                 srcOooFixSize,
                 srcOooVarAddr,
@@ -785,8 +679,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcOooHi,
                 srcOooPartitionLo,
                 srcOooPartitionHi,
-                srcOooMax,
-                oooTimestampMin,
                 oooTimestampHi,
                 dstFixFd,
                 dstFixAddr,
@@ -800,7 +692,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 dskVFd,
                 dstIndexOffset,
                 isIndexed,
-                timestampFd,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
                 partitionMutates,
                 tableWriter,
                 doneLatch
