@@ -38,6 +38,7 @@ import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.OutOfOrderOpenColumnJob.*;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
@@ -144,7 +145,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     0,
                     0,
                     0,
-                    5, //oooOpenNewPartitionForAppend
+                    OPEN_NEW_PARTITION_FOR_APPEND,
                     -1,  // timestamp fd
                     0,
                     0,
@@ -427,18 +428,17 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 // We do not need to create a copy of partition when we simply need to append
                 // existing the one.
                 if (oooTimestampHi < tableFloorOfMaxTimestamp) {
-                    openColumnMode = 1; // oooOpenMidPartitionForAppend
+                    openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
-                    openColumnMode = 2; // oooOpenLastPartitionForAppend
+                    openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
                 }
             } else {
                 appendTxnToPath(path.trimTo(plen), txn);
-                // todo: handle errors
                 createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
                 if (srcTimestampFd > -1) {
-                    openColumnMode = 3; // oooOpenMidPartitionForMerge
+                    openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
                 } else {
-                    openColumnMode = 4; // oooOpenLastPartitionForMerge
+                    openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                 }
             }
 

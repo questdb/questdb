@@ -43,6 +43,11 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrderOpenColumnTask> {
+    public static final int OPEN_MID_PARTITION_FOR_APPEND = 1;
+    public static final int OPEN_LAST_PARTITION_FOR_APPEND = 2;
+    public static final int OPEN_MID_PARTITION_FOR_MERGE = 3;
+    public static final int OPEN_LAST_PARTITION_FOR_MERGE = 4;
+    public static final int OPEN_NEW_PARTITION_FOR_APPEND = 5;
     private static final Log LOG = LogFactory.getLog(OutOfOrderOpenColumnJob.class);
     private final CairoConfiguration configuration;
     private final RingQueue<OutOfOrderCopyTask> outboundQueue;
@@ -111,7 +116,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         // todo: cache
         final AtomicInteger partCounter = new AtomicInteger(1);
         switch (openColumnMode) {
-            case 1:
+            case OPEN_MID_PARTITION_FOR_APPEND:
                 oooOpenMidPartitionForAppend(
                         configuration,
                         outboundQueue,
@@ -143,7 +148,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         doneLatch
                 );
                 break;
-            case 2:
+            case OPEN_LAST_PARTITION_FOR_APPEND:
                 oooOpenLastPartitionForAppend(
                         configuration,
                         outboundQueue,
@@ -177,7 +182,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         doneLatch
                 );
                 break;
-            case 3:
+            case OPEN_MID_PARTITION_FOR_MERGE:
                 oooOpenMidPartitionForMerge(
                         configuration,
                         outboundQueue,
@@ -223,7 +228,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         doneLatch
                 );
                 break;
-            case 4:
+            case OPEN_LAST_PARTITION_FOR_MERGE:
                 oooOpenLastPartitionForMerge(
                         configuration,
                         outboundQueue,
@@ -271,7 +276,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         doneLatch
                 );
                 break;
-            case 5:
+            case OPEN_NEW_PARTITION_FOR_APPEND:
                 oooOpenNewPartitionForAppend(
                         configuration,
                         outboundQueue,
@@ -300,6 +305,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         tableWriter,
                         doneLatch
                 );
+                break;
+            default:
                 break;
         }
     }
