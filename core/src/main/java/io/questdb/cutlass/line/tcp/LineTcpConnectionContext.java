@@ -155,7 +155,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                             if (!scheduler.tryCommitNewEvent(protoParser, charSink, workerId)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
-                                    LOG.info().$('[').$(fd).$("] queue full, consider increasing queue size or number of writer jobs").$();
+                                    LOG.debug().$('[').$(fd).$("] queue full").$();
                                 }
                                 return IOContextResult.QUEUE_FULL;
                             }
