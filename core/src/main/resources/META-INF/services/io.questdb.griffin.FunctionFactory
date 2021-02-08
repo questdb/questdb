@@ -427,6 +427,7 @@ io.questdb.griffin.engine.functions.math.RoundHalfEvenDoubleFunctionFactory
 # case conditional statement
 io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory
 io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
+io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory
 
 # PostgreSQL catalogue functions
 io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory
