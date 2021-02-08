@@ -36,6 +36,7 @@ import static io.questdb.std.Numbers.hexDigits;
 public final class Chars {
     public static final Comparator<CharSequence> CHAR_SEQUENCE_COMPARATOR = Chars::compare;
     public static final Comparator<CharSequence> CHAR_SEQUENCE_COMPARATOR_DESC = Chars::compareDescending;
+    public static final CharFunction TRANSFORM_LOWER = Character::toLowerCase;
 
     private Chars() {
     }

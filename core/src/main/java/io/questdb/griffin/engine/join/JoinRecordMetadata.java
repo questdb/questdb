@@ -46,7 +46,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
     private int refCount;
 
     public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
-        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), false);
+        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes());
         this.timestampIndex = -1;
         this.columnCount = 0;
         this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
@@ -141,10 +141,10 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         final int dot = Chars.indexOf(columnName, lo, '.');
         if (dot == -1) {
             key.putStr(null);
-            key.putStr(columnName, lo, hi);
+            key.putStr(columnName, lo, hi, Chars.TRANSFORM_LOWER);
         } else {
-            key.putStr(columnName, 0, dot);
-            key.putStr(columnName, dot + 1, columnName.length());
+            key.putStr(columnName, 0, dot, Chars.TRANSFORM_LOWER);
+            key.putStr(columnName, dot + 1, columnName.length(), Chars.TRANSFORM_LOWER);
         }
 
         MapValue value = key.findValue();
@@ -170,12 +170,12 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         MapKey key = map.withKey();
 
         if (dot == -1) {
-            key.putStr(tableAlias);
+            key.putStr(tableAlias, Chars.TRANSFORM_LOWER);
         } else {
             assert tableAlias == null;
-            key.putStr(columnName, 0, dot);
+            key.putStr(columnName, 0, dot, Chars.TRANSFORM_LOWER);
         }
-        key.putStr(columnName, dot + 1, columnName.length());
+        key.putStr(columnName, dot + 1, columnName.length(), Chars.TRANSFORM_LOWER);
 
         MapValue value = key.createValue();
         if (!value.isNew()) {
@@ -193,7 +193,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
         key = map.withKey();
         key.putStr(null);
-        key.putStr(columnName, dot + 1, columnName.length());
+        key.putStr(columnName, dot + 1, columnName.length(), Chars.TRANSFORM_LOWER);
 
         value = key.createValue();
         if (value.isNew()) {
