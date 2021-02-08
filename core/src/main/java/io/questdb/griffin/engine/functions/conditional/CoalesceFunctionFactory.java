@@ -124,7 +124,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             double value = args0.getDouble(rec);
-            if (!Double.isNaN(value)) {
+            if (value == value) {
                 return value;
             }
             return args1.getDouble(rec);
@@ -160,7 +160,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             for (int i = 0; i < size; i++) {
                 double value = args.getQuick(i).getDouble(rec);
-                if (!Double.isNaN(value)) {
+                if (value == value) {
                     return value;
                 }
             }
@@ -182,7 +182,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public float getFloat(Record rec) {
             float value = args0.getFloat(rec);
-            if (!Float.isNaN(value)) {
+            if (value == value) {
                 return value;
             }
             return args1.getFloat(rec);
@@ -218,7 +218,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             for (int i = 0; i < size; i++) {
                 float value = args.getQuick(i).getFloat(rec);
-                if (!Float.isNaN(value)) {
+                if (value == value) {
                     return value;
                 }
             }

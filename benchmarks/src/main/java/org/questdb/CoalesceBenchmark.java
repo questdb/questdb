@@ -29,10 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.log.LogFactory;
-import io.questdb.log.LogLevel;
-import io.questdb.log.LogRollingFileWriter;
-import io.questdb.log.LogWriterConfig;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.openjdk.jmh.annotations.*;
@@ -84,29 +80,22 @@ public class CoalesceBenchmark {
     }
 
     @Benchmark
-    public void testBaseline() {
+    public long testBaseline() {
         Function function = new CoalesceFunctionFactory.LongCoalesceFunction(0, constFunctions, constFunctions.size());
+        long sum = 0;
         for (int i = 0; i < N; i++) {
-            function.getLong(records[i]);
+            sum += function.getLong(records[i]);
         }
+        return sum;
     }
 
     @Benchmark
-    public void testTwoLongCoalesceDedicated() {
+    public long testTwoLongCoalesceDedicated() {
         Function function = new CoalesceFunctionFactory.TwoLongCoalesceFunction(0, constFunctions);
+        long sum = 0;
         for (int i = 0; i < N; i++) {
-            function.getLong(records[i]);
+            sum += function.getLong(records[i]);
         }
-    }
-
-    static {
-        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (queue, subSeq, level) -> {
-            LogRollingFileWriter w = new LogRollingFileWriter(queue, subSeq, level);
-            w.setLocation("log-bench1.log");
-            return w;
-        }));
-        LogFactory.INSTANCE.bind();
-        LogFactory.INSTANCE.startThread();
-
+        return sum;
     }
 }
