@@ -78,7 +78,17 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return argsSize == 2 ? new TwoFloatCoalesceFunction(position, args) : new FloatCoalesceFunction(position, args, argsSize);
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
-                return argsSize == 2 ? new TwoSymStrCoalesceFunction(position, args) : new SymStrCoalesceFunction(position, args);
+                if (argsSize == 2) {
+                    int type0 = args.getQuick(0).getType();
+                    if (type0 != args.getQuick(1).getType()) {
+                        return new TwoSymStrCoalesceFunction(position, args);
+                    } else if (type0 == ColumnType.SYMBOL) {
+                        return new TwoSymCoalesceFunction(position, args);
+                    } else {
+                        return new TwoStrCoalesceFunction(position, args);
+                    }
+                }
+                return new SymStrCoalesceFunction(position, args, argsSize);
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.BYTE:
@@ -595,14 +605,90 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoSymCoalesceFunction extends StrFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        public TwoSymCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            CharSequence value = args0.getSymbol(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getSymbol(rec);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr(rec);
+        }
+    }
+
+    private static class TwoStrCoalesceFunction extends StrFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        public TwoStrCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            CharSequence value = args0.getStr(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getStr(rec);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            CharSequence value = args0.getStrB(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getStrB(rec);
+        }
+    }
+
     private static class SymStrCoalesceFunction extends StrFunction implements MultiArgFunction {
         private final ObjList<Function> args;
         private final int size;
 
-        public SymStrCoalesceFunction(int position, ObjList<Function> args) {
+        public SymStrCoalesceFunction(int position, ObjList<Function> args, int size) {
             super(position);
             this.args = args;
-            this.size = args.size();
+            this.size = size;
         }
 
         @Override

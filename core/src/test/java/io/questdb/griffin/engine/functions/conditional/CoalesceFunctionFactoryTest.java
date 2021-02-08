@@ -84,20 +84,21 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInt2Args() throws Exception {
+    public void testIntArgs() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "10\t10\tNaN\t10\t1\n" +
-                        "2\tNaN\tNaN\tNaN\t2\n" +
-                        "6\t6\t6\tNaN\t3\n" +
+                        "10\t10\tNaN\t10\tNaN\n" +
+                        "NaN\tNaN\tNaN\tNaN\tNaN\n" +
+                        "6\t6\t6\tNaN\tNaN\n" +
                         "40\t40\tNaN\t40\t4\n" +
                         "5\tNaN\tNaN\tNaN\t5\n",
                 "select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
-                        "select CAST(x as INT) x," +
-                        " CASE WHEN x % 3 = 0 THEN CAST(x AS INT) * 2 ELSE CAST(NULL as INT)  END as a," +
-                        " CASE WHEN x % 3 = 1 THEN CAST(x AS INT) * 10 ELSE CAST(NULL as INT)  END as b\n" +
+                        "select " +
+                        " CASE WHEN x > 3 THEN CAST(x as INT)ELSE CAST(NULL as INT) END x," +
+                        " CASE WHEN x % 3 = 0 THEN CAST(x AS INT) * 2 ELSE CAST(NULL as INT) END as a," +
+                        " CASE WHEN x % 3 = 1 THEN CAST(x AS INT) * 10 ELSE CAST(NULL as INT) END as b\n" +
                         " from long_sequence(5)" +
                         ")",
                 null,
@@ -136,15 +137,16 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     public void testFloat3Args() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "10.0000\t10.0000\tNaN\t10.0000\t1.0000\n" +
-                        "2.0000\tNaN\tNaN\tNaN\t2.0000\n" +
-                        "0.5000\t0.5000\t0.5000\tNaN\t3.0000\n" +
+                        "10.0000\t10.0000\tNaN\t10.0000\tNaN\n" +
+                        "NaN\tNaN\tNaN\tNaN\tNaN\n" +
+                        "0.5000\t0.5000\t0.5000\tNaN\tNaN\n" +
                         "10.0000\t10.0000\tNaN\t10.0000\t4.0000\n" +
                         "5.0000\tNaN\tNaN\tNaN\t5.0000\n",
                 "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
-                        "select CAST(x as float) as x," +
+                        "select " +
+                        " CASE WHEN x > 3 THEN CAST(x as float) ELSE CAST(NULL as float) END as x," +
                         " CASE WHEN x % 3 = 0 THEN 0.5f ELSE CAST(NULL as float) END as a," +
                         " CASE WHEN x % 3 = 1 THEN 10.0f ELSE CAST(NULL as float) END as b" +
                         " from long_sequence(5)" +
@@ -183,17 +185,17 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testStr3Args() throws Exception {
         assertQuery(
-                "coalesce\n" +
-                        "A\n" +
-                        "\n" +
-                        "B\n" +
-                        "B\n" +
-                        "X\n",
-                "select coalesce(b, a, x) " +
+                "c1\tc2\tx\ta\tb\n" +
+                        "X\tX\tX\t\t\n" +
+                        "AA\tAA\t\tAA\t\n" +
+                        "B\t\t\t\tB\n" +
+                        "A\tA\t\tA\tB\n" +
+                        "\t\t\t\t\n",
+                "select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b\n" +
                         "from alex",
                 "create table alex as (" +
-                        "SELECT rnd_str('X',NULL) as x\n" +
-                        ", rnd_str('A',NULL) as a\n" +
+                        "SELECT rnd_str('X',NULL,NULL) as x\n" +
+                        ", rnd_str('A','AA',NULL,NULL) as a\n" +
                         ", rnd_str('B',NULL) as b\n" +
                         "from long_sequence(5)" +
                         ")",
@@ -207,13 +209,13 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testSymbol3Args() throws Exception {
         assertQuery(
-                "coalesce\tx\ta\tb\n" +
-                        "X\tX\tA\tBB\n" +
-                        "BB\t\t\tBB\n" +
-                        "AA\t\tAA\tB\n" +
-                        "AA\t\tAA\tB\n" +
-                        "AA\t\tAA\tBB\n",
-                "select coalesce(x, a, b), x, a, b " +
+                "c1\tc2\tx\ta\tb\n" +
+                        "X\tX\tX\tA\tBB\n" +
+                        "BB\t\t\t\tBB\n" +
+                        "AA\tAA\t\tAA\tB\n" +
+                        "AA\tAA\t\tAA\tB\n" +
+                        "AA\tAA\t\tAA\tBB\n",
+                "select coalesce(x, a, b) c1, coalesce(x, a) c2, x, a, b " +
                         "from alex",
                 "create table alex as (" +
                         "SELECT rnd_symbol('X',NULL,NULL) as x\n" +
@@ -278,17 +280,19 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testTimestampCoalesce() throws Exception {
         assertQuery(
-                "coalesce\ta\tx\n" +
-                        "1970-01-01T00:00:00.000001Z\t\t1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000002Z\t\t1970-01-01T00:00:00.000002Z\n" +
-                        "1970-01-01T08:20:00.000000Z\t1970-01-01T08:20:00.000000Z\t1970-01-01T00:00:00.000003Z\n" +
-                        "1970-01-01T00:00:00.000004Z\t\t1970-01-01T00:00:00.000004Z\n" +
-                        "1970-01-01T00:00:00.000005Z\t\t1970-01-01T00:00:00.000005Z\n",
-                "select coalesce(a, x) as coalesce, a, x \n" +
+                "c1\tc2\ta\tb\tx\n" +
+                        "1970-01-01T13:53:20.000000Z\t1970-01-01T13:53:20.000000Z\t\t1970-01-01T13:53:20.000000Z\t\n" +
+                        "1970-01-01T00:00:00.000002Z\t\t\t\t1970-01-01T00:00:00.000002Z\n" +
+                        "\t\t\t\t\n" +
+                        "1970-01-01T11:06:40.000000Z\t1970-01-01T11:06:40.000000Z\t1970-01-01T11:06:40.000000Z\t\t1970-01-01T00:00:00.000004Z\n" +
+                        "1970-01-03T21:26:40.000000Z\t1970-01-03T21:26:40.000000Z\t\t1970-01-03T21:26:40.000000Z\t\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
-                        "select CAST(x as Timestamp) as x," +
-                        " CASE WHEN x % 3 = 0 THEN CAST(x * 10000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as a" +
+                        "select " +
+                        "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp) ELSE CAST(NULL as Timestamp) END as x" +
+                        ", CASE WHEN x % 4 = 0 THEN CAST(x * 10000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as a" +
+                        ", CASE WHEN x % 4 = 1 THEN CAST(x * 50000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as b" +
                         " from long_sequence(5)" +
                         ")",
                 null,
@@ -302,19 +306,21 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     public void testDateCoalesce() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tx\n" +
-                        "1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000Z\t\t1970-01-02T00:00:00.000Z\n" +
-                        "1970-01-03T00:00:00.000Z\t\t\t1970-01-03T00:00:00.000Z\n" +
-                        "1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t1970-01-04T00:00:00.000Z\n" +
-                        "1970-02-10T00:00:00.000Z\t1970-02-10T00:00:00.000Z\t\t1970-01-05T00:00:00.000Z\n" +
-                        "1970-01-06T00:00:00.000Z\t\t\t1970-01-06T00:00:00.000Z\n",
+                        "1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000Z\t\t\n" +
+                        "\t\t\t\n" +
+                        "1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t\n" +
+                        "1970-02-10T00:00:00.000Z\t1970-02-10T00:00:00.000Z\t\t1970-01-01T00:00:00.004Z\n" +
+                        "1970-01-01T00:00:00.005Z\t\t\t1970-01-01T00:00:00.005Z\n",
                 "select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, x \n" +
                         "from alex",
                 "create table alex as (" +
                         "WITH tx as (\n" +
                         "select CAST(dateadd('d', CAST(x as INT), CAST(0 AS DATE)) AS DATE) as x, \n" +
                         "CAST(dateadd('d', CAST(x as INT) * 10, CAST(0 AS DATE)) AS DATE) as xx, \n" +
+                        "CAST(x AS DATE) x," +
                         "x as n from long_sequence(5))\n" +
-                        "select x, \n" +
+                        "select " +
+                        "CASE WHEN n > 3 THEN x ELSE CAST(NULL as DATE) END as x, \n" +
                         "CASE WHEN n % 3 = 0 THEN xx ELSE CAST(NULL as DATE) END as a, \n" +
                         "CASE WHEN n % 3 = 1 THEN xx ELSE CAST(NULL as DATE) END as b \n" +
                         "from tx " +
@@ -396,5 +402,23 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testFailsWithUnsupportedType() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table alex as (" +
+                    "select CAST(NULL as binary) x, CAST(NULL as binary) a" +
+                    " from long_sequence(6)" +
+                    ")", sqlExecutionContext);
+
+            try {
+                compiler.compile("select coalesce(x, a)\n" +
+                        "from alex", sqlExecutionContext);
+                Assert.fail("SqlException epected");
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().contains("coalesce"));
+            }
+        });
     }
 }
