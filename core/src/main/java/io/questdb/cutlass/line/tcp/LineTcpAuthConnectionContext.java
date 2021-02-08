@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ThreadLocal;
@@ -81,9 +82,9 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @Override
-    IOContextResult handleIO(int workerId) {
+    IOContextResult handleIO(NetworkIOJob netIoJob) {
         if (authenticated) {
-            return super.handleIO(workerId);
+            return super.handleIO(netIoJob);
         }
         return handleAuth();
     }

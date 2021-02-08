@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -140,19 +141,19 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return peerDisconnected;
     }
 
-    IOContextResult handleIO(int workerId) {
+    IOContextResult handleIO(NetworkIOJob netIoJob) {
         read();
-        return parseMeasurements(workerId);
+        return parseMeasurements(netIoJob);
     }
 
-    protected final IOContextResult parseMeasurements(int workerId) {
+    protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
                 ParseResult rc = goodMeasurement ? protoParser.parseMeasurement(recvBufPos) : protoParser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (!scheduler.tryCommitNewEvent(protoParser, charSink, workerId)) {
+                            if (!scheduler.tryCommitNewEvent(netIoJob, protoParser, charSink)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();

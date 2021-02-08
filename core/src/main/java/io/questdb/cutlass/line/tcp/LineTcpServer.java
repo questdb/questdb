@@ -67,7 +67,7 @@ public class LineTcpServer implements Closeable {
         scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, writerWorkerPool, nIOWorkers);
         for (int i = 0; i < nIOWorkers; i++) {
             final int j = i;
-            ioWorkerPool.assign(i, scheduler.new NeworkIOJob(dispatcher, j));
+            ioWorkerPool.assign(i, scheduler.new NetworkIOJobImpl(dispatcher, j));
         }
 
         final Closeable cleaner = contextFactory::closeContextPool;

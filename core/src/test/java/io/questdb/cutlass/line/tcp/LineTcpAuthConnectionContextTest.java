@@ -28,11 +28,14 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -158,13 +161,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthentication() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -175,13 +178,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationP1363() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, true, null, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, true, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -192,13 +195,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented1() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, false, false, null, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, false, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -209,13 +212,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented2() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, false, false, null, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, false, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -226,13 +229,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented3() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, false, false, null, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, false, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -243,13 +246,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented4() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, true, false, null, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, false, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -260,13 +263,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented5() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, true, false, null, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -277,13 +280,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented6() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, false, null, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, false, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -294,13 +297,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testGoodAuthenticationFragmented7() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, true, null, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, true, true, true, true, null);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertFalse(disconnected);
             recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            waitForIOCompletion(0);
+            waitForIOCompletion();
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -311,7 +314,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testBadUser() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
         });
@@ -320,7 +323,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     @Test
     public void testBadSignature() throws Exception {
         runInContext(() -> {
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
         });
@@ -335,7 +338,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             for (int n = 0; n < junkSignatureInt.length; n++) {
                 junkSignature[n] = (byte) junkSignatureInt[n];
             }
-            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, false, junkSignature, 0);
+            boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, false, false, false, false, junkSignature);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
         });
@@ -348,7 +351,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             while (token.length() < netMsgBufferSize.get()) {
                 token.append(token.toString());
             }
-            boolean authSequenceCompleted = authenticate(token.toString(), AUTH_PRIVATE_KEY1, 0);
+            boolean authSequenceCompleted = authenticate(token.toString(), AUTH_PRIVATE_KEY1);
             Assert.assertFalse(authSequenceCompleted);
             Assert.assertTrue(disconnected);
         });
@@ -358,13 +361,13 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     public void testTruncatedKeyId() throws Exception {
         runInContext(() -> {
             recvBuffer = "test";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
             recvBuffer = "Key";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
             recvBuffer = null;
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertTrue(disconnected);
         });
     }
@@ -374,16 +377,16 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         runInContext(() -> {
             maxSendBytes = 0;
             recvBuffer = AUTH_KEY_ID1 + "\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
             Assert.assertNull(sentBytes);
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
             Assert.assertNull(sentBytes);
             maxSendBytes = -1;
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertNull(sentBytes);
             Assert.assertTrue(disconnected);
         });
@@ -394,18 +397,18 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         runInContext(() -> {
             maxSendBytes = 5;
             recvBuffer = AUTH_KEY_ID1 + "\n";
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertFalse(disconnected);
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertEquals(maxSendBytes, sentBytes.length);
             sentBytes = null;
             Assert.assertFalse(disconnected);
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertEquals(maxSendBytes, sentBytes.length);
             sentBytes = null;
             Assert.assertFalse(disconnected);
             maxSendBytes = -1;
-            handleContextIO(0);
+            handleContextIO();
             Assert.assertNull(sentBytes);
             Assert.assertTrue(disconnected);
         });
@@ -417,9 +420,9 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         try {
             runInContext(() -> {
                 recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-                handleContextIO(0);
+                handleContextIO();
                 Assert.assertFalse(disconnected);
-                waitForIOCompletion(0);
+                waitForIOCompletion();
                 closeContext();
                 Assert.fail();
             });
@@ -428,16 +431,15 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         }
     }
 
-    private boolean authenticate(String authKeyId, PrivateKey authPrivateKey, int workerId) {
-        return authenticate(authKeyId, authPrivateKey, false, false, false, false, null, workerId);
+    private boolean authenticate(String authKeyId, PrivateKey authPrivateKey) {
+        return authenticate(authKeyId, authPrivateKey, false, false, false, false, null);
     }
 
     private boolean authenticate(
-            String authKeyId, PrivateKey authPrivateKey, boolean fragmentKeyId, boolean fragmentChallenge, boolean fragmentSignature, boolean useP1363Encoding, byte[] junkSignature,
-            int workerId
+            String authKeyId, PrivateKey authPrivateKey, boolean fragmentKeyId, boolean fragmentChallenge, boolean fragmentSignature, boolean useP1363Encoding, byte[] junkSignature
     ) {
-        send(authKeyId + "\n", fragmentKeyId, workerId);
-        byte[] challengeBytes = readChallenge(fragmentChallenge, workerId);
+        send(authKeyId + "\n", fragmentKeyId);
+        byte[] challengeBytes = readChallenge(fragmentChallenge);
         if (null == challengeBytes) {
             return false;
         }
@@ -452,8 +454,8 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                 rawSignature = junkSignature;
             }
             byte[] signature = Base64.getEncoder().encode(rawSignature);
-            send(new String(signature, StandardCharsets.UTF_8) + "\n", fragmentSignature, workerId);
-            handleContextIO(workerId);
+            send(new String(signature, StandardCharsets.UTF_8) + "\n", fragmentSignature);
+            handleContextIO();
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
@@ -461,7 +463,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         return true;
     }
 
-    private void send(String sendStr, boolean fragmented, int workerId) {
+    private void send(String sendStr, boolean fragmented) {
         if (fragmented) {
             int nSent = 0;
             do {
@@ -472,15 +474,15 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                     recvBuffer = sendStr.substring(nSent, nSent + n);
                 }
                 nSent += n;
-                handleContextIO(workerId);
+                handleContextIO();
             } while (nSent < sendStr.length());
         } else {
             recvBuffer = sendStr;
-            handleContextIO(workerId);
+            handleContextIO();
         }
     }
 
-    private byte[] readChallenge(boolean fragment, int workerId) {
+    private byte[] readChallenge(boolean fragment) {
         int nChallengeBytes = 0;
         boolean receivedChallenge = false;
         byte[] challengeBytes = null;
@@ -491,7 +493,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             if (fragment) {
                 maxSendBytes = rand.nextInt(10) + 1;
             }
-            handleContextIO(workerId);
+            handleContextIO();
             if (null != sentBytes) {
                 if (null == challengeBytes) {
                     challengeBytes = sentBytes;
@@ -619,8 +621,8 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         workerPool.start(LOG);
     }
 
-    private boolean handleContextIO(int workerId) {
-        switch (context.handleIO(workerId)) {
+    private boolean handleContextIO() {
+        switch (context.handleIO(netIoJob)) {
             case NEEDS_READ:
                 context.getDispatcher().registerChannel(context, IOOperation.READ);
                 return false;
@@ -636,12 +638,12 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         return false;
     }
 
-    private void waitForIOCompletion(int workerId) {
+    private void waitForIOCompletion() {
         int maxIterations = 256;
         recvBuffer = null;
         // Guard against slow writers on disconnect
         while (maxIterations-- > 0) {
-            if (!handleContextIO(workerId)) {
+            if (!handleContextIO()) {
                 break;
             }
             LockSupport.parkNanos(1_000_000);
@@ -655,4 +657,24 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
             throw new RuntimeException(ex);
         }
     }
+
+    private final NetworkIOJob netIoJob = new NetworkIOJob() {
+        private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+
+        @Override
+        public int getWorkerId() {
+            return 0;
+        }
+
+        @Override
+        public TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
+            return localTableUpdateDetailsByTableName.get(tableName);
+        };
+
+        @Override
+        public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
+            localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+        };
+
+    };
 }
