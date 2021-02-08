@@ -33,13 +33,10 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
-import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
-import io.questdb.network.IOOperation;
-import io.questdb.network.IORequestProcessor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -70,39 +67,7 @@ public class LineTcpServer implements Closeable {
         scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, writerWorkerPool, nIOWorkers);
         for (int i = 0; i < nIOWorkers; i++) {
             final int j = i;
-            ioWorkerPool.assign(i, new Job() {
-                // Context blocked on LineTcpMeasurementScheduler queue
-                private final int workerId = j;
-                private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
-                private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
-
-                private void onRequest(int operation, LineTcpConnectionContext context) {
-                    if (handleIO(context, workerId)) {
-                        busyContexts.add(context);
-                        LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
-                    }
-                }
-
-                @Override
-                public boolean run(int workerId) {
-                    assert this.workerId == workerId;
-                    boolean busy = false;
-                    while (busyContexts.size() > 0) {
-                        LineTcpConnectionContext busyContext = busyContexts.getQuick(0);
-                        if (handleIO(busyContext, workerId)) {
-                            break;
-                        }
-                        LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();
-                        busyContexts.remove(0);
-                        busy = true;
-                    }
-
-                    if (dispatcher.processIOQueue(onRequest)) {
-                        return true;
-                    }
-                    return busy;
-                }
-            });
+            ioWorkerPool.assign(i, scheduler.new NeworkIOJob(dispatcher, j));
         }
 
         final Closeable cleaner = contextFactory::closeContextPool;
@@ -151,25 +116,6 @@ public class LineTcpServer implements Closeable {
         Misc.free(scheduler);
         Misc.free(contextFactory);
         Misc.free(dispatcher);
-    }
-
-    private boolean handleIO(LineTcpConnectionContext context, int workerId) {
-        if (!context.invalid()) {
-            switch (context.handleIO(workerId)) {
-                case NEEDS_READ:
-                    context.getDispatcher().registerChannel(context, IOOperation.READ);
-                    return false;
-                case NEEDS_WRITE:
-                    context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                    return false;
-                case QUEUE_FULL:
-                    return true;
-                case NEEDS_DISCONNECT:
-                    context.getDispatcher().disconnect(context);
-                    return false;
-            }
-        }
-        return false;
     }
 
     private class LineTcpConnectionContextFactory implements IOContextFactory<LineTcpConnectionContext>, Closeable, EagerThreadSetup {

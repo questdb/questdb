@@ -59,6 +59,9 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -616,7 +619,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                             long hi = bufPos + 2 * len;
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             int symIndex = writer.getSymbolIndex(colIndex, job.floatingCharSink);
-                             row.putSymIndex(colIndex, symIndex);
+                            row.putSymIndex(colIndex, symIndex);
                             bufPos = hi;
                             break;
                         }
@@ -737,7 +740,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
-        void handleMaintenance() {
+        void handleWriterThreadMaintenance() {
             if (nUncommitted == 0) {
                 long localLastMeasurementReceivedEpochMs = lastMeasurementReceivedEpochMs;
                 if ((milliClock.getTicks() - localLastMeasurementReceivedEpochMs) >= minIdleMsBeforeWriterRelease) {
@@ -893,7 +896,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private class WriterJob implements Job {
-        private final int id;
+        private final int workerId;
         private final Sequence sequence;
         private final AppendMemory appendMemory = new AppendMemory();
         private final Path path = new Path();
@@ -908,23 +911,23 @@ class LineTcpMeasurementScheduler implements Closeable {
                 Sequence sequence
         ) {
             super();
-            this.id = id;
+            this.workerId = id;
             this.sequence = sequence;
         }
 
         @Override
         public boolean run(int workerId) {
-            assert workerId == id;
+            assert this.workerId == workerId;
             boolean busy = drainQueue();
             doMaintenance();
             return busy;
         }
 
         private void close() {
-            LOG.info().$("line protocol writer closing [threadId=").$(id).$(']').$();
+            LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
             // Finish all jobs in the queue before stopping
             for (int n = 0; n < queue.getCapacity(); n++) {
-                if (!run(id)) {
+                if (!run(workerId)) {
                     break;
                 }
             }
@@ -945,7 +948,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
             lastMaintenanceJobMillis = millis;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-                assignedTables.getQuick(n).handleMaintenance();
+                assignedTables.getQuick(n).handleWriterThreadMaintenance();
             }
         }
 
@@ -961,11 +964,11 @@ class LineTcpMeasurementScheduler implements Closeable {
                 busy = true;
                 final LineTcpMeasurementEvent event = queue.get(cursor);
                 boolean eventProcessed;
-                if (event.threadId == id) {
+                if (event.threadId == workerId) {
                     if (!event.tableUpdateDetails.assignedToJob) {
                         assignedTables.add(event.tableUpdateDetails);
                         event.tableUpdateDetails.assignedToJob = true;
-                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(id).$();
+                        LOG.info().$("assigned table to writer thread [tableName=").$(event.tableUpdateDetails.tableName).$(", threadId=").$(workerId).$();
                     }
                     event.processMeasurementEvent(this);
                     eventProcessed = true;
@@ -988,34 +991,95 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         private boolean processRebalance(LineTcpMeasurementEvent event) {
-            if (event.rebalanceToThreadId == id) {
+            if (event.rebalanceToThreadId == workerId) {
                 // This thread is now a declared owner of the table, but it can only become actual
                 // owner when "old" owner is fully done. This is a volatile variable on the event, used by both threads
                 // to handover the table. The starting point is "false" and the "old" owner thread will eventually set this
                 // to "true". In the mean time current thread will not be processing the queue until the handover is
                 // complete
                 if (event.rebalanceReleasedByFromThread) {
-                    LOG.info().$("rebalance cycle, new thread ready [threadId=").$(id).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$();
+                    LOG.info().$("rebalance cycle, new thread ready [threadId=").$(workerId).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$();
                     return true;
                 }
 
                 return false;
             }
 
-            if (event.rebalanceFromThreadId == id) {
+            if (event.rebalanceFromThreadId == workerId) {
                 for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
                     if (assignedTables.get(n) == event.tableUpdateDetails) {
                         assignedTables.remove(n);
                         break;
                     }
                 }
-                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(id).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$(", nUncommitted=")
+                LOG.info().$("rebalance cycle, old thread finished [threadId=").$(workerId).$(", table=").$(event.tableUpdateDetails.tableName).$(']').$(", nUncommitted=")
                         .$(event.tableUpdateDetails.nUncommitted).$(']').$();
                 event.tableUpdateDetails.switchThreads();
                 event.rebalanceReleasedByFromThread = true;
             }
 
             return true;
+        }
+    }
+
+    class NeworkIOJob implements Job {
+        private final IODispatcher<LineTcpConnectionContext> dispatcher;
+        private final int workerId;
+        // Context blocked on LineTcpMeasurementScheduler queue
+        private final ObjList<LineTcpConnectionContext> busyContexts = new ObjList<>();
+        private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
+
+        NeworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
+            super();
+            this.dispatcher = dispatcher;
+            this.workerId = workerId;
+        }
+
+        private void onRequest(int operation, LineTcpConnectionContext context) {
+            if (handleIO(context, workerId)) {
+                busyContexts.add(context);
+                LOG.debug().$("context is waiting on a full queue [fd=").$(context.getFd()).$(']').$();
+            }
+        }
+
+        @Override
+        public boolean run(int workerId) {
+            assert this.workerId == workerId;
+            boolean busy = false;
+            while (busyContexts.size() > 0) {
+                LineTcpConnectionContext busyContext = busyContexts.getQuick(0);
+                if (handleIO(busyContext, workerId)) {
+                    break;
+                }
+                LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();
+                busyContexts.remove(0);
+                busy = true;
+            }
+
+            if (dispatcher.processIOQueue(onRequest)) {
+                busy = true;
+            }
+
+            return busy;
+        }
+
+        private boolean handleIO(LineTcpConnectionContext context, int workerId) {
+            if (!context.invalid()) {
+                switch (context.handleIO(workerId)) {
+                    case NEEDS_READ:
+                        context.getDispatcher().registerChannel(context, IOOperation.READ);
+                        return false;
+                    case NEEDS_WRITE:
+                        context.getDispatcher().registerChannel(context, IOOperation.WRITE);
+                        return false;
+                    case QUEUE_FULL:
+                        return true;
+                    case NEEDS_DISCONNECT:
+                        context.getDispatcher().disconnect(context);
+                        return false;
+                }
+            }
+            return false;
         }
     }
 
