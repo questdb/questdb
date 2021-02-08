@@ -83,9 +83,13 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampLo,
             long oooTimestampHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long txn,
             int prefixType,
@@ -137,8 +141,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         isIndexed,
                         srcTimestampFd,
@@ -169,8 +177,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         isIndexed,
                         srcDataFixColumn,
@@ -204,8 +216,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         txn,
                         prefixType,
@@ -250,8 +266,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         txn,
                         prefixType,
@@ -298,8 +318,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         srcOooLo,
                         srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         isIndexed,
                         tableWriter,
@@ -309,6 +333,110 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             default:
                 break;
         }
+    }
+
+    public static void openColumn(
+            CairoConfiguration configuration,
+            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            Sequence outboundPubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
+            OutOfOrderOpenColumnTask task,
+            long cursor,
+            Sequence subSeq
+    ) {
+        final int openColumnMode = task.getOpenColumnMode();
+        final CharSequence pathToTable = task.getPathToTable();
+        final int columnType = task.getColumnType();
+        final CharSequence columnName = task.getColumnName();
+        final FilesFacade ff = task.getFf();
+        final long srcOooLo = task.getSrcOooLo();
+        final long srcOooHi = task.getSrcOooHi();
+        final long srcOooMax = task.getSrcOooMax();
+        final long oooTimestampMin = task.getOooTimestampMin();
+        final long oooTimestampMax = task.getOooTimestampMax();
+        final long oooTimestampLo = task.getOooTimestampLo();
+        final long oooTimestampHi = task.getOooTimestampHi();
+        final long srcDataMax = task.getSrcDataMax();
+        final long tableFloorOfMaxTimestamp = task.getTableFloorOfMaxTimestamp();
+        final long dataTimestampHi = task.getDataTimestampHi();
+        final long srcTimestampFd = task.getSrcTimestampFd();
+        final long srcTimestampAddr = task.getSrcTimestampAddr();
+        final long srcTimestampSize = task.getSrcTimestampSize();
+        final AtomicInteger columnCounter = task.getColumnCounter();
+        final boolean isIndexed = task.isIndexed();
+        final AppendMemory srcDataFixColumn = task.getSrcDataFixColumn();
+        final AppendMemory srcDataVarColumn = task.getSrcDataVarColumn();
+        final long srcOooFixAddr = task.getSrcOooFixAddr();
+        final long srcOooFixSize = task.getSrcOooFixSize();
+        final long srcOooVarAddr = task.getSrcOooVarAddr();
+        final long srcOooVarSize = task.getSrcOooVarSize();
+        final long mergeOOOLo = task.getMergeOOOLo();
+        final long mergeOOOHi = task.getMergeOOOHi();
+        final long mergeDataLo = task.getMergeDataLo();
+        final long mergeDataHi = task.getMergeDataHi();
+        final long txn = task.getTxn();
+        final int prefixType = task.getPrefixType();
+        final long prefixLo = task.getPrefixLo();
+        final long prefixHi = task.getPrefixHi();
+        final int suffixType = task.getSuffixType();
+        final long suffixLo = task.getSuffixLo();
+        final long suffixHi = task.getSuffixHi();
+        final int mergeType = task.getMergeType();
+        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final TableWriter tableWriter = task.getTableWriter();
+        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
+
+        subSeq.done(cursor);
+
+        openColumn(
+                configuration,
+                outboundQueue,
+                outboundPubSeq,
+                updPartitionSizeTaskQueue,
+                updPartitionSizePubSeq,
+                openColumnMode,
+                ff,
+                pathToTable,
+                columnName,
+                columnCounter,
+                columnType,
+                timestampMergeIndexAddr,
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
+                srcOooLo,
+                srcOooHi,
+                srcOooMax,
+                oooTimestampMin,
+                oooTimestampMax,
+                oooTimestampLo,
+                oooTimestampHi,
+                srcDataMax,
+                tableFloorOfMaxTimestamp,
+                dataTimestampHi,
+                txn,
+                prefixType,
+                prefixLo,
+                prefixHi,
+                mergeType,
+                mergeOOOLo,
+                mergeOOOHi,
+                mergeDataLo,
+                mergeDataHi,
+                suffixType,
+                suffixLo,
+                suffixHi,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                isIndexed,
+                srcDataFixColumn,
+                srcDataVarColumn,
+                tableWriter,
+                doneLatch
+        );
     }
 
     private static long mapReadWriteOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
@@ -383,8 +511,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             boolean isIndexed,
             long srcTimestampFd,
@@ -478,6 +610,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcOooLo,
                 srcOooHi,
                 srcDataMax,
+                tableFloorOfMaxTimestamp,
                 dataTimestampHi,
                 srcOooFixAddr,
                 srcOooFixSize,
@@ -485,8 +618,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
+                srcOooMax,
                 srcOooLo,
                 srcOooHi,
+                oooTimestampMin,
+                oooTimestampMax,
                 oooTimestampHi,
                 dstFixFd,
                 dstFixAddr,
@@ -531,6 +667,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataLo,
             long srcDataHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long srcOooFixAddr,
             long srcOooFixSize,
@@ -538,8 +675,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampHi,
             long dstFixFd,
             long dstFixAddr,
@@ -562,7 +702,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     ) {
         long cursor = outboundPubSeq.next();
         if (cursor > -1) {
-            publishCopyTaskUncontended(
+            publishCopyTaskHarmonized(
                     outboundQueue,
                     outboundPubSeq,
                     columnCounter,
@@ -581,6 +721,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataLo,
                     srcDataHi,
                     srcDataMax,
+                    tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     srcOooFixAddr,
                     srcOooFixSize,
@@ -588,8 +729,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcOooVarSize,
                     srcOooLo,
                     srcOooHi,
+                    srcOooMax,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
+                    oooTimestampMin,
+                    oooTimestampMax,
                     oooTimestampHi,
                     dstFixFd,
                     dstFixAddr,
@@ -616,7 +760,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     configuration,
                     outboundQueue,
                     outboundPubSeq,
-                    updPartitionSizeTaskQueue,
+                    cursor, updPartitionSizeTaskQueue,
                     updPartitionSizePubSeq,
                     columnCounter,
                     partCounter,
@@ -634,6 +778,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataLo,
                     srcDataHi,
                     srcDataMax,
+                    tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     srcOooFixAddr,
                     srcOooFixSize,
@@ -641,8 +786,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcOooVarSize,
                     srcOooLo,
                     srcOooHi,
+                    srcOooMax,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
+                    oooTimestampMin,
+                    oooTimestampMax,
                     oooTimestampHi,
                     dstFixFd,
                     dstFixAddr,
@@ -656,7 +804,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     dstVFd,
                     dstIndexOffset,
                     isIndexed,
-                    cursor,
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
@@ -671,6 +818,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
             Sequence outboundPubSeq,
+            long cursor,
             RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
             MPSequence updPartitionSizePubSeq,
             AtomicInteger columnCounter,
@@ -689,6 +837,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataLo,
             long srcDataHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long srcOooFixAddr,
             long srcOooFixSize,
@@ -696,8 +845,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampHi,
             long dstFixFd,
             long dstFixAddr,
@@ -711,7 +863,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long dstVFd,
             long dstIndexOffset,
             boolean isIndexed,
-            long cursor,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -744,6 +895,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataLo,
                     srcDataHi,
                     srcDataMax,
+                    tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     srcOooFixAddr,
                     srcOooFixSize,
@@ -751,8 +903,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcOooVarSize,
                     srcOooLo,
                     srcOooHi,
+                    srcOooMax,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
+                    oooTimestampMin,
+                    oooTimestampMax,
                     oooTimestampHi,
                     dstFixFd,
                     dstFixAddr,
@@ -774,7 +929,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     doneLatch
             );
         } else {
-            publishCopyTaskUncontended(
+            publishCopyTaskHarmonized(
                     outboundQueue,
                     outboundPubSeq,
                     columnCounter,
@@ -793,6 +948,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataLo,
                     srcDataHi,
                     srcDataMax,
+                    tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     srcOooFixAddr,
                     srcOooFixSize,
@@ -800,8 +956,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcOooVarSize,
                     srcOooLo,
                     srcOooHi,
+                    srcOooMax,
                     srcOooPartitionLo,
                     srcOooPartitionHi,
+                    oooTimestampMin,
+                    oooTimestampMax,
                     oooTimestampHi,
                     dstFixFd,
                     dstFixAddr,
@@ -826,7 +985,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         }
     }
 
-    private static void publishCopyTaskUncontended(
+    private static void publishCopyTaskHarmonized(
             RingQueue<OutOfOrderCopyTask> outboundQueue,
             Sequence outboundPubSeq,
             AtomicInteger columnCounter,
@@ -845,6 +1004,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataLo,
             long srcDataHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long srcOooFixAddr,
             long srcOooFixSize,
@@ -852,8 +1012,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampHi,
             long dstFixFd,
             long dstFixAddr,
@@ -893,6 +1056,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcDataLo,
                 srcDataHi,
                 srcDataMax,
+                tableFloorOfMaxTimestamp,
                 dataTimestampHi,
                 srcOooFixAddr,
                 srcOooFixSize,
@@ -900,8 +1064,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
+                srcOooMax,
                 srcOooPartitionLo,
                 srcOooPartitionHi,
+                oooTimestampMin,
+                oooTimestampMax,
                 oooTimestampHi,
                 dstFixFd,
                 dstFixAddr,
@@ -945,8 +1112,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             boolean isIndexed,
             AppendMemory srcDataFixColumn,
@@ -1024,6 +1195,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 0,
                 srcDataMax,
+                tableFloorOfMaxTimestamp,
                 dataTimestampHi,
                 srcOooFixAddr,
                 srcOooFixSize,
@@ -1031,8 +1203,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
+                srcOooMax,
                 srcOooLo, // the entire OOO block gets appended
                 srcOooHi, // its size is the same as partition size
+                oooTimestampMin,
+                oooTimestampMax,
                 oooTimestampHi,
                 dstFixFd,
                 dstFixAddr,
@@ -1076,8 +1251,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooPartitionMin,
+            long oooPartitionMax,
             long oooPartitionHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long txn,
             int prefixType,
@@ -1250,6 +1429,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcDataVarAddr,
                 srcDataVarSize,
                 srcDataMax,
+                tableFloorOfMaxTimestamp,
                 dataTimestampHi,
                 srcOooFixAddr,
                 srcOooFixSize,
@@ -1257,6 +1437,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
+                srcOooMax,
+                oooPartitionMin,
+                oooPartitionMax,
                 oooPartitionHi,
                 prefixType,
                 prefixLo,
@@ -1311,8 +1494,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooPartitionMin,
+            long oooPartitionMax,
             long oooPartitionHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long txn,
             int prefixType,
@@ -1495,6 +1682,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcDataVarAddr,
                 srcDataVarSize,
                 srcDataMax,
+                tableFloorOfMaxTimestamp,
                 dataTimestampHi,
                 srcOooFixAddr,
                 srcOooFixSize,
@@ -1502,6 +1690,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
+                srcOooMax,
+                oooPartitionMin,
+                oooPartitionMax,
                 oooPartitionHi,
                 prefixType,
                 prefixLo,
@@ -1556,8 +1747,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             boolean isIndexed,
             TableWriter tableWriter,
@@ -1624,6 +1819,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 0,
                 srcDataMax,
+                tableFloorOfMaxTimestamp,
                 dataTimestampHi,
                 srcOooFixAddr,
                 srcOooFixSize,
@@ -1631,8 +1827,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcOooVarSize,
                 srcOooLo,
                 srcOooHi,
+                srcOooMax,
                 srcOooLo,
                 srcOooHi,
+                oooTimestampMin,
+                oooTimestampMax,
                 oooTimestampHi,
                 dstFixFd,
                 dstFixAddr,
@@ -1679,6 +1878,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataVarAddr,
             long srcDataVarSize,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long srcOooFixAddr,
             long srcOooFixSize,
@@ -1686,6 +1886,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampHi,
             int prefixType,
             long prefixLo,
@@ -1743,6 +1946,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         0,
                         0,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         srcOooFixAddr,
                         srcOooFixSize,
@@ -1750,8 +1954,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         prefixLo,
                         prefixHi,
+                        srcOooMax,
                         srcOooLo,
                         srcOooHi,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         dstFixFd,
                         dstFixAddr,
@@ -1796,6 +2003,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         prefixLo,
                         prefixHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         0,
                         0,
@@ -1803,8 +2011,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         0,
                         0,
                         0,
+                        srcOooMax,
                         srcOooLo,
                         srcOooHi,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         dstFixFd,
                         dstFixAddr,
@@ -1854,6 +2065,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         0,
                         0,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         srcOooFixAddr,
                         srcOooFixSize,
@@ -1861,8 +2073,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         mergeOOOLo,
                         mergeOOOHi,
+                        srcOooMax,
                         srcOooLo,
                         srcOooHi,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         dstFixFd,
                         dstFixAddr,
@@ -1907,6 +2122,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         mergeDataLo,
                         mergeDataHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         0,
                         0,
@@ -1914,8 +2130,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         0,
                         0,
                         0,
+                        srcOooMax,
                         srcOooLo,
                         srcOooHi,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         dstFixFd,
                         dstFixAddr,
@@ -1960,6 +2179,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         mergeDataLo,
                         mergeDataHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         srcOooFixAddr,
                         srcOooFixSize,
@@ -1967,8 +2187,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         mergeOOOLo,
                         mergeOOOHi,
+                        srcOooMax,
                         srcOooLo,
                         srcOooHi,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         dstFixFd,
                         dstFixAddr,
@@ -2018,6 +2241,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         0,
                         0,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         srcOooFixAddr,
                         srcOooFixSize,
@@ -2025,8 +2249,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcOooVarSize,
                         suffixLo,
                         suffixHi,
+                        srcOooMax,
                         srcOooLo,
                         srcOooHi,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         dstFixFd,
                         dstFixAddr,
@@ -2071,6 +2298,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         suffixLo,
                         suffixHi,
                         srcDataMax,
+                        tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         0,
                         0,
@@ -2078,8 +2306,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         0,
                         0,
                         0,
+                        srcOooMax,
                         srcOooLo,
                         srcOooHi,
+                        oooTimestampMin,
+                        oooTimestampMax,
                         oooTimestampHi,
                         dstFixFd,
                         dstFixAddr,
@@ -2113,89 +2344,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     }
 
     private void openColumn(OutOfOrderOpenColumnTask task, long cursor, Sequence subSeq) {
-        final int openColumnMode = task.getOpenColumnMode();
-        final CharSequence pathToTable = task.getPathToTable();
-        final int columnType = task.getColumnType();
-        final CharSequence columnName = task.getColumnName();
-        final FilesFacade ff = task.getFf();
-        final long srcOooLo = task.getSrcOooLo();
-        final long srcOooHi = task.getSrcOooHi();
-        final long oooTimestampLo = task.getOooTimestampLo();
-        final long oooTimestampHi = task.getOooTimestampHi();
-        final long srcDataMax = task.getSrcDataMax();
-        final long dataTimestampHi = task.getDataTimestampHi();
-        final long srcTimestampFd = task.getSrcTimestampFd();
-        final long srcTimestampAddr = task.getSrcTimestampAddr();
-        final long srcTimestampSize = task.getSrcTimestampSize();
-        final AtomicInteger columnCounter = task.getColumnCounter();
-        final boolean isIndexed = task.isIndexed();
-        final AppendMemory srcDataFixColumn = task.getSrcDataFixColumn();
-        final AppendMemory srcDataVarColumn = task.getSrcDataVarColumn();
-        final long srcOooFixAddr = task.getSrcOooFixAddr();
-        final long srcOooFixSize = task.getSrcOooFixSize();
-        final long srcOooVarAddr = task.getSrcOooVarAddr();
-        final long srcOooVarSize = task.getSrcOooVarSize();
-        final long mergeOOOLo = task.getMergeOOOLo();
-        final long mergeOOOHi = task.getMergeOOOHi();
-        final long mergeDataLo = task.getMergeDataLo();
-        final long mergeDataHi = task.getMergeDataHi();
-        final long txn = task.getTxn();
-        final int prefixType = task.getPrefixType();
-        final long prefixLo = task.getPrefixLo();
-        final long prefixHi = task.getPrefixHi();
-        final int suffixType = task.getSuffixType();
-        final long suffixLo = task.getSuffixLo();
-        final long suffixHi = task.getSuffixHi();
-        final int mergeType = task.getMergeType();
-        final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
-        final TableWriter tableWriter = task.getTableWriter();
-        final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
-
-        subSeq.done(cursor);
-
         openColumn(
                 configuration,
                 outboundQueue,
                 outboundPubSeq,
                 updPartitionSizeTaskQueue,
                 updPartitionSizePubSeq,
-                openColumnMode,
-                ff,
-                pathToTable,
-                columnName,
-                columnCounter,
-                columnType,
-                timestampMergeIndexAddr,
-                srcOooFixAddr,
-                srcOooFixSize,
-                srcOooVarAddr,
-                srcOooVarSize,
-                srcOooLo,
-                srcOooHi,
-                oooTimestampLo,
-                oooTimestampHi,
-                srcDataMax,
-                dataTimestampHi,
-                txn,
-                prefixType,
-                prefixLo,
-                prefixHi,
-                mergeType,
-                mergeOOOLo,
-                mergeOOOHi,
-                mergeDataLo,
-                mergeDataHi,
-                suffixType,
-                suffixLo,
-                suffixHi,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                isIndexed,
-                srcDataFixColumn,
-                srcDataVarColumn,
-                tableWriter,
-                doneLatch
+                task,
+                cursor,
+                subSeq
         );
     }
 }

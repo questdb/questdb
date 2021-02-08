@@ -201,6 +201,20 @@ public interface CairoConfiguration {
 
     int getTableBlockWriterQueueCapacity();
 
+    int getColumnIndexerQueueCapacity();
+
+    int getVectorAggregateQueueCapacity();
+
+    int getOutOfOrderSortQueueCapacity();
+
+    int getOutOfOrderPartitionQueueCapacity();
+
+    int getOutOfOrderOpenColumnQueueCapacity();
+
+    int getOutOfOrderCopyQueueCapacity();
+
+    int getOutOfOrderUpdPartitionSizeQueueCapacity();
+
     BuildInformation getBuildInformation();
 
     default boolean isOutOfOrderEnabled() {

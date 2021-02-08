@@ -70,13 +70,12 @@ public class MessageBusImpl implements MessageBus {
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
-        // todo: move queue size to configuration
-        this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, 1024);
+        this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, configuration.getColumnIndexerQueueCapacity());
         this.indexerPubSeq = new MPSequence(indexerQueue.getCapacity());
         this.indexerSubSeq = new MCSequence(indexerQueue.getCapacity());
         indexerPubSeq.then(indexerSubSeq).then(indexerPubSeq);
 
-        this.vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, 1024);
+        this.vectorAggregateQueue = new RingQueue<>(VectorAggregateTask::new, configuration.getVectorAggregateQueueCapacity());
         this.vectorAggregatePubSeq = new MPSequence(vectorAggregateQueue.getCapacity());
         this.vectorAggregateSubSeq = new MCSequence(vectorAggregateQueue.getCapacity());
         vectorAggregatePubSeq.then(vectorAggregateSubSeq).then(vectorAggregatePubSeq);
@@ -86,27 +85,27 @@ public class MessageBusImpl implements MessageBus {
         this.tableBlockWriterSubSeq = new MCSequence(tableBlockWriterQueue.getCapacity());
         tableBlockWriterPubSeq.then(tableBlockWriterSubSeq).then(tableBlockWriterPubSeq);
 
-        this.outOfOrderSortQueue = new RingQueue<>(OutOfOrderSortTask::new, 1024);
+        this.outOfOrderSortQueue = new RingQueue<>(OutOfOrderSortTask::new, configuration.getOutOfOrderSortQueueCapacity());
         this.outOfOrderSortPubSeq = new MPSequence(this.outOfOrderSortQueue.getCapacity());
         this.outOfOrderSortSubSeq = new MCSequence(this.outOfOrderSortQueue.getCapacity());
         outOfOrderSortPubSeq.then(outOfOrderSortSubSeq).then(outOfOrderSortPubSeq);
 
-        this.outOfOrderPartitionQueue = new RingQueue<>(OutOfOrderPartitionTask::new, 0);
+        this.outOfOrderPartitionQueue = new RingQueue<>(OutOfOrderPartitionTask::new, configuration.getOutOfOrderPartitionQueueCapacity());
         this.outOfOrderPartitionPubSeq = new MPSequence(this.outOfOrderPartitionQueue.getCapacity());
         this.outOfOrderPartitionSubSeq = new MCSequence(this.outOfOrderPartitionQueue.getCapacity());
         outOfOrderPartitionPubSeq.then(outOfOrderPartitionSubSeq).then(outOfOrderPartitionPubSeq);
 
-        this.outOfOrderOpenColumnQueue = new RingQueue<>(OutOfOrderOpenColumnTask::new, 0);
+        this.outOfOrderOpenColumnQueue = new RingQueue<>(OutOfOrderOpenColumnTask::new, configuration.getOutOfOrderOpenColumnQueueCapacity());
         this.outOfOrderOpenColumnPubSeq = new MPSequence(this.outOfOrderOpenColumnQueue.getCapacity());
         this.outOfOrderOpenColumnSubSeq = new MCSequence(this.outOfOrderOpenColumnQueue.getCapacity());
         outOfOrderOpenColumnPubSeq.then(outOfOrderOpenColumnSubSeq).then(outOfOrderOpenColumnPubSeq);
 
-        this.outOfOrderCopyQueue = new RingQueue<>(OutOfOrderCopyTask::new, 0);
+        this.outOfOrderCopyQueue = new RingQueue<>(OutOfOrderCopyTask::new, configuration.getOutOfOrderCopyQueueCapacity());
         this.outOfOrderCopyPubSeq = new MPSequence(this.outOfOrderCopyQueue.getCapacity());
         this.outOfOrderCopySubSeq = new MCSequence(this.outOfOrderCopyQueue.getCapacity());
         outOfOrderCopyPubSeq.then(outOfOrderCopySubSeq).then(outOfOrderCopyPubSeq);
 
-        this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, 2048);
+        this.outOfOrderUpdPartitionSizeQueue = new RingQueue<>(OutOfOrderUpdPartitionSizeTask::new, configuration.getOutOfOrderUpdPartitionSizeQueueCapacity());
         this.outOfOrderUpdPartitionSizePubSeq = new MPSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
         this.outOfOrderUpdPartitionSizeSubSeq = new MCSequence(this.outOfOrderUpdPartitionSizeQueue.getCapacity());
         outOfOrderUpdPartitionSizePubSeq.then(outOfOrderUpdPartitionSizeSubSeq).then(outOfOrderUpdPartitionSizePubSeq);

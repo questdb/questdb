@@ -51,9 +51,13 @@ public class OutOfOrderOpenColumnTask {
     private long srcOooVarAddr;
     private long srcOooVarSize;
     private long srcDataMax;
+    private long tableFloorOfMaxTimestamp;
     private long dataTimestampHi;
     private long srcOooLo;
     private long srcOooHi;
+    private long srcOooMax;
+    private long oooTimestampMin;
+    private long oooTimestampMax;
     private long oooTimestampLo;
     private long oooTimestampHi;
     private int prefixType;
@@ -122,6 +126,14 @@ public class OutOfOrderOpenColumnTask {
         return oooTimestampLo;
     }
 
+    public long getOooTimestampMax() {
+        return oooTimestampMax;
+    }
+
+    public long getOooTimestampMin() {
+        return oooTimestampMin;
+    }
+
     public int getOpenColumnMode() {
         return openColumnMode;
     }
@@ -170,6 +182,10 @@ public class OutOfOrderOpenColumnTask {
         return srcOooLo;
     }
 
+    public long getSrcOooMax() {
+        return srcOooMax;
+    }
+
     public long getSrcOooVarAddr() {
         return srcOooVarAddr;
     }
@@ -202,6 +218,10 @@ public class OutOfOrderOpenColumnTask {
         return suffixType;
     }
 
+    public long getTableFloorOfMaxTimestamp() {
+        return tableFloorOfMaxTimestamp;
+    }
+
     public TableWriter getTableWriter() {
         return tableWriter;
     }
@@ -232,9 +252,13 @@ public class OutOfOrderOpenColumnTask {
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampLo,
             long oooTimestampHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long txn,
             int prefixType,
@@ -270,9 +294,13 @@ public class OutOfOrderOpenColumnTask {
         this.srcOooVarSize = srcOooVarSize;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
+        this.srcOooMax = srcOooMax;
+        this.oooTimestampMin = oooTimestampMin;
+        this.oooTimestampMax = oooTimestampMax;
         this.oooTimestampLo = oooTimestampLo;
         this.oooTimestampHi = oooTimestampHi;
         this.srcDataMax = srcDataMax;
+        this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.dataTimestampHi = dataTimestampHi;
         this.txn = txn;
         this.prefixType = prefixType;

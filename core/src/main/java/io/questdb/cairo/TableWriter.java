@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -43,14 +40,12 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.OutOfOrderPartitionTask;
-import io.questdb.tasks.OutOfOrderSortTask;
-import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
+import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -130,6 +125,7 @@ public class TableWriter implements Closeable {
     private final OutOfOrderSortMethod oooSortFixColumnRef = this::oooSortFixColumn;
     private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
     private final LongList oooPartitions = new LongList();
+    private final AtomicLong oooUpdRemaining = new AtomicLong();
     private ContiguousVirtualMemory timestampMergeMem;
     private int txPartitionCount = 0;
     private long lockFd;
@@ -2406,6 +2402,96 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void oooConsumeUpdPartitionSizeTasks(
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long tableFloorOfMaxTimestamp
+    ) {
+        final MPSequence updSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
+        final Sequence updSizeSubSeq = messageBus.getOutOfOrderUpdPartitionSizeSubSequence();
+        final RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
+        final Sequence partitionSubSeq = messageBus.getOutOfOrderPartitionSubSeq();
+        final RingQueue<OutOfOrderPartitionTask> partitionQueue = messageBus.getOutOfOrderPartitionQueue();
+        final Sequence openColumnSubSeq = messageBus.getOutOfOrderOpenColumnSubSequence();
+        final RingQueue<OutOfOrderOpenColumnTask> openColumnQueue = messageBus.getOutOfOrderOpenColumnQueue();
+        final Sequence copyPubSeq = messageBus.getOutOfOrderCopyPubSequence();
+        final Sequence copySubSeq = messageBus.getOutOfOrderCopySubSequence();
+        final RingQueue<OutOfOrderCopyTask> copyQueue = messageBus.getOutOfOrderCopyQueue();
+
+        boolean updRemaining;
+        do {
+            long cursor = updSizeSubSeq.next();
+            if (cursor > -1) {
+                final OutOfOrderUpdPartitionSizeTask task = updSizeQueue.get(cursor);
+                final long oooTimestampHi = task.getOooTimestampHi();
+                final long srcOooPartitionLo = task.getSrcOooPartitionLo();
+                final long srcOooPartitionHi = task.getSrcOooPartitionHi();
+                final long srcDataMax = task.getSrcDataMax();
+                final long dataTimestampHi = task.getDataTimestampHi();
+
+                updRemaining = this.oooUpdRemaining.decrementAndGet() > 0;
+                updSizeSubSeq.done(cursor);
+
+                oooUpdatePartitionSize(
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampHi,
+                        srcOooPartitionLo,
+                        srcOooPartitionHi,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        srcOooMax,
+                        srcDataMax
+                );
+            } else {
+                if (updRemaining = this.oooUpdRemaining.get() > 0) {
+                    cursor = partitionSubSeq.next();
+                    if (cursor > -1) {
+                        OutOfOrderPartitionJob.processPartition(
+                                configuration,
+                                openColumnQueue,
+                                messageBus.getOutOfOrderOpenColumnPubSequence(),
+                                copyQueue,
+                                copyPubSeq,
+                                updSizeQueue,
+                                updSizePubSeq,
+                                partitionQueue.get(cursor),
+                                cursor,
+                                partitionSubSeq
+                        );
+                    } else {
+                        cursor = openColumnSubSeq.next();
+                        if (cursor > -1) {
+                            OutOfOrderOpenColumnJob.openColumn(
+                                    configuration,
+                                    copyQueue,
+                                    copyPubSeq,
+                                    updSizeQueue,
+                                    updSizePubSeq,
+                                    openColumnQueue.get(cursor),
+                                    cursor,
+                                    openColumnSubSeq
+                            );
+                        } else {
+                            cursor = copySubSeq.next();
+                            if (cursor > -1) {
+                                OutOfOrderCopyJob.copy(
+                                        configuration,
+                                        updSizeQueue,
+                                        updSizePubSeq,
+                                        copyQueue.get(cursor),
+                                        cursor,
+                                        copySubSeq
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        } while (updRemaining);
+    }
+
     private void oooCopy(
             long[] mergeStruct,
             int blockType,
@@ -3453,6 +3539,7 @@ public class TableWriter implements Closeable {
             final int latchCount = affectedPartitionCount - 1;
 
             this.oooLatch.reset();
+            this.oooUpdRemaining.set(affectedPartitionCount - 1);
 
             for (int i = 1; i < affectedPartitionCount; i++) {
                 final long srcOooLo = oooPartitions.getQuick(i * 2 - 2) + 1;
@@ -3470,6 +3557,8 @@ public class TableWriter implements Closeable {
                             oooColumns,
                             srcOooLo,
                             srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
                             oooTimestampMax,
                             oooTimestampHi,
                             txn,
@@ -3499,6 +3588,8 @@ public class TableWriter implements Closeable {
                             oooColumns,
                             srcOooLo,
                             srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
                             oooTimestampMax,
                             oooTimestampHi,
                             txn,
@@ -3514,50 +3605,13 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            int updRemaining = affectedPartitionCount - 1;
-            final Sequence updSizeSeq = messageBus.getOutOfOrderUpdPartitionSizeSubSequence();
-            final RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
+            oooConsumeUpdPartitionSizeTasks(
+                    srcOooMax,
+                    oooTimestampMin,
+                    oooTimestampMax,
+                    tableFloorOfMaxTimestamp
+            );
 
-            while (updRemaining > 0) {
-                long cursor = updSizeSeq.next();
-                if (cursor > -1) {
-                    final OutOfOrderUpdPartitionSizeTask task = updSizeQueue.get(cursor);
-                    final long oooTimestampHi = task.getOooTimestampHi();
-                    final long srcOooPartitionLo = task.getSrcOooPartitionLo();
-                    final long srcOooPartitionHi = task.getSrcOooPartitionHi();
-                    final long srcDataMax = task.getSrcDataMax();
-                    final long dataTimestampHi = task.getDataTimestampHi();
-
-                    updRemaining--;
-                    updSizeSeq.done(cursor);
-
-                    final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
-                    if (srcOooPartitionHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
-
-                        updatePartitionSize(
-                                oooTimestampHi,
-                                partitionSize,
-                                tableFloorOfMaxTimestamp,
-                                srcDataMax
-                        );
-
-                        if (srcOooPartitionHi + 1 >= srcOooMax) {
-                            // no more out of order data and we just pre-pended data to existing
-                            // partitions
-                            this.minTimestamp = oooTimestampMin;
-                            // when we exit here we need to rollback transientRowCount we've been incrementing
-                            // while adding out-of-order data
-                            this.transientRowCount = this.transientRowCountBeforeOutOfOrder;
-                        }
-                    } else {
-                        updateActivePartitionDetails(
-                                oooTimestampMin,
-                                Math.max(dataTimestampHi, oooTimestampMax),
-                                partitionSize
-                        );
-                    }
-                }
-            }
             oooLatch.await(latchCount);
         } finally {
             path.trimTo(rootLen);
@@ -4326,6 +4380,69 @@ public class TableWriter implements Closeable {
                 }
             }
         }
+    }
+
+    private void oooUpdatePartitionSize(
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampHi,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
+            long tableFloorOfMaxTimestamp,
+            long dataTimestampHi,
+            long srcOooMax,
+            long srcDataMax
+    ) {
+        final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
+        if (srcOooPartitionHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
+
+            updatePartitionSize(
+                    oooTimestampHi,
+                    partitionSize,
+                    tableFloorOfMaxTimestamp,
+                    srcDataMax
+            );
+
+            if (srcOooPartitionHi + 1 >= srcOooMax) {
+                // no more out of order data and we just pre-pended data to existing
+                // partitions
+                this.minTimestamp = oooTimestampMin;
+                // when we exit here we need to rollback transientRowCount we've been incrementing
+                // while adding out-of-order data
+                this.transientRowCount = this.transientRowCountBeforeOutOfOrder;
+            }
+        } else {
+            updateActivePartitionDetails(
+                    oooTimestampMin,
+                    Math.max(dataTimestampHi, oooTimestampMax),
+                    partitionSize
+            );
+        }
+    }
+
+    synchronized void oooUpdatePartitionSizeSynchronized(
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampHi,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
+            long tableFloorOfMaxTimestamp,
+            long dataTimestampHi,
+            long srcOooMax,
+            long srcDataMax
+    ) {
+        oooUpdRemaining.decrementAndGet();
+        oooUpdatePartitionSize(
+                oooTimestampMin,
+                oooTimestampMax,
+                oooTimestampHi,
+                srcOooPartitionLo,
+                srcOooPartitionHi,
+                tableFloorOfMaxTimestamp,
+                dataTimestampHi,
+                srcOooMax,
+                srcDataMax
+        );
     }
 
     private long openAppend(LPSZ name) {
@@ -5296,7 +5413,7 @@ public class TableWriter implements Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
-    void updatePartitionSize(long partitionTimestamp, long partitionSize, long tableFloorOfMaxTimestamp, long srcDataMax) {
+    private void updatePartitionSize(long partitionTimestamp, long partitionSize, long tableFloorOfMaxTimestamp, long srcDataMax) {
         this.fixedRowCount += partitionSize;
         if (partitionTimestamp < tableFloorOfMaxTimestamp) {
             this.fixedRowCount -= srcDataMax;

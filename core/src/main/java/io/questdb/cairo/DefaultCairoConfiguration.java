@@ -456,6 +456,41 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnIndexerQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getVectorAggregateQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getOutOfOrderSortQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getOutOfOrderPartitionQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getOutOfOrderOpenColumnQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getOutOfOrderCopyQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getOutOfOrderUpdPartitionSizeQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
     public BuildInformation getBuildInformation() {
         return buildInformation;
     }

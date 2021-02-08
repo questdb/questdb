@@ -48,6 +48,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcDataLo;
     private long srcDataHi;
     private long srcDataMax;
+    private long tableFloorOfMaxTimestamp;
     private long dataTimestampHi;
     private long srcOooFixAddr;
     private long srcOooFixSize;
@@ -55,8 +56,11 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private long srcOooVarSize;
     private long srcOooLo;
     private long srcOooHi;
+    private long srcOooMax;
     private long srcOooPartitionLo;
     private long srcOooPartitionHi;
+    private long oooTimestampMin;
+    private long oooTimestampMax;
     private long oooTimestampHi;
     private long dstFixFd;
     private long dstFixAddr;
@@ -149,6 +153,14 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return oooTimestampHi;
     }
 
+    public long getOooTimestampMax() {
+        return oooTimestampMax;
+    }
+
+    public long getOooTimestampMin() {
+        return oooTimestampMin;
+    }
+
     public AtomicInteger getPartCounter() {
         return partCounter;
     }
@@ -209,6 +221,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return srcOooLo;
     }
 
+    public long getSrcOooMax() {
+        return srcOooMax;
+    }
+
     public long getSrcOooPartitionHi() {
         return srcOooPartitionHi;
     }
@@ -235,6 +251,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
 
     public long getSrcTimestampSize() {
         return srcTimestampSize;
+    }
+
+    public long getTableFloorOfMaxTimestamp() {
+        return tableFloorOfMaxTimestamp;
     }
 
     public TableWriter getTableWriter() {
@@ -270,6 +290,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcDataLo,
             long srcDataHi,
             long srcDataMax,
+            long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long srcOooFixAddr,
             long srcOooFixSize,
@@ -277,8 +298,11 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             long srcOooVarSize,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
+            long oooTimestampMin,
+            long oooTimestampMax,
             long oooTimestampHi,
             long dstFixFd,
             long dstFixAddr,
@@ -315,6 +339,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcDataLo = srcDataLo;
         this.srcDataHi = srcDataHi;
         this.srcDataMax = srcDataMax;
+        this.tableFloorOfMaxTimestamp = tableFloorOfMaxTimestamp;
         this.dataTimestampHi = dataTimestampHi;
         this.srcOooFixAddr = srcOooFixAddr;
         this.srcOooFixSize = srcOooFixSize;
@@ -322,8 +347,11 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.srcOooVarSize = srcOooVarSize;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
+        this.srcOooMax = srcOooMax;
         this.srcOooPartitionLo = srcOooPartitionLo;
         this.srcOooPartitionHi = srcOooPartitionHi;
+        this.oooTimestampMin = oooTimestampMin;
+        this.oooTimestampMax = oooTimestampMax;
         this.oooTimestampHi = oooTimestampHi;
         this.dstFixFd = dstFixFd;
         this.dstFixAddr = dstFixAddr;

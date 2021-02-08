@@ -42,6 +42,7 @@ import java.io.Closeable;
 public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
+    public static final Closeable CLEANER = Path::clearThreadLocals;
     private static final int OVERHEAD = 4;
     private long ptr;
     private long wptr;
@@ -55,6 +56,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path(int capacity) {
         this.capacity = capacity;
         this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
+    }
+
+    public static void clearThreadLocals() {
+        Misc.free(PATH.get());
+        PATH.remove();
+
+        Misc.free(PATH2.get());
+        PATH2.remove();
     }
 
     public static Path getThreadLocal(CharSequence root) {

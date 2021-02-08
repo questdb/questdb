@@ -39,6 +39,8 @@ public class OutOfOrderPartitionTask {
     private ObjList<ContiguousVirtualMemory> oooColumns;
     private long srcOooLo;
     private long srcOooHi;
+    private long srcOooMax;
+    private long oooTimestampMin;
     private long oooTimestampMax;
     private long oooTimestampHi;
     private long txn;
@@ -79,6 +81,10 @@ public class OutOfOrderPartitionTask {
         return oooTimestampMax;
     }
 
+    public long getOooTimestampMin() {
+        return oooTimestampMin;
+    }
+
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -97,6 +103,10 @@ public class OutOfOrderPartitionTask {
 
     public long getSrcOooLo() {
         return srcOooLo;
+    }
+
+    public long getSrcOooMax() {
+        return srcOooMax;
     }
 
     public long getTableCeilOfMaxTimestamp() {
@@ -131,6 +141,8 @@ public class OutOfOrderPartitionTask {
             ObjList<ContiguousVirtualMemory> oooColumns,
             long srcOooLo,
             long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
             long oooTimestampMax,
             long oooTimestampHi,
             long txn,
@@ -147,6 +159,8 @@ public class OutOfOrderPartitionTask {
         this.txn = txn;
         this.srcOooLo = srcOooLo;
         this.srcOooHi = srcOooHi;
+        this.srcOooMax = srcOooMax;
+        this.oooTimestampMin = oooTimestampMin;
         this.oooTimestampMax = oooTimestampMax;
         this.oooTimestampHi = oooTimestampHi;
         this.lastPartitionSize = lastPartitionSize;
