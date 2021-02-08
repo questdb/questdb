@@ -46,6 +46,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (args.size() < 2) {
+            throw SqlException.$(position, "coalesce can be used with 2 or more arguments");
+        }
+        if (args.size() > 2) {
+            // copy, args collection will be reused by sql parser
+            args = new ObjList<>(args);
+        }
+
         // Similar to CASE function.
         // compute return type in this loop
         final int argsSize = args.size();
@@ -53,25 +61,24 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         for (int i = 0; i < argsSize; i++) {
             returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), args.getQuick(i).getPosition());
         }
-
         switch (returnType) {
             case ColumnType.DOUBLE:
-                return new DoubleCoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoDoubleCoalesceFunction(position, args) : new DoubleCoalesceFunction(position, args, argsSize);
             case ColumnType.DATE:
-                return new DateCoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoDateCoalesceFunction(position, args) : new DateCoalesceFunction(position, args, argsSize);
             case ColumnType.TIMESTAMP:
-                return new TimestampCoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoTimestampCoalesceFunction(position, args) : new TimestampCoalesceFunction(position, args);
             case ColumnType.LONG:
-                return new LongCoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoLongCoalesceFunction(position, args) : new LongCoalesceFunction(position, args, argsSize);
             case ColumnType.LONG256:
-                return new Long256CoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoLong256CoalesceFunction(position, args) : new Long256CoalesceFunction(position, args);
             case ColumnType.INT:
-                return new IntCoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoIntCoalesceFunction(position, args) : new IntCoalesceFunction(position, args, argsSize);
             case ColumnType.FLOAT:
-                return new FloatCoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoFloatCoalesceFunction(position, args) : new FloatCoalesceFunction(position, args, argsSize);
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
-                return new SymStrCoalesceFunction(position, args);
+                return argsSize == 2 ? new TwoSymStrCoalesceFunction(position, args) : new SymStrCoalesceFunction(position, args);
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.BYTE:
@@ -85,12 +92,53 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static boolean isNotNull(Long256 value) {
+        return value != null &&
+                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
+                value.getLong1() != Numbers.LONG_NaN ||
+                value.getLong2() != Numbers.LONG_NaN ||
+                value.getLong3() != Numbers.LONG_NaN);
+    }
+
+    private static class TwoDoubleCoalesceFunction extends DoubleFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoDoubleCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double value = args0.getDouble(rec);
+            if (!Double.isNaN(value)) {
+                return value;
+            }
+            return args1.getDouble(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
     private static class DoubleCoalesceFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int size;
 
-        public DoubleCoalesceFunction(int position, ObjList<Function> args) {
+        public DoubleCoalesceFunction(int position, ObjList<Function> args, int size) {
             super(position);
             this.args = args;
+            this.size = size;
         }
 
         @Override
@@ -100,7 +148,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 double value = args.getQuick(i).getDouble(rec);
                 if (!Double.isNaN(value)) {
                     return value;
@@ -110,12 +158,45 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoFloatCoalesceFunction extends FloatFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoFloatCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            float value = args0.getFloat(rec);
+            if (!Float.isNaN(value)) {
+                return value;
+            }
+            return args1.getFloat(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
     private static class FloatCoalesceFunction extends FloatFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int size;
 
-        public FloatCoalesceFunction(int position, ObjList<Function> args) {
+        public FloatCoalesceFunction(int position, ObjList<Function> args, int size) {
             super(position);
             this.args = args;
+            this.size = size;
         }
 
         @Override
@@ -125,7 +206,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 float value = args.getQuick(i).getFloat(rec);
                 if (!Float.isNaN(value)) {
                     return value;
@@ -135,12 +216,45 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoDateCoalesceFunction extends DateFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoDateCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            long value = args0.getDate(rec);
+            if (value != Numbers.LONG_NaN) {
+                return value;
+            }
+            return args1.getDate(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
     private static class DateCoalesceFunction extends DateFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int size;
 
-        public DateCoalesceFunction(int position, ObjList<Function> args) {
+        public DateCoalesceFunction(int position, ObjList<Function> args, int size) {
             super(position);
             this.args = args;
+            this.size = size;
         }
 
         @Override
@@ -150,7 +264,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 long value = args.getQuick(i).getDate(rec);
                 if (value != Numbers.LONG_NaN) {
                     return value;
@@ -160,12 +274,45 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoTimestampCoalesceFunction extends TimestampFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoTimestampCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            long value = args0.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return value;
+            }
+            return args1.getTimestamp(rec);
+        }
+    }
+
     private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int size;
 
         public TimestampCoalesceFunction(int position, ObjList<Function> args) {
             super(position);
             this.args = args;
+            this.size = args.size();
         }
 
         @Override
@@ -175,7 +322,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 long value = args.getQuick(i).getTimestamp(rec);
                 if (value != Numbers.LONG_NaN) {
                     return value;
@@ -185,12 +332,45 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LongCoalesceFunction extends LongFunction implements MultiArgFunction {
-        private final ObjList<Function> args;
+    public static class TwoLongCoalesceFunction extends LongFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
 
-        public LongCoalesceFunction(int position, ObjList<Function> args) {
+        public TwoLongCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long value = args0.getLong(rec);
+            if (value != Numbers.LONG_NaN) {
+                return value;
+            }
+            return args1.getLong(rec);
+        }
+    }
+
+    public static class LongCoalesceFunction extends LongFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public LongCoalesceFunction(int position, ObjList<Function> args, int size) {
             super(position);
             this.args = args;
+            this.size = size;
         }
 
         @Override
@@ -200,8 +380,9 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            for (int i = 0, size = args.size(); i < size; i++) {
-                long value = args.getQuick(i).getLong(rec);
+            long value;
+            for (int i = 0; i < size; i++) {
+                value = args.getQuick(i).getLong(rec);
                 if (value != Numbers.LONG_NaN) {
                     return value;
                 }
@@ -210,12 +391,65 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoLong256CoalesceFunction extends Long256Function implements BinaryFunction {
+        private final Function args1;
+        private final Function args0;
+
+        public TwoLong256CoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink sink) {
+            Long256 value = args0.getLong256A(rec);
+            if (isNotNull(value)) {
+                Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+            } else {
+                value = args1.getLong256A(rec);
+                Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+            }
+        }
+
+        @Override
+        public Long256 getLong256A(Record rec) {
+            Long256 value = args0.getLong256A(rec);
+            if (isNotNull(value)) {
+                return value;
+            }
+            return args1.getLong256A(rec);
+        }
+
+        @Override
+        public Long256 getLong256B(Record rec) {
+            Long256 value = args0.getLong256B(rec);
+            if (isNotNull(value)) {
+                return value;
+            }
+            return args1.getLong256B(rec);
+        }
+    }
+
     private static class Long256CoalesceFunction extends Long256Function implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int size;
 
         public Long256CoalesceFunction(int position, ObjList<Function> args) {
             super(position);
             this.args = args;
+            this.size = args.size();
         }
 
         @Override
@@ -225,7 +459,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public void getLong256(Record rec, CharSink sink) {
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 Long256 value = args.getQuick(i).getLong256A(rec);
                 if (isNotNull(value)) {
                     Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
@@ -237,7 +471,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256A(Record rec) {
             Long256 value = Long256Impl.NULL_LONG256;
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong256A(rec);
                 if (isNotNull(value)) {
                     return value;
@@ -249,7 +483,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256B(Record rec) {
             Long256 value = Long256Impl.NULL_LONG256;
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong256B(rec);
                 if (isNotNull(value)) {
                     return value;
@@ -257,22 +491,47 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return value;
         }
+    }
 
-        private static boolean isNotNull(Long256 value) {
-            return value != null &&
-                    value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
-                    value.getLong1() != Numbers.LONG_NaN ||
-                    value.getLong2() != Numbers.LONG_NaN ||
-                    value.getLong3() != Numbers.LONG_NaN);
+    private static class TwoIntCoalesceFunction extends IntFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoIntCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            int value = args0.getInt(rec);
+            if (value != Numbers.INT_NaN) {
+                return value;
+            }
+            return args1.getInt(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
         }
     }
 
     private static class IntCoalesceFunction extends IntFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int size;
 
-        public IntCoalesceFunction(int position, ObjList<Function> args) {
+        public IntCoalesceFunction(int position, ObjList<Function> args, int size) {
             super(position);
             this.args = args;
+            this.size = size;
         }
 
         @Override
@@ -282,7 +541,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 int value = args.getQuick(i).getInt(rec);
                 if (value != Numbers.INT_NaN) {
                     return value;
@@ -292,12 +551,58 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoSymStrCoalesceFunction extends StrFunction implements BinaryFunction {
+        private final Function args0;
+        private final Function args1;
+        private final boolean args0IsSymbol;
+        private final boolean arg1IsSymbol;
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        public TwoSymStrCoalesceFunction(int position, ObjList<Function> args) {
+            super(position);
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+            this.args0IsSymbol = args0.getType() == ColumnType.SYMBOL;
+            this.arg1IsSymbol = args1.getType() == ColumnType.SYMBOL;
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            CharSequence value = args0IsSymbol ? args0.getSymbol(rec) : args0.getStr(rec);
+            if (value != null) {
+                return value;
+            }
+            return arg1IsSymbol ? args1.getSymbol(rec) : args1.getStr(rec);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            CharSequence value = args0IsSymbol ? args0.getSymbol(rec) : args0.getStrB(rec);
+            if (value != null) {
+                return value;
+            }
+            return arg1IsSymbol ? args1.getSymbol(rec) : args1.getStrB(rec);
+        }
+    }
+
     private static class SymStrCoalesceFunction extends StrFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final int size;
 
         public SymStrCoalesceFunction(int position, ObjList<Function> args) {
             super(position);
             this.args = args;
+            this.size = args.size();
         }
 
         @Override
@@ -308,15 +613,9 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value;
-                if (arg.getType() == ColumnType.SYMBOL) {
-                    value = arg.getSymbol(rec);
-                } else {
-                    value = arg.getStr(rec);
-                }
-
+                CharSequence value = (arg.getType() == ColumnType.SYMBOL) ? arg.getSymbol(rec) : arg.getStr(rec);
                 if (value != null) {
                     return value;
                 }
@@ -326,15 +625,9 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(Record rec) {
-            for (int i = 0, size = args.size(); i < size; i++) {
+            for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value;
-                if (arg.getType() == ColumnType.SYMBOL) {
-                    value = arg.getSymbol(rec);
-                } else {
-                    value = arg.getStrB(rec);
-                }
-
+                CharSequence value = (arg.getType() == ColumnType.SYMBOL) ? arg.getSymbol(rec) : arg.getStrB(rec);
                 if (value != null) {
                     return value;
                 }

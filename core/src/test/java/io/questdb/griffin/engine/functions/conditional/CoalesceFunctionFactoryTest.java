@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -37,20 +39,41 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFailsWithSingleArg() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table alex as (" +
+                    "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
+                    " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
+                    " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
+                    " from long_sequence(6)" +
+                    ")", sqlExecutionContext);
+
+            try {
+                compiler.compile("select coalesce(b)\n" +
+                        "from alex", sqlExecutionContext);
+                Assert.fail("SqlException epected");
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().contains("coalesce"));
+            }
+        });
+    }
+
+    @Test
     public void testLong2Args() throws Exception {
         assertQuery(
-                "coalesce\n" +
-                        "2\n" +
-                        "4\n" +
-                        "3\n" +
-                        "8\n" +
-                        "10\n" +
-                        "NaN\n",
-                "select coalesce(a, x) " +
+                "c1\tc2\ta\tb\tx\n" +
+                        "3\t3\tNaN\t3\t1\n" +
+                        "NaN\tNaN\tNaN\tNaN\tNaN\n" +
+                        "6\t6\t6\tNaN\t3\n" +
+                        "12\t12\tNaN\t12\tNaN\n" +
+                        "5\tNaN\tNaN\tNaN\t5\n" +
+                        "12\t12\t12\tNaN\tNaN\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
                         "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
-                        " CASE WHEN x % 3 = 0 THEN CAST(NULL as long) ELSE x * 2 END as a" +
+                        " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
+                        " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
                         " from long_sequence(6)" +
                         ")",
                 null,
@@ -63,17 +86,18 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testInt2Args() throws Exception {
         assertQuery(
-                "coalesce\n" +
-                        "2\n" +
-                        "2\n" +
-                        "6\n" +
-                        "4\n" +
-                        "10\n",
-                "select coalesce(a, x) " +
+                "c1\tc2\ta\tb\tx\n" +
+                        "10\t10\tNaN\t10\t1\n" +
+                        "2\tNaN\tNaN\tNaN\t2\n" +
+                        "6\t6\t6\tNaN\t3\n" +
+                        "40\t40\tNaN\t40\t4\n" +
+                        "5\tNaN\tNaN\tNaN\t5\n",
+                "select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
                         "select CAST(x as INT) x," +
-                        " CASE WHEN x % 2 = 0 THEN CAST(NULL as INT) ELSE CAST(x AS INT) * 2 END as a" +
+                        " CASE WHEN x % 3 = 0 THEN CAST(x AS INT) * 2 ELSE CAST(NULL as INT)  END as a," +
+                        " CASE WHEN x % 3 = 1 THEN CAST(x AS INT) * 10 ELSE CAST(NULL as INT)  END as b\n" +
                         " from long_sequence(5)" +
                         ")",
                 null,
@@ -111,13 +135,13 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testFloat3Args() throws Exception {
         assertQuery(
-                "coalesce\n" +
-                        "10.0000\n" +
-                        "2.0000\n" +
-                        "0.5000\n" +
-                        "10.0000\n" +
-                        "5.0000\n",
-                "select coalesce(b, a, x) " +
+                "c1\tc2\ta\tb\tx\n" +
+                        "10.0000\t10.0000\tNaN\t10.0000\t1.0000\n" +
+                        "2.0000\tNaN\tNaN\tNaN\t2.0000\n" +
+                        "0.5000\t0.5000\t0.5000\tNaN\t3.0000\n" +
+                        "10.0000\t10.0000\tNaN\t10.0000\t4.0000\n" +
+                        "5.0000\tNaN\tNaN\tNaN\t5.0000\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
                         "select CAST(x as float) as x," +
@@ -135,13 +159,13 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testDoubleAndLongMixed3Args() throws Exception {
         assertQuery(
-                "coalesce\n" +
-                        "10.0\n" +
-                        "0.2\n" +
-                        "100.0\n" +
-                        "10.0\n" +
-                        "0.5\n",
-                "select coalesce(b, a, x) " +
+                "c1\tc2\ta\tb\tx\n" +
+                        "10.0\t10.0\tNaN\t10.0\t0.1\n" +
+                        "0.2\tNaN\tNaN\tNaN\t0.2\n" +
+                        "100.0\t100.0\t100\tNaN\t0.3\n" +
+                        "10.0\t10.0\tNaN\t10.0\t0.4\n" +
+                        "0.5\tNaN\tNaN\tNaN\t0.5\n",
+                "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
                         "select x / 10.0 as x," +
@@ -157,7 +181,7 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testStrl3Args() throws Exception {
+    public void testStr3Args() throws Exception {
         assertQuery(
                 "coalesce\n" +
                         "A\n" +
@@ -275,15 +299,15 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTimestampAndDateCoalesce() throws Exception {
+    public void testDateCoalesce() throws Exception {
         assertQuery(
-                "coalesce\ta\tx\n" +
-                        "1970-01-02T00:00:00.000Z\t\t1970-01-02T00:00:00.000Z\n" +
-                        "1970-01-21T00:00:00.000Z\t1970-01-21T00:00:00.000Z\t1970-01-03T00:00:00.000Z\n" +
-                        "1970-01-04T00:00:00.000Z\t\t1970-01-04T00:00:00.000Z\n" +
-                        "1970-02-10T00:00:00.000Z\t1970-02-10T00:00:00.000Z\t1970-01-05T00:00:00.000Z\n" +
-                        "1970-01-06T00:00:00.000Z\t\t1970-01-06T00:00:00.000Z\n",
-                "select coalesce(a, x) as coalesce, a, x \n" +
+                "c1\tc2\ta\tx\n" +
+                        "1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000Z\t\t1970-01-02T00:00:00.000Z\n" +
+                        "1970-01-03T00:00:00.000Z\t\t\t1970-01-03T00:00:00.000Z\n" +
+                        "1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t1970-01-31T00:00:00.000Z\t1970-01-04T00:00:00.000Z\n" +
+                        "1970-02-10T00:00:00.000Z\t1970-02-10T00:00:00.000Z\t\t1970-01-05T00:00:00.000Z\n" +
+                        "1970-01-06T00:00:00.000Z\t\t\t1970-01-06T00:00:00.000Z\n",
+                "select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, x \n" +
                         "from alex",
                 "create table alex as (" +
                         "WITH tx as (\n" +
@@ -291,8 +315,9 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         "CAST(dateadd('d', CAST(x as INT) * 10, CAST(0 AS DATE)) AS DATE) as xx, \n" +
                         "x as n from long_sequence(5))\n" +
                         "select x, \n" +
-                        "CASE WHEN n % 2 = 0 THEN xx ELSE CAST(NULL as DATE) END as a \n" +
-                        "from tx "+
+                        "CASE WHEN n % 3 = 0 THEN xx ELSE CAST(NULL as DATE) END as a, \n" +
+                        "CASE WHEN n % 3 = 1 THEN xx ELSE CAST(NULL as DATE) END as b \n" +
+                        "from tx " +
                         ")",
                 null,
                 true,
@@ -304,17 +329,18 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testCoalesceLong256() throws Exception {
         assertQuery(
-                "coalesce\ta\tx\n" +
-                        "\t\t\n" +
-                        "0x4ff974be989fa1d8313c564a4a70df3a6ad4d66b23b47bdf9b46ced4655c6674\t\t0x4ff974be989fa1d8313c564a4a70df3a6ad4d66b23b47bdf9b46ced4655c6674\n" +
-                        "\t\t\n" +
-                        "0x9d34356da0f68f1fbc7827bb6dc3ce15b85b002a9fea625b95bdcc28b3dfce1e\t0x9d34356da0f68f1fbc7827bb6dc3ce15b85b002a9fea625b95bdcc28b3dfce1e\t0xb98b79aef5acec1fdb8cfee61427b2cc7d13df361ce20ad91905dceefe6983dd\n" +
-                        "\t\t\n",
-                "select coalesce(a, x), a, x\n" +
+                "c1\tc2\ta\tb\tx\n" +
+                        "0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t\t0x1408db63570045c42b9133f96d5ac9b49395464592076d7cc536ccc3235f0a72\t\n" +
+                        "0xa4cdac45d508383f9c0a1370d099b7237e25b91255572a8f86fd0ebdb6707e47\t\t\t\t0xa4cdac45d508383f9c0a1370d099b7237e25b91255572a8f86fd0ebdb6707e47\n" +
+                        "\t\t\t\t\n" +
+                        "0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t0x2000c672c7af13b68f38b4e22684beea970e01b3e4aca8b29e144cd789d939f0\t\t0x9ec31d67e4bc804a761b47dbe5d724a075234fffc7e1e6917d2037c10d3c9d2e\n" +
+                        "0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t\t0x2ab49a7d2ed9aec81233ce62b3c6cf03600e7d2ef68eeb777b8273a492471abc\t\n",
+                "select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, b, x \n" +
                         "from alex",
                 "create table alex as (" +
                         "select CASE WHEN x % 2 = 0 THEN rnd_long256(1000) ELSE CAST(NULL as LONG256) END as x," +
-                        " CASE WHEN x % 4 = 0 THEN rnd_long256(10) ELSE CAST(NULL as LONG256) END as a" +
+                        " CASE WHEN x % 4 = 0 THEN rnd_long256(10) ELSE CAST(NULL as LONG256) END as a," +
+                        " CASE WHEN x % 4 = 1 THEN rnd_long256(30) ELSE CAST(NULL as LONG256) END as b" +
                         " from long_sequence(5)" +
                         ")",
                 null,
