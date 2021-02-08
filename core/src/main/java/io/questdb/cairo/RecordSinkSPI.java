@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.CharFunction;
 import io.questdb.std.Long256;
 
 public interface RecordSinkSPI {
@@ -56,11 +55,11 @@ public interface RecordSinkSPI {
 
     void putStr(CharSequence value, int lo, int hi);
 
-    default void putStr(CharSequence value, CharFunction transform) {
+    default void putStrLowerCase(CharSequence value) {
         throw new UnsupportedOperationException();
     }
 
-    default void putStr(CharSequence value, int lo, int hi, CharFunction transform) {
+    default void putStrLowerCase(CharSequence value, int lo, int hi) {
         throw new UnsupportedOperationException();
     }
 

@@ -590,7 +590,7 @@ public class FastMap implements Map {
         }
 
         @Override
-        public void putStr(CharSequence value, CharFunction transform) {
+        public void putStrLowerCase(CharSequence value) {
             if (value == null) {
                 putNull();
                 return;
@@ -601,20 +601,20 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4;
             for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + (i << 1), transform.apply(value.charAt(i)));
+                Unsafe.getUnsafe().putChar(appendAddress + (i << 1), Character.toLowerCase(value.charAt(i)));
             }
             appendAddress += len << 1;
             writeOffset();
         }
 
         @Override
-        public void putStr(CharSequence value, int lo, int hi, CharFunction transform) {
+        public void putStrLowerCase(CharSequence value, int lo, int hi) {
             int len = hi - lo;
             checkSize((len << 1) + 4);
             Unsafe.getUnsafe().putInt(appendAddress, len);
             appendAddress += 4;
             for (int i = lo; i < hi; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((i - lo) << 1), transform.apply(value.charAt(i)));
+                Unsafe.getUnsafe().putChar(appendAddress + ((i - lo) << 1), Character.toLowerCase(value.charAt(i)));
             }
             appendAddress += len << 1;
             writeOffset();
