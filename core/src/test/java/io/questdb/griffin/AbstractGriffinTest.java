@@ -283,7 +283,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         CharSequence s = record.getStr(i);
                         if (s != null) {
                             if (checkSameStr) {
-                                Assert.assertNotSame(s, record.getStrB(i));
+                                Assert.assertNotSame("Expected string instances be different for getStr and getStrB", s, record.getStrB(i));
                             }
                             TestUtils.assertEquals(s, record.getStrB(i));
                             Assert.assertEquals(s.length(), record.getStrLen(i));
