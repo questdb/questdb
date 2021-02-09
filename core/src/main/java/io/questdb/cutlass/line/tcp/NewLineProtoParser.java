@@ -82,6 +82,13 @@ public class NewLineProtoParser implements Closeable {
         assert bufAt != 0 && bufHi >= bufAt;
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
+            if (lookupTableIsNotSpecial(b)) {
+                if (nEscapedChars > 0) {
+                    Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                }
+                bufAt++;
+                continue;
+            }
             boolean endOfLine = false;
             switch (b) {
                 case (byte) '\n':
@@ -410,5 +417,40 @@ public class NewLineProtoParser implements Closeable {
         public boolean getBooleanValue() {
             return booleanValue;
         }
+    }
+
+    private static final byte[] LOOKUP_TABLE = new byte[256];
+
+    private static final void lookupTableMarkSpecial(byte b) {
+        assert lookupTableIsNotSpecial(b);
+        LOOKUP_TABLE[Byte.toUnsignedInt(b)] = 1;
+        assert !lookupTableIsNotSpecial(b);
+    }
+
+    private static final boolean lookupTableIsNotSpecial(byte b) {
+        return LOOKUP_TABLE[Byte.toUnsignedInt(b)] == 0;
+    }
+
+    // private static final int[] LOOKUP_TABLE = new int[8];
+    //
+    // private static final void lookupTableMarkSpecial(byte b) {
+    // assert lookupTableIsNotSpecial(b);
+    // int i = b >> 5;
+    // LOOKUP_TABLE[i] |= 2 << (b & 0x1f);
+    // assert !lookupTableIsNotSpecial(b);
+    // }
+    //
+    // private static final boolean lookupTableIsNotSpecial(byte b) {
+    // int i = b >> 5;
+    // return (LOOKUP_TABLE[i] & (2 << (b & 0x1f))) == 0;
+    // }
+
+    static {
+        lookupTableMarkSpecial((byte) '\n');
+        lookupTableMarkSpecial((byte) '\r');
+        lookupTableMarkSpecial((byte) '=');
+        lookupTableMarkSpecial((byte) ',');
+        lookupTableMarkSpecial((byte) ' ');
+        lookupTableMarkSpecial((byte) '\\');
     }
 }

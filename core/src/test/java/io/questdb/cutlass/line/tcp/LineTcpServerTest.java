@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,9 +36,12 @@ import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoSender;
 import io.questdb.log.Log;
@@ -52,9 +56,11 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 
 public class LineTcpServerTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpServerTest.class);
@@ -64,6 +70,101 @@ public class LineTcpServerTest extends AbstractCairoTest {
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private static final AtomicInteger N_TEST = new AtomicInteger();
     private static final long TEST_TIMEOUT_IN_MS = 120000;
+
+    private Path path;
+    private WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
+        private final int[] affinity = { -1, -1 };
+
+        @Override
+        public boolean haltOnError() {
+            return true;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 2;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return affinity;
+        }
+    });
+
+    private final int bindIp = 0;
+    private final int bindPort = 9002; // Dont clash with other tests since they may run in parallel
+    private IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+        @Override
+        public int getBindIPv4Address() {
+            return bindIp;
+        }
+
+        @Override
+        public int getBindPort() {
+            return bindPort;
+        }
+    };
+    private String authKeyId = null;
+    private int msgBufferSize = 1024;
+    private long minIdleMsBeforeWriterRelease = 30000;
+    private LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
+        @Override
+        public IODispatcherConfiguration getNetDispatcherConfiguration() {
+            return ioDispatcherConfiguration;
+        }
+
+        @Override
+        public int getWriterQueueCapacity() {
+            return 4;
+        }
+
+        @Override
+        public int getNetMsgBufferSize() {
+            return msgBufferSize;
+        }
+
+        @Override
+        public int getMaxMeasurementSize() {
+            return 50;
+        }
+
+        @Override
+        public int getNUpdatesPerLoadRebalance() {
+            return 100;
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return 50;
+        }
+
+        @Override
+        public double getMaxLoadRatio() {
+            // Always rebalance as long as there are more tables than threads;
+            return 1;
+        }
+
+        @Override
+        public String getAuthDbPath() {
+            if (null == authKeyId) {
+                return null;
+            }
+            URL u = getClass().getResource("authDb.txt");
+            return u.getFile();
+        }
+
+        @Override
+        public long getMaintenanceJobHysteresisInMs() {
+            return 25;
+        };
+
+        @Override
+        public long getMinIdleMsBeforeWriterRelease() {
+            return minIdleMsBeforeWriterRelease;
+        };
+
+    };
+    private CairoEngine engine;
 
     @Test
     public void testUnauthenticated() {
@@ -85,86 +186,227 @@ public class LineTcpServerTest extends AbstractCairoTest {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 100);
     }
 
-    private void test(String authKeyId, PrivateKey authPrivateKey, int msgBufferSize, final int nRows) {
-        int nTest = N_TEST.incrementAndGet();
-        WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-            private final int[] affinity = { -1, -1 };
+    @Test
+    public void testWriterRelease1() throws Exception {
+        runInContext(() -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            send(lineData);
 
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
+            TableWriter writer = waitForWriterRelease("weather", 3);
+            writer.close();
 
-            @Override
-            public int getWorkerCount() {
-                return 2;
-            }
+            lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            send(lineData);
 
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinity;
+            writer = waitForWriterRelease("weather", 6);
+            writer.close();
+
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWriterRelease2() throws Exception {
+        runInContext(() -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            send(lineData);
+
+            TableWriter writer = waitForWriterRelease("weather", 3);
+            writer.truncate();
+            writer.close();
+
+            lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            send(lineData);
+
+            writer = waitForWriterRelease("weather", 3);
+            writer.close();
+
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWriterRelease3() throws Exception {
+        runInContext(() -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            send(lineData);
+
+            TableWriter writer = waitForWriterRelease("weather", 3);
+            writer.close();
+            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+
+            lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
+                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
+            send(lineData);
+
+            writer = waitForWriterRelease("weather", 3);
+            writer.close();
+
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWriterRelease4() throws Exception {
+        runInContext(() -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            send(lineData);
+
+            TableWriter writer = waitForWriterRelease("weather", 3);
+            writer.close();
+            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+
+            lineData = "weather,loc=us-midwest temp=85 1465839830102300200\n" +
+                    "weather,loc=us-eastcoast temp=89 1465839830102400200\n" +
+                    "weather,loc=us-westcost temp=82 1465839830102500200\n";
+            send(lineData);
+
+            writer = waitForWriterRelease("weather", 3);
+            writer.close();
+
+            String expected = "loc\ttemp\ttimestamp\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testWriterRelease5() throws Exception {
+        runInContext(() -> {
+            String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
+            send(lineData);
+
+            TableWriter writer = waitForWriterRelease("weather", 3);
+            writer.close();
+            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+
+            lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
+                    "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
+                    "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
+            send(lineData);
+
+            writer = waitForWriterRelease("weather", 3);
+            writer.close();
+
+            String expected = "location\tsource\ttemp\ttimestamp\n" +
+                    "us-midwest\tsensor1\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    private void runInContext(Runnable r) throws Exception {
+        minIdleMsBeforeWriterRelease = 250;
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                path = new Path(4096);
+                LineTcpServerTest.this.engine = engine;
+                LineTcpServer tcpServer = LineTcpServer.create(lineConfiguration, sharedWorkerPool, LOG, engine);
+                sharedWorkerPool.start(LOG);
+
+                r.run();
+
+                sharedWorkerPool.halt();
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                Misc.free(tcpServer);
+            } finally {
+                LineTcpServerTest.this.engine = null;
+                path.close();
             }
         });
+    }
 
-        final int bindIp = 0;
-        final int bindPort = 9002; // Dont clash with other tests since they may run in parallel
-        IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-            @Override
-            public int getBindIPv4Address() {
-                return bindIp;
-            }
+    private void send(String lineData) {
+        int ipv4address = Net.parseIPv4("127.0.0.1");
+        long sockaddr = Net.sockaddr(ipv4address, bindPort);
+        long fd = Net.socketTcp(true);
+        if (Net.connect(fd, sockaddr) != 0) {
+            throw NetworkError.instance(Os.errno(), "could not connect to ").ip(ipv4address);
+        }
+        byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+        long bufaddr = Unsafe.malloc(lineDataBytes.length);
+        for (int n = 0; n < lineDataBytes.length; n++) {
+            Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+        }
+        int rc = Net.send(fd, bufaddr, lineDataBytes.length);
+        Unsafe.free(bufaddr, lineDataBytes.length);
+        Net.close(fd);
+        Net.freeSockAddr(sockaddr);
 
-            @Override
-            public int getBindPort() {
-                return bindPort;
-            }
-        };
-        LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
-            @Override
-            public IODispatcherConfiguration getNetDispatcherConfiguration() {
-                return ioDispatcherConfiguration;
-            }
+        Assert.assertEquals(lineDataBytes.length, rc);
+    }
 
-            @Override
-            public int getWriterQueueCapacity() {
-                return 4;
-            }
-
-            @Override
-            public int getNetMsgBufferSize() {
-                return msgBufferSize;
-            }
-
-            @Override
-            public int getMaxMeasurementSize() {
-                return 50;
-            }
-
-            @Override
-            public int getNUpdatesPerLoadRebalance() {
-                return 100;
-            }
-
-            @Override
-            public int getMaxUncommittedRows() {
-                return 50;
-            }
-
-            @Override
-            public double getMaxLoadRatio() {
-                // Always rebalance as long as there are more tables than threads;
-                return 1;
-            }
-
-            @Override
-            public String getAuthDbPath() {
-                if (null == authKeyId) {
-                    return null;
+    private TableWriter waitForWriterRelease(String tableName, int nMinRows) {
+        int status = TableUtils.TABLE_DOES_NOT_EXIST;
+        int nRows = 0;
+        long startEpochMillis = System.currentTimeMillis();
+        while (true) {
+            if (status != TableUtils.TABLE_EXISTS) {
+                status = engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName, 0, tableName.length());
+            } else if (nRows < nMinRows) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    nRows = (int) reader.size();
+                } catch (EntryLockedException e) {
+                    //
                 }
-                URL u = getClass().getResource("authDb.txt");
-                return u.getFile();
+            } else {
+                try {
+                    return engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                } catch (EntryUnavailableException ex) {
+                    //
+                }
             }
-        };
+
+            long epochMillis = System.currentTimeMillis();
+            if (epochMillis - startEpochMillis > 15000000) {
+                Assert.fail("Timed out waiting for writer release");
+            }
+            try {
+                Thread.sleep(lineConfiguration.getMaintenanceJobHysteresisInMs());
+            } catch (InterruptedException e) {
+                Assert.fail("Interrupted out waiting for writer release");
+            }
+        }
+    }
+
+    private void test(String authKeyId, PrivateKey authPrivateKey, int msgBufferSize, final int nRows) {
+        int nTest = N_TEST.incrementAndGet();
+        this.authKeyId = authKeyId;
+        this.msgBufferSize = msgBufferSize;
 
         final String[] tables = { "weather1-" + nTest, "weather2-" + nTest, "weather3-" + nTest };
         final String[] locations = { "london", "paris", "rome" };

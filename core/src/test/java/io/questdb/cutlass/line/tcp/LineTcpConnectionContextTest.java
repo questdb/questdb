@@ -35,7 +35,6 @@ import java.util.function.Function;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import io.questdb.cairo.AbstractCairoTest;
@@ -44,13 +43,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTestUtils;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderRecordCursor;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
 import io.questdb.log.Log;
@@ -65,12 +61,12 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 
 public class LineTcpConnectionContextTest extends AbstractCairoTest {
@@ -1015,201 +1011,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
-    public void testWriterRelease1() throws Exception {
-        runInContext(() -> {
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
-                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
-                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion(false);
-
-            int nRows;
-            do {
-                nRows = getTableCount("weather");
-            } while (nRows == 0);
-
-            TableWriter writer = null;
-            do {
-                try {
-                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
-                } catch (EntryUnavailableException ex) {
-                    try {
-                        handleContextIO();
-                        Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs());
-                    } catch (InterruptedException e) {
-                        //
-                    }
-                }
-            } while (null == writer);
-            writer.close();
-
-            recvBuffer = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
-                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion();
-
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
-            assertTable(expected, "weather");
-        });
-    }
-
-    @Test
-    @Ignore
-    public void testWriterRelease2() throws Exception {
-        runInContext(() -> {
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
-                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
-                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion(false);
-
-            int nRows;
-            do {
-                nRows = getTableCount("weather");
-            } while (nRows == 0);
-
-            TableWriter writer = null;
-            do {
-                try {
-                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
-                } catch (EntryUnavailableException ex) {
-                    try {
-                        Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs());
-                    } catch (InterruptedException e) {
-                        //
-                    }
-                }
-            } while (null == writer);
-            writer.truncate();
-            writer.close();
-
-            recvBuffer = "weather,location=us-midwest,source=sensor1 temperature=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast,source=sensor2 temperature=89 1465839830102400200\n" +
-                    "weather,location=us-westcost,source=sensor1 temperature=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion();
-
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\tsource\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tsensor1\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tsensor2\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tsensor1\n";
-            assertTable(expected, "weather");
-        });
-    }
-
-    @Test
-    @Ignore
-    public void testWriterRelease3() throws Exception {
-        runInContext(() -> {
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
-                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
-                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion(false);
-
-            int nRows;
-            do {
-                nRows = getTableCount("weather");
-            } while (nRows == 0);
-
-            TableWriter writer = null;
-            do {
-                try {
-                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
-                } catch (EntryUnavailableException ex) {
-                    try {
-                        Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs());
-                    } catch (InterruptedException e) {
-                        //
-                    }
-                }
-            } while (null == writer);
-            writer.close();
-            Path path = new Path();
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
-            path.close();
-
-            recvBuffer = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
-                    "weather,location=us-westcost temperature=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion();
-
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
-            assertTable(expected, "weather");
-        });
-    }
-
-    @Test
-    @Ignore
-    public void testWriterRelease4() throws Exception {
-        runInContext(() -> {
-            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
-                    "weather,location=us-midwest temperature=83 1465839830100500200\n" +
-                    "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion(false);
-
-            int nRows;
-            do {
-                nRows = getTableCount("weather");
-            } while (nRows == 0);
-
-            TableWriter writer = null;
-            do {
-                try {
-                    writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather");
-                } catch (EntryUnavailableException ex) {
-                    try {
-                        Thread.sleep(lineTcpConfiguration.getMaintenanceJobHysteresisInMs());
-                    } catch (InterruptedException e) {
-                        //
-                    }
-                }
-            } while (null == writer);
-            writer.close();
-            Path path = new Path();
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
-            path.close();
-
-            recvBuffer = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
-                    "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +
-                    "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
-            handleContextIO();
-            Assert.assertFalse(disconnected);
-            waitForIOCompletion();
-
-            closeContext();
-            String expected = "location\tsource\ttemp\ttimestamp\n" +
-                    "us-midwest\tsensor1\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\tsensor1\t82.0\t2016-06-13T17:43:50.102500Z\n";
-            assertTable(expected, "weather");
-        });
-    }
-
-    @Test
     public void testBooleans() throws Exception {
         runInContext(() -> {
             recvBuffer = "weather,location=us-eastcoast raining=true 1465839830100400200\n" +
@@ -1374,13 +1175,39 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 Arrays.fill(affinityByThread, -1);
             }
         });
-        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool, 1) {
+
+        WorkerPool netIoWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            private final int[] affinityByThread = { -1 };
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinityByThread;
+            }
+        });
+
+        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, netIoWorkerPool, null, workerPool) {
             @Override
             boolean tryCommitNewEvent(NetworkIOJob netIoJob, NewLineProtoParser protoParser, FloatingDirectCharSink charSink) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
                 return super.tryCommitNewEvent(netIoJob, protoParser, charSink);
+            }
+
+            @Override
+            protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
+                Assert.assertEquals(0, workerId);
+                return netIoJob;
             }
         };
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
@@ -1561,6 +1388,7 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
 
     private final NetworkIOJob netIoJob = new NetworkIOJob() {
         private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<SymbolCache>();
 
         @Override
         public int getWorkerId() {
@@ -1575,7 +1403,21 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         @Override
         public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
-        };
+        }
 
+        @Override
+        public boolean run(int workerId) {
+            Assert.fail("This is a mock job, not designed to run in a wroker pool");
+            return false;
+        }
+
+        @Override
+        public ObjList<SymbolCache> getUnusedSymbolCaches() {
+            return unusedSymbolCaches;
+        }
+
+        @Override
+        public void close() {
+        };
     };
 }

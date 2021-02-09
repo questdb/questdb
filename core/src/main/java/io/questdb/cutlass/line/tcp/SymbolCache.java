@@ -74,14 +74,15 @@ class SymbolCache implements Closeable {
     }
 
     void clear() {
-        indexBySym.clear();
         symMapReader.updateSymbolCount(0);
+        indexBySym.clear();
+        txMem.close();
     }
 
     @Override
     public void close() throws IOException {
+        symMapReader.close();
         indexBySym.clear();
         txMem.close();
-        symMapReader.close();
     }
 }

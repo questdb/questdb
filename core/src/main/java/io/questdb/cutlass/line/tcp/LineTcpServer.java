@@ -30,6 +30,7 @@ import org.jetbrains.annotations.Nullable;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJobImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
@@ -63,12 +64,7 @@ public class LineTcpServer implements Closeable {
                 contextFactory);
         this.dedicatedPools = dedicatedPools;
         ioWorkerPool.assign(dispatcher);
-        int nIOWorkers = ioWorkerPool.getWorkerCount();
-        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, writerWorkerPool, nIOWorkers);
-        for (int i = 0; i < nIOWorkers; i++) {
-            final int j = i;
-            ioWorkerPool.assign(i, scheduler.new NetworkIOJobImpl(dispatcher, j));
-        }
+        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
 
         final Closeable cleaner = contextFactory::closeContextPool;
         for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {

@@ -24,25 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import static org.junit.Assert.assertEquals;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -54,7 +36,31 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-import static org.junit.Assert.assertEquals;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.TableUpdateDetails;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.test.tools.TestUtils;
 
 public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpAuthConnectionContextTest.class);
@@ -578,7 +584,33 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
                 Arrays.fill(affinityByThread, -1);
             }
         });
-        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, workerPool, 1);
+
+        WorkerPool netIoWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            private final int[] affinityByThread = { -1 };
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinityByThread;
+            }
+        });
+
+        scheduler = new LineTcpMeasurementScheduler(lineTcpConfiguration, engine, netIoWorkerPool, null, workerPool) {
+            @Override
+            protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
+                Assert.assertEquals(0, workerId);
+                return netIoJob;
+            }
+        };
 
         AuthDb authDb = new AuthDb(lineTcpConfiguration);
         context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler);
@@ -660,6 +692,7 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
 
     private final NetworkIOJob netIoJob = new NetworkIOJob() {
         private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+        private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<SymbolCache>();
 
         @Override
         public int getWorkerId() {
@@ -674,7 +707,21 @@ public class LineTcpAuthConnectionContextTest extends AbstractCairoTest {
         @Override
         public void addTableUpdateDetails(TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
-        };
+        }
 
+        @Override
+        public boolean run(int workerId) {
+            Assert.fail("This is a mock job, not designed to run in a wroker pool");
+            return false;
+        }
+
+        @Override
+        public ObjList<SymbolCache> getUnusedSymbolCaches() {
+            return unusedSymbolCaches;
+        }
+
+        @Override
+        public void close() {
+        };
     };
 }
