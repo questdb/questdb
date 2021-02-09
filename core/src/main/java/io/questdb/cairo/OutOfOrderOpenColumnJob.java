@@ -107,8 +107,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean isIndexed,
-            AppendMemory srcDataFixColumn,
-            AppendMemory srcDataVarColumn,
+            long activeFixFd,
+            long activeVarFd,
+            long activeTop,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -185,8 +186,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         isIndexed,
-                        srcDataFixColumn,
-                        srcDataVarColumn,
+                        activeFixFd,
+                        activeVarFd,
+                        activeTop,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
@@ -287,8 +289,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         suffixLo,
                         suffixHi,
                         isIndexed,
-                        srcDataFixColumn,
-                        srcDataVarColumn,
+                        activeFixFd,
+                        activeVarFd,
+                        activeTop,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
@@ -365,8 +368,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long srcTimestampSize = task.getSrcTimestampSize();
         final AtomicInteger columnCounter = task.getColumnCounter();
         final boolean isIndexed = task.isIndexed();
-        final AppendMemory srcDataFixColumn = task.getSrcDataFixColumn();
-        final AppendMemory srcDataVarColumn = task.getSrcDataVarColumn();
         final long srcOooFixAddr = task.getSrcOooFixAddr();
         final long srcOooFixSize = task.getSrcOooFixSize();
         final long srcOooVarAddr = task.getSrcOooVarAddr();
@@ -384,6 +385,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long suffixHi = task.getSuffixHi();
         final int mergeType = task.getMergeType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final long activeFixFd = task.getActiveFixFd();
+        final long activeVarFd = task.getActiveVarFd();
+        final long activeTop = task.getActiveTop();
         final TableWriter tableWriter = task.getTableWriter();
         final SOUnboundedCountDownLatch doneLatch = task.getDoneLatch();
 
@@ -432,8 +436,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcTimestampAddr,
                 srcTimestampSize,
                 isIndexed,
-                srcDataFixColumn,
-                srcDataVarColumn,
+                activeFixFd,
+                activeVarFd,
+                activeTop,
                 tableWriter,
                 doneLatch
         );
@@ -607,6 +612,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 0,
                 0,
+                0,
                 srcOooLo,
                 srcOooHi,
                 srcDataMax,
@@ -658,6 +664,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
+            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -712,6 +719,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     columnType,
                     blockType,
                     timestampMergeIndexAddr,
+                    srcDataTop,
                     srcDataFixFd,
                     srcDataFixAddr,
                     srcDataFixSize,
@@ -769,6 +777,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     columnType,
                     blockType,
                     timestampMergeIndexAddr,
+                    srcDataTop,
                     srcDataFixFd,
                     srcDataFixAddr,
                     srcDataFixSize,
@@ -828,6 +837,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
+            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -886,6 +896,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     columnType,
                     blockType,
                     timestampMergeIndexAddr,
+                    srcDataTop,
                     srcDataFixFd,
                     srcDataFixAddr,
                     srcDataFixSize,
@@ -939,6 +950,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     columnType,
                     blockType,
                     timestampMergeIndexAddr,
+                    srcDataTop,
                     srcDataFixFd,
                     srcDataFixAddr,
                     srcDataFixSize,
@@ -995,6 +1007,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
+            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -1047,6 +1060,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 columnType,
                 blockType,
                 timestampMergeIndexAddr,
+                srcDataTop,
                 srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixSize,
@@ -1120,8 +1134,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             boolean isIndexed,
-            AppendMemory srcDataFixColumn,
-            AppendMemory srcDataVarColumn,
+            long activeFixFd,
+            long activeVarFd,
+            long activeTop,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -1144,22 +1159,28 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         switch (columnType) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                dstFixOffset = srcDataFixColumn.getAppendOffset();
-                dstFixFd = -srcDataFixColumn.getFd();
+                dstFixOffset = srcDataMax * Long.BYTES;
+                dstFixFd = -activeFixFd;
                 dstFixSize = dstLen * Long.BYTES + dstFixOffset;
                 truncateToSizeOrFail(ff, null, -dstFixFd, dstFixSize);
                 dstFixAddr = mapReadWriteOrFail(ff, null, -dstFixFd, dstFixSize);
 
-                dstVarFd = -srcDataVarColumn.getFd();
-                dstVarOffset = srcDataVarColumn.getAppendOffset();
+                dstVarFd = -activeVarFd;
+                dstVarOffset = getVarColumnSize(
+                        ff,
+                        columnType,
+                        -dstVarFd,
+                        Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES)
+                );
                 dstVarSize = dstVarOffset + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 truncateToSizeOrFail(ff, null, -dstVarFd, dstVarSize);
                 dstVarAddr = mapReadWriteOrFail(ff, null, -dstVarFd, dstVarSize);
                 break;
             default:
-                long oooSize = dstLen << ColumnType.pow2SizeOf(Math.abs(columnType));
-                dstFixOffset = srcDataFixColumn.getAppendOffset();
-                dstFixFd = -srcDataFixColumn.getFd();
+                int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
+                long oooSize = dstLen << shl;
+                dstFixOffset = srcDataMax << shl;
+                dstFixFd = -activeFixFd;
                 dstFixSize = oooSize + dstFixOffset;
                 truncateToSizeOrFail(ff, null, -dstFixFd, dstFixSize);
                 dstFixAddr = mapReadWriteOrFail(ff, null, -dstFixFd, dstFixSize);
@@ -1185,6 +1206,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 pathToTable,
                 columnType,
                 OO_BLOCK_OO,
+                0,
                 0,
                 0,
                 0,
@@ -1272,8 +1294,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long suffixLo,
             long suffixHi,
             boolean isIndexed,
-            AppendMemory srcDataFixColumn,
-            AppendMemory srcDataVarColumn,
+            long activeFixFd,
+            long activeVarFd,
+            long activeTop,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -1305,15 +1328,20 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.STRING:
                 // index files are opened as normal
                 iFile(path.trimTo(plen), columnName);
-                srcDataFixFd = -srcDataFixColumn.getFd();
-                srcDataFixSize = srcDataFixColumn.getAppendOffset();
-                srcDataFixAddr = mapRO(ff, Math.abs(srcDataFixFd), srcDataFixSize);
+                srcDataFixFd = -activeFixFd;
+                srcDataFixSize = srcDataMax * Long.BYTES;
+                srcDataFixAddr = mapRO(ff, -srcDataFixFd, srcDataFixSize);
 
                 // open data file now
                 dFile(path.trimTo(plen), columnName);
-                srcDataVarFd = -srcDataVarColumn.getFd();
-                srcDataVarSize = srcDataVarColumn.getAppendOffset();
-                srcDataVarAddr = mapRO(ff, Math.abs(srcDataVarFd), srcDataVarSize);
+                srcDataVarFd = -activeVarFd;
+                srcDataVarSize = getVarColumnSize(
+                        ff,
+                        columnType,
+                        -srcDataVarFd,
+                        Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES)
+                );
+                srcDataVarAddr = mapRO(ff, -srcDataVarFd, srcDataVarSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
                 path.concat(columnName);
@@ -1331,9 +1359,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
                 dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
-
-                // append offset is 0
-                //MergeStruct.setDestAppendOffsetFromOffset0(mergeStruct, varColumnStructOffset, 0L);
 
                 // configure offsets
                 switch (prefixType) {
@@ -1364,10 +1389,13 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 break;
             default:
-                srcDataFixFd = -srcDataFixColumn.getFd();
+                srcDataFixFd = -activeFixFd;
+                if (activeTop > 0) {
+                    System.out.println("ok");
+                }
                 final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
                 dFile(path.trimTo(plen), columnName);
-                srcDataFixSize = srcDataFixColumn.getAppendOffset();
+                srcDataFixSize = (srcDataMax-activeTop) << shl;
                 srcDataFixAddr = mapRO(ff, -srcDataFixFd, srcDataFixSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
@@ -1376,15 +1404,27 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 path.concat(columnName).put(FILE_SUFFIX_D).$();
 
                 dstFixFd = openReadWriteOrFail(ff, path);
-                dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax) << shl;
-                truncateToSizeOrFail(ff, path, Math.abs(dstFixFd), dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, path, Math.abs(dstFixFd), dstFixSize);
-                // configure offsets for fixed columns
-                dstFixAppendOffset1 = (prefixHi - prefixLo + 1) << shl;
+                dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - activeTop) << shl;
+                truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+
+                // when prefix is "data" we need to reduce it by "activeTop"
+                if (prefixType == OO_BLOCK_DATA) {
+                    dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - activeTop) << shl;
+                    prefixHi -= activeTop;
+                } else {
+                    dstFixAppendOffset1 = (prefixHi - prefixLo + 1) << shl;
+                }
+
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
                     dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen << shl);
                 } else {
                     dstFixAppendOffset2 = dstFixAppendOffset1;
+                }
+
+                if (suffixType == OO_BLOCK_DATA && activeTop > 0) {
+                    suffixHi -= activeTop;
+                    suffixLo -= activeTop;
                 }
 
                 if (isIndexed) {
@@ -1422,6 +1462,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 pathToTable,
                 columnType,
                 timestampMergeIndexAddr,
+                activeTop,
                 srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixSize,
@@ -1675,6 +1716,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 pathToTable,
                 columnType,
                 timestampMergeIndexAddr,
+                0,
                 srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixSize,
@@ -1818,6 +1860,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 0,
                 0,
+                0,
                 srcDataMax,
                 tableFloorOfMaxTimestamp,
                 dataTimestampHi,
@@ -1871,6 +1914,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             CharSequence pathToTable,
             int columnType,
             long timestampMergeIndexAddr,
+            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -1937,6 +1981,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         prefixType,
                         0,
+                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,
@@ -1994,6 +2039,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         prefixType,
                         0,
+                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,
@@ -2056,6 +2102,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         mergeType,
                         0,
+                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,
@@ -2113,6 +2160,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         mergeType,
                         0,
+                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,
@@ -2170,6 +2218,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         mergeType,
                         timestampMergeIndexAddr,
+                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,
@@ -2232,6 +2281,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         suffixType,
                         0,
+                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,
@@ -2289,6 +2339,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         suffixType,
                         0,
+                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,

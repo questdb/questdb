@@ -65,6 +65,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
+            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -216,6 +217,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final int columnType = task.getColumnType();
         final int blockType = task.getBlockType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final long srcDataTop = task.getSrcDataTop();
         final long srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
         final long srcDataFixSize = task.getSrcDataFixSize();
@@ -271,6 +273,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 columnType,
                 blockType,
                 timestampMergeIndexAddr,
+                srcDataTop,
                 srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixSize,

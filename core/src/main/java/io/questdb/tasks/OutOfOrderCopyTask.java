@@ -39,6 +39,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
     private int columnType;
     private int blockType;
     private long timestampMergeIndexAddr;
+    private long srcDataTop;
     private long srcDataFixFd;
     private long srcDataFixAddr;
     private long srcDataFixSize;
@@ -193,6 +194,10 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         return srcDataMax;
     }
 
+    public long getSrcDataTop() {
+        return srcDataTop;
+    }
+
     public long getSrcDataVarAddr() {
         return srcDataVarAddr;
     }
@@ -281,6 +286,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
+            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -330,6 +336,7 @@ public class OutOfOrderCopyTask extends AbstractLockable {
         this.columnType = columnType;
         this.blockType = blockType;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
+        this.srcDataTop = srcDataTop;
         this.srcDataFixFd = srcDataFixFd;
         this.srcDataFixAddr = srcDataFixAddr;
         this.srcDataFixSize = srcDataFixSize;

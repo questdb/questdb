@@ -1854,6 +1854,10 @@ public class TableWriter implements Closeable {
         }
     }
 
+    long getColumnTop(int columnIndex) {
+        return columnTops.getQuick(columnIndex);
+    }
+
     private long getNextMinTimestamp(
             Timestamps.TimestampFloorMethod timestampFloorMethod,
             Timestamps.TimestampAddMethod timestampAddMethod

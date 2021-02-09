@@ -24,7 +24,6 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.AppendMemory;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.FilesFacade;
@@ -44,8 +43,6 @@ public class OutOfOrderOpenColumnTask {
     private long srcTimestampAddr;
     private long srcTimestampSize;
     private long timestampMergeIndexAddr;
-    private AppendMemory srcDataFixColumn;
-    private AppendMemory srcDataVarColumn;
     private long srcOooFixAddr;
     private long srcOooFixSize;
     private long srcOooVarAddr;
@@ -71,8 +68,23 @@ public class OutOfOrderOpenColumnTask {
     private int suffixType;
     private long suffixLo;
     private long suffixHi;
+    private long activeFixFd;
+    private long activeVarFd;
+    private long activeTop;
     private TableWriter tableWriter;
     private SOUnboundedCountDownLatch doneLatch;
+
+    public long getActiveFixFd() {
+        return activeFixFd;
+    }
+
+    public long getActiveTop() {
+        return activeTop;
+    }
+
+    public long getActiveVarFd() {
+        return activeVarFd;
+    }
 
     public AtomicInteger getColumnCounter() {
         return columnCounter;
@@ -154,16 +166,8 @@ public class OutOfOrderOpenColumnTask {
         return prefixType;
     }
 
-    public AppendMemory getSrcDataFixColumn() {
-        return srcDataFixColumn;
-    }
-
     public long getSrcDataMax() {
         return srcDataMax;
-    }
-
-    public AppendMemory getSrcDataVarColumn() {
-        return srcDataVarColumn;
     }
 
     public long getSrcOooFixAddr() {
@@ -276,8 +280,9 @@ public class OutOfOrderOpenColumnTask {
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean isIndexed,
-            AppendMemory srcDataFixColumn,
-            AppendMemory srcDataVarColumn,
+            long activeFixFd,
+            long activeVarFd,
+            long activeTop,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -318,8 +323,9 @@ public class OutOfOrderOpenColumnTask {
         this.srcTimestampAddr = srcTimestampAddr;
         this.srcTimestampSize = srcTimestampSize;
         this.isIndexed = isIndexed;
-        this.srcDataFixColumn = srcDataFixColumn;
-        this.srcDataVarColumn = srcDataVarColumn;
+        this.activeFixFd = activeFixFd;
+        this.activeVarFd = activeVarFd;
+        this.activeTop = activeTop;
         this.tableWriter = tableWriter;
         this.doneLatch = doneLatch;
     }

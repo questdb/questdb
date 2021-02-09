@@ -26,7 +26,6 @@
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
-#include <sys/mman.h>
 
 typedef struct {
     uint64_t c8[256];
@@ -331,6 +330,31 @@ inline void merge_shuffle(jlong src1, jlong src2, jlong dest, jlong index, jlong
     );
 }
 
+template<class T>
+inline void merge_shuffle_internal_top(T *src1, T *src2, T *dest, index_t *index, int64_t count, uint64_t top) {
+
+    T *sources[] = {src2, src1};
+    uint64_t shifts[] = {0, top};
+    for (long i = 0; i < count; i++) {
+        const auto r = reinterpret_cast<uint64_t>(index[i].i);
+        const uint64_t pick = r >> 63u;
+        const auto row = r & ~(1LLu << 63u);
+        dest[i] = sources[pick][row - shifts[pick]];
+    }
+}
+
+template<class T>
+inline void merge_shuffle_top(jlong src1, jlong src2, jlong dest, jlong index, jlong count, jlong top) {
+    merge_shuffle_internal_top<T>(
+            reinterpret_cast<T *>(src1),
+            reinterpret_cast<T *>(src2),
+            reinterpret_cast<T *>(dest),
+            reinterpret_cast<index_t *>(index),
+            count,
+            top
+    );
+}
+
 void k_way_merge_long_index(
         index_entry_t *indexes,
         uint32_t entries_count,
@@ -470,7 +494,7 @@ inline void merge_copy_var_column(
         dst_fix[l] = dst_var_offset;
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
-        const uint64_t rr = row & ~(1ul << 63);
+        const uint64_t rr = row & ~(1ull << 63);
         const int64_t offset = src_fix[bit][rr];
         char *src_var_ptr = src_var[bit] + offset;
         auto len = *reinterpret_cast<T *>(src_var_ptr);
@@ -626,6 +650,12 @@ JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                            jlong count) {
     merge_shuffle<int64_t>(src1, src2, dest, index, count);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffleTop64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
+                                           jlong count, jlong top) {
+    merge_shuffle_top<int64_t>(src1, src2, dest, index, count, top);
 }
 
 JNIEXPORT void JNICALL
