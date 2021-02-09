@@ -657,7 +657,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case ColumnType.STRING:
-                oooMergeCopyStrColumn(
+                Vect.oooMergeCopyStrColumn(
                         mergeIndexAddr,
                         rowCount,
                         srcDataFixAddr,
@@ -670,7 +670,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 );
                 break;
             case ColumnType.BINARY:
-                oooMergeCopyBinColumn(
+                Vect.oooMergeCopyBinColumn(
                         mergeIndexAddr,
                         rowCount,
                         srcDataFixAddr,
@@ -698,81 +698,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 break;
             default:
                 break;
-        }
-    }
-
-    private static void oooMergeCopyBinColumn(
-            long mergeIndexAddr,
-            long mergeIndexSize,
-            long srcDataFixAddr,
-            long srcDataVarAddr,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long dstFixAddr,
-            long dstVarAddr,
-            long dstVarOffset
-    ) {
-        // destination of variable length data
-        long destVarOffset = dstVarOffset;
-
-        // reverse order
-        // todo: cache?
-        long[] srcFix = new long[]{srcOooFixAddr, srcDataFixAddr};
-        long[] srcVar = new long[]{srcOooVarAddr, srcDataVarAddr};
-
-        for (long l = 0; l < mergeIndexSize; l++) {
-            final long row = getTimestampIndexRow(mergeIndexAddr, l);
-            // high bit in the index in the source array [0,1]
-            final int bit = (int) (row >>> 63);
-            // row number is "row" with high bit removed
-            final long rr = row & ~(1L << 63);
-            Unsafe.getUnsafe().putLong(dstFixAddr + l * Long.BYTES, destVarOffset);
-            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
-            long addr = srcVar[bit] + offset;
-            long len = Unsafe.getUnsafe().getLong(addr);
-            if (len > 0) {
-                Unsafe.getUnsafe().copyMemory(addr, dstVarAddr + destVarOffset, len + Long.BYTES);
-                destVarOffset += len + Long.BYTES;
-            } else {
-                Unsafe.getUnsafe().putLong(dstVarAddr + destVarOffset, len);
-                destVarOffset += Long.BYTES;
-            }
-        }
-    }
-
-    private static void oooMergeCopyStrColumn(
-            long mergeIndexAddr,
-            long mergeIndexSize,
-            long srcDataFixAddr,
-            long srcDataVarAddr,
-            long srcOooFixAddr,
-            long srcOooVarAddr,
-            long dstFixAddr,
-            long dstVarAddr,
-            long dstVarOffset
-    ) {
-        // destination of variable length data
-        long destVarOffset = dstVarOffset;
-
-        // reverse order
-        // todo: cache?
-        long[] srcFix = new long[]{srcOooFixAddr, srcDataFixAddr};
-        long[] srcVar = new long[]{srcOooVarAddr, srcDataVarAddr};
-
-        for (long l = 0; l < mergeIndexSize; l++) {
-            final long row = getTimestampIndexRow(mergeIndexAddr, l);
-            // high bit in the index in the source array [0,1]
-            final int bit = (int) (row >>> 63);
-            // row number is "row" with high bit removed
-            final long rr = row & ~(1L << 63);
-            Unsafe.getUnsafe().putLong(dstFixAddr + l * Long.BYTES, destVarOffset);
-            long offset = Unsafe.getUnsafe().getLong(srcFix[bit] + rr * Long.BYTES);
-            long addr = srcVar[bit] + offset;
-            int len = Unsafe.getUnsafe().getInt(addr);
-            Unsafe.getUnsafe().putInt(dstVarAddr + destVarOffset, len);
-            len = Math.max(0, len);
-            Unsafe.getUnsafe().copyMemory(addr + 4, dstVarAddr + destVarOffset + 4, (long) len * Character.BYTES);
-            destVarOffset += (long) len * Character.BYTES + Integer.BYTES;
         }
     }
 

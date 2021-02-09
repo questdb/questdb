@@ -30,12 +30,7 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -358,6 +353,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public TextConfiguration getTextConfiguration() {
         return textConfiguration;
+    }
+
+    @Override
+    public long getTxPendingPartitionAreaSize() {
+        return 64 * 1024;
     }
 
     @Override

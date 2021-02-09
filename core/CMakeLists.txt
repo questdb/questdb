@@ -163,7 +163,7 @@ else ()
     )
 
     # AVX2 lib
-    add_library(questdb-avx2 OBJECT ${VCL_FILES} src/main/c/share/vec_radix_sort.cpp)
+    add_library(questdb-avx2 OBJECT ${VCL_FILES} src/main/c/share/ooo.cpp)
     set_target_properties(
             questdb-avx2 PROPERTIES
             COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma -std=c++17"
@@ -201,8 +201,6 @@ else ()
             questdb PROPERTIES
             COMPILE_FLAGS "-m64 -O3 "
     )
-
-    include_directories(src/main/c/share/abseil-cpp)
 
     target_link_libraries(
             questdb

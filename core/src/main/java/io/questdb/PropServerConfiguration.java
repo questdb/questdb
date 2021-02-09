@@ -150,6 +150,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
+    private final long sqlTxPendingPartitionAreaSize;
     private final DateLocale locale;
     private final String backupRoot;
     private final DateFormat backupDirTimestampFormat;
@@ -553,6 +554,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         if (this.locale == null) {
             throw new ServerConfigurationException("cairo.date.locale", dateLocale);
         }
+        this.sqlTxPendingPartitionAreaSize = getLongSize(properties, env, "cairo.tx.pending.partition.area.size", 64 * 1024);
+
 
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
@@ -1293,6 +1296,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+
+        @Override
+        public long getTxPendingPartitionAreaSize() {
+            return sqlTxPendingPartitionAreaSize;
+        }
 
         @Override
         public int getBindVariablePoolSize() {

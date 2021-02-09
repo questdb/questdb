@@ -32,7 +32,13 @@ public final class Vect {
 
     public static native double avgLong(long pLong, long count);
 
-    public static native boolean hasNull(long pInt, long count);
+    public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
+
+    public static native long binarySearchIndexT(long pData, long value, long low, long high, int scanDirection);
+
+    public static native void flattenIndex(long pIndex, long count);
+
+    public static native void freeMergedIndex(long pIndex);
 
     public static native int getSupportedInstructionSet();
 
@@ -53,17 +59,65 @@ public final class Vect {
         return " [" + base + "," + Vect.getSupportedInstructionSet() + "]";
     }
 
+    public static native boolean hasNull(long pInt, long count);
+
+    public static native void indexReshuffle16Bit(long pSrc, long pDest, long pIndex, long count);
+
+    public static native void indexReshuffle32Bit(long pSrc, long pDest, long pIndex, long count);
+
+    public static native void indexReshuffle64Bit(long pSrc, long pDest, long pIndex, long count);
+
+    public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
+
+    public static native long makeTimestampIndex(long pData, long low, long high, long pIndex);
+
     public static native double maxDouble(long pDouble, long count);
 
     public static native int maxInt(long pInt, long count);
 
     public static native long maxLong(long pLong, long count);
 
+    public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
+
+    public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native void mergeShuffle32Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native void mergeShuffle64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
     public static native double minDouble(long pDouble, long count);
 
     public static native int minInt(long pInt, long count);
 
     public static native long minLong(long pLong, long count);
+
+    public static native void oooMergeCopyStrColumn(
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    );
+
+    public static native void oooMergeCopyBinColumn(
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    );
+
+    public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
     public static native double sumDouble(long pDouble, long count);
 
@@ -74,34 +128,4 @@ public final class Vect {
     public static native long sumInt(long pInt, long count);
 
     public static native long sumLong(long pLong, long count);
-
-    public static native void sortLongIndexAscInPlace(long pLongData, long count);
-
-    public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
-
-    public static native void flattenIndex(long pIndex, long count);
-
-    public static native void indexReshuffle16Bit(long pSrc, long pDest, long pIndex, long count);
-
-    public static native void indexReshuffle32Bit(long pSrc, long pDest, long pIndex, long count);
-
-    public static native void indexReshuffle64Bit(long pSrc, long pDest, long pIndex, long count);
-
-    public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
-
-    public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
-
-    public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
-
-    public static native void mergeShuffle32Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
-
-    public static native void mergeShuffle64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
-
-    public static native void freeMergedIndex(long pIndex);
-
-    public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
-
-    public static native long binarySearchIndexT(long pData, long value, long low, long high, int scanDirection);
-
-    public static native long makeTimestampIndex(long pData, long low, long high, long pIndex);
 }

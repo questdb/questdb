@@ -158,6 +158,8 @@ public interface CairoConfiguration {
 
     TextConfiguration getTextConfiguration();
 
+    long getTxPendingPartitionAreaSize();
+
     long getWorkStealTimeoutNanos();
 
     boolean isParallelIndexingEnabled();

@@ -255,7 +255,7 @@ public class TableWriter implements Closeable {
                 this.designatedTimestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
             }
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-            this.txPendingPartitionSizes = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
+            this.txPendingPartitionSizes = new ContiguousVirtualMemory(configuration.getTxPendingPartitionAreaSize(), Integer.MAX_VALUE);
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.oooColumns = new ObjList<>(columnCount * 2);
