@@ -49,12 +49,7 @@ public class SymbolMapWriter implements Closeable {
     private final int maxHash;
     private boolean nullValue = false;
     private final TransientSymbolCountChangeHandler transientSymbolCountChangeHandler;
-    // private final int colIndex;
-    // private final BigMem txMem;
 
-    // public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount, int colIndex, BigMem txMem) {
-    // this.colIndex = colIndex;
-    // this.txMem = txMem;
     public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount, TransientSymbolCountChangeHandler transientSymbolCountChangeHandler) {
         this.transientSymbolCountChangeHandler = transientSymbolCountChangeHandler;
         final int plen = path.length();
@@ -185,7 +180,6 @@ public class SymbolMapWriter implements Closeable {
         offsetMem.jumpTo(keyToOffset(symbolCount));
         jumpCharMemToSymbolCount(symbolCount);
         transientSymbolCountChangeHandler.handleTansientymbolCountChange(symbolCount);
-        // txMem.putInt(TableUtils.getSymbolWriterTransientIndexOffset(colIndex), symbolCount);
         if (cache != null) {
             cache.clear();
         }
@@ -246,8 +240,6 @@ public class SymbolMapWriter implements Closeable {
         indexWriter.add(hash, offsetOffset);
         int symIndex = offsetToKey(offsetOffset);
         transientSymbolCountChangeHandler.handleTansientymbolCountChange(symIndex);
-        // Unsafe.getUnsafe().storeFence();
-        // txMem.putInt(TableUtils.getSymbolWriterTransientIndexOffset(colIndex), symIndex);
         return symIndex;
     }
 
