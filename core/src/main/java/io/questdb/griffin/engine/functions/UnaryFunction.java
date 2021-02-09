@@ -50,4 +50,8 @@ public interface UnaryFunction extends Function {
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         getArg().init(symbolTableSource, executionContext);
     }
+
+    default boolean isRuntimeConstant() {
+        return getArg().isRuntimeConstant();
+    }
 }

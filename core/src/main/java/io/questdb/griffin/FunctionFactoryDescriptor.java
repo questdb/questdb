@@ -25,6 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 
 public class FunctionFactoryDescriptor {
     private static final int ARRAY_MASK = 1 << 31;
@@ -194,6 +196,31 @@ public class FunctionFactoryDescriptor {
             throw SqlException.position(0).put("invalid function name character: ").put(sig);
         }
         return openBraceIndex;
+    }
+
+    public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(name);
+        signatureBuilder.put('(');
+        for (int i = signature.length() - 2; i > openBraceIndex; i--) {
+            char curr = signature.charAt(i);
+            if (curr == '[') {
+                signatureBuilder.put("[]");
+            } else if (curr != ']') {
+                signatureBuilder.put(curr);
+            }
+        }
+        signatureBuilder.put(')');
+        return signatureBuilder.toString();
+    }
+
+    public static String replaceSignatureName(String name, String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(name);
+        signatureBuilder.put(signature, openBraceIndex, signature.length());
+        return signatureBuilder.toString();
     }
 
     public int getArgTypeMask(int index) {

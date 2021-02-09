@@ -56,4 +56,10 @@ public interface BinaryFunction extends Function {
     Function getLeft();
 
     Function getRight();
+
+    default boolean isRuntimeConstant() {
+        final Function l = getLeft();
+        final Function r = getRight();
+        return (l.isConstant() && r.isRuntimeConstant()) || (r.isConstant() && l.isRuntimeConstant()) || (l.isRuntimeConstant() && r.isRuntimeConstant());
+    }
 }

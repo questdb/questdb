@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.std.LongList;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 
 public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
     /**
@@ -37,7 +37,7 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalFwdDataFrameCursor(LongList intervals, int timestampIndex) {
+    public IntervalFwdDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
         super(intervals, timestampIndex);
     }
 

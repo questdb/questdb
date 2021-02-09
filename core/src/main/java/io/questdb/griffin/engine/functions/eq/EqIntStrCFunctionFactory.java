@@ -27,20 +27,24 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class EqIntStrCFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
+public class EqIntStrCFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(Is)";
+    }
+
+    @Override
+    public boolean isBoolean() {
+        return true;
     }
 
     @Override
@@ -48,24 +52,22 @@ public class EqIntStrCFunctionFactory extends AbstractBooleanFunctionFactory imp
         try {
             final CharSequence value = args.getQuick(1).getStr(null);
             if (value == null) {
-                return new Func(position, args.getQuick(0), Numbers.INT_NaN, isNegated);
+                return new Func(position, args.getQuick(0), Numbers.INT_NaN);
             }
-            return new Func(position, args.getQuick(0), Numbers.parseInt(value), isNegated);
+            return new Func(position, args.getQuick(0), Numbers.parseInt(value));
         } catch (NumericException e) {
-            return new BooleanConstant(args.getQuick(1).getPosition(), isNegated);
+            return new NegatedAwareBooleanConstantFunc(args.getQuick(1).getPosition());
         }
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    private static class Func extends NegatableBooleanFunction implements UnaryFunction {
         private final Function left;
         private final int right;
 
-        public Func(int position, Function left, int right, boolean isNegated) {
+        public Func(int position, Function left, int right) {
             super(position);
             this.left = left;
             this.right = right;
-            this.isNegated = isNegated;
         }
 
         @Override
@@ -75,7 +77,19 @@ public class EqIntStrCFunctionFactory extends AbstractBooleanFunctionFactory imp
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (left.getInt(rec) == right);
+            return negated != (left.getInt(rec) == right);
+        }
+    }
+
+    private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
+
+        public NegatedAwareBooleanConstantFunc(int position) {
+            super(position);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated;
         }
     }
 }

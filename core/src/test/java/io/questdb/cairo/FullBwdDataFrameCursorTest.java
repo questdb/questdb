@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
@@ -89,7 +88,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                     FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
                     final TableReaderRecord record = new TableReaderRecord();
 
-                    try (final DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE)) {
+                    try (final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
                         printCursor(record, cursor);
 
                         TestUtils.assertEquals(expected, sink);
@@ -114,7 +113,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                     w.removeColumn("a");
 
                     try {
-                        factory.getCursor(AllowAllCairoSecurityContext.INSTANCE);
+                        factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
                         Assert.fail();
                     } catch (ReaderOutOfDateException ignored) {
                     }

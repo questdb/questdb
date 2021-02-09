@@ -770,14 +770,14 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         alterTableDropColumn(tableNamePosition, writer);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        alterTableDropOrAttachPartition(writer, PartitionAction.DROP);
+                        alterTableDropOrAttachPartition(writer, PartitionAction.DROP, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
                 } else if (SqlKeywords.isAttachKeyword(tok)) {
                     tok = expectToken(lexer, "'partition'");
                     if (SqlKeywords.isPartitionKeyword(tok)) {
-                        alterTableDropOrAttachPartition(writer, PartitionAction.ATTACH);
+                        alterTableDropOrAttachPartition(writer, PartitionAction.ATTACH, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
@@ -1045,7 +1045,7 @@ public class SqlCompiler implements Closeable {
         } while (true);
     }
 
-    private void alterTableDropOrAttachPartition(TableWriter writer, int action) throws SqlException {
+    private void alterTableDropOrAttachPartition(TableWriter writer, int action, SqlExecutionContext executionContext) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
@@ -1058,6 +1058,7 @@ public class SqlCompiler implements Closeable {
                 metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                 Function function = functionParser.parseFunction(expr, metadata, currentExecutionContext);
                 if (function != null && function.getType() == ColumnType.BOOLEAN) {
+                    function.init(null, executionContext);
                     writer.removePartition(function, pos);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");

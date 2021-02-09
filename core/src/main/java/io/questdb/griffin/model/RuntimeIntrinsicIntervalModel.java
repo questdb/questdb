@@ -22,12 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.model;
 
-public abstract class AbstractBooleanFunctionFactory {
-    protected boolean isNegated = false;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.LongList;
 
-    public void setNegated(boolean isNegated) {
-        this.isNegated = isNegated;
-    }
+import java.io.Closeable;
+
+public interface RuntimeIntrinsicIntervalModel extends Closeable {
+    LongList calculateIntervals(SqlExecutionContext sqlContext);
+
+    boolean allIntervalsHitOnePartition(int partitionBy);
 }

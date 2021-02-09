@@ -109,12 +109,18 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqTimestampStrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory,
 
 //                   '<' operator
             io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtTimestampStrFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtStrTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory,
+
 //                   '+' operator
             io.questdb.griffin.engine.functions.math.AddByteFunctionFactory,
             io.questdb.griffin.engine.functions.math.AddShortFunctionFactory,
@@ -129,6 +135,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubLongFunctionFactory,
+            io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory,
 //                    # '/' operator,
             io.questdb.griffin.engine.functions.math.DivDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.DivLongFunctionFactory,
@@ -465,6 +472,7 @@ open module io.questdb {
 //                  case conditional statement
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
+            io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory,
 //                  PostgeSQL catalogue functions
             io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.AttributeCatalogueFunctionFactory,

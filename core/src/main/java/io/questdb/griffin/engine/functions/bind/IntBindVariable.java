@@ -46,4 +46,9 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     public void clear() {
         this.value = Numbers.INT_NaN;
     }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
 }

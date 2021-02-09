@@ -1,3 +1,27 @@
+################################################################################
+#     ___                  _   ____  ____
+#    / _ \ _   _  ___  ___| |_|  _ \| __ )
+#   | | | | | | |/ _ \/ __| __| | | |  _ \
+#   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+#    \__\_\\__,_|\___||___/\__|____/|____/
+#
+#  Copyright (c) 2014-2019 Appsicle
+#  Copyright (c) 2019-2020 QuestDB
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+################################################################################
+
 io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory
 io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory
@@ -26,12 +50,17 @@ io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqTimestampStrFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory
 
 #nullif
 io.questdb.griffin.engine.functions.eq.NullIfCharCharFunctionFactory
 
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtTimestampStrFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtStrTimestampFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory
 
 # '+' operator
 io.questdb.griffin.engine.functions.math.AddByteFunctionFactory
@@ -48,6 +77,7 @@ io.questdb.griffin.engine.functions.math.NegDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory
 io.questdb.griffin.engine.functions.math.SubIntFunctionFactory
 io.questdb.griffin.engine.functions.math.SubLongFunctionFactory
+io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory
 
 # '/' operator
 io.questdb.griffin.engine.functions.math.DivDoubleFunctionFactory
@@ -421,6 +451,7 @@ io.questdb.griffin.engine.functions.math.RoundHalfEvenDoubleFunctionFactory
 # case conditional statement
 io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory
 io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory
+io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory
 
 # PostgreSQL catalogue functions
 io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory

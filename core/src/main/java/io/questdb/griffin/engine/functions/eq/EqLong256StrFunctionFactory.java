@@ -27,18 +27,17 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
+public class EqLong256StrFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<Long256Decoder> DECODER = ThreadLocal.withInitial(Long256Decoder::new);
 
     @Override
@@ -47,37 +46,40 @@ public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory 
     }
 
     @Override
+    public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final CharSequence hexLong256 = args.getQuick(1).getStr(null);
         try {
-            return DECODER.get().newInstance(position, args.getQuick(0), hexLong256, isNegated);
+            return DECODER.get().newInstance(position, args.getQuick(0), hexLong256);
         } catch (NumericException e) {
             throw SqlException.position(args.getQuick(1).getPosition()).put("invalid hex value for long256");
         }
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    private static class Func extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final long long0;
         private final long long1;
         private final long long2;
         private final long long3;
 
-        public Func(int position, Function arg, long long0, long long1, long long2, long long3, boolean isNegated) {
+        public Func(int position, Function arg, long long0, long long1, long long2, long long3) {
             super(position);
             this.arg = arg;
             this.long0 = long0;
             this.long1 = long1;
             this.long2 = long2;
             this.long3 = long3;
-            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
             final Long256 value = arg.getLong256A(rec);
-            return isNegated != (value.getLong0() == long0 &&
+            return negated != (value.getLong0() == long0 &&
                     value.getLong1() == long1 &&
                     value.getLong2() == long2 &&
                     value.getLong3() == long3);
@@ -103,9 +105,9 @@ public class EqLong256StrFunctionFactory extends AbstractBooleanFunctionFactory 
             long3 = l3;
         }
 
-        private Func newInstance(int position, Function arg, CharSequence hexLong256, boolean isNegated) throws NumericException {
+        private Func newInstance(int position, Function arg, CharSequence hexLong256) throws NumericException {
             decode(hexLong256, 2, hexLong256.length(), this);
-            return new Func(position, arg, long0, long1, long2, long3, isNegated);
+            return new Func(position, arg, long0, long1, long2, long3);
         }
 
     }

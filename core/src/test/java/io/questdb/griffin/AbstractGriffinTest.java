@@ -283,7 +283,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         CharSequence s = record.getStr(i);
                         if (s != null) {
                             if (checkSameStr) {
-                                Assert.assertNotSame(s, record.getStrB(i));
+                                Assert.assertNotSame("Expected string instances be different for getStr and getStrB", s, record.getStrB(i));
                             }
                             TestUtils.assertEquals(s, record.getStrB(i));
                             Assert.assertEquals(s.length(), record.getStrLen(i));
@@ -383,7 +383,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
-        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false);
+        printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, false, null);
     }
 
     protected static void printSqlResult(
@@ -395,9 +395,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean supportsRandomAccess,
             boolean checkSameStr,
             boolean expectSize,
-            boolean sizeCanBeVariable
+            boolean sizeCanBeVariable,
+            CharSequence expectedPlan
     ) throws SqlException {
-        RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        RecordCursorFactory factory = cc.getRecordCursorFactory();
+        if (expectedPlan != null) {
+            sink.clear();
+            factory.toSink(sink);
+            TestUtils.assertEquals(expectedPlan, sink);
+        }
         try {
             assertTimestamp(expectedTimestamp, factory);
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
@@ -446,9 +453,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 compiler.compile(ddl, sqlExecutionContext);
             }
             if (verify != null) {
-                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+                printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
             }
-            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
+            printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, null);
         });
     }
 
@@ -592,10 +599,23 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) {
+        assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, checkSameStr, expectSize, false);
+    }
+
+    void assertFactoryCursor(
+            String expected,
+            String expectedTimestamp,
+            RecordCursorFactory factory,
+            boolean supportsRandomAccess,
+            SqlExecutionContext sqlExecutionContext,
+            boolean checkSameStr,
+            boolean expectSize,
+            boolean sizeCanBeVariable
+    ) {
         assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
-        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, false, sqlExecutionContext);
+        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, sqlExecutionContext);
         // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, false, sqlExecutionContext);
+        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, sqlExecutionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
         assertVariableColumns(factory, checkSameStr);
     }
@@ -637,6 +657,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
         assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, true, expectSize);
+    }
+
+    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws SqlException {
+        assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, true, expectSize, sizeCanBeVariable);
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext)
@@ -682,6 +706,21 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     ) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, checkSameStr, expectSize);
+        }
+    }
+
+    protected void assertQuery(
+            SqlCompiler compiler,
+            String expected,
+            String query,
+            String expectedTimestamp,
+            SqlExecutionContext sqlExecutionContext, boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean expectSize,
+            boolean sizeCanBeVariable
+    ) throws SqlException {
+        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, checkSameStr, expectSize, sizeCanBeVariable);
         }
     }
 

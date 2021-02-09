@@ -61,11 +61,19 @@ public interface FunctionFactory {
      *
      * @return signature, for example "substr(SII)"
      */
-     String getSignature();
+    String getSignature();
 
-    default boolean isGroupBy() { return false; }
+    default boolean isGroupBy() {
+        return false;
+    }
 
-    default boolean isCursor() { return false; }
+    default boolean isCursor() {
+        return false;
+    }
+
+    default boolean isBoolean() {
+        return false;
+    }
 
     Function newInstance(
             @Transient ObjList<Function> args,
