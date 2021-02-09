@@ -74,7 +74,7 @@ class SymbolCache implements Closeable {
     }
 
     void clear() {
-        symMapReader.updateSymbolCount(0);
+        symMapReader.close();
         indexBySym.clear();
         txMem.close();
     }
