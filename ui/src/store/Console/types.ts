@@ -16,12 +16,17 @@ export type ConsoleStateShape = Readonly<{
 
 export enum ConsoleAT {
   BOOTSTRAP = "CONSOLE/BOOTSTRAP",
+  REFRESH_AUTH_TOKEN = "CONSOLE/REFRESH_AUTH_TOKEN",
   SET_CONFIGURATION = "CONSOLE/SET_CONFIGURATION",
   TOGGLE_SIDE_MENU = "CONSOLE/TOGGLE_SIDE_MENU",
 }
 
 export type BootstrapAction = Readonly<{
   type: ConsoleAT.BOOTSTRAP
+}>
+
+export type RefreshAuthTokenAction = Readonly<{
+  type: ConsoleAT.REFRESH_AUTH_TOKEN
 }>
 
 type SetConfigurationAction = Readonly<{
@@ -35,5 +40,6 @@ type ToggleSideMenuAction = Readonly<{
 
 export type ConsoleAction =
   | BootstrapAction
+  | RefreshAuthTokenAction
   | SetConfigurationAction
   | ToggleSideMenuAction
