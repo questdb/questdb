@@ -28,19 +28,23 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.AbstractBooleanFunctionFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory implements FunctionFactory {
+public class EqDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(DD)";
+    }
+
+    @Override
+    public boolean isBoolean() {
+        return true;
     }
 
     @Override
@@ -57,56 +61,54 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         if (left.isConstant() && left.getType() == ColumnType.DOUBLE && Double.isNaN(left.getDouble(null))) {
             switch (right.getType()) {
                 case ColumnType.INT:
-                    return new FuncIntIsNaN(position, right, isNegated);
+                    return new FuncIntIsNaN(position, right);
                 case ColumnType.LONG:
-                    return new FuncLongIsNaN(position, right, isNegated);
+                    return new FuncLongIsNaN(position, right);
                 case ColumnType.DATE:
-                    return new FuncDateIsNaN(position, right, isNegated);
+                    return new FuncDateIsNaN(position, right);
                 case ColumnType.TIMESTAMP:
-                    return new FuncTimestampIsNaN(position, right, isNegated);
+                    return new FuncTimestampIsNaN(position, right);
                 case ColumnType.FLOAT:
-                    return new FuncFloatIsNaN(position, right, isNegated);
+                    return new FuncFloatIsNaN(position, right);
                 default:
                     // double
-                    return new FuncDoubleIsNaN(position, right, isNegated);
+                    return new FuncDoubleIsNaN(position, right);
             }
         } else if (right.isConstant() && right.getType() == ColumnType.DOUBLE && Double.isNaN(right.getDouble(null))) {
             switch (left.getType()) {
                 case ColumnType.INT:
-                    return new FuncIntIsNaN(position, left, isNegated);
+                    return new FuncIntIsNaN(position, left);
                 case ColumnType.LONG:
-                    return new FuncLongIsNaN(position, left, isNegated);
+                    return new FuncLongIsNaN(position, left);
                 case ColumnType.DATE:
-                    return new FuncDateIsNaN(position, left, isNegated);
+                    return new FuncDateIsNaN(position, left);
                 case ColumnType.TIMESTAMP:
-                    return new FuncTimestampIsNaN(position, left, isNegated);
+                    return new FuncTimestampIsNaN(position, left);
                 case ColumnType.FLOAT:
-                    return new FuncFloatIsNaN(position, left, isNegated);
+                    return new FuncFloatIsNaN(position, left);
                 default:
                     // double
-                    return new FuncDoubleIsNaN(position, left, isNegated);
+                    return new FuncDoubleIsNaN(position, left);
             }
         }
-        return new Func(position, args.getQuick(0), args.getQuick(1), isNegated);
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    protected static class Func extends BooleanFunction implements BinaryFunction {
-        private final boolean isNegated;
+    protected static class Func extends NegatableBooleanFunction implements BinaryFunction {
         protected final Function left;
         protected final Function right;
 
-        public Func(int position, Function left, Function right, boolean isNegated) {
+        public Func(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
-            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
             final double l = left.getDouble(rec);
             final double r = right.getDouble(rec);
-            return isNegated != (l != l && r != r || Math.abs(l - r) < 0.0000000001);
+            return negated != (l != l && r != r || Math.abs(l - r) < 0.0000000001);
         }
 
         @Override
@@ -120,19 +122,17 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected static class FuncIntIsNaN extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    protected static class FuncIntIsNaN extends NegatableBooleanFunction implements UnaryFunction {
         protected final Function arg;
 
-        public FuncIntIsNaN(int position, Function arg, boolean isNegated) {
+        public FuncIntIsNaN(int position, Function arg) {
             super(position);
             this.arg = arg;
-            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (arg.getInt(rec) == Numbers.INT_NaN);
+            return negated != (arg.getInt(rec) == Numbers.INT_NaN);
         }
 
         @Override
@@ -141,19 +141,17 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected static class FuncLongIsNaN extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    protected static class FuncLongIsNaN extends NegatableBooleanFunction implements UnaryFunction {
         protected final Function arg;
 
-        public FuncLongIsNaN(int position, Function arg, boolean isNegated) {
+        public FuncLongIsNaN(int position, Function arg) {
             super(position);
             this.arg = arg;
-            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (arg.getLong(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getLong(rec) == Numbers.LONG_NaN);
         }
 
         @Override
@@ -162,19 +160,17 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected static class FuncDateIsNaN extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    protected static class FuncDateIsNaN extends NegatableBooleanFunction implements UnaryFunction {
         protected final Function arg;
 
-        public FuncDateIsNaN(int position, Function arg, boolean isNegated) {
+        public FuncDateIsNaN(int position, Function arg) {
             super(position);
             this.arg = arg;
-            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (arg.getDate(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
         }
 
         @Override
@@ -183,19 +179,17 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected static class FuncTimestampIsNaN extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    protected static class FuncTimestampIsNaN extends NegatableBooleanFunction implements UnaryFunction {
         protected final Function arg;
 
-        public FuncTimestampIsNaN(int position, Function arg, boolean isNegated) {
+        public FuncTimestampIsNaN(int position, Function arg) {
             super(position);
             this.arg = arg;
-            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
+            return negated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
         }
 
         @Override
@@ -204,19 +198,17 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected static class FuncFloatIsNaN extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    protected static class FuncFloatIsNaN extends NegatableBooleanFunction implements UnaryFunction {
         protected final Function arg;
 
-        public FuncFloatIsNaN(int position, Function arg, boolean isNegated) {
+        public FuncFloatIsNaN(int position, Function arg) {
             super(position);
             this.arg = arg;
-            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (Float.isNaN(arg.getFloat(rec)));
+            return negated != (Float.isNaN(arg.getFloat(rec)));
         }
 
         @Override
@@ -225,19 +217,17 @@ public class EqDoubleFunctionFactory extends AbstractBooleanFunctionFactory impl
         }
     }
 
-    protected static class FuncDoubleIsNaN extends BooleanFunction implements UnaryFunction {
-        private final boolean isNegated;
+    protected static class FuncDoubleIsNaN extends NegatableBooleanFunction implements UnaryFunction {
         protected final Function arg;
 
-        public FuncDoubleIsNaN(int position, Function arg, boolean isNegated) {
+        public FuncDoubleIsNaN(int position, Function arg) {
             super(position);
             this.arg = arg;
-            this.isNegated = isNegated;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return isNegated != (Double.isNaN(arg.getDouble(rec)));
+            return negated != (Double.isNaN(arg.getDouble(rec)));
         }
 
         @Override
