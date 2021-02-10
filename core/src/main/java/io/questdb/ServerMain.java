@@ -310,7 +310,7 @@ public class ServerMain {
         final String publicZip = "/io/questdb/site/public.zip";
         final String publicDir = dir + "/public";
         final byte[] buffer = new byte[1024 * 1024];
-        final long thisVersion = ServerMain.class.getResource(publicZip).openConnection().getLastModified();
+        final long thisVersion = ServerMain.class.getResource(publicZip) != null ? ServerMain.class.getResource(publicZip).openConnection().getLastModified() : Long.MIN_VALUE;
         final long oldVersion = getPublicVersion(publicDir);
         if (thisVersion > oldVersion) {
             try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {

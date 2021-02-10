@@ -85,7 +85,6 @@ public class TableWriter implements Closeable {
     private final Row row = new Row();
     private final int rootLen;
     private final ReadOnlyMemory metaMem;
-    private final ContiguousVirtualMemory txPendingPartitionSizes;
     private final int partitionBy;
     private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
     private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
@@ -119,7 +118,6 @@ public class TableWriter implements Closeable {
     private final LongList partitionListByTimestamp = new LongList();
     private final LongList partitionsToDrop = new LongList();
     private final TimestampValueRecord dropPartitionFunctionRec = new TimestampValueRecord();
-    private boolean saveAttachedPartitionList;
     private final boolean outOfOrderEnabled;
     private ContiguousVirtualMemory tmpShuffleIndex;
     private ContiguousVirtualMemory tmpShuffleData;
@@ -250,7 +248,6 @@ public class TableWriter implements Closeable {
             if (metadata.getTimestampIndex() > -1) {
                 this.designatedTimestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
             }
-            this.txPendingPartitionSizes = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
             this.tmpShuffleIndex = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
             this.tmpShuffleData = new ContiguousVirtualMemory(ff.getPageSize(), Integer.MAX_VALUE);
             this.refs.extendAndSet(columnCount, 0);
@@ -287,6 +284,7 @@ public class TableWriter implements Closeable {
                     partitionDirFmt = null;
                     break;
             }
+            this.txFile.initPartitionFloor(timestampFloorMethod, partitionBy);
 
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
@@ -699,11 +697,6 @@ public class TableWriter implements Closeable {
 
             updateIndexes();
 
-            txFile.beginCommit();
-            if (txFile.getTxPartitionCount() > 1) {
-                commitPendingPartitions();
-                txPendingPartitionSizes.jumpTo(0);
-            }
             txFile.commit(commitMode, this.denseSymbolMapWriters);
         }
     }
@@ -865,91 +858,60 @@ public class TableWriter implements Closeable {
     }
 
     public boolean removePartition(long timestamp) {
-        return false;
-//        if (partitionBy == PartitionBy.NONE || timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
-//            return false;
-//        }
-//
-//        if (getPartitionLo(timestamp) == getPartitionLo(maxTimestamp)) {
-//            LOG.error()
-//                    .$("cannot remove active partition [path=").$(path)
-//                    .$(", maxTimestamp=").$ts(maxTimestamp)
-//                    .$(']').$();
-//            return false;
-//        }
-//
-//        if (!attachedPartitions.contains(timestamp)) {
-//            LOG.error().$("partition is already marked for delete [path=").$(path).$(']').$();
-//            return false;
-//        }
-//
-//        try {
-//            // when we want to delete first partition we must find out
-//            // minTimestamp from next partition if it exists or next partition and so on
-//            //
-//            // when somebody removed data directories manually and then
-//            // attempts to tidy up metadata with logical partition delete
-//            // we have to uphold the effort and re-compute table size and its minTimestamp from
-//            // what remains on disk
-//
-//            // find out if we are removing min partition
-//
-//            final long nextMinTimestamp;
-//            if (getPartitionLo(timestamp) == getPartitionLo(minTimestamp)) {
-//                nextMinTimestamp = getNextMinTimestamp(timestampFloorMethod, timestampAddMethod);
-//            } else {
-//                nextMinTimestamp = minTimestamp;
-//            }
-//
-//            setStateForTimestamp(path, timestamp, false);
-//
-//            if (ff.exists(path.$())) {
-//
-//                // todo: when this fails - rescan partitions to calculate fixedRowCount
-//                //     also write a _todo_ file, which will indicate which partition we wanted to delete
-//                //     reconcile partitions we can read sizes of with partition table
-//                //     add partitions we cannot read sizes of to partition table
-//                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
-//
-//                int symbolWriterCount = denseSymbolMapWriters.size();
-//                long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
-//                txMem.putLong(TX_OFFSET_TXN, txn);
-//                Unsafe.getUnsafe().storeFence();
-//
-//                final long partitionVersion = txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1;
-//                txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionVersion);
-//
-//                if (nextMinTimestamp != minTimestamp) {
-//                    txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, nextMinTimestamp);
-//                    minTimestamp = nextMinTimestamp;
-//                }
-//
-//                // decrement row count
-//                txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT) - partitionSize);
-//
-//                attachedPartitions.remove(timestamp);
-//                saveAttachedPartitionsToTx(symbolWriterCount);
-//
-//                Unsafe.getUnsafe().storeFence();
-//                // txn check
-//                txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-//
-//                if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
-//                    LOG.info().$("partition directory delete is postponed [path=").$(path).$(']').$();
-//                }
-//
-//                fixedRowCount -= partitionSize;
-//
-//                LOG.info().$("partition marked for delete [path=").$(path).$(']').$();
-//                return true;
-//            } else {
-//                LOG.error().$("cannot remove already missing partition [path=").$(path).$(']').$();
-//                return false;
-//            }
-//
-//        } finally {
-//            path.trimTo(rootLen);
-//        }
+        long minTimestamp = txFile.getMinTimestamp();
+        long maxTimestamp = txFile.getMaxTimestamp();
+        timestamp = getPartitionLo(timestamp);
+
+        if (partitionBy == PartitionBy.NONE || timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
+            return false;
+        }
+
+        if (timestamp == getPartitionLo(maxTimestamp)) {
+            LOG.error()
+                    .$("cannot remove active partition [path=").$(path)
+                    .$(", maxTimestamp=").$ts(maxTimestamp)
+                    .$(']').$();
+            return false;
+        }
+
+        if (!txFile.attachedPartitionsContains(timestamp)) {
+            LOG.error().$("partition is already detached [path=").$(path).$(']').$();
+            return false;
+        }
+
+        try {
+            // when we want to delete first partition we must find out
+            // minTimestamp from next partition if it exists or next partition and so on
+            //
+            // when somebody removed data directories manually and then
+            // attempts to tidy up metadata with logical partition delete
+            // we have to uphold the effort and re-compute table size and its minTimestamp from
+            // what remains on disk
+
+            // find out if we are removing min partition
+            setStateForTimestamp(path, timestamp, false);
+
+            if (ff.exists(path.$())) {
+                // todo: when this fails - rescan partitions to calculate fixedRowCount
+                //     also write a _todo_ file, which will indicate which partition we wanted to delete
+                //     reconcile partitions we can read sizes of with partition table
+                //     add partitions we cannot read sizes of to partition table
+                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
+                txFile.removePartition(timestamp, partitionSize);
+
+                if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
+                    LOG.info().$("partition directory delete is postponed [path=").$(path).$(']').$();
+                }
+                LOG.info().$("partition marked for delete [path=").$(path).$(']').$();
+                return true;
+            } else {
+                LOG.error().$("cannot remove already missing partition [path=").$(path).$(']').$();
+                return false;
+            }
+
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     public void removePartition(Function function, int posForError) throws SqlException {
@@ -1034,7 +996,6 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
             LOG.info().$("tx rollback [name=").$(name).$(']').$();
             freeColumns(false);
-            txPendingPartitionSizes.jumpTo(0);
             configureAppendPosition();
             rollbackIndexes();
             purgeUnusedPartitions();
@@ -1474,13 +1435,17 @@ public class TableWriter implements Closeable {
             return;
         }
 
-        if (txFile.getTransientRowCount() == 0) {
+        long dirtyMaxTimestamp = txFile.getMaxTimestamp();
+        long dirtyTransientRowCount = txFile.getTransientRowCount();
+        txFile.cancelRow();
+
+        if (dirtyTransientRowCount == 0) {
             if (partitionBy != PartitionBy.NONE) {
                 // we have to undo creation of partition
                 freeColumns(false);
                 if (removeDirOnCancelRow) {
                     try {
-                        setStateForTimestamp(path, txFile.getMaxTimestamp(), false);
+                        setStateForTimestamp(path, dirtyMaxTimestamp, false);
                         if (!ff.rmdir(path.$())) {
                             throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                         }
@@ -1491,12 +1456,10 @@ public class TableWriter implements Closeable {
                 }
 
                 // open old partition
-                long prevMaxTimestamp = txFile.getPrevMaxTimestamp();
-                if (prevMaxTimestamp > Long.MIN_VALUE) {
+                if (txFile.getMaxTimestamp() > Long.MIN_VALUE) {
                     try {
-                        txPendingPartitionSizes.jumpTo((txFile.getTxPartitionCount() - 2) * 16L);
-                        openPartition(prevMaxTimestamp);
-                        setAppendPosition(txFile.getPrevTransientRowCount(), false);
+                        openPartition(txFile.getMaxTimestamp());
+                        setAppendPosition(txFile.getTransientRowCount(), false);
                     } catch (CairoException e) {
                         freeColumns(false);
                         throw e;
@@ -1506,10 +1469,8 @@ public class TableWriter implements Closeable {
                 }
 
                 // undo counts
-                txFile.rollbackPartition();
                 removeDirOnCancelRow = true;
             } else {
-                txFile.rollbackRows();
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
                     getPrimaryColumn(i).setSize(0);
@@ -1520,7 +1481,6 @@ public class TableWriter implements Closeable {
                 }
             }
         } else {
-            txFile.rollbackRows();
             // we are staying within same partition, prepare append positions for row count
             boolean rowChanged = false;
             // verify if any of the columns have been changed
@@ -1596,34 +1556,6 @@ public class TableWriter implements Closeable {
         commit();
 
         setAppendPosition(txFile.getTransientRowCount(), true);
-    }
-
-    private void commitPendingPartitions() {
-        long offset = 0;
-        for (int i = 0; i < txFile.getTxPartitionCount() - 1; i++) {
-            try {
-                long partitionTimestamp = txPendingPartitionSizes.getLong(offset + 8);
-                setStateForTimestamp(path, partitionTimestamp, false);
-                long fd = openReadWriteOrFail(ff, path.concat(ARCHIVE_FILE_NAME).$());
-                try {
-                    int len = 8;
-                    long o = offset;
-                    while (len > 0) {
-                        if (ff.write(fd, txPendingPartitionSizes.addressOf(o), len, 0) == len) {
-                            o += len;
-                            len = 0;
-                        } else {
-                            throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
-                        }
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-                offset += 16;
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
     }
 
     private void configureAppendPosition() {
@@ -2051,7 +1983,6 @@ public class TableWriter implements Closeable {
                 blockWriter.close();
             }
             Misc.free(metaMem);
-            Misc.free(txPendingPartitionSizes);
             Misc.free(ddlMem);
             Misc.free(other);
             Misc.free(attachPath);
@@ -2550,6 +2481,11 @@ public class TableWriter implements Closeable {
                     .$(", ceilOfMaxTimestamp=").microTime(ceilOfMaxTimestamp)
                     .$(']').$();
 
+            long fixedRowCount = txFile.getFixedRowCount();
+            long minTimestamp = txFile.getMinTimestamp();
+            long maxTimestamp = txFile.getMaxTimestamp();
+            long transientRowCount = txFile.getTransientRowCount();
+
             while (indexLo < indexMax) {
                 long ooTimestampLo = getTimestampIndexValue(mergedTimestamps, indexLo);
 
@@ -3007,22 +2943,22 @@ public class TableWriter implements Closeable {
                 }
 
                 final long partitionSize = dataIndexMax + indexHi - indexLo + 1;
-                assert false : "todo";
-//                if (indexHi + 1 < indexMax || partitionTimestampHi < floorMaxTimestamp) {
-//
-//                    fixedRowCount += partitionSize;
-//                    if (partitionTimestampHi < floorMaxTimestamp) {
-//                        fixedRowCount -= dataIndexMax;
-//                    }
-//
-//                    // We just updated non-last partition. It is possible that this partition
-//                    // has already been updated by transaction or out of order logic was the only
-//                    // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
-//                    // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
-//                    // (it has been incremented before out-of-order logic kicked in) and
-//                    // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
-//
-//                    boolean missing = true;
+                if (indexHi + 1 < indexMax || partitionTimestampHi < floorMaxTimestamp) {
+
+                    fixedRowCount += partitionSize;
+                    if (partitionTimestampHi < floorMaxTimestamp) {
+                        fixedRowCount -= dataIndexMax;
+                    }
+
+                    // We just updated non-last partition. It is possible that this partition
+                    // has already been updated by transaction or out of order logic was the only
+                    // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
+                    // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
+                    // (it has been incremented before out-of-order logic kicked in) and
+                    // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
+
+                    boolean missing = true;
+                    assert false : "todo ooo";
 //                    long x = txPendingPartitionSizes.getAppendOffset() / 16;
 //                    for (long l = 0; l < x; l++) {
 //                        long ts = txPendingPartitionSizes.getLong(l * 16 + Long.BYTES);
@@ -3033,33 +2969,33 @@ public class TableWriter implements Closeable {
 //                            break;
 //                        }
 //                    }
-//
-//                    if (missing) {
-//                        txPartitionCount++;
-//                        txPendingPartitionSizes.putLong128(partitionSize, partitionTimestampHi);
-//                        checkAddAttachedPartition(partitionTimestampHi);
-//                    }
-//
-//                    if (indexHi + 1 >= indexMax) {
-//                        // no more out of order data and we just pre-pended data to existing
-//                        // partitions
-//                        minTimestamp = ooTimestampMin;
-//                        // when we exit here we need to rollback transientRowCount we've been incrementing
-//                        // while adding out-of-order data
-//                        transientRowCount = transientRowCountBeforeOutOfOrder;
-//                        break;
-//                    }
-//                    indexLo = indexHi + 1;
-//                } else {
-//                    transientRowCount = partitionSize;
-//                    // Compute max timestamp as maximum of out of order data and
-//                    // data in existing partition.
-//                    // When partition is new, the data timestamp is MIN_LONG
-//                    maxTimestamp = Math.max(getTimestampIndexValue(mergedTimestamps, indexHi), dataTimestampHi);
-//                    minTimestamp = Math.min(minTimestamp, ooTimestampMin);
-//                    break;
-//                }
+
+                    if (missing) {
+                        txFile.checkAddPartition(partitionTimestampHi, partitionSize);
+                    }
+
+                    if (indexHi + 1 >= indexMax) {
+                        // no more out of order data and we just pre-pended data to existing
+                        // partitions
+                        minTimestamp = ooTimestampMin;
+                        // when we exit here we need to rollback transientRowCount we've been incrementing
+                        // while adding out-of-order data
+                        transientRowCount = transientRowCountBeforeOutOfOrder;
+                        break;
+                    }
+                    indexLo = indexHi + 1;
+                } else {
+                    transientRowCount = partitionSize;
+                    // Compute max timestamp as maximum of out of order data and
+                    // data in existing partition.
+                    // When partition is new, the data timestamp is MIN_LONG
+                    maxTimestamp = Math.max(getTimestampIndexValue(mergedTimestamps, indexHi), dataTimestampHi);
+                    minTimestamp = Math.min(minTimestamp, ooTimestampMin);
+                    break;
+                }
             }
+
+            txFile.updateOutOfOrder(minTimestamp, maxTimestamp, transientRowCount, fixedRowCount);
         } finally {
             path.trimTo(rootLen);
             this.mergeRowCount = 0;
@@ -3725,7 +3661,7 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            checkAddAttachedPartition(timestamp);
+            // checkAddAttachedPartition(timestamp);
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
             path.trimTo(rootLen);
@@ -4150,13 +4086,13 @@ public class TableWriter implements Closeable {
                     setStateForTimestamp(path, ts, false);
                     int p = path.length();
 
-                    if (txFile.attachedPartitionsContains(ts)) {
-                        if (ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
-                            actualSize += TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
-                            lastTimestamp = ts;
-                        } else {
-                            LOG.info().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
-                        }
+                    long partitionSize = txFile.attachedPartitionsSize(ts);
+                    if (partitionSize > 0 && ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
+                        actualSize += TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
+                        lastTimestamp = ts;
+                    } else {
+                        LOG.info().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
+                        partitionSize = txFile.attachedPartitionsSize(ts);
                     }
                 }
 
@@ -4418,8 +4354,7 @@ public class TableWriter implements Closeable {
             }
             switchPartition(timestampLo);
         }
-        this.txFile.appendTransientRows(nRowsAdded);
-        this.txFile.updateMaxTimestamp(timestampHi);
+        this.txFile.appendBlock(timestampLo, timestampHi, nRowsAdded);
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             // Handle column tops
@@ -4451,10 +4386,7 @@ public class TableWriter implements Closeable {
         // file can be created in appropriate directory.
         // For simplicity use partitionLo, which can be
         // translated to directory name when needed
-        long transientRowCount = txFile.switchPartitions();
-        if (txFile.getTxPartitionCount() > 0) {
-            txPendingPartitionSizes.putLong128(transientRowCount, ceilMaxTimestamp());
-        }
+        txFile.switchPartitions();
         openPartition(timestamp);
         setAppendPosition(0, false);
     }
@@ -4578,8 +4510,8 @@ public class TableWriter implements Closeable {
     }
 
     private void updateIndexesSlow() {
-        final long lo = txFile.getTxPartitionCount() == 1 ? txFile.getPrevTransientRowCount() : 0;
         final long hi = txFile.getTransientRowCount();
+        final long lo = txFile.getTxPartitionCount() == 1 ? hi - txFile.getLastTxSize() : 0;
         if (indexCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) {
             updateIndexesParallel(lo, hi);
         } else {
@@ -4666,12 +4598,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void checkAddAttachedPartition(long timestamp) {
-        if (partitionBy != PartitionBy.NONE) {
-            txFile.checkAddAttachedPartition(getPartitionLo(timestamp));
-        }
-    }
-
     @FunctionalInterface
     private interface ShuffleOutOfOrderDataInternal {
         void shuffle(long pSrc, long pDest, long pIndex, long count);
@@ -4752,7 +4678,7 @@ public class TableWriter implements Closeable {
             updateMaxTimestamp(timestamp);
 
             // Add new partition to _tx attached partition list
-            checkAddAttachedPartition(timestamp);
+            txFile.checkAddPartition(timestamp);
             return row;
         }
 
@@ -4795,7 +4721,7 @@ public class TableWriter implements Closeable {
                         activeNullSetters.getQuick(i).run();
                     }
                 }
-                txFile.appendTransientRows(1);
+                txFile.appendRowNoTimestamp(1);
                 masterRef++;
                 txFile.startRow();
             }
