@@ -444,7 +444,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         );
     }
 
-    private static long mapReadWriteOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
+    private static long mapRW(FilesFacade ff, @Nullable Path path, long fd, long size) {
         long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
         if (addr > -1) {
             return addr;
@@ -452,7 +452,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         throw CairoException.instance(ff.errno()).put("could not mmap column [file=").put(path).put(", fd=").put(fd).put(", size=").put(size).put(']');
     }
 
-    private static long openReadWriteOrFail(FilesFacade ff, Path path) {
+    private static long openRW(FilesFacade ff, Path path) {
         final long fd = ff.openRW(path);
         if (fd > -1) {
             LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
@@ -461,11 +461,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
     }
 
-    private static void truncateToSizeOrFail(FilesFacade ff, @Nullable Path path, long fd, long size) {
+    private static void allocateDiskSpace(FilesFacade ff, @Nullable Path path, long fd, long size) {
         if (ff.isRestrictedFileSystem()) {
             return;
         }
-        if (!ff.truncate(fd, size)) {
+        if (!ff.allocate(fd, size)) {
             throw CairoException.instance(ff.errno()).put("could not resize [file=").put(path).put(", size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
@@ -548,15 +548,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.STRING:
                 // index files are opened as normal
                 iFile(path.trimTo(plen), columnName);
-                dstFixFd = openReadWriteOrFail(ff, path);
+                dstFixFd = openRW(ff, path);
                 dstFixSize = dstLen * Long.BYTES;
-                truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
                 dstFixOffset = srcDataMax * Long.BYTES;
 
                 // open data file now
                 dFile(path.trimTo(plen), columnName);
-                dstVarFd = openReadWriteOrFail(ff, path);
+                dstVarFd = openRW(ff, path);
                 dstVarOffset = getVarColumnSize(
                         ff,
                         columnType,
@@ -564,31 +564,31 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES)
                 );
                 dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
-                truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
-                dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, path, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, path, dstVarFd, dstVarSize);
                 break;
             case -ColumnType.TIMESTAMP:
                 dstFixSize = dstLen * Long.BYTES;
                 dstFixOffset = srcDataMax * Long.BYTES;
                 dstFixFd = -srcTimestampFd;
-                truncateToSizeOrFail(ff, null, -dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, null, -dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, null, -dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, null, -dstFixFd, dstFixSize);
                 break;
             default:
                 final int shl = ColumnType.pow2SizeOf(columnType);
                 dstFixSize = dstLen << shl;
                 dstFixOffset = srcDataMax << shl;
                 dFile(path.trimTo(plen), columnName);
-                dstFixFd = openReadWriteOrFail(ff, path);
-                truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, null, dstFixFd, dstFixSize);
+                dstFixFd = openRW(ff, path);
+                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, null, dstFixFd, dstFixSize);
 
                 dstIndexOffset = dstFixOffset;
                 if (isIndexed) {
                     BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                    dstKFd = openReadWriteOrFail(ff, path);
+                    dstKFd = openRW(ff, path);
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                    dstVFd = openReadWriteOrFail(ff, path);
+                    dstVFd = openRW(ff, path);
                 }
                 break;
         }
@@ -1162,8 +1162,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstFixOffset = srcDataMax * Long.BYTES;
                 dstFixFd = -activeFixFd;
                 dstFixSize = dstLen * Long.BYTES + dstFixOffset;
-                truncateToSizeOrFail(ff, null, -dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, null, -dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, null, -dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, null, -dstFixFd, dstFixSize);
 
                 dstVarFd = -activeVarFd;
                 dstVarOffset = getVarColumnSize(
@@ -1173,8 +1173,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES)
                 );
                 dstVarSize = dstVarOffset + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                truncateToSizeOrFail(ff, null, -dstVarFd, dstVarSize);
-                dstVarAddr = mapReadWriteOrFail(ff, null, -dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, null, -dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, null, -dstVarFd, dstVarSize);
                 break;
             default:
                 int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
@@ -1182,13 +1182,13 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstFixOffset = srcDataMax << shl;
                 dstFixFd = -activeFixFd;
                 dstFixSize = oooSize + dstFixOffset;
-                truncateToSizeOrFail(ff, null, -dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, null, -dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, null, -dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, null, -dstFixFd, dstFixSize);
                 if (isIndexed) {
                     BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                    dstKFd = openReadWriteOrFail(ff, path);
+                    dstKFd = openRW(ff, path);
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                    dstVFd = openReadWriteOrFail(ff, path);
+                    dstVFd = openRW(ff, path);
                     dstIndexOffset = dstFixOffset;
                 }
                 break;
@@ -1348,17 +1348,17 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 final int pColNameLen = path.length();
 
                 path.put(FILE_SUFFIX_I).$();
-                dstFixFd = openReadWriteOrFail(ff, path);
+                dstFixFd = openRW(ff, path);
                 dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax) * Long.BYTES;
-                truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
 
                 path.trimTo(pColNameLen);
                 path.put(FILE_SUFFIX_D).$();
-                dstVarFd = openReadWriteOrFail(ff, path);
+                dstVarFd = openRW(ff, path);
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
-                dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, path, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, path, dstVarFd, dstVarSize);
 
                 // configure offsets
                 switch (prefixType) {
@@ -1390,23 +1390,24 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 break;
             default:
                 srcDataFixFd = -activeFixFd;
-                if (activeTop > 0) {
-                    System.out.println("ok");
-                }
                 final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
                 dFile(path.trimTo(plen), columnName);
-                srcDataFixSize = (srcDataMax-activeTop) << shl;
+                srcDataFixSize = (srcDataMax - activeTop) << shl;
                 srcDataFixAddr = mapRO(ff, -srcDataFixFd, srcDataFixSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
                 final int pDirNameLen = path.length();
 
-                path.concat(columnName).put(FILE_SUFFIX_D).$();
+                if (activeTop > 0) {
+                    writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, activeTop);
+                }
 
-                dstFixFd = openReadWriteOrFail(ff, path);
+                path.trimTo(pDirNameLen).concat(columnName).put(FILE_SUFFIX_D).$();
+
+                dstFixFd = openRW(ff, path);
                 dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - activeTop) << shl;
-                truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
 
                 // when prefix is "data" we need to reduce it by "activeTop"
                 if (prefixType == OO_BLOCK_DATA) {
@@ -1429,9 +1430,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 if (isIndexed) {
                     BitmapIndexUtils.keyFileName(path.trimTo(pDirNameLen), columnName);
-                    dstKFd = openReadWriteOrFail(ff, path);
+                    dstKFd = openRW(ff, path);
                     BitmapIndexUtils.valueFileName(path.trimTo(pDirNameLen), columnName);
-                    dstVFd = openReadWriteOrFail(ff, path);
+                    dstVFd = openRW(ff, path);
                 }
 
                 if (prefixType != OO_BLOCK_NONE) {
@@ -1514,6 +1515,17 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         );
     }
 
+    private static void writeColumnTop(FilesFacade ff, Path path, CharSequence columnName, long columnTop) {
+        topFile(path, columnName);
+        final long fd = openRW(ff, path);
+        allocateDiskSpace(ff, path, fd, Long.BYTES);
+        long addr = mapRW(ff, path, fd, Long.BYTES);
+        //noinspection SuspiciousNameCombination
+        Unsafe.getUnsafe().putLong(addr, columnTop);
+        ff.munmap(addr, Long.BYTES);
+        ff.close(fd);
+    }
+
     private static void oooOpenMidPartitionForMerge(
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
@@ -1587,12 +1599,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 iFile(path.trimTo(plen), columnName);
-                srcDataFixFd = openReadWriteOrFail(ff, path);
+                srcDataFixFd = openRW(ff, path);
                 srcDataFixSize = srcDataMax * Long.BYTES;
                 srcDataFixAddr = mapRO(ff, srcDataFixFd, srcDataFixSize);
 
                 dFile(path.trimTo(plen), columnName);
-                srcDataVarFd = openReadWriteOrFail(ff, path);
+                srcDataVarFd = openRW(ff, path);
                 srcDataVarSize = getVarColumnSize(
                         ff,
                         columnType,
@@ -1604,17 +1616,17 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 appendTxnToPath(path.trimTo(plen), txn);
                 oooSetPath(path, columnName, FILE_SUFFIX_I);
 
-                dstFixFd = openReadWriteOrFail(ff, path);
+                dstFixFd = openRW(ff, path);
                 dstFixSize = dstLen * Long.BYTES;
-                truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
                 oooSetPath(path, columnName, FILE_SUFFIX_D);
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                dstVarFd = openReadWriteOrFail(ff, path);
-                truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
-                dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
+                dstVarFd = openRW(ff, path);
+                allocateDiskSpace(ff, path, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, path, dstVarFd, dstVarSize);
 
                 // configure offsets
                 switch (prefixType) {
@@ -1655,7 +1667,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataFixFd = -srcTimestampFd;
                 } else {
                     dFile(path.trimTo(plen), columnName);
-                    srcDataFixFd = openReadWriteOrFail(ff, path);
+                    srcDataFixFd = openRW(ff, path);
                 }
 
                 final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
@@ -1668,10 +1680,10 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 path.concat(columnName).put(FILE_SUFFIX_D).$();
 
-                dstFixFd = openReadWriteOrFail(ff, path);
+                dstFixFd = openRW(ff, path);
                 dstFixSize = dstLen << shl;
-                truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
 
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1) << shl;
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
@@ -1683,9 +1695,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 // we have "src" index
                 if (isIndexed) {
                     BitmapIndexUtils.keyFileName(path.trimTo(pDirNameLen), columnName);
-                    dstKFd = openReadWriteOrFail(ff, path);
+                    dstKFd = openRW(ff, path);
                     BitmapIndexUtils.valueFileName(path.trimTo(pDirNameLen), columnName);
-                    dstVFd = openReadWriteOrFail(ff, path);
+                    dstVFd = openRW(ff, path);
                 }
 
                 if (prefixType != OO_BLOCK_NONE) {
@@ -1813,28 +1825,28 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_I);
-                dstFixFd = openReadWriteOrFail(ff, path);
-                truncateToSizeOrFail(ff, path, dstFixFd, (srcOooHi - srcOooLo + 1) * Long.BYTES);
+                dstFixFd = openRW(ff, path);
+                allocateDiskSpace(ff, path, dstFixFd, (srcOooHi - srcOooLo + 1) * Long.BYTES);
                 dstFixSize = (srcOooHi - srcOooLo + 1) * Long.BYTES;
-                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
 
                 oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
-                dstVarFd = openReadWriteOrFail(ff, path);
+                dstVarFd = openRW(ff, path);
                 dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                truncateToSizeOrFail(ff, path, dstVarFd, dstVarSize);
-                dstVarAddr = mapReadWriteOrFail(ff, path, dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, path, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, path, dstVarFd, dstVarSize);
                 break;
             default:
                 oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
-                dstFixFd = openReadWriteOrFail(ff, path);
+                dstFixFd = openRW(ff, path);
                 dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
-                truncateToSizeOrFail(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapReadWriteOrFail(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
                 if (isIndexed) {
                     BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                    dstKFd = openReadWriteOrFail(ff, path);
+                    dstKFd = openRW(ff, path);
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                    dstVFd = openReadWriteOrFail(ff, path);
+                    dstVFd = openRW(ff, path);
                 }
                 break;
         }

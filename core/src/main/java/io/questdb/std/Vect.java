@@ -85,7 +85,7 @@ public final class Vect {
 
     public static native void mergeShuffle64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    public static native void mergeShuffle64TopBit(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long columnTop);
+    public static native void mergeShuffleWithTop64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count, long columnTop);
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 

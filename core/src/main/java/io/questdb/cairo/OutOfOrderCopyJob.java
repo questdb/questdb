@@ -110,21 +110,40 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
-                oooMergeCopy(
-                        columnType,
-                        timestampMergeIndexAddr,
-                        srcDataFixAddr,
-                        srcDataVarAddr,
-                        srcDataLo,
-                        srcDataHi,
-                        srcOooFixAddr,
-                        srcOooVarAddr,
-                        srcOooLo,
-                        srcOooHi,
-                        dstFixAddr + dstFixOffset,
-                        dstVarAddr,
-                        dstVarOffset
-                );
+                if (srcDataTop == 0) {
+                    oooMergeCopy(
+                            columnType,
+                            timestampMergeIndexAddr,
+                            srcDataFixAddr,
+                            srcDataVarAddr,
+                            srcDataLo,
+                            srcDataHi,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            dstFixAddr + dstFixOffset,
+                            dstVarAddr,
+                            dstVarOffset
+                    );
+                } else {
+                    oooMergeCopyWithTop(
+                            columnType,
+                            timestampMergeIndexAddr,
+                            srcDataTop,
+                            srcDataFixAddr,
+                            srcDataVarAddr,
+                            srcDataLo,
+                            srcDataHi,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
+                            dstFixAddr + dstFixOffset,
+                            dstVarAddr,
+                            dstVarOffset
+                    );
+                }
                 break;
             case OO_BLOCK_OO:
                 oooCopyOOO(
@@ -695,6 +714,77 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
                 Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                break;
+            case -ColumnType.TIMESTAMP:
+                oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private static void oooMergeCopyWithTop(
+            int columnType,
+            long mergeIndexAddr,
+            long srcDataTop,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcDataLo,
+            long srcDataHi,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    ) {
+        final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
+        switch (columnType) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                break;
+            case ColumnType.SHORT:
+            case ColumnType.CHAR:
+                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                break;
+            case ColumnType.STRING:
+                Vect.oooMergeCopyStrColumn(
+                        mergeIndexAddr,
+                        rowCount,
+                        srcDataFixAddr,
+                        srcDataVarAddr,
+                        srcOooFixAddr,
+                        srcOooVarAddr,
+                        dstFixAddr,
+                        dstVarAddr,
+                        dstVarOffset
+                );
+                break;
+            case ColumnType.BINARY:
+                Vect.oooMergeCopyBinColumn(
+                        mergeIndexAddr,
+                        rowCount,
+                        srcDataFixAddr,
+                        srcDataVarAddr,
+                        srcOooFixAddr,
+                        srcOooVarAddr,
+                        dstFixAddr,
+                        dstVarAddr,
+                        dstVarOffset
+                );
+                break;
+            case ColumnType.INT:
+            case ColumnType.FLOAT:
+            case ColumnType.SYMBOL:
+                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                break;
+            case ColumnType.DOUBLE:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                Vect.mergeShuffleWithTop64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount, srcDataTop);
                 break;
             case -ColumnType.TIMESTAMP:
                 oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);

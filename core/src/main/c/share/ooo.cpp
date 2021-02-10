@@ -653,7 +653,7 @@ Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, j
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_mergeShuffleTop64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
+Java_io_questdb_std_Vect_mergeShuffleWithTop64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                            jlong count, jlong top) {
     merge_shuffle_top<int64_t>(src1, src2, dest, index, count, top);
 }

@@ -3584,7 +3584,7 @@ public class TableWriter implements Closeable {
 
     @SuppressWarnings("SuspiciousNameCombination")
     private void writeColumnTop(CharSequence name, long columnTop) {
-        long fd = openAppend(path.concat(name).put(".top").$());
+        long fd = openAppend(topFile(path, name));
         try {
             Unsafe.getUnsafe().putLong(tempMem8b, columnTop);
             if (ff.append(fd, tempMem8b, Long.BYTES) != Long.BYTES) {

@@ -40,7 +40,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -80,9 +79,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    public void testAppendAfterTopFixedMiddleContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testAppendAfterTopFixedMiddle0);
+    public void testColumnTopLastDataOOODataContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataParallel() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
     }
 
     @Test
@@ -1375,7 +1378,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/oo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
+                "/xxx.txt/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -1567,13 +1570,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
                 "insert into x select * from middle",
-                "/oo/testPartitionedDataMergeData.txt"
+                "/xxx.txt/testPartitionedDataMergeData.txt"
         );
 
         assertIndexResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/oo/testPartitionedDataMergeData_Index.txt"
+                "/xxx.txt/testPartitionedDataMergeData_Index.txt"
         );
     }
 
@@ -1638,13 +1641,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
                 "insert into x select * from middle",
-                "/oo/testPartitionedDataMergeEnd.txt"
+                "/xxx.txt/testPartitionedDataMergeEnd.txt"
         );
 
         assertIndexResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/oo/testPartitionedDataMergeEnd_Index.txt"
+                "/xxx.txt/testPartitionedDataMergeEnd_Index.txt"
         );
     }
 
@@ -1712,7 +1715,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
                 "insert into x select * from middle",
-                "/oo/testPartitionedDataOOData.txt"
+                "/xxx.txt/testPartitionedDataOOData.txt"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -1898,11 +1901,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
     }
 
-    private static void testAppendAfterTopFixedMiddle0(
+    private static void testColumnTopLastDataOOOData0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) throws SqlException, URISyntaxException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -1955,16 +1958,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        // 549900000000
-/*
-        RecordCursorFactory f = compiler.compile("select cast(max(ts) as long) from x", sqlExecutionContext).getRecordCursorFactory();
-        RecordCursor c = f.getCursor(sqlExecutionContext);
-
-        sink.clear();
-        printer.print(c, f.getMetadata(), true);
-        System.out.println(sink);
-*/
-
         compiler.compile(
                 "create table append as (" +
                         "select" +
@@ -1991,15 +1984,24 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        // create third table, which will contain both X and 1AM
-        assertOutOfOrderDataConsistency(
-                engine,
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
+
+        // use this code to debug
+//        assertOutOfOrderDataConsistency(
+//                engine,
+//                compiler,
+//                sqlExecutionContext,
+//                "create table y as (x union all append)",
+//                "y order by ts",
+//                "insert into x select * from append",
+//                "x'"
+//        );
+
+        assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "create table y as (x union all append)",
-                "y where sym = 'googl' order by ts",
-                "insert into x select * from append",
-                "x where sym = 'googl'"
+                "x",
+                "/oo/testColumnTopLastDataOOOData.txt"
         );
     }
 
@@ -2255,13 +2257,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "create table y as (select * from x union all select * from 1am union all select * from top2)",
                 "insert into x select * from (1am union all top2)",
-                "/oo/testPartitionedDataOODataPbOOData.txt"
+                "/xxx.txt/testPartitionedDataOODataPbOOData.txt"
         );
 
         assertIndexResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/oo/testPartitionedDataOODataPbOOData_Index.txt"
+                "/xxx.txt/testPartitionedDataOODataPbOOData_Index.txt"
         );
     }
 
