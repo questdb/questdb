@@ -1391,19 +1391,25 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             default:
                 srcDataFixFd = -activeFixFd;
                 final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
+
+
                 dFile(path.trimTo(plen), columnName);
-                srcDataFixSize = (srcDataMax - activeTop) << shl;
-                srcDataFixAddr = mapRO(ff, -srcDataFixFd, srcDataFixSize);
+                srcDataFixSize = (srcDataMax) << shl;
+                srcDataFixAddr = mapRW(ff, path, -srcDataFixFd, srcDataFixSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
                 final int pDirNameLen = path.length();
 
                 if (activeTop > 0) {
-                    writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, activeTop);
+                    if (activeTop > prefixHi) {
+                        Unsafe.getUnsafe().copyMemory(srcDataFixAddr, srcDataFixAddr + (activeTop << shl), (srcDataMax - activeTop) << shl);
+                        Unsafe.getUnsafe().setMemory(srcDataFixAddr, activeTop << shl, (byte) 0);
+                        activeTop = 0;
+                    } else {
+                        writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, activeTop);
+                    }
                 }
-
                 path.trimTo(pDirNameLen).concat(columnName).put(FILE_SUFFIX_D).$();
-
                 dstFixFd = openRW(ff, path);
                 dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - activeTop) << shl;
                 allocateDiskSpace(ff, path, dstFixFd, dstFixSize);

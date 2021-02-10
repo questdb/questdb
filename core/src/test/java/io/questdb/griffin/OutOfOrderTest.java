@@ -40,6 +40,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -79,8 +80,22 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopLastOOODataContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopLastOOOData0);
+    }
+
+    @Test
     public void testColumnTopLastDataOOODataContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOOData() throws Exception {
+        assertMemoryLeak(() ->testColumnTopLastDataOOOData0(
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
     }
 
     @Test
@@ -1378,7 +1393,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 compiler,
                 sqlExecutionContext,
                 "x",
-                "/xxx.txt/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
+                "/oo/testPartitionedDataOOIntoLastOverflowIntoNewPartition.txt"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -1570,13 +1585,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
                 "insert into x select * from middle",
-                "/xxx.txt/testPartitionedDataMergeData.txt"
+                "/oo/testPartitionedDataMergeData.txt"
         );
 
         assertIndexResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/xxx.txt/testPartitionedDataMergeData_Index.txt"
+                "/oo/testPartitionedDataMergeData_Index.txt"
         );
     }
 
@@ -1641,13 +1656,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
                 "insert into x select * from middle",
-                "/xxx.txt/testPartitionedDataMergeEnd.txt"
+                "/oo/testPartitionedDataMergeEnd.txt"
         );
 
         assertIndexResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/xxx.txt/testPartitionedDataMergeEnd_Index.txt"
+                "/oo/testPartitionedDataMergeEnd_Index.txt"
         );
     }
 
@@ -1715,7 +1730,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
                 "insert into x select * from middle",
-                "/xxx.txt/testPartitionedDataOOData.txt"
+                "/oo/testPartitionedDataOOData.txt"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -1906,6 +1921,21 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
+
+        //
+        // ----- last partition
+        //
+        // +-----------+
+        // |   empty   |
+        // |           |
+        // +-----------+   <-- top -->       +---------+
+        // |           |                     |   data  |
+        // |           |   +----------+      +---------+
+        // |           |   |   OOO    |      |   ooo   |
+        // |           | < |  block   |  ==  +---------+
+        // |           |   | (narrow) |      |   data  |
+        // |           |   +----------+      +---------+
+        // +-----------+
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -2003,6 +2033,125 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 "x",
                 "/oo/testColumnTopLastDataOOOData.txt"
         );
+    }
+
+    private static void testColumnTopLastOOOData0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, URISyntaxException {
+
+        //
+        // ----- last partition
+        //
+        // +-----------+
+        // |   empty   |
+        // |           | < +----------+      +---------+
+        // |           |   |   OOO    |      |   ooo   |
+        // |           |   |  block   |  ==  +---------+
+        // +-----------+   | (narrow) |      |   data  |
+        // |           |   +----------+      +---------+
+        // |           |
+        // |           |
+        // |           |
+        // +-----------+
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column v double", sqlExecutionContext);
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549920000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_double() v" +
+                        " from long_sequence(500)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(546600000000L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        " rnd_double() v" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+//        compiler.compile("insert into x select * from append", sqlExecutionContext);
+
+        // use this code to debug
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "y order by ts",
+                "insert into x select * from append",
+                "x'"
+        );
+
+//        assertSqlResultAgainstFile(
+//                compiler,
+//                sqlExecutionContext,
+//                "x",
+//                "/oo/testColumnTopLastDataOOOData.txt"
+//        );
     }
 
     private static void assertIndexConsistency(
@@ -2257,13 +2406,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "create table y as (select * from x union all select * from 1am union all select * from top2)",
                 "insert into x select * from (1am union all top2)",
-                "/xxx.txt/testPartitionedDataOODataPbOOData.txt"
+                "/oo/testPartitionedDataOODataPbOOData.txt"
         );
 
         assertIndexResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "/xxx.txt/testPartitionedDataOODataPbOOData_Index.txt"
+                "/oo/testPartitionedDataOODataPbOOData_Index.txt"
         );
     }
 
