@@ -26,6 +26,7 @@ export type BootstrapAction = Readonly<{
 }>
 
 export type RefreshAuthTokenAction = Readonly<{
+  payload: boolean
   type: ConsoleAT.REFRESH_AUTH_TOKEN
 }>
 
