@@ -118,7 +118,14 @@ public final class TestUtils {
                             if (b == 13) {
                                 continue;
                             }
-                            Assert.assertEquals(b, Unsafe.getUnsafe().getByte(strp++));
+                            byte bb= Unsafe.getUnsafe().getByte(strp);
+                            strp++;
+                            if (b != bb) {
+                                Assert.fail(
+                                        "expected: '" + (char) (bb) + "'(" + bb + ")" +
+                                                ", actual: '" + (char) (b) + "'(" + b + ")" +
+                                                ", at: " + (offset + i - 1));
+                            }
                         }
 
                         offset += reada;

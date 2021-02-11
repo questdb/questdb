@@ -505,6 +505,13 @@ inline void merge_copy_var_column(
     }
 }
 
+template<class T>
+inline void set_memory_vanilla(T *addr, T value, int64_t count) {
+    for (int64_t i = 0; i < count; i++) {
+        addr[i] = value;
+    }
+}
+
 extern "C" {
 
 JNIEXPORT void JNICALL
@@ -653,8 +660,9 @@ Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, j
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_mergeShuffleWithTop64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
-                                           jlong count, jlong top) {
+Java_io_questdb_std_Vect_mergeShuffleWithTop64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                  jlong index,
+                                                  jlong count, jlong top) {
     merge_shuffle_top<int64_t>(src1, src2, dest, index, count, top);
 }
 
@@ -689,5 +697,56 @@ Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData,
             reinterpret_cast<index_t *>(pIndex)
     );
 }
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlong value,
+                                        jlong count) {
+    set_memory_vanilla<int64_t>(
+            reinterpret_cast<int64_t *>(pData),
+            reinterpret_cast<int64_t>(value),
+            (int64_t) (count)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint value,
+                                       jlong count) {
+    set_memory_vanilla<jint>(
+            reinterpret_cast<jint *>(pData),
+            value,
+            (int64_t) (count)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jdouble value,
+                                       jlong count) {
+    set_memory_vanilla<jdouble>(
+            reinterpret_cast<jdouble *>(pData),
+            value,
+            (int64_t) (count)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryFloat(JNIEnv *env, jclass cl, jlong pData, jfloat value,
+                                         jlong count) {
+    set_memory_vanilla<jfloat>(
+            reinterpret_cast<jfloat *>(pData),
+            value,
+            (int64_t) (count)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jshort value,
+                                        jlong count) {
+    set_memory_vanilla<jshort>(
+            reinterpret_cast<jshort *>(pData),
+            value,
+            (int64_t) (count)
+    );
+}
+
 }
 

@@ -28,14 +28,11 @@ import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.OutOfOrderCopyTask;
 import io.questdb.tasks.OutOfOrderOpenColumnTask;
 import io.questdb.tasks.OutOfOrderUpdPartitionSizeTask;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -444,12 +441,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         );
     }
 
-    private static long mapRW(FilesFacade ff, @Nullable Path path, long fd, long size) {
+    private static long mapRW(FilesFacade ff, long fd, long size) {
         long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
         if (addr > -1) {
             return addr;
         }
-        throw CairoException.instance(ff.errno()).put("could not mmap column [file=").put(path).put(", fd=").put(fd).put(", size=").put(size).put(']');
+        throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
     }
 
     private static long openRW(FilesFacade ff, Path path) {
@@ -461,12 +458,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
     }
 
-    private static void allocateDiskSpace(FilesFacade ff, @Nullable Path path, long fd, long size) {
+    private static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
         if (ff.isRestrictedFileSystem()) {
             return;
         }
         if (!ff.allocate(fd, size)) {
-            throw CairoException.instance(ff.errno()).put("could not resize [file=").put(path).put(", size=").put(size).put(", fd=").put(fd).put(']');
+            throw CairoException.instance(ff.errno()).put("could allocate file [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
 
@@ -550,8 +547,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 iFile(path.trimTo(plen), columnName);
                 dstFixFd = openRW(ff, path);
                 dstFixSize = dstLen * Long.BYTES;
-                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
                 dstFixOffset = srcDataMax * Long.BYTES;
 
                 // open data file now
@@ -564,15 +561,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES)
                 );
                 dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
-                allocateDiskSpace(ff, path, dstVarFd, dstVarSize);
-                dstVarAddr = mapRW(ff, path, dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
                 break;
             case -ColumnType.TIMESTAMP:
                 dstFixSize = dstLen * Long.BYTES;
                 dstFixOffset = srcDataMax * Long.BYTES;
                 dstFixFd = -srcTimestampFd;
-                allocateDiskSpace(ff, null, -dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, null, -dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, -dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize);
                 break;
             default:
                 final int shl = ColumnType.pow2SizeOf(columnType);
@@ -580,8 +577,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstFixOffset = srcDataMax << shl;
                 dFile(path.trimTo(plen), columnName);
                 dstFixFd = openRW(ff, path);
-                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, null, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
                 dstIndexOffset = dstFixOffset;
                 if (isIndexed) {
@@ -664,9 +661,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
-            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
+            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
@@ -719,9 +716,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     columnType,
                     blockType,
                     timestampMergeIndexAddr,
-                    srcDataTop,
                     srcDataFixFd,
                     srcDataFixAddr,
+                    srcDataFixOffset,
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
@@ -777,9 +774,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     columnType,
                     blockType,
                     timestampMergeIndexAddr,
-                    srcDataTop,
                     srcDataFixFd,
                     srcDataFixAddr,
+                    srcDataFixOffset,
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
@@ -837,9 +834,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
-            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
+            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
@@ -896,9 +893,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     columnType,
                     blockType,
                     timestampMergeIndexAddr,
-                    srcDataTop,
                     srcDataFixFd,
                     srcDataFixAddr,
+                    srcDataFixOffset,
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
@@ -950,9 +947,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     columnType,
                     blockType,
                     timestampMergeIndexAddr,
-                    srcDataTop,
                     srcDataFixFd,
                     srcDataFixAddr,
+                    srcDataFixOffset,
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
@@ -1007,9 +1004,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
-            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
+            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
@@ -1060,9 +1057,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 columnType,
                 blockType,
                 timestampMergeIndexAddr,
-                srcDataTop,
                 srcDataFixFd,
                 srcDataFixAddr,
+                srcDataFixOffset,
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
@@ -1162,8 +1159,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstFixOffset = srcDataMax * Long.BYTES;
                 dstFixFd = -activeFixFd;
                 dstFixSize = dstLen * Long.BYTES + dstFixOffset;
-                allocateDiskSpace(ff, null, -dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, null, -dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, -dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize);
 
                 dstVarFd = -activeVarFd;
                 dstVarOffset = getVarColumnSize(
@@ -1173,8 +1170,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES)
                 );
                 dstVarSize = dstVarOffset + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                allocateDiskSpace(ff, null, -dstVarFd, dstVarSize);
-                dstVarAddr = mapRW(ff, null, -dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, -dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, -dstVarFd, dstVarSize);
                 break;
             default:
                 int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
@@ -1182,8 +1179,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstFixOffset = srcDataMax << shl;
                 dstFixFd = -activeFixFd;
                 dstFixSize = oooSize + dstFixOffset;
-                allocateDiskSpace(ff, null, -dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, null, -dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, -dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize);
                 if (isIndexed) {
                     BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
                     dstKFd = openRW(ff, path);
@@ -1305,6 +1302,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     ) {
         long srcDataFixFd;
         long srcDataFixAddr;
+        long srcDataFixOffset = 0; // todo: implement for var column
         long srcDataFixSize;
         long srcDataVarFd = 0;
         long srcDataVarAddr = 0;
@@ -1350,15 +1348,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 path.put(FILE_SUFFIX_I).$();
                 dstFixFd = openRW(ff, path);
                 dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax) * Long.BYTES;
-                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
                 path.trimTo(pColNameLen);
                 path.put(FILE_SUFFIX_D).$();
                 dstVarFd = openRW(ff, path);
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                allocateDiskSpace(ff, path, dstVarFd, dstVarSize);
-                dstVarAddr = mapRW(ff, path, dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
 
                 // configure offsets
                 switch (prefixType) {
@@ -1391,29 +1389,37 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             default:
                 srcDataFixFd = -activeFixFd;
                 final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
-
-
-                dFile(path.trimTo(plen), columnName);
-                srcDataFixSize = (srcDataMax) << shl;
-                srcDataFixAddr = mapRW(ff, path, -srcDataFixFd, srcDataFixSize);
-
                 appendTxnToPath(path.trimTo(plen), txn);
                 final int pDirNameLen = path.length();
 
                 if (activeTop > 0) {
+                    final long srcDataActualBytes = (srcDataMax - activeTop) << shl;
+                    final long srcDataMaxBytes = srcDataMax << shl;
                     if (activeTop > prefixHi) {
-                        Unsafe.getUnsafe().copyMemory(srcDataFixAddr, srcDataFixAddr + (activeTop << shl), (srcDataMax - activeTop) << shl);
-                        Unsafe.getUnsafe().setMemory(srcDataFixAddr, activeTop << shl, (byte) 0);
+                        // extend the existing column down, we will be discarding it anyway
+                        srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
+                        srcDataFixAddr = mapRW(ff, -srcDataFixFd, srcDataFixSize);
+                        setNull(columnType, srcDataFixAddr + srcDataActualBytes, activeTop);
+                        Unsafe.getUnsafe().copyMemory(srcDataFixAddr, srcDataFixAddr + srcDataMaxBytes, srcDataActualBytes);
                         activeTop = 0;
+                        srcDataFixOffset = -srcDataActualBytes;
                     } else {
                         writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, activeTop);
+                        srcDataFixSize = srcDataActualBytes;
+                        srcDataFixAddr = mapRW(ff, -srcDataFixFd, srcDataFixSize);
+                        srcDataFixOffset = 0;
                     }
+                } else {
+                    srcDataFixSize = srcDataMax << shl;
+                    srcDataFixAddr = mapRW(ff, -srcDataFixFd, srcDataFixSize);
+                    srcDataFixOffset = 0;
                 }
+
                 path.trimTo(pDirNameLen).concat(columnName).put(FILE_SUFFIX_D).$();
                 dstFixFd = openRW(ff, path);
                 dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - activeTop) << shl;
-                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
                 // when prefix is "data" we need to reduce it by "activeTop"
                 if (prefixType == OO_BLOCK_DATA) {
@@ -1469,9 +1475,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 pathToTable,
                 columnType,
                 timestampMergeIndexAddr,
-                activeTop,
                 srcDataFixFd,
                 srcDataFixAddr,
+                srcDataFixOffset,
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
@@ -1521,11 +1527,48 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         );
     }
 
+    private static void setNull(int columnType, long addr, long count) {
+        switch (columnType) {
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
+                // todo: implement
+                break;
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+                Unsafe.getUnsafe().setMemory(addr, count, (byte) 0);
+                break;
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+                Vect.setMemoryShort(addr, (short) 0, count);
+                break;
+            case ColumnType.INT:
+                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                break;
+            case ColumnType.FLOAT:
+                Vect.setMemoryFloat(addr, Float.NaN, count);
+                break;
+            case ColumnType.SYMBOL:
+                Vect.setMemoryInt(addr, -1, count);
+                break;
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case -ColumnType.TIMESTAMP:
+            case ColumnType.TIMESTAMP:
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
+                break;
+            case ColumnType.DOUBLE:
+                Vect.setMemoryDouble(addr, Double.NaN, count);
+                break;
+            default:
+                break;
+        }
+    }
+
     private static void writeColumnTop(FilesFacade ff, Path path, CharSequence columnName, long columnTop) {
         topFile(path, columnName);
         final long fd = openRW(ff, path);
-        allocateDiskSpace(ff, path, fd, Long.BYTES);
-        long addr = mapRW(ff, path, fd, Long.BYTES);
+        allocateDiskSpace(ff, fd, Long.BYTES);
+        long addr = mapRW(ff, fd, Long.BYTES);
         //noinspection SuspiciousNameCombination
         Unsafe.getUnsafe().putLong(addr, columnTop);
         ff.munmap(addr, Long.BYTES);
@@ -1624,15 +1667,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 dstFixFd = openRW(ff, path);
                 dstFixSize = dstLen * Long.BYTES;
-                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
                 oooSetPath(path, columnName, FILE_SUFFIX_D);
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 dstVarFd = openRW(ff, path);
-                allocateDiskSpace(ff, path, dstVarFd, dstVarSize);
-                dstVarAddr = mapRW(ff, path, dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
 
                 // configure offsets
                 switch (prefixType) {
@@ -1688,8 +1731,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 dstFixFd = openRW(ff, path);
                 dstFixSize = dstLen << shl;
-                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1) << shl;
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
@@ -1734,9 +1777,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 pathToTable,
                 columnType,
                 timestampMergeIndexAddr,
-                0,
                 srcDataFixFd,
                 srcDataFixAddr,
+                0,
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
@@ -1832,22 +1875,22 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             case ColumnType.STRING:
                 oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_I);
                 dstFixFd = openRW(ff, path);
-                allocateDiskSpace(ff, path, dstFixFd, (srcOooHi - srcOooLo + 1) * Long.BYTES);
+                allocateDiskSpace(ff, dstFixFd, (srcOooHi - srcOooLo + 1) * Long.BYTES);
                 dstFixSize = (srcOooHi - srcOooLo + 1) * Long.BYTES;
-                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
                 oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
                 dstVarFd = openRW(ff, path);
                 dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                allocateDiskSpace(ff, path, dstVarFd, dstVarSize);
-                dstVarAddr = mapRW(ff, path, dstVarFd, dstVarSize);
+                allocateDiskSpace(ff, dstVarFd, dstVarSize);
+                dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
                 break;
             default:
                 oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
                 dstFixFd = openRW(ff, path);
                 dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
-                allocateDiskSpace(ff, path, dstFixFd, dstFixSize);
-                dstFixAddr = mapRW(ff, path, dstFixFd, dstFixSize);
+                allocateDiskSpace(ff, dstFixFd, dstFixSize);
+                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
                 if (isIndexed) {
                     BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
                     dstKFd = openRW(ff, path);
@@ -1932,9 +1975,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             CharSequence pathToTable,
             int columnType,
             long timestampMergeIndexAddr,
-            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
+            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
@@ -1999,9 +2042,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         prefixType,
                         0,
-                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
+                        srcDataFixOffset,
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
@@ -2057,9 +2100,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         prefixType,
                         0,
-                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
+                        srcDataFixOffset,
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
@@ -2120,9 +2163,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         mergeType,
                         0,
-                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
+                        srcDataFixOffset,
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
@@ -2178,9 +2221,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         mergeType,
                         0,
-                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
+                        srcDataFixOffset,
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
@@ -2236,9 +2279,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         mergeType,
                         timestampMergeIndexAddr,
-                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
+                        srcDataFixOffset,
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
@@ -2299,9 +2342,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         suffixType,
                         0,
-                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
+                        srcDataFixOffset,
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
@@ -2357,9 +2400,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         columnType,
                         suffixType,
                         0,
-                        srcDataTop,
                         srcDataFixFd,
                         srcDataFixAddr,
+                        srcDataFixOffset,
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,

@@ -65,9 +65,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
-            long srcDataTop,
             long srcDataFixFd,
             long srcDataFixAddr,
+            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
@@ -110,7 +110,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
-                if (srcDataTop == 0) {
+                if (srcDataFixOffset == 0) {
                     oooMergeCopy(
                             columnType,
                             timestampMergeIndexAddr,
@@ -130,8 +130,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     oooMergeCopyWithTop(
                             columnType,
                             timestampMergeIndexAddr,
-                            srcDataTop,
                             srcDataFixAddr,
+                            srcDataFixOffset,
                             srcDataVarAddr,
                             srcDataLo,
                             srcDataHi,
@@ -162,7 +162,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case OO_BLOCK_DATA:
                 oooCopyData(
                         columnType,
-                        srcDataFixAddr,
+                        srcDataFixAddr - srcDataFixOffset,
                         srcDataFixSize,
                         srcDataVarAddr,
                         srcDataVarSize,
@@ -236,9 +236,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final int columnType = task.getColumnType();
         final int blockType = task.getBlockType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
-        final long srcDataTop = task.getSrcDataTop();
         final long srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
+        final long srcDataFixOffset = task.getSrcDataFixOffset();
         final long srcDataFixSize = task.getSrcDataFixSize();
         final long srcDataVarFd = task.getSrcDataVarFd();
         final long srcDataVarAddr = task.getSrcDataVarAddr();
@@ -292,9 +292,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 columnType,
                 blockType,
                 timestampMergeIndexAddr,
-                srcDataTop,
                 srcDataFixFd,
                 srcDataFixAddr,
+                srcDataFixOffset,
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
@@ -726,8 +726,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     private static void oooMergeCopyWithTop(
             int columnType,
             long mergeIndexAddr,
-            long srcDataTop,
             long srcDataFixAddr,
+            long srcDataFixOffset,
             long srcDataVarAddr,
             long srcDataLo,
             long srcDataHi,
@@ -784,7 +784,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-                Vect.mergeShuffleWithTop64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount, srcDataTop);
+                Vect.mergeShuffleWithTop64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount, srcDataFixOffset);
                 break;
             case -ColumnType.TIMESTAMP:
                 oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);

@@ -40,7 +40,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -80,30 +79,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testColumnTopLastOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastOOOData0);
-    }
-
-    @Test
-    public void testColumnTopLastDataOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
-    }
-
-    @Test
-    public void testColumnTopLastDataOOOData() throws Exception {
-        assertMemoryLeak(() ->testColumnTopLastDataOOOData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
-    }
-
-    @Test
-    public void testColumnTopLastDataOOODataParallel() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
-    }
-
-    @Test
     public void testBench() throws SqlException {
         testBench0(
                 engine,
@@ -130,6 +105,30 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     @Test
     public void testBenchParallel() throws Exception {
         executeWithPool(4, this::testBench0);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOOData() throws Exception {
+        assertMemoryLeak(() -> testColumnTopLastDataOOOData0(
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataParallel() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
+    }
+
+    @Test
+    public void testColumnTopLastOOODataContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopLastOOOData0);
     }
 
     @Test
@@ -1962,6 +1961,16 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
 
         compiler.compile("alter table x add column v double", sqlExecutionContext);
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -1983,7 +1992,18 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_double() v" +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_long() v9" +
                         " from long_sequence(500)",
                 sqlExecutionContext
         );
@@ -2008,7 +2028,18 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_double() v" +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
@@ -2081,6 +2112,16 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
 
         compiler.compile("alter table x add column v double", sqlExecutionContext);
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -2102,7 +2143,18 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_double() v" +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_long() v9" +
                         " from long_sequence(500)",
                 sqlExecutionContext
         );
@@ -2127,31 +2179,42 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t," +
-                        " rnd_double() v" +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
-//        compiler.compile("insert into x select * from append", sqlExecutionContext);
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         // use this code to debug
-        assertOutOfOrderDataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (x union all append)",
-                "y order by ts",
-                "insert into x select * from append",
-                "x'"
-        );
-
-//        assertSqlResultAgainstFile(
+//        assertOutOfOrderDataConsistency(
+//                engine,
 //                compiler,
 //                sqlExecutionContext,
-//                "x",
-//                "/oo/testColumnTopLastDataOOOData.txt"
+//                "create table y as (x union all append)",
+//                "y order by ts",
+//                "insert into x select * from append",
+//                "x'"
 //        );
+
+        assertSqlResultAgainstFile(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                "/oo/testColumnTopLastOOOData.txt"
+        );
     }
 
     private static void assertIndexConsistency(
@@ -2244,6 +2307,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         URL url = OutOfOrderTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
+//        System.out.println(sink);
         TestUtils.assertEquals(new File(url.toURI()), sink);
     }
 

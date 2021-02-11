@@ -89,6 +89,16 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
+    public static native void setMemoryLong(long pData, long value, long count);
+
+    public static native void setMemoryInt(long pData, int value, long count);
+
+    public static native void setMemoryDouble(long pData, double value, long count);
+
+    public static native void setMemoryFloat(long pData, float value, long count);
+
+    public static native void setMemoryShort(long pData, short value, long count);
+
     public static native double minDouble(long pDouble, long count);
 
     public static native int minInt(long pInt, long count);

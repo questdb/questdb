@@ -1416,6 +1416,104 @@ nodejs code:
     }
 
     @Test
+    public void testLargeSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(4);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("CREATE TABLE IF NOT EXISTS recorded_l1_data (\n" +
+                            " HighLimitPrice double,\n" +
+                            " LastAuctionImbalanceSide string,\n" +
+                            " LastAuctionImbalanceVolume double,\n" +
+                            " LastAuctionPrice double,\n" +
+                            " LastAuctionVolume double,\n" +
+                            " LastPrice double,\n" +
+                            " LastTradePrice double,\n" +
+                            " LastTradeQty double,\n" +
+                            " LowLimitPrice double,\n" +
+                            " MARKET_EURONEXT_PhaseQualifier long,\n" +
+                            " MARKET_EURONEXT_StatusReason long,\n" +
+                            " MARKET_EURONEXT_TradingPeriod long,\n" +
+                            " MARKET_GroupTradingStatus long,\n" +
+                            " MARKET_JSE_MIT_TradingStatusDetails string,\n" +
+                            " MARKET_LSE_SuspendedIndicator string,\n" +
+                            " MARKET_OMX_NORDIC_NoteCodes1 long,\n" +
+                            " MARKET_OMX_NORDIC_NoteCodes2 long,\n" +
+                            " MARKET_SWX_BookCondition long,\n" +
+                            " MARKET_SWX_SecurityTradingStatus long,\n" +
+                            " MARKET_SWX_TradingPhase string,\n" +
+                            " MARKET_SWX_TradingSessionSubID string,\n" +
+                            " MARKET_TradingStatus long,\n" +
+                            " askPx double,\n" +
+                            " askQty double,\n" +
+                            " bidPx double,\n" +
+                            " bidQty double,\n" +
+                            " glid symbol,\n" +
+                            " TradingStatus long,\n" +
+                            " serverTimestamp long,\n" +
+                            " marketTimestamp long,\n" +
+                            " timestamp timestamp\n" +
+                            " ) timestamp(timestamp) partition by DAY;"
+                    );
+                }
+
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("insert into recorded_l1_data \n" +
+                            " select \n" +
+                            "     rnd_double(), \n" +
+                            "     rnd_str(), \n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_str(),\n" +
+                            "     rnd_str(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_str(),\n" +
+                            "     rnd_str(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_double(),\n" +
+                            "     rnd_symbol('a','b','c'),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     rnd_long(),\n" +
+                            "     timestamp_sequence(0, 100000)\n" +
+                            "     from long_sequence(50000)\n" +
+                            "    )");
+                }
+
+                double sum = 0;
+                long count = 0;
+                try (PreparedStatement preparedStatement = connection.prepareStatement("SELECT * FROM recorded_l1_data;")) {
+                    try (ResultSet rs = preparedStatement.executeQuery()) {
+                        while (rs.next()) {
+                            sum += rs.getDouble(1);
+                            count++;
+                        }
+                    }
+                }
+                Assert.assertEquals(50_000, count);
+                Assert.assertEquals(24963.57352782434, sum, 0.00000001);
+            }
+        });
+    }
+
+    @Test
     public void testLoginBadPassword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (PGWireServer ignored = createPGServer(1)) {
