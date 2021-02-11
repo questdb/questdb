@@ -891,8 +891,8 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
     public void testSumInTimestampRangeWithColTop() throws Exception {
-        final long step = 100L;
-        final long count = 10001L;
+        final long step = 1000L;
+        final long count = 1000000L;
         final long increment = count / 7;
         assertMemoryLeak(() -> {
             String createSql = "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(0, " + step + ") t from long_sequence(" + count + ")) timestamp(t) partition by DAY";

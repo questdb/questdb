@@ -192,20 +192,16 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                                 pageNRowsRemaining.setQuick(i, 0);
                             } else {
                                 int page = pages.getQuick(i);
-                                while (true) {
-                                    long pageSize = col.getPageSize(page) >> columnSizes.getQuick(i);
-                                    if (pageSize > loRemaining) {
-                                        long addr = col.getPageAddress(page);
-                                        addr += loRemaining << columnSizes.getQuick(i);
-                                        columnPageNextAddress.setQuick(i, addr);
-                                        long pageHi = Math.min(partitionHi, pageSize);
-                                        pageNRowsRemaining.setQuick(i, pageHi - partitionLo);
-                                        pages.setQuick(i, page);
-                                        break;
-                                    }
-                                    loRemaining -= pageSize;
-                                    page++;
+                                long pageSize = col.getPageSize(page) >> columnSizes.getQuick(i);
+                                if (pageSize < partitionHi) {
+                                    throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
                                 }
+                                long addr = col.getPageAddress(page);
+                                addr += loRemaining << columnSizes.getQuick(i);
+                                columnPageNextAddress.setQuick(i, addr);
+                                long pageHi = Math.min(partitionHi, pageSize);
+                                pageNRowsRemaining.setQuick(i, pageHi - partitionLo);
+                                pages.setQuick(i, page);
                             }
                         }
                     }
