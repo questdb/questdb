@@ -1,5 +1,5 @@
 import { Epic, ofType } from "redux-observable"
-import { filter, map, switchMap, tap } from "rxjs/operators"
+import { filter, map, switchMap, switchMapTo, tap } from "rxjs/operators"
 import { NEVER, of, timer } from "rxjs"
 
 import { actions } from "store"
@@ -49,7 +49,7 @@ export const triggerRefreshTokenOnBootstrap: Epic<
       const authPayload = localStorage.getItem("AUTH_PAYLOAD")
 
       if (authPayload != null) {
-        return of(actions.console.refreshAuthToken())
+        return of(actions.console.refreshAuthToken(true))
       }
 
       return NEVER
@@ -61,7 +61,7 @@ export const refreshToken: Epic<StoreAction, ConsoleAction, StoreShape> = (
 ) =>
   action$.pipe(
     ofType<StoreAction, RefreshAuthTokenAction>(ConsoleAT.REFRESH_AUTH_TOKEN),
-    switchMap(() => {
+    switchMap((action) => {
       const authPayload = localStorage.getItem("AUTH_PAYLOAD")
 
       if (authPayload != null) {
@@ -70,26 +70,34 @@ export const refreshToken: Epic<StoreAction, ConsoleAction, StoreShape> = (
             authPayload,
           ) as AuthPayload
 
-          if (expiry != null && refreshRoute != null) {
-            const waitUntil = expiry * 1e3 - 30e3 - Date.now()
-
-            if (waitUntil < 0) {
-              return NEVER
-            }
-
-            return timer(waitUntil).pipe(
-              switchMap(() => fromFetch<AuthPayload>(refreshRoute)),
-              tap((response) => {
-                if (!response.error) {
-                  localStorage.setItem(
-                    "AUTH_PAYLOAD",
-                    JSON.stringify(response.data),
-                  )
-                }
-              }),
-              switchMap(() => of(actions.console.refreshAuthToken())),
-            )
+          if (refreshRoute == null) {
+            return NEVER
           }
+
+          const fetch$ = fromFetch<AuthPayload>(refreshRoute).pipe(
+            tap((response) => {
+              if (!response.error) {
+                localStorage.setItem(
+                  "AUTH_PAYLOAD",
+                  JSON.stringify(response.data),
+                )
+              }
+            }),
+            switchMap(() => of(actions.console.refreshAuthToken(false))),
+          )
+
+          const offset = 30e3
+          const waitUntil = (expiry ?? 0) * 1e3 - offset - Date.now()
+
+          if (waitUntil > -offset) {
+            return timer(Math.max(0, waitUntil)).pipe(switchMapTo(fetch$))
+          }
+
+          if (action.payload) {
+            return fetch$
+          }
+
+          return NEVER
         } catch (error) {
           return NEVER
         }
