@@ -211,7 +211,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         ObjList<CharSequence> tableNames = tableUpdateDetailsByTableName.keys();
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-            loadByThread[stats.writerThreadId] += stats.nUpdates.get();
+            loadByThread[stats.writerThreadId] += stats.nUpdates;
         }
     }
 
@@ -239,7 +239,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                     return true;
                 } finally {
                     pubSeq.done(seq);
-                    if (tableUpdateDetails.nUpdates.incrementAndGet() > nUpdatesPerLoadRebalance) {
+                    if (++tableUpdateDetails.nUpdates > nUpdatesPerLoadRebalance) {
                         if (tableUpdateDetailsLock.writeLock().tryLock()) {
                             try {
                                 loadRebalance();
@@ -360,10 +360,10 @@ class LineTcpMeasurementScheduler implements Closeable {
             String leastLoadedTableName = null;
             for (int n = 0, sz = tableNames.size(); n < sz; n++) {
                 TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-                if (stats.writerThreadId == highestLoadedThreadId && stats.nUpdates.get() > 0) {
+                if (stats.writerThreadId == highestLoadedThreadId && stats.nUpdates > 0) {
                     nTables++;
-                    if (stats.nUpdates.get() < lowestLoad) {
-                        lowestLoad = stats.nUpdates.get();
+                    if (stats.nUpdates < lowestLoad) {
+                        lowestLoad = stats.nUpdates;
                         leastLoadedTableName = stats.tableName;
                     }
                 }
@@ -383,7 +383,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         for (int n = 0, sz = tableNames.size(); n < sz; n++) {
             TableUpdateDetails stats = tableUpdateDetailsByTableName.get(tableNames.get(n));
-            stats.nUpdates.set(0);
+            stats.nUpdates = 0;
         }
 
         if (null != tableToMove) {
@@ -724,7 +724,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     class TableUpdateDetails implements Closeable {
         final String tableName;
         private int writerThreadId = Integer.MIN_VALUE;
-        private final AtomicInteger nUpdates = new AtomicInteger(); // Number of updates since the last load rebalance
+        private int nUpdates = 0; // Number of updates since the last load rebalance, this is an estimate because its incremented by
+                                  // multiple threads without synchronisation
         private TableWriter writer;
         private int nUncommitted = 0;
         private final ThreadLocalDetails[] localDetailsArray;
