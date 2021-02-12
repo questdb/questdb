@@ -60,7 +60,7 @@ public class LtStrTimestampFunctionFactory implements FunctionFactory {
                 long leftTimestamp = parseFullOrPartialTimestamp(leftFn.getStr(null));
                 return new LtStrConstantTimestampFunction(position, leftTimestamp, args.getQuick(1));
             } catch (NumericException e) {
-                throw SqlException.$(position, "could not parse timestamp [value='").put(leftFn.getStr(null)).put("']");
+                throw SqlException.invalidDate(leftFn.getPosition());
             }
         }
         return new LtStrTimestampFunction(position, leftFn, args.getQuick(1));

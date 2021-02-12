@@ -27,6 +27,7 @@ package io.questdb.griffin.model;
 import io.questdb.std.LongList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Random;
@@ -194,6 +195,50 @@ public class IntervalUtilsTest {
         add(intervals, 200, Long.MAX_VALUE);
 
         runTestInvertInplace(intervals, 1, "[NaN,1], [101,199]");
+    }
+
+    @Test
+    public void testIsInEmptyIntervalList() {
+        LongList intervals = new LongList();
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 123));
+    }
+
+    @Test
+    public void testIsInListWithOneInterval() {
+        LongList intervals = new LongList();
+        add(intervals, 100, 102);
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 99));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 100));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 101));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 102));
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 103));
+    }
+
+    @Test
+    public void testIsInListWithEvenNumberOfIntervals() {
+        LongList intervals = new LongList();
+        add(intervals, 100, 102);
+        add(intervals, 122, 124);
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 99));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 101));
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 103));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 123));
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 125));
+    }
+
+    @Test
+    public void testIsInListWithOddNumberOfIntervals() {
+        LongList intervals = new LongList();
+        add(intervals, 100, 102);
+        add(intervals, 122, 124);
+        add(intervals, 150, 155);
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 99));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 101));
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 103));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 123));
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 125));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 151));
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 156));
     }
 
     private void runTestIntersectInplace(LongList intervals, int divider, String expected) {
