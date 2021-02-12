@@ -193,7 +193,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                             } else {
                                 int page = pages.getQuick(i);
                                 long pageSize = col.getPageSize(page) >> columnSizes.getQuick(i);
-                                if (pageSize < partitionHi) {
+                                if (pageSize < loRemaining) {
                                     throw CairoException.instance(0).put("partition is not mapped as single page, cannot perform vector calculation");
                                 }
                                 long addr = col.getPageAddress(page);
