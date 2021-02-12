@@ -905,7 +905,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             compiler.compile(insetSql, sqlExecutionContext);
 
             // Move upper timestamp boundary
-            // [increment, ts * step)
+            // [step, ts * step)
             for (long ts = increment; ts < 2 * count; ts += increment) {
                 try (
                         RecordCursorFactory factory = compiler.compile("select sum(val) s1,  sum(val2) s2 from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)", sqlExecutionContext).getRecordCursorFactory();
