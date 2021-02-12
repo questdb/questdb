@@ -310,7 +310,13 @@ public class ServerMain {
         final String publicZip = "/io/questdb/site/public.zip";
         final String publicDir = dir + "/public";
         final byte[] buffer = new byte[1024 * 1024];
-        final long thisVersion = ServerMain.class.getResource(publicZip).openConnection().getLastModified();
+        URL resource = ServerMain.class.getResource(publicZip);
+        long thisVersion = Long.MIN_VALUE;
+        if (resource == null) {
+            log.error().$("did not find Web Console build at '").$(publicZip).$("'. Proceeding with out of date Web Console").$();
+        } else {
+            thisVersion = resource.openConnection().getLastModified();
+        }
         final long oldVersion = getPublicVersion(publicDir);
         if (thisVersion > oldVersion) {
             try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {

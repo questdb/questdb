@@ -2312,7 +2312,7 @@ public class SqlCodeGenerator implements Mutable {
                 DataFrameCursorFactory dfcFactory;
 
                 if (latestByColumnCount > 0) {
-                    Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                    Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                     if (f != null && f.isConstant() && !f.getBool(null)) {
                         return new EmptyTableRecordCursorFactory(myMeta);
                     }
