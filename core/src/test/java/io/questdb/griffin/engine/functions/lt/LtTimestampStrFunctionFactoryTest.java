@@ -138,7 +138,7 @@ public class LtTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Test
     public void testFailureWhenConstantStringIsNotValidTimestamp() throws NumericException {
-        assertFailure(true, 36, "could not parse timestamp [value='abc']", parseUTCTimestamp("2020-12-31T23:59:59.000000Z"), "abc");
+        assertFailure(true, 38, "Invalid date", parseUTCTimestamp("2020-12-31T23:59:59.000000Z"), "abc");
     }
 
     @Test
