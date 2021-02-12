@@ -24,27 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import java.io.Closeable;
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReadWriteLock;
-
-import org.jetbrains.annotations.NotNull;
-
 import io.questdb.Telemetry;
-import io.questdb.cairo.AppendMemory;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
@@ -52,29 +33,23 @@ import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.NewLineProtoParser.ProtoEntity;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.Job;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.Sequence;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.CharSequenceIntHashMap;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjIntHashMap;
-import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
@@ -306,8 +281,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     long getNextPublisherEventSequence() {
         assert isOpen();
         long seq;
+        //noinspection StatementWithEmptyBody
         while ((seq = pubSeq.next()) == -2) {
-            ;
         }
         return seq;
     }
@@ -408,7 +383,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
     }
 
-    private static int[] DEFAULT_COLUMN_TYPES = new int[NewLineProtoParser.N_ENTITY_TYPES];
+    private static final int[] DEFAULT_COLUMN_TYPES = new int[NewLineProtoParser.N_ENTITY_TYPES];
     static {
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[NewLineProtoParser.ENTITY_TYPE_FLOAT] = ColumnType.DOUBLE;
@@ -425,14 +400,14 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         private TableUpdateDetails tableUpdateDetails;
         private long bufLo;
-        private long bufSize;
+        private final long bufSize;
 
         private int rebalanceFromThreadId;
         private int rebalanceToThreadId;
         private volatile boolean rebalanceReleasedByFromThread;
 
         private LineTcpMeasurementEvent(int maxMeasurementSize, MicrosecondClock clock, LineProtoTimestampAdapter timestampAdapter) {
-            bufSize = (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
+            bufSize = (long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1);
             bufLo = Unsafe.malloc(bufSize);
             this.clock = clock;
             this.timestampAdapter = timestampAdapter;
@@ -497,7 +472,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         long tmpBufPos = bufPos;
                         int l = entity.getValue().length();
                         bufPos += Integer.BYTES + Byte.BYTES;
-                        long hi = bufPos + 2 * l;
+                        long hi = bufPos + 2L * l;
                         floatingCharSink.of(bufPos, hi);
                         if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                             throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
@@ -532,13 +507,14 @@ class LineTcpMeasurementScheduler implements Closeable {
                         bufPos += Double.BYTES;
                         break;
                     }
-                    case NewLineProtoParser.ENTITY_TYPE_STRING: {
+                    case NewLineProtoParser.ENTITY_TYPE_STRING:
+                    case NewLineProtoParser.ENTITY_TYPE_LONG256: {
                         Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                         bufPos += Byte.BYTES;
                         int l = entity.getValue().length();
                         Unsafe.getUnsafe().putInt(bufPos, l);
                         bufPos += Integer.BYTES;
-                        long hi = bufPos + 2 * l;
+                        long hi = bufPos + 2L * l;
                         floatingCharSink.of(bufPos, hi);
                         if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
                             throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
@@ -551,20 +527,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                         bufPos += Byte.BYTES;
                         Unsafe.getUnsafe().putByte(bufPos, (byte) (entity.getBooleanValue() ? 1 : 0));
                         bufPos += Byte.BYTES;
-                        break;
-                    }
-                    case NewLineProtoParser.ENTITY_TYPE_LONG256: {
-                        Unsafe.getUnsafe().putByte(bufPos, entity.getType());
-                        bufPos += Byte.BYTES;
-                        int l = entity.getValue().length();
-                        Unsafe.getUnsafe().putInt(bufPos, l);
-                        bufPos += Integer.BYTES;
-                        long hi = bufPos + 2 * l;
-                        floatingCharSink.of(bufPos, hi);
-                        if (!Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), floatingCharSink)) {
-                            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(entity.getName());
-                        }
-                        bufPos = hi;
                         break;
                     }
                 }
@@ -612,7 +574,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                             row = null;
                             int colType = DEFAULT_COLUMN_TYPES[entityType];
                             if (TableUtils.isValidColumnName(job.charSink)) {
-                                colIndex = writer.getMetadata().getColumnCount();
                                 writer.addColumn(job.charSink, colType);
                             } else {
                                 throw CairoException.instance(0).put("invalid column name [table=").put(writer.getName())
@@ -630,7 +591,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_TAG: {
                             int len = Unsafe.getUnsafe().getInt(bufPos);
                             bufPos += Integer.BYTES;
-                            long hi = bufPos + 2 * len;
+                            long hi = bufPos + 2L * len;
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             int symIndex = writer.getSymbolIndex(colIndex, job.floatingCharSink);
                             row.putSymIndex(colIndex, symIndex);
@@ -689,7 +650,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_STRING: {
                             int len = Unsafe.getUnsafe().getInt(bufPos);
                             bufPos += Integer.BYTES;
-                            long hi = bufPos + 2 * len;
+                            long hi = bufPos + 2L * len;
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             row.putStr(colIndex, job.floatingCharSink);
                             bufPos = hi;
@@ -699,7 +660,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_LONG256: {
                             int len = Unsafe.getUnsafe().getInt(bufPos);
                             bufPos += Integer.BYTES;
-                            long hi = bufPos + 2 * len;
+                            long hi = bufPos + 2L * len;
                             job.floatingCharSink.asCharSequence(bufPos, hi);
                             row.putLong256(colIndex, job.floatingCharSink);
                             bufPos = hi;
@@ -723,7 +684,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     class TableUpdateDetails implements Closeable {
         final String tableName;
-        private int writerThreadId = Integer.MIN_VALUE;
+        private int writerThreadId;
         private int nUpdates = 0; // Number of updates since the last load rebalance, this is an estimate because its incremented by
                                   // multiple threads without synchronisation
         private TableWriter writer;
