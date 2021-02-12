@@ -971,6 +971,49 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnSubQueryIndexed() throws Exception {
         TestMatchFunctionFactory.clear();
+        final String expected = "a\tb\tk\n" +
+                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795045\t\t1970-01-06T18:53:20.000000Z\n" +
+                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "57.93466326862211\t\t1970-01-10T06:13:20.000000Z\n" +
+                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "26.922103479744898\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.98405941762054\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.5019885372507\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.01121139739173\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
+    public void testFilterOnSubQueryIndexedAndFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         final String expected = "b\tk\ta\n" +
                 "HYRX\t1970-01-07T22:40:00.000000Z\t97.71103146051203\n" +
                 "HYRX\t1970-01-11T10:00:00.000000Z\t12.026122412833129\n";
