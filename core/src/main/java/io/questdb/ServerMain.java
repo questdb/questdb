@@ -313,7 +313,7 @@ public class ServerMain {
         URL resource = ServerMain.class.getResource(publicZip);
         long thisVersion = Long.MIN_VALUE;
         if (resource == null) {
-            log.error().$("did not find Web Console build at '").$(publicZip).$("'. Proceeding with out of date Web Console").$();
+            log.error().$("did not find Web Console build at '").$(publicZip).$("'. Proceeding without Web Console checks").$();
         } else {
             thisVersion = resource.openConnection().getLastModified();
         }
