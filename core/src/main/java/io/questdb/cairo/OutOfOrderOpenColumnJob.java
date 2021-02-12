@@ -1395,7 +1395,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 if (activeTop > 0) {
                     final long srcDataActualBytes = (srcDataMax - activeTop) << shl;
                     final long srcDataMaxBytes = srcDataMax << shl;
-                    if (activeTop > prefixHi) {
+                    if (activeTop > prefixHi || prefixType == OO_BLOCK_OO) {
                         // extend the existing column down, we will be discarding it anyway
                         srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                         srcDataFixAddr = mapRW(ff, -srcDataFixFd, srcDataFixSize);
