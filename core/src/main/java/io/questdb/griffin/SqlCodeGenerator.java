@@ -2352,7 +2352,7 @@ public class SqlCodeGenerator implements Mutable {
                         final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
                         final Record.CharSequenceFunction func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
 
-                        Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                        Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (f != null && f.isConstant() && !f.getBool(null)) {
                             return new EmptyTableRecordCursorFactory(myMeta);
                         }
@@ -2466,7 +2466,7 @@ public class SqlCodeGenerator implements Mutable {
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
                             symbolValueList.add(functionParser.createBindVariable(intrinsicModel.keyExcludedValuePositions.getQuick(i), intrinsicModel.keyExcludedValues.get(i)));
                         }
-                        Function f = compileFilter(intrinsicModel, readerMeta, executionContext);
+                        Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (f != null && f.isConstant()) {
                             try {
                                 if (!f.getBool(null)) {
