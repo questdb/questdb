@@ -127,6 +127,20 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopLastOOOPrefixParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testColumnTopLastOOOPrefix0);
+    }
+
+    @Test
+    public void testColumnTopLastOOOPrefix() throws Exception {
+        assertMemoryLeak(() -> testColumnTopLastOOOPrefix0 (
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
+    }
+
+    @Test
     public void testColumnTopLastDataOOODataParallel() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
     }
@@ -134,6 +148,20 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     @Test
     public void testColumnTopLastOOODataContended() throws Exception {
         executeWithPool(0, OutOfOrderTest::testColumnTopLastOOOData0);
+    }
+
+    @Test
+    public void testColumnTopLastOOODataParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testColumnTopLastOOOData0);
+    }
+
+    @Test
+    public void testColumnTopLastOOOData() throws Exception {
+        assertMemoryLeak(() -> testColumnTopLastOOOData0(
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
     }
 
     @Test
@@ -1975,6 +2003,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
         compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
         compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
         compiler.compile("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
@@ -2008,6 +2038,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_timestamp(10,100000,356) v7," +
                         " rnd_symbol('AAA','BBB', null) v8," +
                         " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
                         " rnd_long() v9" +
                         " from long_sequence(500)",
                 sqlExecutionContext
@@ -2044,6 +2076,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_timestamp(10,100000,356) v7," +
                         " rnd_symbol('AAA','BBB', null) v8," +
                         " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
                         " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
@@ -2277,6 +2311,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
         compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
         compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+//        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
+//        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
         compiler.compile("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
@@ -2310,6 +2346,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_timestamp(10,100000,356) v7," +
                         " rnd_symbol('AAA','BBB', null) v8," +
                         " rnd_char() v10," +
+//                        " rnd_str() v11," +
+//                        " rnd_bin() v12," +
                         " rnd_long() v9" +
                         " from long_sequence(500)",
                 sqlExecutionContext
@@ -2346,6 +2384,8 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_timestamp(10,100000,356) v7," +
                         " rnd_symbol('AAA','BBB', null) v8," +
                         " rnd_char() v10," +
+//                        " rnd_str() v11," +
+//                        " rnd_bin() v12," +
                         " rnd_long() v9" +
                         " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",

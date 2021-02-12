@@ -1302,7 +1302,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     ) {
         long srcDataFixFd;
         long srcDataFixAddr;
-        long srcDataFixOffset = 0; // todo: implement for var column
+        long srcDataFixOffset;
         long srcDataFixSize;
         long srcDataVarFd = 0;
         long srcDataVarAddr = 0;
@@ -1320,34 +1320,77 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         long dstKFd = 0;
         long dstVFd = 0;
         int partCount = 0;
-
+        final int pDirNameLen;
         switch (columnType) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
                 // index files are opened as normal
-                iFile(path.trimTo(plen), columnName);
                 srcDataFixFd = -activeFixFd;
-                srcDataFixSize = srcDataMax * Long.BYTES;
-                srcDataFixAddr = mapRO(ff, -srcDataFixFd, srcDataFixSize);
-
-                // open data file now
-                dFile(path.trimTo(plen), columnName);
                 srcDataVarFd = -activeVarFd;
-                srcDataVarSize = getVarColumnSize(
-                        ff,
-                        columnType,
-                        -srcDataVarFd,
-                        Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES)
-                );
-                srcDataVarAddr = mapRO(ff, -srcDataVarFd, srcDataVarSize);
 
                 appendTxnToPath(path.trimTo(plen), txn);
-                path.concat(columnName);
-                final int pColNameLen = path.length();
+                pDirNameLen = path.length();
 
+                // --------------------------------------
+                if (activeTop > 0) {
+                    final long srcDataActualBytes = (srcDataMax - activeTop) * Long.BYTES;
+                    final long srcDataMaxBytes = srcDataMax * Long.BYTES;
+                    if (activeTop > prefixHi || prefixType == OO_BLOCK_OO) {
+                        // extend the existing column down, we will be discarding it anyway
+                        srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
+                        srcDataFixAddr = mapRW(ff, -srcDataFixFd, srcDataFixSize);
+
+                        srcDataVarSize = getVarColumnSize(
+                                ff,
+                                columnType,
+                                -srcDataVarFd,
+                                Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize + srcDataActualBytes - Long.BYTES)
+                        );
+                        srcDataVarAddr = mapRW(ff, -srcDataVarFd, srcDataVarSize);
+
+                        // at bottom of source var column set length of strings to null (-1) for as many strings
+                        // as activeTop value.
+
+                        setNull(columnType, srcDataFixAddr + srcDataActualBytes, activeTop);
+                        Unsafe.getUnsafe().copyMemory(srcDataFixAddr, srcDataFixAddr + srcDataMaxBytes, srcDataActualBytes);
+                        activeTop = 0;
+                        srcDataFixOffset = -srcDataActualBytes;
+                    } else {
+                        // when we are shuffling "empty" space we can just reduce column top instead
+                        // of moving data
+                        writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, activeTop);
+                        srcDataFixSize = srcDataActualBytes;
+                        srcDataFixAddr = mapRW(ff, -srcDataFixFd, srcDataFixSize);
+                        srcDataFixOffset = 0;
+
+                        srcDataVarSize = getVarColumnSize(
+                                ff,
+                                columnType,
+                                -srcDataVarFd,
+                                Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - srcDataFixOffset - Long.BYTES)
+                        );
+                        srcDataVarAddr = mapRO(ff, -srcDataVarFd, srcDataVarSize);
+                    }
+                } else {
+                    srcDataFixSize = srcDataMax * Long.BYTES;
+                    srcDataFixAddr = mapRW(ff, -srcDataFixFd, srcDataFixSize);
+                    srcDataFixOffset = 0;
+
+                    srcDataVarSize = getVarColumnSize(
+                            ff,
+                            columnType,
+                            -srcDataVarFd,
+                            Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES)
+                    );
+                    srcDataVarAddr = mapRO(ff, -srcDataVarFd, srcDataVarSize);
+                }
+
+
+                path.trimTo(pDirNameLen).concat(columnName);
+                int pColNameLen = path.length();
                 path.put(FILE_SUFFIX_I).$();
                 dstFixFd = openRW(ff, path);
-                dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax) * Long.BYTES;
+                dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - activeTop) * Long.BYTES;
                 allocateDiskSpace(ff, dstFixFd, dstFixSize);
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
@@ -1357,6 +1400,18 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 allocateDiskSpace(ff, dstVarFd, dstVarSize);
                 dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
+
+                if (prefixType == OO_BLOCK_DATA) {
+                    dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - activeTop) * Long.BYTES;
+                    prefixHi -= activeTop;
+                } else {
+                    dstFixAppendOffset1 = (prefixHi - prefixLo + 1) * Long.BYTES;
+                }
+
+                if (suffixType == OO_BLOCK_DATA && activeTop > 0) {
+                    suffixHi -= activeTop;
+                    suffixLo -= activeTop;
+                }
 
                 // configure offsets
                 switch (prefixType) {
@@ -1372,8 +1427,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         break;
                 }
 
-                dstFixAppendOffset1 = (prefixHi - prefixLo + 1) * Long.BYTES;
-
                 // offset 2
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
                     long oooLen = getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
@@ -1385,12 +1438,13 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     dstVarAppendOffset2 = dstVarAppendOffset1;
                 }
 
+
                 break;
             default:
                 srcDataFixFd = -activeFixFd;
                 final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
                 appendTxnToPath(path.trimTo(plen), txn);
-                final int pDirNameLen = path.length();
+                pDirNameLen = path.length();
 
                 if (activeTop > 0) {
                     final long srcDataActualBytes = (srcDataMax - activeTop) << shl;
@@ -1404,6 +1458,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         activeTop = 0;
                         srcDataFixOffset = -srcDataActualBytes;
                     } else {
+                        // when we are shuffling "empty" space we can just reduce column top instead
+                        // of moving data
                         writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, activeTop);
                         srcDataFixSize = srcDataActualBytes;
                         srcDataFixAddr = mapRW(ff, -srcDataFixFd, srcDataFixSize);
