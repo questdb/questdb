@@ -4,7 +4,8 @@ const bootstrap = (): ConsoleAction => ({
   type: ConsoleAT.BOOTSTRAP,
 })
 
-const refreshAuthToken = (): ConsoleAction => ({
+const refreshAuthToken = (init: boolean): ConsoleAction => ({
+  payload: init,
   type: ConsoleAT.REFRESH_AUTH_TOKEN,
 })
 

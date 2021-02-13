@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.lt;
+package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -33,18 +33,20 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.TIMESTAMP_FORMAT_MIN_LENGTH;
 
-public class LtStrTimestampFunctionFactory implements FunctionFactory {
+public class EqTimestampStrFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "<(SN)";
+        return "=(NS)";
     }
 
     @Override
@@ -54,54 +56,52 @@ public class LtStrTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function leftFn = args.getQuick(0);
-        if (leftFn.isConstant()) {
+        Function rightFn = args.getQuick(1);
+        if (rightFn.isConstant()) {
             try {
-                long leftTimestamp = parseFullOrPartialTimestamp(leftFn.getStr(null));
-                return new LtStrConstantTimestampFunction(position, leftTimestamp, args.getQuick(1));
+                return new EqTimestampStrConstantFunction(position, args.getQuick(0), rightFn.getStr(null));
             } catch (NumericException e) {
-                throw SqlException.invalidDate(leftFn.getPosition());
+                throw SqlException.$(position, "could not parse timestamp [value='").put(rightFn.getStr(null)).put("']");
             }
         }
-        return new LtStrTimestampFunction(position, leftFn, args.getQuick(1));
+        return new EqTimestampStrFunction(position, args.getQuick(0), rightFn);
     }
 
-    private static long parseFullOrPartialTimestamp(CharSequence seq) throws NumericException {
-        if (seq.length() >= TIMESTAMP_FORMAT_MIN_LENGTH) {
-            return TimestampFormatUtils.parseTimestamp(seq);
-        } else {
-            return IntervalUtils.parseCCPartialDate(seq) - 1;
-        }
-    }
+    private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function left;
+        private final long beginning;
+        private final long end;
 
-    private static class LtStrConstantTimestampFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final long left;
-        private final Function right;
-
-        public LtStrConstantTimestampFunction(int position, long left, Function right) {
+        public EqTimestampStrConstantFunction(int position, Function left, CharSequence right) throws NumericException {
             super(position);
             this.left = left;
-            this.right = right;
+            if (right.length() >= TIMESTAMP_FORMAT_MIN_LENGTH) {
+                beginning = end = TimestampFormatUtils.parseTimestamp(right);
+            } else {
+                LongList out = new LongList();
+                IntervalUtils.parseInterval(right, 0, right.length(), IntervalOperation.INTERSECT, out);
+                beginning = IntervalUtils.getEncodedPeriodLo(out, 0);
+                end = IntervalUtils.getEncodedPeriodHi(out, 0);
+            }
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated
-                    ? left >= right.getTimestamp(rec)
-                    : left < right.getTimestamp(rec);
+            return negated != isTimestampInRange(left.getTimestamp(rec), beginning, end);
         }
 
         @Override
         public Function getArg() {
-            return right;
+            return left;
         }
     }
 
-    private static class LtStrTimestampFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
+        private final LongList intervals = new LongList();
 
-        public LtStrTimestampFunction(int position, Function left, Function right) {
+        public EqTimestampStrFunction(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
@@ -109,12 +109,19 @@ public class LtStrTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence timestampAsString = left.getStr(rec);
+            CharSequence timestampAsString = right.getStr(rec);
             try {
-                long leftTimestamp = parseFullOrPartialTimestamp(timestampAsString);
-                return negated
-                        ? leftTimestamp >= right.getTimestamp(rec)
-                        : leftTimestamp < right.getTimestamp(rec);
+                intervals.clear();
+                long beginning;
+                long end;
+                if (timestampAsString.length() >= TIMESTAMP_FORMAT_MIN_LENGTH) {
+                    beginning = end = TimestampFormatUtils.parseTimestamp(timestampAsString);
+                } else {
+                    IntervalUtils.parseInterval(timestampAsString, 0, timestampAsString.length(), IntervalOperation.INTERSECT, intervals);
+                    beginning = IntervalUtils.getEncodedPeriodLo(intervals, 0);
+                    end = IntervalUtils.getEncodedPeriodHi(intervals, 0);
+                }
+                return negated != isTimestampInRange(left.getTimestamp(rec), beginning, end);
             } catch (NumericException e) {
                 return false;
             }
@@ -129,5 +136,9 @@ public class LtStrTimestampFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return right;
         }
+    }
+
+    private static boolean isTimestampInRange(long timestamp, long begin, long end) {
+        return timestamp >= begin && timestamp <= end;
     }
 }
