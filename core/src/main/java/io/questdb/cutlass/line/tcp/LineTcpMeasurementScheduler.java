@@ -636,7 +636,19 @@ class LineTcpMeasurementScheduler implements Closeable {
                         case NewLineProtoParser.ENTITY_TYPE_FLOAT: {
                             double v = Unsafe.getUnsafe().getDouble(bufPos);
                             bufPos += Double.BYTES;
-                            row.putDouble(colIndex, v);
+                            final int colType = writer.getMetadata().getColumnType(colIndex);
+                            switch (colType) {
+                                case ColumnType.DOUBLE:
+                                    row.putDouble(colIndex, v);
+                                    break;
+
+                                case ColumnType.FLOAT:
+                                    row.putFloat(colIndex, (float) v);
+                                    break;
+
+                                default:
+                                    throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
+                            }
                             break;
                         }
 
