@@ -36,6 +36,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private QueryModel queryModel;
     private int selectKeywordPosition;
     private int endOfValuesPosition;
+    private int bindVariablesPosition;
+    private int endOfCurrentValuesBlockPosition;
 
     private InsertModel() {
     }
@@ -61,6 +63,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.columnValues.clear();
         this.selectKeywordPosition = 0;
         this.endOfValuesPosition = 0;
+        this.bindVariablesPosition = 0;
+        this.endOfCurrentValuesBlockPosition = 0;
     }
 
     public int getColumnPosition(int columnIndex) {
@@ -108,8 +112,20 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return endOfValuesPosition;
     }
 
+    public int getEndOfCurrentValuesBlockPosition(){
+        return endOfCurrentValuesBlockPosition;
+    }
+
     public void setEndOfValuesPosition(int endOfValuesPosition) {
         this.endOfValuesPosition = endOfValuesPosition;
+    }
+
+    public void setEndOfCurrentValuesBlockPosition(int position){
+        this.endOfCurrentValuesBlockPosition = position;
+    }
+
+    public void setBindVariablesPosition(int bindVariablesPosition){
+        this.bindVariablesPosition = bindVariablesPosition;
     }
 
     @Override
@@ -140,5 +156,9 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
 
             sink.put(')');
         }
+    }
+
+    public int getBindVariablesPosition() {
+        return bindVariablesPosition;
     }
 }

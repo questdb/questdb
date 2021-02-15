@@ -89,13 +89,17 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(DROP);
     }
 
-    CompiledQuery ofInsert(InsertStatement insertStatement) {
-        this.insertStatement = insertStatement;
+    CompiledQuery ofInsert() {
         return of(INSERT);
     }
 
     CompiledQuery ofInsertAsSelect() {
         return of(INSERT_AS_SELECT);
+    }
+
+    CompiledQuery ofInsertWithBindVariables(InsertStatement insertStatement) {
+        this.insertStatement = insertStatement;
+        return of(INSERT_WITH_BIND_VARS);
     }
 
     CompiledQuery ofRepair() {

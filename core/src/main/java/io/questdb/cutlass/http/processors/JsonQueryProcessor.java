@@ -92,7 +92,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = JsonQueryProcessor::sendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
-        this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
@@ -102,6 +101,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_LOCAL, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.INSERT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, messageBus);
@@ -333,19 +333,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         JsonQueryProcessorState state = LV.get(context);
         internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
         readyForNextRequest(context);
-    }
-
-    private void executeInsert(
-            JsonQueryProcessorState state,
-            CompiledQuery cc,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final InsertStatement insertStatement = cc.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
-            insertMethod.execute();
-            insertMethod.commit();
-        }
-        sendConfirmation(state, cc, keepAliveHeader);
     }
 
     private void executeNewSelect(

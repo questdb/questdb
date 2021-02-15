@@ -24,8 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -36,11 +34,11 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
     public void testNotSelectDeleted() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances (cust_id int, balance_ccy symbol, balance double, inactive boolean, timestamp timestamp);", sqlExecutionContext);
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006));", sqlExecutionContext).getInsertStatement());
+            compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);", sqlExecutionContext);
+            compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);", sqlExecutionContext);
+            compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);", sqlExecutionContext);
+            compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);", sqlExecutionContext);
+            compiler.compile("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006));", sqlExecutionContext);
 
             CompiledQuery cc = compiler.compile("(select * from balances latest by balance_ccy where cust_id=1) where not inactive;", sqlExecutionContext);
             Assert.assertNotNull(cc.getRecordCursorFactory());
@@ -52,12 +50,5 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
                         "1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z\n", sink);
             }
         });
-    }
-
-    private static void execInsert(InsertStatement statement) {
-        try (InsertMethod m = statement.createMethod(sqlExecutionContext)) {
-            m.execute();
-            m.commit();
-        }
     }
 }

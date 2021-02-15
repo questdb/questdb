@@ -157,12 +157,7 @@ public class SecurityTest extends AbstractGriffinTest {
     public void testAlterTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            CompiledQuery cq = compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
-            InsertStatement insertStatement = cq.getInsertStatement();
-            try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
-                method.execute();
-                method.commit();
-            }
+            compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
             assertQuery("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances", null, true, true);
 
             try {
@@ -196,21 +191,11 @@ public class SecurityTest extends AbstractGriffinTest {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             assertQuery("count\n0\n", "select count() from balances", null, false, true);
 
-            CompiledQuery cq = compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
-            InsertStatement insertStatement = cq.getInsertStatement();
-            try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
-                method.execute();
-                method.commit();
-            }
+            compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
             assertQuery("count\n1\n", "select count() from balances", null, false, true);
 
             try {
-                cq = compiler.compile("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
-                insertStatement = cq.getInsertStatement();
-                try (InsertMethod method = insertStatement.createMethod(readOnlyExecutionContext)) {
-                    method.execute();
-                    method.commit();
-                }
+                compiler.compile("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));

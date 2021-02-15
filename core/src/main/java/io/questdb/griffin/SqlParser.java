@@ -929,23 +929,44 @@ public final class SqlParser {
         }
 
         if (isValuesKeyword(tok)) {
-            expectTok(lexer, '(');
-
-            do {
-                ExpressionNode expr = expectExpr(lexer);
-                if (Chars.equals(expr.token, ')')) {
-                    throw err(lexer, "missing column value");
-                }
-
-                model.addColumnValue(expr);
-            } while (Chars.equals((tok = tok(lexer, "','")), ','));
-
-            expectTok(tok, lexer.lastTokenPosition(), ')');
-            model.setEndOfValuesPosition(lexer.lastTokenPosition());
-
+            parseNextInsertRow(lexer, model);
             return model;
         }
         throw err(lexer, "'select' or 'values' expected");
+    }
+
+    void parseNextInsertRow(GenericLexer lexer, InsertModel model) throws SqlException {
+
+        model.getColumnValues().clear();
+
+        CharSequence tok;
+        expectTok(lexer, '(');
+        do {
+            ExpressionNode value = parseExpr(lexer);
+            if (value.isBindVariable()) {
+                model.setBindVariablesPosition(lexer.lastTokenPosition());
+            }
+            model.addColumnValue(value);
+        } while (Chars.equals((tok = tok(lexer, "','")), ','));
+
+        expectTok(tok, lexer.lastTokenPosition(), ')');
+
+        int endOfValues = lexer.lastTokenPosition();
+        model.setEndOfCurrentValuesBlockPosition(endOfValues);
+        tok = optTok(lexer);
+        if (tok != null && Chars.equals(tok, ",")){
+            endOfValues = -1;
+        }
+        model.setEndOfValuesPosition(endOfValues);
+    }
+
+    @NotNull
+    private ExpressionNode parseExpr(GenericLexer lexer) throws SqlException {
+        ExpressionNode expr = expectExpr(lexer);
+        if (Chars.equals(expr.token, ')')) {
+            throw err(lexer, "missing column value");
+        }
+        return expr;
     }
 
     private QueryModel parseJoin(GenericLexer lexer, CharSequence tok, int joinType, QueryModel parent) throws SqlException {

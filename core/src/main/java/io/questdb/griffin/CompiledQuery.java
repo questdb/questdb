@@ -42,6 +42,7 @@ public interface CompiledQuery {
     short COPY_REMOTE = 11;
     short RENAME_TABLE = 12;
     short BACKUP_TABLE = 13;
+    short INSERT_WITH_BIND_VARS = 14;
 
     RecordCursorFactory getRecordCursorFactory();
 

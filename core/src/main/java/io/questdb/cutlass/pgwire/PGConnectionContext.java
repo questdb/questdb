@@ -949,7 +949,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     queryTag = TAG_SELECT;
                     LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
                     break;
-                case CompiledQuery.INSERT:
+                case CompiledQuery.INSERT_WITH_BIND_VARS:
                     queryTag = TAG_INSERT;
                     typesAndInsert = typesAndInsertPool.pop();
                     typesAndInsert.of(cc.getInsertStatement(), bindVariableService);
