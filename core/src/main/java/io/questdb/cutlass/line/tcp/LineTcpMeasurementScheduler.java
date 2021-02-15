@@ -615,6 +615,13 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     row.putLong(colIndex, v);
                                     break;
 
+                                case ColumnType.INT:
+                                    if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
+                                        throw CairoException.instance(0).put("line protocol integer is out of int bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                    }
+                                    row.putInt(colIndex, (int) v);
+                                    break;
+
                                 case ColumnType.SHORT:
                                     if (v < Short.MIN_VALUE || v > Short.MAX_VALUE) {
                                         throw CairoException.instance(0).put("line protocol integer is out of short bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
@@ -627,7 +634,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 default:
-
                                     throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
                             }
                             break;
@@ -647,7 +653,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     break;
 
                                 default:
-                                    throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
+                                    throw CairoException.instance(0).put("expected a line protocol float [entityType=").put(entityType).put(']');
                             }
                             break;
                         }
