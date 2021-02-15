@@ -73,6 +73,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataVarAddr,
             long srcDataVarOffset,
             long srcDataVarSize,
+            long srcDataTop,
             long srcDataLo,
             long srcDataHi,
             long srcDataMax,
@@ -111,7 +112,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     ) {
         switch (blockType) {
             case OO_BLOCK_MERGE:
-                if (srcDataFixOffset == 0) {
+                if (srcDataFixOffset == 0 && srcDataTop == 0) {
                     oooMergeCopy(
                             columnType,
                             timestampMergeIndexAddr,
@@ -127,6 +128,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             dstVarAddr,
                             dstVarOffset
                     );
+                } else if (srcDataTop > 0) {
+                    final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
+                    Vect.mergeShuffleWithTop64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount, -srcDataTop * 8);
                 } else {
                     oooMergeCopyWithTop(
                             columnType,
@@ -134,6 +138,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                             srcDataFixAddr,
                             srcDataFixOffset,
                             srcDataVarAddr,
+                            srcDataVarOffset,
                             srcDataLo,
                             srcDataHi,
                             srcOooFixAddr,
@@ -163,9 +168,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case OO_BLOCK_DATA:
                 oooCopyData(
                         columnType,
-                        srcDataFixAddr - srcDataFixOffset,
-                        srcDataFixSize + srcDataFixOffset,
-                        srcDataVarAddr + srcDataVarOffset, // todo: make offset consitent, either add or subtract both
+                        srcDataFixAddr + srcDataFixOffset,
+                        srcDataFixSize - srcDataFixOffset,
+                        srcDataVarAddr + srcDataVarOffset,
                         srcDataVarSize - srcDataVarOffset,
                         srcDataLo,
                         srcDataHi,
@@ -245,6 +250,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcDataVarAddr = task.getSrcDataVarAddr();
         final long srcDataVarOffset = task.getSrcDataVarOffset();
         final long srcDataVarSize = task.getSrcDataVarSize();
+        final long srcDataTop = task.getSrcDataTop();
         final long srcDataLo = task.getSrcDataLo();
         final long srcDataMax = task.getSrcDataMax();
         final long srcDataHi = task.getSrcDataHi();
@@ -302,6 +308,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcDataVarAddr,
                 srcDataVarOffset,
                 srcDataVarSize,
+                srcDataTop,
                 srcDataLo,
                 srcDataHi,
                 srcDataMax,
@@ -732,6 +739,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataFixAddr,
             long srcDataFixOffset,
             long srcDataVarAddr,
+            long srcDataVarOffset,
             long srcDataLo,
             long srcDataHi,
             long srcOooFixAddr,
@@ -746,18 +754,19 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         switch (columnType) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                Vect.mergeShuffleWithTop8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount, srcDataFixOffset);
                 break;
             case ColumnType.SHORT:
             case ColumnType.CHAR:
-                Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                Vect.mergeShuffleWithTop16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount, srcDataFixOffset);
                 break;
             case ColumnType.STRING:
-                Vect.oooMergeCopyStrColumn(
+                Vect.oooMergeCopyStrColumnWithTop(
                         mergeIndexAddr,
                         rowCount,
                         srcDataFixAddr,
-                        srcDataVarAddr,
+                        srcDataFixOffset,
+                        srcDataVarAddr + srcDataVarOffset,
                         srcOooFixAddr,
                         srcOooVarAddr,
                         dstFixAddr,
@@ -766,11 +775,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 );
                 break;
             case ColumnType.BINARY:
-                Vect.oooMergeCopyBinColumn(
+                Vect.oooMergeCopyBinColumnWithTop(
                         mergeIndexAddr,
                         rowCount,
                         srcDataFixAddr,
-                        srcDataVarAddr,
+                        srcDataFixOffset,
+                        srcDataVarAddr + srcDataVarOffset,
                         srcOooFixAddr,
                         srcOooVarAddr,
                         dstFixAddr,
@@ -781,7 +791,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             case ColumnType.INT:
             case ColumnType.FLOAT:
             case ColumnType.SYMBOL:
-                Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
+                Vect.mergeShuffleWithTop32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount, srcDataFixOffset);
                 break;
             case ColumnType.DOUBLE:
             case ColumnType.LONG:

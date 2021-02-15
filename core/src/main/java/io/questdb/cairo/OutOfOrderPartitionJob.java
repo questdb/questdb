@@ -988,7 +988,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     oooTimestampMax,
                     oooTimestampLo,
                     oooTimestampHi,
-                    srcDataMax,
+                    activeTop, srcDataMax,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     txn,
@@ -1009,7 +1009,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     isIndexed,
                     activeFixFd,
                     activeVarFd,
-                    activeTop,
                     tableWriter,
                     doneLatch
             );

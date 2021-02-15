@@ -331,15 +331,15 @@ inline void merge_shuffle(jlong src1, jlong src2, jlong dest, jlong index, jlong
 }
 
 template<class T>
-inline void merge_shuffle_internal_top(T *src1, T *src2, T *dest, index_t *index, int64_t count, uint64_t top) {
-
+inline void merge_shuffle_internal_top(T *src1, T *src2, T *dest, index_t *index, int64_t count, uint64_t topOffset) {
     T *sources[] = {src2, src1};
-    uint64_t shifts[] = {0, top};
+    uint64_t shifts[] = {0, topOffset / sizeof(T)};
     for (long i = 0; i < count; i++) {
         const auto r = reinterpret_cast<uint64_t>(index[i].i);
         const uint64_t pick = r >> 63u;
         const auto row = r & ~(1LLu << 63u);
-        dest[i] = sources[pick][row - shifts[pick]];
+        printf("row: %llu, shift: %llu, pick: %llu\n", row, shifts[pick], pick);
+        dest[i] = sources[pick][row + shifts[pick]];
     }
 }
 
@@ -506,6 +506,40 @@ inline void merge_copy_var_column(
 }
 
 template<class T>
+inline void merge_copy_var_column_top(
+        index_t *merge_index,
+        int64_t merge_index_size,
+        int64_t *src_data_fix,
+        int64_t src_data_fix_offset,
+        char *src_data_var,
+        int64_t *src_ooo_fix,
+        char *src_ooo_var,
+        int64_t *dst_fix,
+        char *dst_var,
+        int64_t dst_var_offset,
+        T mult
+) {
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    char *src_var[] = {src_ooo_var, src_data_var};
+    int64_t fix_shifts[] = {0, src_data_fix_offset / 8};
+
+    for (int64_t l = 0; l < merge_index_size; l++) {
+        _mm_prefetch(merge_index + 64, _MM_HINT_T0);
+        dst_fix[l] = dst_var_offset;
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        const int64_t offset = src_fix[bit][rr + fix_shifts[bit]];
+        char *src_var_ptr = src_var[bit] + offset;
+        auto len = *reinterpret_cast<T *>(src_var_ptr);
+        auto char_count = len > 0 ? len * mult : 0;
+        reinterpret_cast<T *>(dst_var + dst_var_offset)[0] = len;
+        memcpy(dst_var + dst_var_offset + sizeof(T), src_var_ptr + sizeof(T), char_count);
+        dst_var_offset += char_count + sizeof(T);
+    }
+}
+
+template<class T>
 inline void set_memory_vanilla(T *addr, T value, int64_t count) {
     for (int64_t i = 0; i < count; i++) {
         addr[i] = value;
@@ -545,6 +579,58 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
             reinterpret_cast<int64_t>(dst_var_offset),
             2
     );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyStrColumnWithTop(JNIEnv *env, jclass cl,
+                                                      jlong merge_index,
+                                                      jlong merge_index_size,
+                                                      jlong src_data_fix,
+                                                      jlong src_data_fix_offset,
+                                                      jlong src_data_var,
+                                                      jlong src_ooo_fix,
+                                                      jlong src_ooo_var,
+                                                      jlong dst_fix,
+                                                      jlong dst_var,
+                                                      jlong dst_var_offset) {
+    merge_copy_var_column_top<int32_t>(
+            reinterpret_cast<index_t *>(merge_index),
+            reinterpret_cast<int64_t>(merge_index_size),
+            reinterpret_cast<int64_t *>(src_data_fix),
+            src_data_fix_offset,
+            reinterpret_cast<char *>(src_data_var),
+            reinterpret_cast<int64_t *>(src_ooo_fix),
+            reinterpret_cast<char *>(src_ooo_var),
+            reinterpret_cast<int64_t *>(dst_fix),
+            reinterpret_cast<char *>(dst_var),
+            reinterpret_cast<int64_t>(dst_var_offset),
+            2);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyBinColumnWithTop(JNIEnv *env, jclass cl,
+                                                      jlong merge_index,
+                                                      jlong merge_index_size,
+                                                      jlong src_data_fix,
+                                                      jlong src_data_fix_offset,
+                                                      jlong src_data_var,
+                                                      jlong src_ooo_fix,
+                                                      jlong src_ooo_var,
+                                                      jlong dst_fix,
+                                                      jlong dst_var,
+                                                      jlong dst_var_offset) {
+    merge_copy_var_column_top<int64_t>(
+            reinterpret_cast<index_t *>(merge_index),
+            reinterpret_cast<int64_t>(merge_index_size),
+            reinterpret_cast<int64_t *>(src_data_fix),
+            src_data_fix_offset,
+            reinterpret_cast<char *>(src_data_var),
+            reinterpret_cast<int64_t *>(src_ooo_fix),
+            reinterpret_cast<char *>(src_ooo_var),
+            reinterpret_cast<int64_t *>(dst_fix),
+            reinterpret_cast<char *>(dst_var),
+            reinterpret_cast<int64_t>(dst_var_offset),
+            1);
 }
 
 JNIEXPORT void JNICALL
@@ -670,8 +756,29 @@ Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, j
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffleWithTop64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
                                                   jlong index,
-                                                  jlong count, jlong top) {
-    merge_shuffle_top<int64_t>(src1, src2, dest, index, count, top);
+                                                  jlong count, jlong topOffset) {
+    merge_shuffle_top<int64_t>(src1, src2, dest, index, count, topOffset);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffleWithTop32Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                  jlong index,
+                                                  jlong count, jlong topOffset) {
+    merge_shuffle_top<int32_t>(src1, src2, dest, index, count, topOffset);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffleWithTop16Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                  jlong index,
+                                                  jlong count, jlong topOffset) {
+    merge_shuffle_top<int16_t>(src1, src2, dest, index, count, topOffset);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffleWithTop8Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                 jlong index,
+                                                 jlong count, jlong topOffset) {
+    merge_shuffle_top<int8_t>(src1, src2, dest, index, count, topOffset);
 }
 
 JNIEXPORT void JNICALL
@@ -755,12 +862,21 @@ Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jsh
             (int64_t) (count)
     );
 }
-//setVarColumnRefs32Bit
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setVarColumnRefs32Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
     set_var_refs<int32_t>(
+            reinterpret_cast<int64_t *>(pData),
+            reinterpret_cast<int64_t>(offset),
+            reinterpret_cast<int64_t>(count)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setVarColumnRefs64Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
+                                               jlong count) {
+    set_var_refs<int64_t>(
             reinterpret_cast<int64_t *>(pData),
             reinterpret_cast<int64_t>(offset),
             reinterpret_cast<int64_t>(count)
