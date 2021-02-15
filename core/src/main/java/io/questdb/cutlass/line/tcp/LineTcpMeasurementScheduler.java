@@ -629,6 +629,13 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     row.putShort(colIndex, (short) v);
                                     break;
 
+                                case ColumnType.BYTE:
+                                    if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
+                                        throw CairoException.instance(0).put("line protocol integer is out of byte bounds [columnIndex=").put(colIndex).put(", v=").put(v).put(']');
+                                    }
+                                    row.putByte(colIndex, (byte) v);
+                                    break;
+
                                 case ColumnType.TIMESTAMP:
                                     row.putTimestamp(colIndex, v);
                                     break;
