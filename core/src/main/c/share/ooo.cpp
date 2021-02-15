@@ -512,6 +512,14 @@ inline void set_memory_vanilla(T *addr, T value, int64_t count) {
     }
 }
 
+template<class T>
+inline void set_var_refs(int64_t *addr, int64_t offset, int64_t count) {
+    auto inc = sizeof(T);
+    for (int64_t i = 0; i < count; i++) {
+        addr[i] = offset + i * inc;
+    }
+}
+
 extern "C" {
 
 JNIEXPORT void JNICALL
@@ -700,7 +708,7 @@ Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData,
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlong value,
-                                        jlong count) {
+                                       jlong count) {
     set_memory_vanilla<int64_t>(
             reinterpret_cast<int64_t *>(pData),
             reinterpret_cast<int64_t>(value),
@@ -710,7 +718,7 @@ Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlon
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint value,
-                                       jlong count) {
+                                      jlong count) {
     set_memory_vanilla<jint>(
             reinterpret_cast<jint *>(pData),
             value,
@@ -720,7 +728,7 @@ Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint 
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jdouble value,
-                                       jlong count) {
+                                         jlong count) {
     set_memory_vanilla<jdouble>(
             reinterpret_cast<jdouble *>(pData),
             value,
@@ -730,7 +738,7 @@ Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jd
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryFloat(JNIEnv *env, jclass cl, jlong pData, jfloat value,
-                                         jlong count) {
+                                        jlong count) {
     set_memory_vanilla<jfloat>(
             reinterpret_cast<jfloat *>(pData),
             value,
@@ -747,6 +755,16 @@ Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jsh
             (int64_t) (count)
     );
 }
+//setVarColumnRefs32Bit
 
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setVarColumnRefs32Bit(JNIEnv *env, jclass cl, jlong pData, jlong offset,
+                                               jlong count) {
+    set_var_refs<int32_t>(
+            reinterpret_cast<int64_t *>(pData),
+            reinterpret_cast<int64_t>(offset),
+            reinterpret_cast<int64_t>(count)
+    );
+}
 }
 

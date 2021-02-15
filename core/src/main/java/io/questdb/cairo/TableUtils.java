@@ -704,6 +704,22 @@ public final class TableUtils {
         return address;
     }
 
+    static void shiftCopyFixedSizeColumnData(
+            long shift,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstAddr
+    ) {
+        final long lo = srcLo * Long.BYTES;
+        final long hi = (srcHi + 1) * Long.BYTES;
+        final long slo = src + lo;
+        final long len = hi - lo;
+        for (long o = 0; o < len; o += Long.BYTES) {
+            Unsafe.getUnsafe().putLong(dstAddr + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
+        }
+    }
+
     static {
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");

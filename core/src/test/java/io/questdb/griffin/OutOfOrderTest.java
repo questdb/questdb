@@ -2311,7 +2311,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
         compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
         compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-//        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
 //        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
         compiler.compile("alter table x add column v9 long", sqlExecutionContext);
 
@@ -2346,7 +2346,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_timestamp(10,100000,356) v7," +
                         " rnd_symbol('AAA','BBB', null) v8," +
                         " rnd_char() v10," +
-//                        " rnd_str() v11," +
+                        " rnd_str() v11," +
 //                        " rnd_bin() v12," +
                         " rnd_long() v9" +
                         " from long_sequence(500)",
@@ -2384,7 +2384,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_timestamp(10,100000,356) v7," +
                         " rnd_symbol('AAA','BBB', null) v8," +
                         " rnd_char() v10," +
-//                        " rnd_str() v11," +
+                        " rnd_str() v11," +
 //                        " rnd_bin() v12," +
                         " rnd_long() v9" +
                         " from long_sequence(100)" +

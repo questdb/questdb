@@ -610,6 +610,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 0,
                 0,
+                0,
                 srcOooLo,
                 srcOooHi,
                 srcDataMax,
@@ -667,6 +668,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
+            long srcDataVarOffset,
             long srcDataVarSize,
             long srcDataLo,
             long srcDataHi,
@@ -722,6 +724,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
+                    srcDataVarOffset,
                     srcDataVarSize,
                     srcDataLo,
                     srcDataHi,
@@ -780,6 +783,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
+                    srcDataVarOffset,
                     srcDataVarSize,
                     srcDataLo,
                     srcDataHi,
@@ -840,6 +844,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
+            long srcDataVarOffset,
             long srcDataVarSize,
             long srcDataLo,
             long srcDataHi,
@@ -899,6 +904,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
+                    srcDataVarOffset,
                     srcDataVarSize,
                     srcDataLo,
                     srcDataHi,
@@ -953,6 +959,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
+                    srcDataVarOffset,
                     srcDataVarSize,
                     srcDataLo,
                     srcDataHi,
@@ -1010,6 +1017,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
+            long srcDataVarOffset,
             long srcDataVarSize,
             long srcDataLo,
             long srcDataHi,
@@ -1063,6 +1071,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
+                srcDataVarOffset,
                 srcDataVarSize,
                 srcDataLo,
                 srcDataHi,
@@ -1213,6 +1222,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 0,
                 0,
+                0,
                 srcDataMax,
                 tableFloorOfMaxTimestamp,
                 dataTimestampHi,
@@ -1306,6 +1316,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         long srcDataFixSize;
         long srcDataVarFd = 0;
         long srcDataVarAddr = 0;
+        long srcDataVarOffset = 0;
         long srcDataVarSize = 0;
         long dstFixFd;
         long dstFixSize;
@@ -1331,7 +1342,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 appendTxnToPath(path.trimTo(plen), txn);
                 pDirNameLen = path.length();
 
-                // --------------------------------------
                 if (activeTop > 0) {
                     final long srcDataActualBytes = (srcDataMax - activeTop) * Long.BYTES;
                     final long srcDataMaxBytes = srcDataMax * Long.BYTES;
@@ -1344,15 +1354,25 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                                 ff,
                                 columnType,
                                 -srcDataVarFd,
-                                Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize + srcDataActualBytes - Long.BYTES)
+                                Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataActualBytes - Long.BYTES)
                         );
-                        srcDataVarAddr = mapRW(ff, -srcDataVarFd, srcDataVarSize);
 
                         // at bottom of source var column set length of strings to null (-1) for as many strings
                         // as activeTop value.
+                        if (columnType == ColumnType.STRING) {
+                            srcDataVarOffset = srcDataVarSize;
+                            srcDataVarSize += activeTop * Integer.BYTES + srcDataVarSize;
+                            srcDataVarAddr = mapRW(ff, -srcDataVarFd, srcDataVarSize);
+                            Vect.setMemoryInt(srcDataVarAddr + srcDataVarOffset, -1, activeTop);
 
-                        setNull(columnType, srcDataFixAddr + srcDataActualBytes, activeTop);
-                        Unsafe.getUnsafe().copyMemory(srcDataFixAddr, srcDataFixAddr + srcDataMaxBytes, srcDataActualBytes);
+                            // now set the "empty" bit of fixed size column with references to those
+                            // null strings we just added
+                            Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes, 0, activeTop);
+                            // we need to shift copy the original column so that new block points at strings "below" the
+                            // nulls we created above
+                            TableUtils.shiftCopyFixedSizeColumnData(-activeTop * Integer.BYTES, srcDataFixAddr, 0, srcDataMax - activeTop, srcDataFixAddr + srcDataMaxBytes);
+                            Unsafe.getUnsafe().copyMemory(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + activeTop * Integer.BYTES, srcDataVarOffset);
+                        }
                         activeTop = 0;
                         srcDataFixOffset = -srcDataActualBytes;
                     } else {
@@ -1397,7 +1417,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 path.trimTo(pColNameLen);
                 path.put(FILE_SUFFIX_D).$();
                 dstVarFd = openRW(ff, path);
-                dstVarSize = srcDataVarSize + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                dstVarSize = srcDataVarSize - srcDataVarOffset + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 allocateDiskSpace(ff, dstVarFd, dstVarSize);
                 dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
 
@@ -1420,7 +1440,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         partCount++;
                         break;
                     case OO_BLOCK_DATA:
-                        dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr, srcDataFixSize, srcDataVarSize);
+                        dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr - srcDataFixOffset, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
                         partCount++;
                         break;
                     default:
@@ -1430,7 +1450,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 // offset 2
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
                     long oooLen = getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                    long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr, srcDataFixSize, srcDataVarSize);
+                    long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr - srcDataFixOffset, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
                     dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen * Long.BYTES);
                     dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
                 } else {
@@ -1537,6 +1557,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
+                srcDataVarOffset,
                 srcDataVarSize,
                 srcDataMax,
                 tableFloorOfMaxTimestamp,
@@ -1835,10 +1856,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 timestampMergeIndexAddr,
                 srcDataFixFd,
                 srcDataFixAddr,
-                0,
+                0, //todo:
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
+                0, // todo:
                 srcDataVarSize,
                 srcDataMax,
                 tableFloorOfMaxTimestamp,
@@ -1978,6 +2000,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 0,
                 0,
                 0,
+                0,
                 srcDataMax,
                 tableFloorOfMaxTimestamp,
                 dataTimestampHi,
@@ -2037,6 +2060,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
+            long srcDataVarOffset,
             long srcDataVarSize,
             long srcDataMax,
             long tableFloorOfMaxTimestamp,
@@ -2104,6 +2128,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
+                        srcDataVarOffset,
                         srcDataVarSize,
                         0,
                         0,
@@ -2162,6 +2187,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
+                        srcDataVarOffset,
                         srcDataVarSize,
                         prefixLo,
                         prefixHi,
@@ -2225,6 +2251,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
+                        srcDataVarOffset,
                         srcDataVarSize,
                         0,
                         0,
@@ -2283,6 +2310,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
+                        srcDataVarOffset,
                         srcDataVarSize,
                         mergeDataLo,
                         mergeDataHi,
@@ -2341,6 +2369,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
+                        srcDataVarOffset,
                         srcDataVarSize,
                         mergeDataLo,
                         mergeDataHi,
@@ -2404,6 +2433,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
+                        srcDataVarOffset,
                         srcDataVarSize,
                         0,
                         0,
@@ -2462,6 +2492,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         srcDataFixSize,
                         srcDataVarFd,
                         srcDataVarAddr,
+                        srcDataVarOffset,
                         srcDataVarSize,
                         suffixLo,
                         suffixHi,

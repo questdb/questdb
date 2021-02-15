@@ -129,6 +129,8 @@ public final class Vect {
             long dstVarOffset
     );
 
+    public static native void setVarColumnRefs32Bit(long address, long initialOffset, long count);
+
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
     public static native double sumDouble(long pDouble, long count);

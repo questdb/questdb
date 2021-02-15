@@ -71,6 +71,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
+            long srcDataVarOffset,
             long srcDataVarSize,
             long srcDataLo,
             long srcDataHi,
@@ -163,9 +164,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 oooCopyData(
                         columnType,
                         srcDataFixAddr - srcDataFixOffset,
-                        srcDataFixSize,
-                        srcDataVarAddr,
-                        srcDataVarSize,
+                        srcDataFixSize + srcDataFixOffset,
+                        srcDataVarAddr + srcDataVarOffset, // todo: make offset consitent, either add or subtract both
+                        srcDataVarSize - srcDataVarOffset,
                         srcDataLo,
                         srcDataHi,
                         dstFixAddr + dstFixOffset,
@@ -242,6 +243,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final long srcDataFixSize = task.getSrcDataFixSize();
         final long srcDataVarFd = task.getSrcDataVarFd();
         final long srcDataVarAddr = task.getSrcDataVarAddr();
+        final long srcDataVarOffset = task.getSrcDataVarOffset();
         final long srcDataVarSize = task.getSrcDataVarSize();
         final long srcDataLo = task.getSrcDataLo();
         final long srcDataMax = task.getSrcDataMax();
@@ -298,6 +300,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcDataFixSize,
                 srcDataVarFd,
                 srcDataVarAddr,
+                srcDataVarOffset,
                 srcDataVarSize,
                 srcDataLo,
                 srcDataHi,
@@ -649,7 +652,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         if (lo == dstVarOffset) {
             oooCopyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
         } else {
-            shiftCopyFixedSizeColumnData(lo - dstVarOffset, srcFixAddr, srcLo, srcHi, dstFixAddr);
+            TableUtils.shiftCopyFixedSizeColumnData(lo - dstVarOffset, srcFixAddr, srcLo, srcHi, dstFixAddr);
         }
     }
 
@@ -791,22 +794,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 break;
             default:
                 break;
-        }
-    }
-
-    private static void shiftCopyFixedSizeColumnData(
-            long shift,
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstAddr
-    ) {
-        final long lo = srcLo * Long.BYTES;
-        final long hi = (srcHi + 1) * Long.BYTES;
-        final long slo = src + lo;
-        final long len = hi - lo;
-        for (long o = 0; o < len; o += Long.BYTES) {
-            Unsafe.getUnsafe().putLong(dstAddr + o, Unsafe.getUnsafe().getLong(slo + o) - shift);
         }
     }
 
