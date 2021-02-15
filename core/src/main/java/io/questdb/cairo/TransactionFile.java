@@ -24,7 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
@@ -32,39 +35,19 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class TransactionFile implements Closeable {
-
-    private static final int LONGS_PER_PARTITION = 4;
-    private static final int PARTITION_TS_OFFSET = 0;
-    private static final int PARTITION_SIZE_OFFSET = 1;
-    private final FilesFacade ff;
-    private final Path path;
-    private final int rootLen;
-    private final LongList attachedPartitions = new LongList();
+public final class TransactionFile extends TransactionFileReader implements Closeable {
     private int attachedPositionDirtyIndex;
-    private ReadWriteMemory txMem;
-    private long fixedRowCount;
-    private long txn;
-    private int symbolsCount;
-    private long dataVersion;
-    private long structureVersion;
     private int txPartitionCount;
-    private long tempMem8b = Unsafe.malloc(Long.BYTES);
+    private final long tempMem8b = Unsafe.malloc(Long.BYTES);
 
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
     private long prevTransientRowCount;
 
-    private long minTimestamp;
-    private long maxTimestamp;
-    private long transientRowCount;
-    private Timestamps.TimestampFloorMethod timestampFloorMethod;
-    private int partitionBy = -1;
+    private ReadWriteMemory txMem;
 
     public TransactionFile(FilesFacade ff, Path path) {
-        this.ff = ff;
-        this.path = path;
-        this.rootLen = path.length();
+        super(ff, path, false);
     }
 
     public void appendBlock(long timestampLo, long timestampHi, long nRowsAdded) {
@@ -73,18 +56,6 @@ public class TransactionFile implements Closeable {
 
     public void appendRowNoTimestamp(long nRowsAdded) {
         transientRowCount += nRowsAdded;
-    }
-
-    public boolean attachedPartitionsContains(long ts) {
-        return findAttachedPartitionIndex(getPartitionLo(ts)) >= 0;
-    }
-
-    public long attachedPartitionSize(long ts) {
-        final int index = findAttachedPartitionIndex(getPartitionLo(ts));
-        if (index >= 0) {
-            return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
-        }
-        return -1;
     }
 
     public void bumpStructureVersion(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
@@ -126,18 +97,43 @@ public class TransactionFile implements Closeable {
         minTimestamp = prevMinTimestamp;
     }
 
+    public long cancelToMaxTimestamp() {
+        return prevMaxTimestamp;
+    }
+
     public long cancelToTransientRowCount() {
         return prevTransientRowCount;
     }
 
     public void checkAddPartition(long partitionHi, long partitionSize) {
-        assert false;
+        setAttachedPartitionSize(partitionHi, partitionSize);
     }
 
     @Override
     public void close() {
         txMem = Misc.free(txMem);
         Unsafe.free(tempMem8b, Long.BYTES);
+    }
+
+    @Override
+    public void read() {
+        super.read();
+        this.prevTransientRowCount = this.transientRowCount;
+        this.prevMaxTimestamp = maxTimestamp;
+        this.prevMinTimestamp = minTimestamp;
+    }
+
+    @Override
+    protected VirtualMemory openTxnFile(FilesFacade ff, Path path, int rootLen) {
+        try {
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return txMem = new ReadWriteMemory(ff, path, ff.getPageSize());
+            }
+            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     public void commit(int commitMode, ObjList<SymbolMapWriter> denseSymbolMapWriters) {
@@ -147,8 +143,10 @@ public class TransactionFile implements Closeable {
         txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
 
         symbolsCount = denseSymbolMapWriters.size();
+        int attachedPositionDirtyIndex = this.attachedPositionDirtyIndex;
         saveAttachedPartitionsToTx(symbolsCount);
         if (txPartitionCount > 1) {
+            commitPendingPartitions(attachedPositionDirtyIndex);
             txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
             txPartitionCount = 1;
         }
@@ -181,36 +179,8 @@ public class TransactionFile implements Closeable {
         }
     }
 
-    public long getFixedRowCount() {
-        return fixedRowCount;
-    }
-
     public long getLastTxSize() {
         return txPartitionCount == 1 ? transientRowCount - prevTransientRowCount : transientRowCount;
-    }
-
-    public long getMaxTimestamp() {
-        return maxTimestamp;
-    }
-
-    public long cancelToMaxTimestamp() {
-        return prevMaxTimestamp;
-    }
-
-    public long getMinTimestamp() {
-        return minTimestamp;
-    }
-
-    public void setMinTimestamp(long firstTimestamp) {
-        this.minTimestamp = firstTimestamp;
-    }
-
-    public long getStructureVersion() {
-        return structureVersion;
-    }
-
-    public long getTransientRowCount() {
-        return transientRowCount;
     }
 
     public int getTxPartitionCount() {
@@ -221,48 +191,12 @@ public class TransactionFile implements Closeable {
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
     }
 
-    public void initPartitionFloor(Timestamps.TimestampFloorMethod timestampFloorMethod, int partitionBy) {
-        assert this.timestampFloorMethod == null;
-        this.timestampFloorMethod = timestampFloorMethod;
-        this.partitionBy = partitionBy;
-    }
-
     public void newBlock() {
         prevMaxTimestamp = maxTimestamp;
     }
 
     public void openFirstPartition() {
         txPartitionCount = 1;
-    }
-
-    public void read() {
-        if (this.txMem == null) {
-            this.txMem = openTxnFile();
-        }
-        this.txn = txMem.getLong(TX_OFFSET_TXN);
-        this.transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-        this.prevTransientRowCount = this.transientRowCount;
-        this.fixedRowCount = txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        this.minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-        this.maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-        this.dataVersion = txMem.getLong(TX_OFFSET_DATA_VERSION);
-        this.structureVersion = txMem.getLong(TX_OFFSET_STRUCT_VERSION);
-        this.symbolsCount = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        this.prevMaxTimestamp = maxTimestamp;
-        this.prevMinTimestamp = minTimestamp;
-        loadAttachedPartitions();
-    }
-
-    public long readFixedRowCount() {
-        return txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-    }
-
-    public int readSymbolWriterIndexOffset(int i) {
-        return txMem.getInt(getSymbolWriterIndexOffset(i));
-    }
-
-    public int readWriterCount() {
-        return txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
     }
 
     public void removePartition(long timestamp, long partitionSize) {
@@ -331,6 +265,10 @@ public class TransactionFile implements Closeable {
         minTimestamp = prevMinTimestamp;
     }
 
+    public void setMinTimestamp(long firstTimestamp) {
+        this.minTimestamp = firstTimestamp;
+    }
+
     public void startRow() {
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
@@ -379,8 +317,9 @@ public class TransactionFile implements Closeable {
         throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
     }
 
-    private void commitPendingPartitions() {
-        for (int i = attachedPositionDirtyIndex; i < attachedPartitions.size() - 1; i += LONGS_PER_PARTITION) {
+    private void commitPendingPartitions(int attachedPositionDirtyIndex) {
+        int size = attachedPartitions.size();
+        for (int i = attachedPositionDirtyIndex; i < size - 1; i += LONGS_PER_PARTITION) {
             try {
                 long partitionTimestamp = attachedPartitions.getQuick(i + PARTITION_TS_OFFSET);
                 long partitionSize = attachedPartitions.getQuick(i + PARTITION_SIZE_OFFSET);
@@ -402,50 +341,9 @@ public class TransactionFile implements Closeable {
             }
         }
     }
-//1362873600000000
-    private int findAttachedPartitionIndex(long ts) {
-        ts = getPartitionLo(ts);
-        // TODO: make binary search
-        for (int i = 0, size = attachedPartitions.size(); i < size; i += LONGS_PER_PARTITION) {
-            if (attachedPartitions.getQuick(i) > ts) {
-                return -(i + 1);
-            }
-            if (attachedPartitions.getQuick(i) == ts) {
-                return i;
-            }
-        }
-        return -(attachedPartitions.size() + 1);
-    }
-
-    private long getPartitionLo(long timestamp) {
-        return timestampFloorMethod != null ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
-    }
 
     private long getTxEofOffset() {
         return getTxMemSize(symbolsCount, attachedPartitions.size());
-    }
-
-    private void loadAttachedPartitions() {
-        attachedPartitions.clear();
-        int symbolWriterCount = symbolsCount;
-        int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
-        if (partitionTableSize > 0) {
-            for (int i = 0; i < partitionTableSize; i++) {
-                attachedPartitions.add(txMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
-            }
-        }
-    }
-
-    private ReadWriteMemory openTxnFile() {
-        try {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return new ReadWriteMemory(ff, path, ff.getPageSize());
-            }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
-
-        } finally {
-            path.trimTo(rootLen);
-        }
     }
 
     private void popAttachedPartitions() {
@@ -463,13 +361,14 @@ public class TransactionFile implements Closeable {
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {
-        setAttachedPartitionSize(maxTimestamp, transientRowCount);
+        if (maxTimestamp != Long.MIN_VALUE) {
+            setAttachedPartitionSize(maxTimestamp, transientRowCount);
+        }
         int n = attachedPartitions.size();
         txMem.putInt(getPartitionTableSizeOffset(symCount), n);
         for (int i = attachedPositionDirtyIndex; i < n; i++) {
             txMem.putLong(getPartitionTableIndexOffset(symCount, i), attachedPartitions.get(i));
         }
-        commitPendingPartitions();
         attachedPositionDirtyIndex = n;
     }
 
@@ -494,4 +393,3 @@ public class TransactionFile implements Closeable {
         attachedPositionDirtyIndex = Math.min(index, attachedPositionDirtyIndex);
     }
 }
-//1362873600000000

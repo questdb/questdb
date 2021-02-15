@@ -36,8 +36,6 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
 
-import static io.questdb.cairo.TableUtils.TX_OFFSET_MIN_TIMESTAMP;
-
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final PartitionPathGenerator YEAR_GEN = TableReader::pathGenYear;
@@ -53,7 +51,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final FilesFacade ff;
     private final Path path;
     private final int rootLen;
-    private final ReadOnlyColumn txMem;
     private final TableReaderMetadata metadata;
     private final LongList partitionRowCounts;
     private final PartitionPathGenerator partitionPathGenerator;
@@ -65,13 +62,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
-    private final LongHashSet attachedPartitions = new LongHashSet();
+    private final TransactionFileReader txFile;
     private LongList columnTops;
     private ObjList<ReadOnlyColumn> columns;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountBits;
-    private long transientRowCount;
     private long structVersion;
     private long dataVersion;
     private long prevStructVersion;
@@ -85,6 +81,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long prevMinTimestamp = Long.MAX_VALUE;
     private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
+    private long transientRowCount;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
@@ -95,11 +92,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
-            this.txMem = openTxnFile();
+            this.txFile = new TransactionFileReader(ff, path, true);
+            this.txFile.open();
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
-            switch (this.metadata.getPartitionBy()) {
+            int partitionBy = this.metadata.getPartitionBy();
+            switch (partitionBy) {
                 case PartitionBy.DAY:
                     partitionPathGenerator = DAY_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
@@ -129,7 +128,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                     timestampAddMethod = null;
                     break;
             }
-            readTxn();
+            txFile.initPartitionFloor(timestampFloorMethod, partitionBy);
+            readTxnSlow();
             openSymbolMaps();
             this.prevStructVersion = structVersion;
             this.prevPartitionTableVersion = partitionTableVersion;
@@ -192,7 +192,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeBitmapIndexCache();
             Misc.free(path);
             Misc.free(metadata);
-            Misc.free(txMem);
+            Misc.free(txFile);
             freeColumns();
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -568,7 +568,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             final long rowCount = partitionRowCounts.get(partitionIndex);
             if (rowCount > -1) {
                 final long timestamp = timestampAddMethod.calculate(prevMinTimestamp, partitionIndex);
-                if (!attachedPartitions.contains(timestamp)) {
+                if (!txFile.attachedPartitionsContains(timestamp)) {
                     int base = getColumnBase(partitionIndex);
                     for (int k = 0; k < columnCount; k++) {
                         closeColumn(base, k);
@@ -815,8 +815,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private long openPartition0(int partitionIndex) {
         // is this table partitioned?
-        if (timestampAddMethod != null
-                && !attachedPartitions.contains(
+        if (timestampAddMethod != null && !txFile.attachedPartitionsContains(
                 timestampAddMethod.calculate(minTimestamp, partitionIndex))) {
             return -1;
         }
@@ -880,14 +879,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private ReadOnlyColumn openTxnFile() {
-        try {
-            return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), TableUtils.getSymbolWriterIndexOffset(0));
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private Path pathGenDay(int partitionIndex) {
         TableUtils.fmtDay.format(
                 Timestamps.addDays(minTimestamp, partitionIndex),
@@ -924,14 +915,14 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean readTxn() {
         // fast path
-        return this.txn != txMem.getLong(TableUtils.TX_OFFSET_TXN) && readTxnSlow();
+        return this.txn != txFile.readTxn() && readTxnSlow();
     }
 
     private boolean readTxnSlow() {
         int count = 0;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
-            long txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
+            long txn = txFile.readTxn();
 
             // exit if this is the same as we already have
             if (txn == this.txn) {
@@ -942,60 +933,38 @@ public class TableReader implements Closeable, SymbolTableSource {
             Unsafe.getUnsafe().loadFence();
 
             // do start and end sequences match? if so we have a chance at stable read
-            if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK)) {
+            if (txn == txFile.readTxnCheck()) {
                 // great, we seem to have got stable read, lets do some reading
                 // and check later if it was worth it
 
                 Unsafe.getUnsafe().loadFence();
-                final long transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
-                final long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
-                final long minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-                final long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
-                final long structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
-                final long dataVersion = txMem.getLong(TableUtils.TX_OFFSET_DATA_VERSION);
-                final long partitionTableVersion = txMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+                txFile.read();
 
                 this.symbolCountSnapshot.clear();
-                int symbolMapCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
-                if (symbolMapCount > 0) {
-                    txMem.grow(TableUtils.getSymbolWriterIndexOffset(symbolMapCount));
-                    for (int i = 0; i < symbolMapCount; i++) {
-                        symbolCountSnapshot.add(txMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
-                    }
-                }
+                this.txFile.readSymbolCounts(this.symbolCountSnapshot);
 
-                txMem.grow(TableUtils.getPartitionTableIndexOffset(symbolMapCount, 0));
-
-                this.attachedPartitions.clear();
-                int partitionTableSize = txMem.getInt(TableUtils.getPartitionTableSizeOffset(symbolMapCount));
-                if (partitionTableSize > 0) {
-                    txMem.grow(TableUtils.getPartitionTableIndexOffset(symbolMapCount, partitionTableSize));
-                    for (int i = 0; i < partitionTableSize; i++) {
-                        this.attachedPartitions.add(txMem.getLong(TableUtils.getPartitionTableIndexOffset(symbolMapCount, i)));
-                    }
-                }
 
                 Unsafe.getUnsafe().loadFence();
                 // ok, we have snapshot, check if our snapshot is stable
-                if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN)) {
+                if (txn == txFile.getTxn()) {
                     // good, very stable, congrats
                     this.txn = txn;
-                    this.transientRowCount = transientRowCount;
-                    this.rowCount = fixedRowCount + transientRowCount;
+                    this.transientRowCount = txFile.getTransientRowCount();
+                    this.rowCount = txFile.getFixedRowCount() + transientRowCount;
                     this.prevMinTimestamp = this.minTimestamp;
-                    if (minTimestamp == Long.MAX_VALUE) {
+                    if (txFile.getMinTimestamp() == Long.MAX_VALUE) {
                         this.minTimestamp = Long.MAX_VALUE;
                     } else {
-                        this.minTimestamp = timestampFloorMethod.floor(minTimestamp);
+                        this.minTimestamp = timestampFloorMethod.floor(txFile.getMinTimestamp());
                     }
-                    this.maxTimestamp = maxTimestamp;
-                    this.structVersion = structVersion;
-                    this.dataVersion = dataVersion;
-                    this.partitionTableVersion = partitionTableVersion;
+                    this.maxTimestamp = txFile.getMaxTimestamp();
+                    this.structVersion = txFile.getStructureVersion();
+                    this.dataVersion = txFile.getDataVersion();
+                    this.partitionTableVersion = txFile.getPartitionTableVersion();
                     LOG.info()
                             .$("new transaction [txn=").$(txn)
                             .$(", transientRowCount=").$(transientRowCount)
-                            .$(", fixedRowCount=").$(fixedRowCount)
+                            .$(", fixedRowCount=").$(txFile.getFixedRowCount())
                             .$(", minTimestamp=").$ts(this.minTimestamp)
                             .$(", maxTimestamp=").$ts(this.maxTimestamp)
                             .$(", attempts=").$(count)
