@@ -1572,6 +1572,7 @@ public class SqlCompiler implements Closeable {
 
         ObjList<Function> valueFunctions = null;
         Function timestampFunction = null;
+
         try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
@@ -1609,8 +1610,7 @@ public class SqlCompiler implements Closeable {
                 final ObjList<ExpressionNode> values = model.getColumnValues();
                 final int valueCount = values.size();
                 if (columnCount != valueCount) {
-                    throw SqlException.$(model.getEndOfCurrentValuesBlockPosition(),
-                            "not enough values [expected=").put(columnCount).put(", actual=").put(values.size()).put(']');
+                    throw SqlException.incorrectNumberOfValues(model.getEndOfCurrentValuesBlockPosition(), columnCount, values.size());
                 }
                 valueFunctions = new ObjList<>(columnCount);
 
@@ -1664,8 +1664,7 @@ public class SqlCompiler implements Closeable {
             VirtualRecord record = new VirtualRecord(valueFunctions);
             RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
 
-            insertRecord(copier, writer, timestampFunction, record);
-            valueFunctions.clear();
+            initInsertAndClear(copier, writer, timestampFunction, record, executionContext);
 
             int expectedColumnCount = model.getColumnValues().size();
             while (model.getEndOfValuesPosition() < 0) {
@@ -1673,12 +1672,11 @@ public class SqlCompiler implements Closeable {
                 parser.parseNextInsertRow(lexer, model);
 
                 if (expectedColumnCount != model.getColumnValues().size()) {
-                    throw SqlException.$(model.getEndOfCurrentValuesBlockPosition(), "incorrect number of values [expected=").put(valueFunctions.size())
-                            .put(", actual=").put(model.getColumnValues().size()).put(']');
+                    throw SqlException.incorrectNumberOfValues(model.getEndOfCurrentValuesBlockPosition(), valueFunctions.size(), model.getColumnValues().size());
                 }
 
-                if (model.getBindVariablesPosition() > 0) {
-                    throw SqlException.$(model.getBindVariablesPosition(), "Bind variables not allowed in multi-row insert statements");
+                if (model.getBindVariablesPosition() > 0){
+                    throw SqlException.bindVarsNotAllowed(model.getBindVariablesPosition());
                 }
 
                 int writerTimestampIndex = metadata.getTimestampIndex();
@@ -1700,9 +1698,7 @@ public class SqlCompiler implements Closeable {
                         timestampFunction = function;
                     }
                 }
-
-                insertRecord(copier, writer, timestampFunction, record);
-                valueFunctions.clear();
+                initInsertAndClear(copier, writer, timestampFunction, record, executionContext);
             }
             writer.commit();
         } catch (SqlException | CairoException e) {
@@ -1719,15 +1715,24 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofInsert();
     }
 
-    private static void insertRecord(RecordToRowCopier copier, TableWriter writer, Function timestampFunction, VirtualRecord record) {
+    private static void initInsertAndClear(RecordToRowCopier copier, TableWriter writer, Function timestampFunction, VirtualRecord record,
+                                           SqlExecutionContext executionContext) {
+
+        Function.init(record.getFunctions(), null, executionContext);
+        if (timestampFunction != null){
+            timestampFunction.init(null, executionContext);
+        }
+
         TableWriter.Row row;
         if (timestampFunction != null) {
             row = writer.newRow(timestampFunction.getTimestamp(null));
         } else {
             row = writer.newRow();
         }
+
         copier.copy(record, row);
         row.append();
+        record.getFunctions().clear();
     }
 
     private CompiledQuery insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
@@ -1847,6 +1852,11 @@ public class SqlCompiler implements Closeable {
         if (model.getColumnSet().size() > 0 && model.getColumnSet().size() != model.getColumnValues().size()) {
             throw SqlException.$(model.getColumnPosition(0), "value count does not match column count");
         }
+
+        if (model.getBindVariablesPosition() > 0 && model.getEndOfValuesPosition() < 0){
+            throw SqlException.bindVarsNotAllowed(model.getBindVariablesPosition());
+        }
+
         return model;
     }
 

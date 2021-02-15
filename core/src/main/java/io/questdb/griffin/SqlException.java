@@ -48,6 +48,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Invalid column: ").put(column);
     }
 
+    public static SqlException bindVarsNotAllowed(int position) {
+        return position(position).put("Bind variables not allowed");
+    }
+
+    public static SqlException incorrectNumberOfValues(int position, int expected, int actual){
+        return position(position).put("incorrect number of values [expected=").put(expected).put(", actual=").put(actual);
+    }
+
     public static SqlException last() {
         return tlException.get();
     }

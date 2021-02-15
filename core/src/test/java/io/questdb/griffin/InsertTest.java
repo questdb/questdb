@@ -391,6 +391,76 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertMultipleRowsWithBindVarsInSecondRow() throws Exception {
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table orders(ts timestamp, orderId int, customer string) timestamp(ts)", sqlExecutionContext);
+
+            try {
+                compiler.compile("insert into orders values " +
+                        "(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'), 1, 'John Smith')," +
+                        "(to_timestamp('2019-12-05T13:20:49', 'yyyy-MM-ddTHH:mm:ss'), $2, 'Dave Jones')", sqlExecutionContext);
+            } catch (SqlException e){
+                Assert.assertEquals(167, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Bind variables not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsWithBindVarsInFirstRow() throws Exception {
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table orders(ts timestamp, orderId int, customer string) timestamp(ts)", sqlExecutionContext);
+
+            try {
+                compiler.compile("insert into orders values " +
+                        "(to_timestamp('2019-12-04T13:20:49', 'yyyy-MM-ddTHH:mm:ss'), $1, 'John Smith')," +
+                        "(to_timestamp('2019-12-05T13:20:49', 'yyyy-MM-ddTHH:mm:ss'), 2, 'Dave Jones')", sqlExecutionContext);
+            } catch (SqlException e){
+                Assert.assertEquals(89, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "Bind variables not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsWithFunction() throws Exception {
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table someTable(ts timestamp, someSymbol symbol) timestamp(ts)", sqlExecutionContext);
+            compiler.compile("insert into someTable(ts, someSymbol) values " +
+                    "(1262599200000000, cast(32 as symbol)), " +
+                    "(1262599300000000, cast(34 as symbol))",
+                    sqlExecutionContext);
+
+            String expected = "ts\tsomeSymbol\n" +
+                    "2010-01-04T10:00:00.000000Z\t32\n" +
+                    "2010-01-04T10:01:40.000000Z\t34\n";
+
+            sink.clear();
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "someTable")) {
+                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertMultipleRowsWithTooManyFieldsInSecondRow() throws Exception {
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            try {
+                compiler.compile("insert into balances values (1, 'USD', 35.5), (2, 'GBP', 42.5, 34.2)", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertEquals(67, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "incorrect number of values");
+            }
+        });
+    }
+
+    @Test
     public void testInsertNotEnoughFields() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
@@ -398,7 +468,7 @@ public class InsertTest extends AbstractGriffinTest {
                 compiler.compile("insert into balances values (1, 'USD')", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(37, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "not enough values");
+                TestUtils.assertContains(e.getFlyweightMessage(), "incorrect number of values");
             }
         });
     }
