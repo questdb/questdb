@@ -527,19 +527,20 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                     @SuppressWarnings("resource")
             TableModel model = new TableModel(configuration, "t_ilp21",
                     PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT).col("int1", ColumnType.INT)
+                            .col("date1", ColumnType.DATE)
                             .timestamp()) {
                 CairoTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
-            recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i\n" +
-                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i\n";
+            recvBuffer = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i\n" +
+                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i\n";
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "event\tid\tts\tfloat1\tint1\ttimestamp\n" +
-                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102800Z\n" +
-                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102800Z\n";
+            String expected = "event\tid\tts\tfloat1\tint1\tdate1\ttimestamp\n" +
+                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t2016-06-13T17:43:50.102800Z\n" +
+                    "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t2016-06-13T17:43:50.102800Z\n";
             assertTable(expected, "t_ilp21");
         });
     }

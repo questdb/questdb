@@ -633,6 +633,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                                     row.putTimestamp(colIndex, v);
                                     break;
 
+                                case ColumnType.DATE:
+                                    row.putDate(colIndex, v);
+                                    break;
+
                                 default:
                                     throw CairoException.instance(0).put("expected a line protocol integer [entityType=").put(entityType).put(']');
                             }
