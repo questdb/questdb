@@ -79,7 +79,7 @@ public class TransactionFile implements Closeable {
         return findAttachedPartitionIndex(getPartitionLo(ts)) >= 0;
     }
 
-    public long attachedPartitionsSize(long ts) {
+    public long attachedPartitionSize(long ts) {
         final int index = findAttachedPartitionIndex(getPartitionLo(ts));
         if (index >= 0) {
             return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
@@ -126,10 +126,12 @@ public class TransactionFile implements Closeable {
         minTimestamp = prevMinTimestamp;
     }
 
-    public void checkAddPartition(long minTimestamp) {
+    public long cancelToTransientRowCount() {
+        return prevTransientRowCount;
     }
 
     public void checkAddPartition(long partitionHi, long partitionSize) {
+        assert false;
     }
 
     @Override
@@ -144,8 +146,9 @@ public class TransactionFile implements Closeable {
 
         txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
 
+        symbolsCount = denseSymbolMapWriters.size();
+        saveAttachedPartitionsToTx(symbolsCount);
         if (txPartitionCount > 1) {
-            commitPendingPartitions();
             txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
             txPartitionCount = 1;
         }
@@ -154,13 +157,10 @@ public class TransactionFile implements Closeable {
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
 
         // store symbol counts
-        symbolsCount = denseSymbolMapWriters.size();
         for (int i = 0; i < symbolsCount; i++) {
             int symbolCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
             txMem.putInt(getSymbolWriterIndexOffset(i), symbolCount);
         }
-
-        saveAttachedPartitionsToTx(symbolsCount);
 
         Unsafe.getUnsafe().storeFence();
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
@@ -191,6 +191,10 @@ public class TransactionFile implements Closeable {
 
     public long getMaxTimestamp() {
         return maxTimestamp;
+    }
+
+    public long cancelToMaxTimestamp() {
+        return prevMaxTimestamp;
     }
 
     public long getMinTimestamp() {
@@ -376,7 +380,7 @@ public class TransactionFile implements Closeable {
     }
 
     private void commitPendingPartitions() {
-        for (int i = attachedPositionDirtyIndex; i < attachedPartitions.size(); i += LONGS_PER_PARTITION) {
+        for (int i = attachedPositionDirtyIndex; i < attachedPartitions.size() - 1; i += LONGS_PER_PARTITION) {
             try {
                 long partitionTimestamp = attachedPartitions.getQuick(i + PARTITION_TS_OFFSET);
                 long partitionSize = attachedPartitions.getQuick(i + PARTITION_SIZE_OFFSET);
@@ -398,7 +402,7 @@ public class TransactionFile implements Closeable {
             }
         }
     }
-
+//1362873600000000
     private int findAttachedPartitionIndex(long ts) {
         ts = getPartitionLo(ts);
         // TODO: make binary search
@@ -422,6 +426,7 @@ public class TransactionFile implements Closeable {
     }
 
     private void loadAttachedPartitions() {
+        attachedPartitions.clear();
         int symbolWriterCount = symbolsCount;
         int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
         if (partitionTableSize > 0) {
@@ -459,12 +464,12 @@ public class TransactionFile implements Closeable {
 
     private void saveAttachedPartitionsToTx(int symCount) {
         setAttachedPartitionSize(maxTimestamp, transientRowCount);
-
         int n = attachedPartitions.size();
         txMem.putInt(getPartitionTableSizeOffset(symCount), n);
         for (int i = attachedPositionDirtyIndex; i < n; i++) {
             txMem.putLong(getPartitionTableIndexOffset(symCount, i), attachedPartitions.get(i));
         }
+        commitPendingPartitions();
         attachedPositionDirtyIndex = n;
     }
 
@@ -474,7 +479,6 @@ public class TransactionFile implements Closeable {
         if (index >= 0) {
             // Update
             attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-            attachedPositionDirtyIndex = Math.min(index, attachedPositionDirtyIndex);
         } else {
             // Insert
             int existingSize = attachedPartitions.size();
@@ -486,7 +490,8 @@ public class TransactionFile implements Closeable {
             }
             attachedPartitions.set(index + PARTITION_TS_OFFSET, partitionTimestamp);
             attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-            attachedPositionDirtyIndex = Math.min(index, attachedPositionDirtyIndex);
         }
+        attachedPositionDirtyIndex = Math.min(index, attachedPositionDirtyIndex);
     }
 }
+//1362873600000000

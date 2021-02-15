@@ -1437,7 +1437,8 @@ public class TableWriter implements Closeable {
 
         long dirtyMaxTimestamp = txFile.getMaxTimestamp();
         long dirtyTransientRowCount = txFile.getTransientRowCount();
-        txFile.cancelRow();
+        long rollbackToMaxTimestamp = txFile.cancelToMaxTimestamp();
+        long rollbackToTransientRowCount = txFile.cancelToTransientRowCount();
 
         if (dirtyTransientRowCount == 0) {
             if (partitionBy != PartitionBy.NONE) {
@@ -1456,10 +1457,10 @@ public class TableWriter implements Closeable {
                 }
 
                 // open old partition
-                if (txFile.getMaxTimestamp() > Long.MIN_VALUE) {
+                if (rollbackToMaxTimestamp > Long.MIN_VALUE) {
                     try {
-                        openPartition(txFile.getMaxTimestamp());
-                        setAppendPosition(txFile.getTransientRowCount(), false);
+                        openPartition(rollbackToMaxTimestamp);
+                        setAppendPosition(rollbackToTransientRowCount, false);
                     } catch (CairoException e) {
                         freeColumns(false);
                         throw e;
@@ -1470,7 +1471,9 @@ public class TableWriter implements Closeable {
 
                 // undo counts
                 removeDirOnCancelRow = true;
+                txFile.cancelRow();
             } else {
+                txFile.cancelRow();
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
                     getPrimaryColumn(i).setSize(0);
@@ -1481,6 +1484,7 @@ public class TableWriter implements Closeable {
                 }
             }
         } else {
+            txFile.cancelRow();
             // we are staying within same partition, prepare append positions for row count
             boolean rowChanged = false;
             // verify if any of the columns have been changed
@@ -4086,13 +4090,16 @@ public class TableWriter implements Closeable {
                     setStateForTimestamp(path, ts, false);
                     int p = path.length();
 
-                    long partitionSize = txFile.attachedPartitionsSize(ts);
-                    if (partitionSize > 0 && ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
-                        actualSize += TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
+                    long partitionSize = txFile.attachedPartitionSize(ts);
+                    if (partitionSize >= 0 && ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
+                        long sizeInsidePartitionDir = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
+                        if (sizeInsidePartitionDir != partitionSize) {
+                            LOG.info().$("partition size is different between tx file and ").$(ARCHIVE_FILE_NAME).$(" file [name=").$(path.trimTo(p).$()).$(']').$();
+                        }
+                        actualSize += sizeInsidePartitionDir;
                         lastTimestamp = ts;
                     } else {
                         LOG.info().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
-                        partitionSize = txFile.attachedPartitionsSize(ts);
                     }
                 }
 
@@ -4676,9 +4683,6 @@ public class TableWriter implements Closeable {
                 return newRow0(timestamp);
             }
             updateMaxTimestamp(timestamp);
-
-            // Add new partition to _tx attached partition list
-            txFile.checkAddPartition(timestamp);
             return row;
         }
 
