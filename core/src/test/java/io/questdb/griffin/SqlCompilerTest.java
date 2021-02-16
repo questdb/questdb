@@ -2425,14 +2425,14 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table xy (ts timestamp)", sqlExecutionContext);
             // execute insert with micros
-            executeInsert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
+            compiler.compile("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')", sqlExecutionContext);
 
             // execute insert with millis
-            executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
+            compiler.compile("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')", sqlExecutionContext);
 
             // test bad format
             try {
-                executeInsert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
+                compiler.compile("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not convert to timestamp");

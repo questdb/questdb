@@ -122,10 +122,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         queryModel = null;
     }
 
-    public boolean isBindVariable(){
-        return type == BIND_VARIABLE;
-    }
-
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {
         clear();
         // override literal with bind variable

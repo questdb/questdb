@@ -370,7 +370,7 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertMultipleRowsWithColumnList() throws Exception {
+    public void testInsertMultipleRowsWithColumnSet() throws Exception {
 
         assertMemoryLeak(() -> {
             compiler.compile("create table orders(ts timestamp, orderId int, customer string) timestamp(ts)", sqlExecutionContext);
@@ -529,8 +529,8 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSymbolNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table symbols (sym symbol, isNewSymbol BOOLEAN)  partition by NONE", sqlExecutionContext);
-            executeInsert("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY', false);");
-            executeInsert("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD', true);");
+            compiler.compile("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY', false);", sqlExecutionContext);
+            compiler.compile("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD', true);", sqlExecutionContext);
 
             String expected = "sym\tisNewSymbol\n" +
                     "USDJPY\tfalse\n" +
@@ -548,8 +548,8 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSymbolPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;", sqlExecutionContext);
-            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
-            executeInsert("insert into trades VALUES ( 1262599300000000, 'USDFJD', 2, 4);");
+            compiler.compile("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);", sqlExecutionContext);
+            compiler.compile("insert into trades VALUES ( 1262599300000000, 'USDFJD', 2, 4);", sqlExecutionContext);
 
             String expected = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +
@@ -567,7 +567,7 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSymbolPartitionedAfterTruncate() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;", sqlExecutionContext);
-            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
+            compiler.compile("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);", sqlExecutionContext);
 
             String expected1 = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n";
@@ -582,7 +582,7 @@ public class InsertTest extends AbstractGriffinTest {
                 w.truncate();
             }
 
-            executeInsert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
+            compiler.compile("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);", sqlExecutionContext);
 
             String expected2 = "ts\tsym\tbid\task\n" +
                     "2073-05-21T13:35:00.000000Z\tUSDFJD\t2.0\t4.0\n";
@@ -599,8 +599,8 @@ public class InsertTest extends AbstractGriffinTest {
     public void testInsertSymbolPartitionedFarApart() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table trades (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by DAY;", sqlExecutionContext);
-            executeInsert("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);");
-            executeInsert("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);");
+            compiler.compile("insert into trades VALUES ( 1262599200000000, 'USDJPY', 1, 2);", sqlExecutionContext);
+            compiler.compile("insert into trades VALUES ( 3262599300000000, 'USDFJD', 2, 4);", sqlExecutionContext);
 
             String expected = "ts\tsym\tbid\task\n" +
                     "2010-01-04T10:00:00.000000Z\tUSDJPY\t1.0\t2.0\n" +

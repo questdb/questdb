@@ -943,7 +943,7 @@ public final class SqlParser {
         expectTok(lexer, '(');
         do {
             ExpressionNode value = parseExpr(lexer);
-            if (value.isBindVariable()) {
+            if (value.type == ExpressionNode.BIND_VARIABLE) {
                 model.setBindVariablesPosition(lexer.lastTokenPosition());
             }
             model.addColumnValue(value);

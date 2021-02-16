@@ -209,20 +209,20 @@ public class AsOfJoinTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //tabY
             compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-            executeInsert("insert into tabY values ('A', 1, 10000)");
-            executeInsert("insert into tabY values ('A', 2, 20000)");
-            executeInsert("insert into tabY values ('A', 3, 30000)");
-            executeInsert("insert into tabY values ('B', 1, 30000)");
-            executeInsert("insert into tabY values ('B', 2, 40000)");
-            executeInsert("insert into tabY values ('B', 3, 50000)");
+            compiler.compile("insert into tabY values ('A', 1, 10000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('A', 2, 20000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('A', 3, 30000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 1, 30000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 2, 40000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 3, 50000)", sqlExecutionContext);
             //tabZ
             compiler.compile("create table tabZ (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-            executeInsert("insert into tabZ values ('B', 1, 10000)");
-            executeInsert("insert into tabZ values ('B', 2, 20000)");
-            executeInsert("insert into tabZ values ('B', 3, 30000)");
-            executeInsert("insert into tabZ values ('A', 3, 30000)");
-            executeInsert("insert into tabZ values ('A', 6, 40000)");
-            executeInsert("insert into tabZ values ('A', 7, 50000)");
+            compiler.compile("insert into tabZ values ('B', 1, 10000)", sqlExecutionContext);
+            compiler.compile("insert into tabZ values ('B', 2, 20000)", sqlExecutionContext);
+            compiler.compile("insert into tabZ values ('B', 3, 30000)", sqlExecutionContext);
+            compiler.compile("insert into tabZ values ('A', 3, 30000)", sqlExecutionContext);
+            compiler.compile("insert into tabZ values ('A', 6, 40000)", sqlExecutionContext);
+            compiler.compile("insert into tabZ values ('A', 7, 50000)", sqlExecutionContext);
             //check tables
             String ex = "tag\tx\tts\n" +
                     "A\t1\t1970-01-01T00:00:00.010000Z\n" +
@@ -440,12 +440,12 @@ public class AsOfJoinTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //tabY
             compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-            executeInsert("insert into tabY values ('A', 1, 10000)");
-            executeInsert("insert into tabY values ('A', 2, 20000)");
-            executeInsert("insert into tabY values ('A', 3, 30000)");
-            executeInsert("insert into tabY values ('B', 1, 30000)");
-            executeInsert("insert into tabY values ('B', 2, 40000)");
-            executeInsert("insert into tabY values ('B', 3, 50000)");
+            compiler.compile("insert into tabY values ('A', 1, 10000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('A', 2, 20000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('A', 3, 30000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 1, 30000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 2, 40000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 3, 50000)", sqlExecutionContext);
             //check tables
             String ex = "tag\tx\tts\n" +
                     "A\t1\t1970-01-01T00:00:00.010000Z\n" +
@@ -473,12 +473,12 @@ public class AsOfJoinTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             //tabY
             compiler.compile("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)", sqlExecutionContext);
-            executeInsert("insert into tabY values ('A', 1, 10000)");
-            executeInsert("insert into tabY values ('A', 2, 20000)");
-            executeInsert("insert into tabY values ('A', 3, 30000)");
-            executeInsert("insert into tabY values ('B', 1, 40000)");
-            executeInsert("insert into tabY values ('B', 2, 50000)");
-            executeInsert("insert into tabY values ('B', 3, 60000)");
+            compiler.compile("insert into tabY values ('A', 1, 10000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('A', 2, 20000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('A', 3, 30000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 1, 40000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 2, 50000)", sqlExecutionContext);
+            compiler.compile("insert into tabY values ('B', 3, 60000)", sqlExecutionContext);
             //check tables
             String ex = "tag\tx\tts\n" +
                     "A\t1\t1970-01-01T00:00:00.010000Z\n" +
@@ -515,8 +515,8 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     " long_sequence(20)" +
                     ") timestamp(ts) partition by DAY", sqlExecutionContext);
             //insert
-            executeInsert("insert into tab values ('CC', 24, 210000)");
-            executeInsert("insert into tab values ('CC', 25, 220000)");
+            compiler.compile("insert into tab values ('CC', 24, 210000)", sqlExecutionContext);
+            compiler.compile("insert into tab values ('CC', 25, 220000)", sqlExecutionContext);
             String ex = "tag\tx\tts\n" +
                     "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
                     "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
@@ -564,8 +564,8 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     " long_sequence(20)" +
                     ") timestamp(ts) partition by DAY", sqlExecutionContext);
             //insert
-            executeInsert("insert into tab values ('CC', 24, 210000)");
-            executeInsert("insert into tab values ('CC', 25, 220000)");
+            compiler.compile("insert into tab values ('CC', 24, 210000)", sqlExecutionContext);
+            compiler.compile("insert into tab values ('CC', 25, 220000)", sqlExecutionContext);
             String ex = "tag\tx\tts\n" +
                     "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
                     "AA\t2\t1970-01-01T00:00:00.010000Z\n" +

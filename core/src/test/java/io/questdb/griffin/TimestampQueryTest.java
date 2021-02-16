@@ -53,7 +53,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -76,7 +76,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -96,7 +96,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -115,7 +115,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -135,7 +135,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -155,7 +155,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -175,7 +175,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -195,7 +195,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -215,7 +215,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000001Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -235,7 +235,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -255,7 +255,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -275,7 +275,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -294,7 +294,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -313,7 +313,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -333,7 +333,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -353,7 +353,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -372,7 +372,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -391,7 +391,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -411,7 +411,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -431,7 +431,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -450,7 +450,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -469,7 +469,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -489,7 +489,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -508,7 +508,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -527,7 +527,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -549,7 +549,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
                 compiler.compile(createStmt, sqlExecutionContext);
                 //insert
-                executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+                compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
                 String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
                         "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
 
@@ -624,7 +624,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
@@ -650,7 +650,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
             compiler.compile(createStmt, sqlExecutionContext);
             //insert
-            executeInsert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
+            compiler.compile("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)", sqlExecutionContext);
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";

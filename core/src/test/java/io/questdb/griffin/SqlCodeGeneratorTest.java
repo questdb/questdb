@@ -5082,7 +5082,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void executeInsertStatement(double d) throws SqlException {
         String ddl = "insert into x (ds) values (" + d + ")";
-        executeInsert(ddl);
+        compiler.compile(ddl, sqlExecutionContext);
     }
 
     private void testBindVariableWithLike0(String keyword) throws Exception {

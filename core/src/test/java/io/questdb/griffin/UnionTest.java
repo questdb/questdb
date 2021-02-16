@@ -281,11 +281,11 @@ public class UnionTest extends AbstractGriffinTest {
     public void testExcept() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+            compiler.compile("insert into events2 values ('amy', 'grp1', 'flash')", sqlExecutionContext);
+            compiler.compile("insert into events2 values ('joey', 'grp2', 'sit')", sqlExecutionContext);
+            compiler.compile("insert into events2 values ('stewy', 'grp1', 'stand')", sqlExecutionContext);
+            compiler.compile("insert into events2 values ('bobby', 'grp1', 'flash')", sqlExecutionContext);
+            compiler.compile("insert into events2 values ('stewy', 'grp1', 'flash')", sqlExecutionContext);
 
             assertQuery(
                     "groupid\tcontact\n" +
@@ -305,11 +305,11 @@ public class UnionTest extends AbstractGriffinTest {
     public void testIntersect() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+            compiler.compile("insert into events2 values ('amy', 'grp1', 'flash')", sqlExecutionContext);
+            compiler.compile("insert into events2 values ('joey', 'grp2', 'sit')", sqlExecutionContext);
+            compiler.compile("insert into events2 values ('stewy', 'grp1', 'stand')", sqlExecutionContext);
+            compiler.compile("insert into events2 values ('bobby', 'grp1', 'flash')", sqlExecutionContext);
+            compiler.compile("insert into events2 values ('stewy', 'grp1', 'flash')", sqlExecutionContext);
 
             assertQuery(
                     "groupid\tcontact\n" +
