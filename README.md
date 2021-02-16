@@ -50,7 +50,7 @@ data is safe - yet instantly accessible.
 
 ## Live demo
 
-Query [our demo](http://demo.questdb.io) dataset with 1.6 billion rows in
+Query [our demo](https://demo.questdb.io) dataset with 1.6 billion rows in
 milliseconds.
 
 ## Web Console
