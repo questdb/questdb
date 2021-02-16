@@ -28,7 +28,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -47,11 +46,19 @@ public final class TransactionFile extends TransactionFileReader implements Clos
     private ReadWriteMemory txMem;
 
     public TransactionFile(FilesFacade ff, Path path) {
-        super(ff, path, false);
+        super(ff, path);
     }
 
     public void appendBlock(long timestampLo, long timestampHi, long nRowsAdded) {
-        assert false : "todo";
+        if (timestampLo < maxTimestamp) {
+            throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+        }
+
+        if (txPartitionCount == 0) {
+            txPartitionCount = 1;
+        }
+        this.maxTimestamp = timestampHi;
+        this.transientRowCount += nRowsAdded;
     }
 
     public void appendRowNoTimestamp(long nRowsAdded) {
@@ -103,10 +110,6 @@ public final class TransactionFile extends TransactionFileReader implements Clos
 
     public long cancelToTransientRowCount() {
         return prevTransientRowCount;
-    }
-
-    public void checkAddPartition(long partitionHi, long partitionSize) {
-        setAttachedPartitionSize(partitionHi, partitionSize);
     }
 
     @Override
@@ -199,16 +202,11 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         txPartitionCount = 1;
     }
 
-    public void removePartition(long timestamp, long partitionSize) {
-        long nextMinTimestamp = minTimestamp;
-        if (attachedPartitions.size() > 0 && timestamp == attachedPartitions.getQuick(0)) {
-            nextMinTimestamp = attachedPartitions.size() > 5 ? attachedPartitions.getQuick(5) : Long.MAX_VALUE;
-        }
-
-        long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
+    public void removePartition(long timestamp, long nextMinTimestamp) {
+        final long partitionSize = getPartitionSizeByPartitionTimestamp(timestamp);
+        final long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
-
         final long partitionVersion = txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1;
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionVersion);
 
@@ -279,7 +277,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         fixedRowCount += transientRowCount;
         prevTransientRowCount = transientRowCount;
 
-        setAttachedPartitionSize(maxTimestamp, transientRowCount);
+        updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
         transientRowCount = 0;
 
         txPartitionCount++;
@@ -302,11 +300,16 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         maxTimestamp = timestamp;
     }
 
-    public void updateOutOfOrder(long minTimestamp, long maxTimestamp, long transientRowCount, long fixedRowCount) {
+    public void finishOutOfOrderUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
-        this.transientRowCount = transientRowCount;
-        this.fixedRowCount = fixedRowCount;
+        assert attachedPartitions.size() > 0;
+        this.transientRowCount = attachedPartitions.getQuick(attachedPartitions.size() - LONGS_PER_PARTITION + PARTITION_SIZE_OFFSET);
+        this.fixedRowCount = 0;
+        for (int i = 0, hi = attachedPartitions.size() - LONGS_PER_PARTITION; i < hi; i += LONGS_PER_PARTITION) {
+            this.fixedRowCount += attachedPartitions.getQuick(i + PARTITION_SIZE_OFFSET);
+        }
+        txPartitionCount++;
     }
 
     private static long openReadWriteOrFail(FilesFacade ff, Path path) {
@@ -328,9 +331,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
                 long fd = openReadWriteOrFail(ff, path.concat(ARCHIVE_FILE_NAME).$());
                 try {
                     Unsafe.getUnsafe().putLong(tempMem8b, partitionSize);
-                    if (ff.write(fd, tempMem8b, Long.BYTES, 0) == Long.BYTES) {
-                        continue;
-                    } else {
+                    if (ff.write(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
                         throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
                     }
                 } finally {
@@ -356,13 +357,14 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         int size = attachedPartitions.size();
         if (size > index + 1) {
             attachedPartitions.arrayCopy(index + LONGS_PER_PARTITION, index, size - index - 1);
+            attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
         }
         attachedPartitions.truncateTo(size - LONGS_PER_PARTITION);
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {
         if (maxTimestamp != Long.MIN_VALUE) {
-            setAttachedPartitionSize(maxTimestamp, transientRowCount);
+            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
         }
         int n = attachedPartitions.size();
         txMem.putInt(getPartitionTableSizeOffset(symCount), n);
@@ -372,18 +374,18 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         attachedPositionDirtyIndex = n;
     }
 
-    private void setAttachedPartitionSize(long maxTimestamp, long partitionSize) {
+    public void updatePartitionSizeByTimestamp(long maxTimestamp, long partitionSize) {
         long partitionTimestamp = getPartitionLo(maxTimestamp);
         int index = findAttachedPartitionIndex(partitionTimestamp);
+        int size = attachedPartitions.size();
         if (index >= 0) {
             // Update
             attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
         } else {
             // Insert
-            int existingSize = attachedPartitions.size();
-            attachedPartitions.extendAndSet(existingSize + LONGS_PER_PARTITION - 1, 0);
+            attachedPartitions.extendAndSet(size + LONGS_PER_PARTITION - 1, 0);
             index = -(index + 1);
-            if (index < existingSize) {
+            if (index < size) {
                 // Insert in the middle
                 attachedPartitions.arrayCopy(index, index + LONGS_PER_PARTITION, LONGS_PER_PARTITION);
             }

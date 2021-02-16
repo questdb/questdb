@@ -44,7 +44,6 @@ public class TransactionFileReader implements Closeable {
     protected final Path path;
     protected final int rootLen;
     protected final LongList attachedPartitions = new LongList();
-    private final boolean isReadOnly;
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
@@ -59,16 +58,23 @@ public class TransactionFileReader implements Closeable {
     private long partitionTableVersion;
     private Timestamps.TimestampFloorMethod timestampFloorMethod;
 
-    public TransactionFileReader(FilesFacade ff, Path path, boolean isReadOnly) {
+    public TransactionFileReader(FilesFacade ff, Path path) {
         this.ff = ff;
         this.path = path;
         this.rootLen = path.length();
-        this.isReadOnly = isReadOnly;
     }
 
     @Override
     public void close() {
         roTxMem = Misc.free(roTxMem);
+    }
+
+    public long getAttachedPartitionTimestamp(int i) {
+        return attachedPartitions.getQuick(i * LONGS_PER_PARTITION);
+    }
+
+    public int getAttachedPartitionsSize() {
+        return attachedPartitions.size();
     }
 
     public long getDataVersion() {
@@ -106,13 +112,13 @@ public class TransactionFileReader implements Closeable {
     public void open() {
         assert this.roTxMem == null;
         roTxMem = openTxnFile(ff, path, rootLen);
-        if (isReadOnly && roTxMem instanceof ReadOnlyMemory) {
+        if (roTxMem instanceof ReadOnlyMemory) {
+            // In readonly mode Tx file has to call grow sometimes
             this.readOnlyTxMem = (ReadOnlyMemory) roTxMem;
         }
     }
 
-
-    public long attachedPartitionSize(long ts) {
+    public long getPartitionSizeByPartitionTimestamp(long ts) {
         final int index = findAttachedPartitionIndex(getPartitionLo(ts));
         if (index >= 0) {
             return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
@@ -121,22 +127,16 @@ public class TransactionFileReader implements Closeable {
     }
 
     public void read() {
-        if (this.roTxMem != null) {
-            this.txn = roTxMem.getLong(TX_OFFSET_TXN);
-            this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-            this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-            this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-            this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-            this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
-            this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
-            this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-            partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-            loadAttachedPartitions();
-
-            return;
-        }
-
-        openAndRead();
+        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
+        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
+        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
+        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
+        this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+        partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+        loadAttachedPartitions();
     }
 
     public long readFixedRowCount() {
@@ -146,7 +146,7 @@ public class TransactionFileReader implements Closeable {
     public void readSymbolCounts(IntList symbolCountSnapshot) {
         int symbolMapCount = roTxMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
         if (symbolMapCount > 0) {
-            if (isReadOnly) {
+            if (this.readOnlyTxMem != null) {
                 this.readOnlyTxMem.grow(TableUtils.getSymbolWriterIndexOffset(symbolMapCount));
             }
             for (int i = 0; i < symbolMapCount; i++) {
@@ -175,7 +175,6 @@ public class TransactionFileReader implements Closeable {
         return findAttachedPartitionIndex(ts) >= 0;
     }
 
-
     public void initPartitionFloor(Timestamps.TimestampFloorMethod timestampFloorMethod, int partitionBy) {
         assert this.timestampFloorMethod == null;
         this.timestampFloorMethod = timestampFloorMethod;
@@ -187,18 +186,13 @@ public class TransactionFileReader implements Closeable {
         int symbolWriterCount = symbolsCount;
         int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
         if (partitionTableSize > 0) {
-            if (isReadOnly) {
+            if (this.readOnlyTxMem != null) {
                 this.readOnlyTxMem.grow(TableUtils.getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
             }
             for (int i = 0; i < partitionTableSize; i++) {
                 attachedPartitions.add(roTxMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
             }
         }
-    }
-
-    private void openAndRead() {
-        open();
-        read();
     }
 
     protected VirtualMemory openTxnFile(FilesFacade ff, Path path, int rootLen) {
@@ -214,8 +208,13 @@ public class TransactionFileReader implements Closeable {
 
     protected int findAttachedPartitionIndex(long ts) {
         ts = getPartitionLo(ts);
+        int hi = attachedPartitions.size() - LONGS_PER_PARTITION;
+        if (hi > -1 && ts == attachedPartitions.getQuick(hi)) {
+            return hi;
+        }
+
         // TODO: make binary search
-        for (int i = 0, size = attachedPartitions.size(); i < size; i += LONGS_PER_PARTITION) {
+        for (int i = 0; i <= hi; i += LONGS_PER_PARTITION) {
             if (attachedPartitions.getQuick(i) > ts) {
                 return -(i + 1);
             }
@@ -225,6 +224,26 @@ public class TransactionFileReader implements Closeable {
         }
         return -(attachedPartitions.size() + 1);
     }
+
+//    protected int findAttachedPartitionIndex(long ts) {
+//        ts = getPartitionLo(ts);
+//        // TODO: make binary search
+//        // Start from the end, usually it will be last partition searched
+//        int hi = attachedPartitions.size() - LONGS_PER_PARTITION;
+//        if (hi > -1 && ts == attachedPartitions.getQuick(hi)) {
+//            return hi;
+//        }
+//
+//        for (int i = hi - 1; i > -1; i -= LONGS_PER_PARTITION) {
+//            if (ts > attachedPartitions.getQuick(i)) {
+//                return -(i);
+//            }
+//            if (attachedPartitions.getQuick(i) == ts) {
+//                return i;
+//            }
+//        }
+//        return -(attachedPartitions.size() + 1);
+//    }
 
     protected long getPartitionLo(long timestamp) {
         return timestampFloorMethod != null ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;

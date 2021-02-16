@@ -92,7 +92,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
-            this.txFile = new TransactionFileReader(ff, path, true);
+            this.txFile = new TransactionFileReader(ff, path);
             this.txFile.open();
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
