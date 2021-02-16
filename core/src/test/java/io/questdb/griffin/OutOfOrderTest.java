@@ -79,12 +79,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBench() throws SqlException {
-        testBench0(
+    public void testBench() throws Exception {
+        executeVanilla(() -> testBench0(
                 engine,
                 compiler,
                 sqlExecutionContext
-        );
+        ));
     }
 
     @Test
@@ -109,7 +109,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopLastDataMerge() throws Exception {
-        assertMemoryLeak(() -> testColumnTopLastDataMergeData0(
+        executeVanilla(() -> testColumnTopLastDataMergeData0(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -118,7 +118,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopLastDataMerge2Data() throws Exception {
-        assertMemoryLeak(() -> testColumnTopLastDataMerge2Data0(
+        executeVanilla(() -> testColumnTopLastDataMerge2Data0(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -147,7 +147,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopLastDataOOOData() throws Exception {
-        assertMemoryLeak(() -> testColumnTopLastDataOOOData0(
+        executeVanilla(() -> testColumnTopLastDataOOOData0(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -166,7 +166,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopLastOOOData() throws Exception {
-        assertMemoryLeak(() -> testColumnTopLastOOOData0(
+        executeVanilla(() -> testColumnTopLastOOOData0(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -179,13 +179,32 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopMidOOODataContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopMidOOOData0);
+    }
+
+    @Test
+    public void testColumnTopMidOOODataParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testColumnTopMidOOOData0);
+    }
+
+    @Test
+    public void testColumnTopMidOOOData() throws Exception {
+        executeVanilla(() -> testColumnTopMidOOOData0(
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
+    }
+
+    @Test
     public void testColumnTopLastOOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testColumnTopLastOOOData0);
     }
 
     @Test
     public void testColumnTopLastOOOPrefix() throws Exception {
-        assertMemoryLeak(() -> testColumnTopLastOOOPrefix0(
+        executeVanilla(() -> testColumnTopLastOOOPrefix0(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -203,8 +222,27 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopMidDataMergeDataContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopMidDataMergeData0);
+    }
+
+    @Test
+    public void testColumnTopMidDataMergeDataParallel() throws Exception {
+        executeWithPool(4, OutOfOrderTest::testColumnTopMidDataMergeData0);
+    }
+
+    @Test
+    public void testColumnTopMidDataMergeData() throws Exception {
+        executeVanilla(() -> testColumnTopMidDataMergeData0(
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
+    }
+
+    @Test
     public void testPartitionedDataAppendOOData() throws Exception {
-        assertMemoryLeak(
+        executeVanilla(
                 () -> testPartitionedDataAppendOOData0(
                         engine,
                         compiler,
@@ -220,7 +258,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataIndexed() throws Exception {
-        assertMemoryLeak(() -> testPartitionedDataAppendOODataIndexed0(
+        executeVanilla(() -> testPartitionedDataAppendOODataIndexed0(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -240,7 +278,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        assertMemoryLeak(() -> testPartitionedDataAppendOODataNotNullStrTail0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedDataAppendOODataNotNullStrTail0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -260,7 +298,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        assertMemoryLeak(() -> {
+        executeVanilla(() -> {
                     // create table with roughly 2AM data
                     compiler.compile(
                             "create table x as (" +
@@ -335,7 +373,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataMergeData() throws Exception {
-        assertMemoryLeak(() -> testPartitionedDataMergeData0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedDataMergeData0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -350,7 +388,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataMergeEnd() throws Exception {
-        assertMemoryLeak(() -> testPartitionedDataMergeEnd0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedDataMergeEnd0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -365,7 +403,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataOOData() throws Exception {
-        assertMemoryLeak(() -> testPartitionedDataOOData0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedDataOOData0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -380,7 +418,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataOODataPbOOData() throws Exception {
-        assertMemoryLeak(() -> testPartitionedDataOODataPbOOData0(
+        executeVanilla(() -> testPartitionedDataOODataPbOOData0(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -399,7 +437,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataOOIntoLastIndexSearchBug() throws Exception {
-        assertMemoryLeak(() -> testPartitionedDataOOIntoLastIndexSearchBug0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedDataOOIntoLastIndexSearchBug0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -414,7 +452,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartition() throws Exception {
-        assertMemoryLeak(() -> testPartitionedDataOOIntoLastOverflowIntoNewPartition0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedDataOOIntoLastOverflowIntoNewPartition0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -429,7 +467,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOData() throws Exception {
-        assertMemoryLeak(() -> testPartitionedOOData0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedOOData0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -439,7 +477,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOODataOOCollapsed() throws Exception {
-        assertMemoryLeak(() -> testPartitionedOODataOOCollapsed0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedOODataOOCollapsed0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -459,7 +497,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOODataUpdateMinTimestamp() throws Exception {
-        assertMemoryLeak(() -> testPartitionedOODataUpdateMinTimestamp0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedOODataUpdateMinTimestamp0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -474,7 +512,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOMerge() throws Exception {
-        assertMemoryLeak(() -> testPartitionedOOMerge0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedOOMerge0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -484,7 +522,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOMergeData() throws Exception {
-        assertMemoryLeak(() -> testPartitionedOOMergeData0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedOOMergeData0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -499,7 +537,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOMergeOO() throws Exception {
-        assertMemoryLeak(() -> testPartitionedOOMergeOO0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedOOMergeOO0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -519,7 +557,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOONullSetters() throws Exception {
-        assertMemoryLeak(() -> {
+        executeVanilla(() -> {
 
             compiler.compile("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
@@ -565,7 +603,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitions() throws Exception {
-        assertMemoryLeak(() -> testPartitionedOOPrefixesExistingPartitions0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedOOPrefixesExistingPartitions0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -580,7 +618,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOTopAndBottom() throws Exception {
-        assertMemoryLeak(() -> testPartitionedOOTopAndBottom0(engine, compiler, sqlExecutionContext));
+        executeVanilla(() -> testPartitionedOOTopAndBottom0(engine, compiler, sqlExecutionContext));
     }
 
     @Test
@@ -591,6 +629,15 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     @Test
     public void testPartitionedOOTopAndBottomParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testPartitionedOOTopAndBottom0);
+    }
+
+    private static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
+        OutOfOrderOpenColumnJob.initBuf();
+        try {
+            assertMemoryLeak(code);
+        } finally {
+            OutOfOrderOpenColumnJob.freeBuf();
+        }
     }
 
     private static void testPartitionedOOPrefixesExistingPartitions0(
@@ -2300,6 +2347,150 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
     }
 
+
+    private static void testColumnTopMidDataMergeData0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, URISyntaxException {
+
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column v double", sqlExecutionContext);
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549920000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(1000)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549900000000L,50000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
+
+        // use this code to debug
+//        assertOutOfOrderDataConsistency(
+//                engine,
+//                compiler,
+//                sqlExecutionContext,
+//                "create table y as (x union all append)",
+//                "y order by ts",
+//                "insert into x select * from append",
+//                "x'"
+//        );
+
+        assertSqlResultAgainstFile(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                "/oo/testColumnTopMidDataMergeData.txt"
+        );
+    }
+
     private static void testColumnTopLastDataMerge2Data0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -2451,21 +2642,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
-
-        //
-        // ----- last partition
-        //
-        // +-----------+ <-- top -->       +---------+
-        // |   empty   |                   |   data  |
-        // |           | +----------+      +---------+
-        // +-----------+ |   OOO    |      |   ooo   |
-        // |           | |  block   |  ==  +---------+
-        // |           | | (narrow) |      |   data  |
-        // |           | +----------+      +---------+
-        // |           |
-        // |           |
-        // |           |
-        // +-----------+
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -2608,21 +2784,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, URISyntaxException {
-
-        //
-        // ----- last partition
-        //
-        // +-----------+
-        // |   empty   |
-        // |           | < +----------+      +---------+
-        // |           |   |   OOO    |      |   ooo   |
-        // |           |   |  block   |  ==  +---------+
-        // +-----------+   | (narrow) |      |   data  |
-        // |           |   +----------+      +---------+
-        // |           |
-        // |           |
-        // |           |
-        // +-----------+
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -2757,6 +2918,148 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext,
                 "x",
                 "/oo/testColumnTopLastOOOData.txt"
+        );
+    }
+
+    private static void testColumnTopMidOOOData0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, URISyntaxException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column v double", sqlExecutionContext);
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549920000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(1000)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(546600000000L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
+
+        // use this code to debug
+//        assertOutOfOrderDataConsistency(
+//                engine,
+//                compiler,
+//                sqlExecutionContext,
+//                "create table y as (x union all append)",
+//                "y order by ts",
+//                "insert into x select * from append",
+//                "x'"
+//        );
+
+        assertSqlResultAgainstFile(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                "/oo/testColumnTopMidOOOData.txt"
         );
     }
 
@@ -3083,7 +3386,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     private void executeWithPool(int workerCount, OutOfOrderCode runnable) throws Exception {
-        assertMemoryLeak(() -> {
+        executeVanilla(() -> {
             if (workerCount > 0) {
                 int[] affinity = new int[workerCount];
                 for (int i = 0; i < workerCount; i++) {
@@ -3117,7 +3420,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 pool.assignCleaner(Path.CLEANER);
                 pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
                 pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
+                pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus(), pool.getWorkerCount()));
                 pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
 
                 pool.start(LOG);
@@ -3156,12 +3459,15 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     }
                 };
 
+                OutOfOrderOpenColumnJob.initBuf();
                 try (
                         final CairoEngine engine = new CairoEngine(configuration);
                         final SqlCompiler compiler = new SqlCompiler(engine);
                         final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 ) {
                     runnable.run(engine, compiler, sqlExecutionContext);
+                } finally {
+                    OutOfOrderOpenColumnJob.freeBuf();
                 }
             }
         });

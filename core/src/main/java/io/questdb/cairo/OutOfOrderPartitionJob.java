@@ -65,6 +65,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     }
 
     public static void processPartition(
+            int workerId,
             CairoConfiguration configuration,
             RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
@@ -119,6 +120,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             createDirsOrFail(ff, path, configuration.getMkDirMode());
 
             publishOpenColumnTasks(
+                    workerId,
                     configuration,
                     openColumnTaskOutboundQueue,
                     openColumnPubSeq,
@@ -422,6 +424,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             }
 
             publishOpenColumnTasks(
+                    workerId,
                     configuration,
                     openColumnTaskOutboundQueue,
                     openColumnPubSeq,
@@ -468,6 +471,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     }
 
     public static void processPartition(
+            int workerId,
             CairoConfiguration configuration,
             RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
@@ -506,6 +510,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         subSeq.done(cursor);
 
         processPartition(
+                workerId,
                 configuration,
                 openColumnTaskOutboundQueue,
                 openColumnPubSeq,
@@ -583,7 +588,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long oooTimestampMax,
             long oooTimestampLo,
             long oooTimestampHi,
-            long srcDataMax,
+            long srcDataTop, long srcDataMax,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long txn,
@@ -604,7 +609,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long srcTimestampSize,
             long activeFixFd,
             long activeVarFd,
-            long activeTop,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -649,7 +653,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 isIndexed,
                 activeFixFd,
                 activeVarFd,
-                activeTop,
+                srcDataTop,
                 tableWriter,
                 doneLatch
         );
@@ -657,6 +661,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     }
 
     private static void publishOpenColumnTasks(
+            int workerId,
             CairoConfiguration configuration,
             RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
@@ -730,7 +735,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             final AppendMemory mem2 = columns.getQuick(colOffset + 1);
             final long activeFixFd;
             final long activeVarFd;
-            final long activeTop = tableWriter.getColumnTop(i);
+            final long srcDataTop;
             final long srcOooFixAddr;
             final long srcOooFixSize;
             final long srcOooVarAddr;
@@ -753,6 +758,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
             final CharSequence columnName = metadata.getColumnName(i);
             final boolean isIndexed = metadata.isColumnIndexed(i);
+            if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
+                srcDataTop = tableWriter.getColumnTop(i);
+            } else {
+                srcDataTop = -1; // column open job will have to find out if top exists and its value
+            }
+
 
             final long cursor = openColumnPubSeq.next();
             if (cursor > -1) {
@@ -778,6 +789,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         oooTimestampMax,
                         oooTimestampLo,
                         oooTimestampHi,
+                        srcDataTop,
                         srcDataMax,
                         tableFloorOfMaxTimestamp,
                         dataTimestampHi,
@@ -799,12 +811,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         srcTimestampSize,
                         activeFixFd,
                         activeVarFd,
-                        activeTop,
                         tableWriter,
                         doneLatch
                 );
             } else {
                 publishOpenColumnTaskContended(
+                        workerId,
                         configuration,
                         openColumnTaskOutboundQueue,
                         openColumnPubSeq,
@@ -833,6 +845,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         oooTimestampHi,
                         tableFloorOfMaxTimestamp,
                         dataTimestampHi,
+                        srcDataTop,
                         srcDataMax,
                         txn,
                         prefixType,
@@ -852,7 +865,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         isIndexed,
                         activeFixFd,
                         activeVarFd,
-                        activeTop,
                         tableWriter,
                         doneLatch
                 );
@@ -861,6 +873,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     }
 
     private static void publishOpenColumnTaskContended(
+            int workerId,
             CairoConfiguration configuration,
             RingQueue<OutOfOrderOpenColumnTask> openColumnTaskOutboundQueue,
             Sequence openColumnPubSeq,
@@ -889,7 +902,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long oooTimestampHi,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
-            long srcDataMax,
+            long srcDataTop, long srcDataMax,
             long txn,
             int prefixType,
             long prefixLo,
@@ -908,7 +921,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             boolean isIndexed,
             long activeFixFd,
             long activeVarFd,
-            long activeTop,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -939,7 +951,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     oooTimestampMax,
                     oooTimestampLo,
                     oooTimestampHi,
-                    srcDataMax,
+                    srcDataTop, srcDataMax,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     txn,
@@ -960,12 +972,12 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcTimestampSize,
                     activeFixFd,
                     activeVarFd,
-                    activeTop,
                     tableWriter,
                     doneLatch
             );
         } else {
             OutOfOrderOpenColumnJob.openColumn(
+                    workerId,
                     configuration,
                     copyTaskOutboundQueue,
                     copyTaskPubSeq,
@@ -989,7 +1001,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     oooTimestampMax,
                     oooTimestampLo,
                     oooTimestampHi,
-                    activeTop, srcDataMax,
+                    srcDataTop,
+                    srcDataMax,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     txn,
@@ -1018,12 +1031,13 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        processPartition(queue.get(cursor), cursor, subSeq);
+        processPartition(workerId + 1, queue.get(cursor), cursor, subSeq);
         return true;
     }
 
-    private void processPartition(OutOfOrderPartitionTask task, long cursor, Sequence subSeq) {
+    private void processPartition(int workerId, OutOfOrderPartitionTask task, long cursor, Sequence subSeq) {
         processPartition(
+                workerId,
                 configuration,
                 openColumnTaskOutboundQueue,
                 openColumnPubSeq,

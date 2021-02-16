@@ -2072,6 +2072,7 @@ public class TableWriter implements Closeable {
     }
 
     private void oooConsumeUpdPartitionSizeTasks(
+            int workerId,
             long srcOooMax,
             long oooTimestampMin,
             long oooTimestampMax,
@@ -2118,6 +2119,7 @@ public class TableWriter implements Closeable {
                     cursor = partitionSubSeq.next();
                     if (cursor > -1) {
                         OutOfOrderPartitionJob.processPartition(
+                                workerId,
                                 configuration,
                                 openColumnQueue,
                                 messageBus.getOutOfOrderOpenColumnPubSequence(),
@@ -2133,6 +2135,7 @@ public class TableWriter implements Closeable {
                         cursor = openColumnSubSeq.next();
                         if (cursor > -1) {
                             OutOfOrderOpenColumnJob.openColumn(
+                                    workerId,
                                     configuration,
                                     copyQueue,
                                     copyPubSeq,
@@ -2162,6 +2165,14 @@ public class TableWriter implements Closeable {
     }
 
     private void oooMergeParallel() {
+        final int workerId;
+        final Thread thread = Thread.currentThread();
+        if (thread instanceof Worker) {
+            workerId = ((Worker) thread).getWorkerId();
+        } else {
+            workerId = 0;
+        }
+
         final int timestampIndex = metadata.getTimestampIndex();
         try {
 
@@ -2239,6 +2250,7 @@ public class TableWriter implements Closeable {
                     oooPartitionPubSeq.done(cursor);
                 } else {
                     OutOfOrderPartitionJob.processPartition(
+                            workerId,
                             configuration,
                             messageBus.getOutOfOrderOpenColumnQueue(),
                             messageBus.getOutOfOrderOpenColumnPubSequence(),
@@ -2271,6 +2283,7 @@ public class TableWriter implements Closeable {
             }
 
             oooConsumeUpdPartitionSizeTasks(
+                    workerId,
                     srcOooMax,
                     oooTimestampMin,
                     oooTimestampMax,
