@@ -68,7 +68,6 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                backupRoot = temp.newFolder("backup").getAbsolutePath();
                 copyPartitionToBackup(src.getName(), "2020-01-01", dst.getName());
                 compiler.compile("ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01';", sqlExecutionContext);
 
@@ -107,17 +106,8 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
 
     private void copyPartitionToBackup(String src, String partitionFolder, String dst) throws IOException {
         try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(partitionFolder).$();
-             Path backup = new Path().of(configuration.getBackupRoot())) {
+             Path backup = new Path().of(configuration.getRoot())) {
 
-            int backupLen = backup.length();
-            Files.mkdir(backup.$(), DIR_MODE);
-            backup.trimTo(backupLen);
-
-            if (Files.mkdir(backup.concat(dst).$(), DIR_MODE) != 0) {
-                Assert.fail("Cannot create " + backup.toString() + ". Error: " + Os.errno());
-            }
-
-            backup.trimTo(backupLen);
             copyDirectory(p1, backup.concat(dst).concat(partitionFolder).$());
         }
     }

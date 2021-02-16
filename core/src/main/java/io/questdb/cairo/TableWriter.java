@@ -49,7 +49,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.function.LongConsumer;
 
-import static io.questdb.cairo.StatusCode.ATTACH_ROOT_NOT_CONFIGURED;
+import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TableWriter implements Closeable {
@@ -80,7 +80,6 @@ public class TableWriter implements Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
     private final Path other;
-    private final Path attachPath;
     private final LongList refs = new LongList();
     private final Row row = new Row();
     private final int rootLen;
@@ -202,9 +201,6 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.path = new Path().of(root).concat(name);
         this.other = new Path().of(root).concat(name);
-        this.attachPath = configuration.getBackupRoot() != null
-                ? new Path().of(configuration.getBackupRoot()).concat(name)
-                : null;
         this.name = Chars.toString(name);
         this.rootLen = path.length();
         if (null == messageBus) {
@@ -540,105 +536,70 @@ public class TableWriter implements Closeable {
     }
 
     public int attachPartition(long timestamp) {
-        return ATTACH_ROOT_NOT_CONFIGURED;
-//        if (attachPath == null) {
-//            LOG.error().$("directory to attach partitions from is not configured, attach statement fails");
-//            return ATTACH_ROOT_NOT_CONFIGURED;
-//        }
-//
-//        if (partitionBy == PartitionBy.NONE) {
-//            return TABLE_NOT_PARTITIONED;
-//        }
-//
-//        // Partitioned table must have a timestamp
-//        if (metadata.getTimestampIndex() < 0) {
-//            LOG.error()
-//                    .$("partitioned table does not have timestamp column [path=").$(path)
-//                    .$(']').$();
-//            return TABLE_NOT_PARTITIONED;
-//        }
-//        CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
-//        if (attachedPartitions.contains(timestamp)) {
-//            LOG.info().$("partition is already attached [path=").$(path).$(']').$();
-//        }
-//
-//        if (metadata.getSymbolMapCount() > 0) {
-//            return TABLE_HAS_SYMBOLS;
-//        }
-//
-//        int attachRootLen = attachPath.length();
-//        try {
-//            setPathForPartition(attachPath, partitionBy, timestamp);
-//            setPathForPartition(path, partitionBy, timestamp);
-//            if (ff.exists(attachPath.$())) {
-//                int renameStatus = TableUtils.moveFolder(ff, attachPath, path, true);
-//                if (renameStatus != 0) {
-//                    LOG.error().$("moving directory to attache partition failed [from=").
-//                            $(attachPath).$(", to=").$(path).$(", errno=").$(renameStatus).$();
-//                    return RENAME_DIRECTORY_OS_CALL_FAILED;
-//                }
-//
-//                // find out lo, hi ranges of partition attached
-//                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
-//                readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem8b, partitionSize);
-//                long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem8b);
-//                long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem8b + 8);
-//
-//                long nextMinTimestamp = Math.min(minPartitionTimestamp, minTimestamp);
-//                long nextMaxTimestamp = Math.max(maxPartitionTimestamp, maxTimestamp);
-//
-//                int symbolWriterCount = denseSymbolMapWriters.size();
-//                int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
-//
-//                long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
-//                txMem.putLong(TX_OFFSET_TXN, txn);
-//                Unsafe.getUnsafe().storeFence();
-//
-//                final long partitionVersion = txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1;
-//                txMem.jumpTo(getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
-//                txMem.putLong(timestamp);
-//
-//                txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionVersion);
-//                txMem.putInt(getPartitionTableSizeOffset(symbolWriterCount), partitionTableSize + 1);
-//
-//                if (nextMinTimestamp < minTimestamp) {
-//                    txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, nextMinTimestamp);
-//                    minTimestamp = nextMinTimestamp;
-//                }
-//                if (nextMaxTimestamp > maxTimestamp) {
-//                    txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, nextMaxTimestamp);
-//                    maxTimestamp = nextMinTimestamp;
-//                    transientRowCount = partitionSize;
-//                    txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
-//                }
-//
-//                // decrement row count
-//                txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT) + partitionSize);
-//
-//                // save attached partitions
-//                checkAddAttachedPartition(minPartitionTimestamp);
-//                if (saveAttachedPartitionList) {
-//                    saveAttachedPartitionsToTx(symbolWriterCount);
-//                }
-//
-//                Unsafe.getUnsafe().storeFence();
-//                // txn check
-//                txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-//                fixedRowCount += partitionSize;
-//
-//                LOG.info().$("partition attached [path=").$(path).$(']').$();
-//            } else {
-//                LOG.error().$("cannot attach missing partition [path=").$(path).$(']').$();
-//                return CANNOT_ATTACH_MISSING_PARTITION;
-//            }
-//
-//        } finally {
-//            path.trimTo(rootLen);
-//            attachPath.trimTo(attachRootLen);
-//        }
-//
-//
-//        return StatusCode.OK;
+        if (partitionBy == PartitionBy.NONE) {
+            return TABLE_NOT_PARTITIONED;
+        }
+
+        // Partitioned table must have a timestamp
+        if (metadata.getTimestampIndex() < 0) {
+            LOG.error()
+                    .$("partitioned table does not have timestamp column [path=").$(path)
+                    .$(']').$();
+            return TABLE_NOT_PARTITIONED;
+        }
+        if (inTransaction()) {
+            return CANNOT_ATTACH_IN_TRANSACTION;
+        }
+
+        CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
+        if (txFile.attachedPartitionsContains(timestamp)) {
+            LOG.info().$("partition is already attached [path=").$(path).$(']').$();
+        }
+
+        if (metadata.getSymbolMapCount() > 0) {
+            return TABLE_HAS_SYMBOLS;
+        }
+
+        try {
+            setPathForPartition(path, partitionBy, timestamp);
+            if (!ff.exists(path.$())) {
+                setPathForPartition(other, partitionBy, timestamp);
+                other.put(DETACHED_DIR_MARKER);
+
+                if (ff.exists(other.$())) {
+                    if (ff.rename(other, path)) {
+                        LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
+                    }
+                }
+            }
+
+            if (ff.exists(path.$())) {
+                // find out lo, hi ranges of partition attached
+                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
+                readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem8b, partitionSize);
+                long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem8b);
+                long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem8b + 8);
+
+                long nextMinTimestamp = Math.min(minPartitionTimestamp, txFile.getMinTimestamp());
+                long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txFile.getMaxTimestamp());
+
+                txFile.updatePartitionSizeByTimestamp(timestamp, partitionSize);
+                txFile.finishOutOfOrderUpdate(nextMinTimestamp, nextMaxTimestamp);
+                txFile.commit(defaultCommitMode, denseSymbolMapWriters);
+
+                LOG.info().$("partition attached [path=").$(path).$(']').$();
+            } else {
+                LOG.error().$("cannot attach missing partition [path=").$(path).$(']').$();
+                return CANNOT_ATTACH_MISSING_PARTITION;
+            }
+
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
+
+
+        return StatusCode.OK;
     }
 
     public void changeCacheFlag(int columnIndex, boolean cache) {
@@ -1997,7 +1958,6 @@ public class TableWriter implements Closeable {
             Misc.free(metaMem);
             Misc.free(ddlMem);
             Misc.free(other);
-            Misc.free(attachPath);
             Misc.free(tmpShuffleData);
             Misc.free(tmpShuffleIndex);
             Misc.free(timestampSearchColumn);
@@ -3629,7 +3589,6 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            // checkAddAttachedPartition(timestamp);
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
             path.trimTo(rootLen);
@@ -3872,6 +3831,7 @@ public class TableWriter implements Closeable {
             ff.iterateDir(path.$(), (pName, type) -> {
                 path.trimTo(rootLen);
                 path.concat(pName).$();
+
                 nativeLPSZ.of(pName);
                 if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR) {
                     try {
@@ -3883,15 +3843,23 @@ public class TableWriter implements Closeable {
                         // not a date?
                         // ignore exception and remove directory
                     }
-                    if (ff.rmdir(path)) {
-                        LOG.info().$("removing partition dir: ").$(path).$();
+
+                    // Do not remove, try to rename instead
+                    other.trimTo(rootLen);
+                    other.concat(pName);
+                    other.put(DETACHED_DIR_MARKER);
+                    other.$();
+
+                    if (ff.rename(path, other)) {
+                        LOG.info().$("moved partition dir: ").$(path).$(" to ").$(other).$();
                     } else {
-                        LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
+                        LOG.error().$("cannot rename: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
                     }
                 }
             });
         } finally {
             path.trimTo(rootLen);
+            other.trimTo(rootLen);
         }
     }
 

@@ -43,6 +43,7 @@ public final class TableUtils {
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
+    public static final String DETACHED_DIR_MARKER = ".detached";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_VERSION = -1;
