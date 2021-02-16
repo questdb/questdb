@@ -331,14 +331,15 @@ inline void merge_shuffle(jlong src1, jlong src2, jlong dest, jlong index, jlong
 }
 
 template<class T>
-inline void merge_shuffle_internal_top(T *src1, T *src2, T *dest, index_t *index, int64_t count, uint64_t topOffset) {
+inline void merge_shuffle_internal_top(T *src1, T *src2, T *dest, index_t *index, int64_t count, int64_t topOffset) {
     T *sources[] = {src2, src1};
-    uint64_t shifts[] = {0, topOffset / sizeof(T)};
+    int64_t sz = sizeof(T);
+    int64_t shifts[] = {0, static_cast<int64_t>(topOffset/sz)};
+    _mm_prefetch(shifts, _MM_HINT_NTA);
     for (long i = 0; i < count; i++) {
         const auto r = reinterpret_cast<uint64_t>(index[i].i);
-        const uint64_t pick = r >> 63u;
+        const int64_t pick = r >> 63u;
         const auto row = r & ~(1LLu << 63u);
-        printf("row: %llu, shift: %llu, pick: %llu\n", row, shifts[pick], pick);
         dest[i] = sources[pick][row + shifts[pick]];
     }
 }

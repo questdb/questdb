@@ -130,7 +130,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     );
                 } else if (srcDataTop > 0) {
                     final long rowCount = srcOooHi - srcOooLo + 1 + srcDataHi - srcDataLo + 1;
-                    Vect.mergeShuffleWithTop64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, rowCount, -srcDataTop * 8);
+                    Vect.mergeShuffleWithTop64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr + dstFixOffset, timestampMergeIndexAddr, rowCount, -srcDataTop * 8);
                 } else {
                     oooMergeCopyWithTop(
                             columnType,
