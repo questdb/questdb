@@ -1477,7 +1477,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 // offset 2
                 if (mergeDataLo > -1 && mergeOOOLo > -1) {
                     long oooLen = getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                    long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr + srcDataFixOffset, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
+                    long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr + srcDataFixOffset -srcDataTop * 8, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
                     dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen * Long.BYTES);
                     dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
                 } else {
