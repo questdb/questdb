@@ -208,42 +208,30 @@ public class TransactionFileReader implements Closeable {
 
     protected int findAttachedPartitionIndex(long ts) {
         ts = getPartitionLo(ts);
+        // Start from the end, usually it will be last partition searched / appended
         int hi = attachedPartitions.size() - LONGS_PER_PARTITION;
-        if (hi > -1 && ts == attachedPartitions.getQuick(hi)) {
-            return hi;
+        if (hi > -1) {
+            long last = attachedPartitions.getQuick(hi);
+            if (last < ts) {
+                return -(hi + LONGS_PER_PARTITION + 1);
+            }
+            if (last == ts) {
+                return hi;
+            }
         }
 
-        // TODO: make binary search
-        for (int i = 0; i <= hi; i += LONGS_PER_PARTITION) {
-            if (attachedPartitions.getQuick(i) > ts) {
-                return -(i + 1);
+        // attachedPartitions should be too small to do binary search, scan backwards
+        for (int i = hi - LONGS_PER_PARTITION; i > -1; i -= LONGS_PER_PARTITION) {
+            long partitionTs = attachedPartitions.getQuick(i);
+            if (partitionTs < ts) {
+                return -(i + LONGS_PER_PARTITION + 1);
             }
-            if (attachedPartitions.getQuick(i) == ts) {
+            if (partitionTs == ts) {
                 return i;
             }
         }
-        return -(attachedPartitions.size() + 1);
+        return -1;
     }
-
-//    protected int findAttachedPartitionIndex(long ts) {
-//        ts = getPartitionLo(ts);
-//        // TODO: make binary search
-//        // Start from the end, usually it will be last partition searched
-//        int hi = attachedPartitions.size() - LONGS_PER_PARTITION;
-//        if (hi > -1 && ts == attachedPartitions.getQuick(hi)) {
-//            return hi;
-//        }
-//
-//        for (int i = hi - 1; i > -1; i -= LONGS_PER_PARTITION) {
-//            if (ts > attachedPartitions.getQuick(i)) {
-//                return -(i);
-//            }
-//            if (attachedPartitions.getQuick(i) == ts) {
-//                return i;
-//            }
-//        }
-//        return -(attachedPartitions.size() + 1);
-//    }
 
     protected long getPartitionLo(long timestamp) {
         return timestampFloorMethod != null ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
