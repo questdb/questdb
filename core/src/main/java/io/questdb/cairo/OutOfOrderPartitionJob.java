@@ -764,7 +764,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 srcDataTop = -1; // column open job will have to find out if top exists and its value
             }
 
-
             final long cursor = openColumnPubSeq.next();
             if (cursor > -1) {
                 publishOpenColumnTaskHarmonized(

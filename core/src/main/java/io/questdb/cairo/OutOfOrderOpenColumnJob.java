@@ -175,7 +175,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 );
                 break;
             case OPEN_LAST_PARTITION_FOR_APPEND:
-                oooOpenLastPartitionForAppend(
+                openLastPartitionForAppend(
                         workerId,
                         configuration,
                         outboundQueue,
@@ -608,6 +608,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstFixOffset = srcDataMax << shl;
                 dFile(path.trimTo(plen), columnName);
                 dstFixFd = openRW(ff, path);
+                if (ff.length(dstFixFd) == 0) {
+                    writeColumnTop(ff, path.trimTo(plen), columnName, srcDataMax, workerId);
+                    dstFixSize -= dstFixOffset;
+                    dstFixOffset = 0;
+                    srcDataTop = srcDataMax;
+                }
                 allocateDiskSpace(ff, dstFixFd, dstFixSize);
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
 
@@ -1152,7 +1158,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         outboundPubSeq.done(cursor);
     }
 
-    private static void oooOpenLastPartitionForAppend(
+    private static void openLastPartitionForAppend(
             int workerId,
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
@@ -1419,6 +1425,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             default:
                 srcDataFixFd = -activeFixFd;
                 openFixColumnForMerge(
+                        workerId,
                         configuration,
                         outboundQueue,
                         outboundPubSeq,
@@ -1611,6 +1618,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcDataFixFd = openRW(ff, path);
                 }
                 openFixColumnForMerge(
+                        workerId,
                         configuration,
                         outboundQueue,
                         outboundPubSeq,
@@ -1665,6 +1673,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     }
 
     private static void openFixColumnForMerge(
+            int workerId,
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
             Sequence outboundPubSeq,
@@ -1747,7 +1756,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             } else {
                 // when we are shuffling "empty" space we can just reduce column top instead
                 // of moving data
-                writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, srcDataTop);
+                writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, srcDataTop, workerId);
                 srcDataFixSize = srcDataActualBytes;
                 srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize);
                 srcDataFixOffset = 0;
@@ -1998,7 +2007,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             } else {
                 // when we are shuffling "empty" space we can just reduce column top instead
                 // of moving data
-                writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, srcDataTop);
+                writeColumnTop(ff, path.trimTo(pDirNameLen), columnName, srcDataTop, workerId);
                 srcDataFixSize = srcDataActualBytes;
                 srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize);
                 srcDataFixOffset = 0;
@@ -2190,14 +2199,15 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         }
     }
 
-    private static void writeColumnTop(FilesFacade ff, Path path, CharSequence columnName, long columnTop) {
+    private static void writeColumnTop(FilesFacade ff, Path path, CharSequence columnName, long columnTop, int workerId) {
         topFile(path, columnName);
         final long fd = openRW(ff, path);
-        allocateDiskSpace(ff, fd, Long.BYTES);
-        long addr = mapRW(ff, fd, Long.BYTES);
+        final long buf = get8ByteBuf(workerId);
         //noinspection SuspiciousNameCombination
-        Unsafe.getUnsafe().putLong(addr, columnTop);
-        ff.munmap(addr, Long.BYTES);
+        Unsafe.getUnsafe().putLong(buf, columnTop);
+        allocateDiskSpace(ff, fd, Long.BYTES);
+        // todo: check for failure
+        ff.write(fd, buf, Long.BYTES, 0);
         ff.close(fd);
     }
 
