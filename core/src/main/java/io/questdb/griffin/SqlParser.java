@@ -929,13 +929,13 @@ public final class SqlParser {
         }
 
         if (isValuesKeyword(tok)) {
-            parseNextInsertRow(lexer, model);
+            parseNextValues(lexer, model);
             return model;
         }
         throw err(lexer, "'select' or 'values' expected");
     }
 
-    void parseNextInsertRow(GenericLexer lexer, InsertModel model) throws SqlException {
+    void parseNextValues(GenericLexer lexer, InsertModel model) throws SqlException {
 
         model.getColumnValues().clear();
 

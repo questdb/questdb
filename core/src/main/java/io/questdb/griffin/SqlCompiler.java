@@ -1570,141 +1570,97 @@ public class SqlCompiler implements Closeable {
         final ExpressionNode name = model.getTableName();
         tableExistsOrFail(name.position, name.token, executionContext);
 
+        final long structureVersion;
+        final RecordMetadata metadata;
+        final CharSequenceHashSet columnSet;
+        try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
+            structureVersion = reader.getVersion();
+            metadata = reader.getMetadata();
+            columnSet = model.getColumnSet();
+        }
+
+        validateColumnSet(model, metadata, columnSet);
+
+        if (model.getBindVariablesPosition() > 0) {
+            return insertBindVars(executionContext, model, name, structureVersion, metadata);
+        } else {
+            return insertNoBindVars(executionContext, model, metadata);
+        }
+
+    }
+
+    private CompiledQuery insertNoBindVars(SqlExecutionContext executionContext, InsertModel model, RecordMetadata metadata) throws SqlException {
         ObjList<Function> valueFunctions = null;
         Function timestampFunction = null;
 
-        try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), name.token, TableUtils.ANY_TABLE_VERSION)) {
-            final long structureVersion = reader.getVersion();
-            final RecordMetadata metadata = reader.getMetadata();
-            final int writerTimestampIndex = metadata.getTimestampIndex();
-            final CharSequenceHashSet columnSet = model.getColumnSet();
-            final int columnSetSize = columnSet.size();
-            listColumnFilter.clear();
-
-            if (columnSetSize > 0) {
-                valueFunctions = new ObjList<>(columnSetSize);
-                for (int i = 0; i < columnSetSize; i++) {
-                    int index = metadata.getColumnIndexQuiet(columnSet.get(i));
-                    if (index > -1) {
-                        final ExpressionNode node = model.getColumnValues().getQuick(i);
-
-                        Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
-                        assignTypeIfBindVar(metadata, index, function, executionContext.getBindVariableService());
-                        validateAndConsume(
-                                valueFunctions,
-                                metadata,
-                                index,
-                                writerTimestampIndex,
-                                function,
-                                node);
-
-                        if (index == writerTimestampIndex) {
-                            timestampFunction = function;
-                        }
-                    } else {
-                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
-                    }
-                }
-            } else {
-                final int columnCount = metadata.getColumnCount();
-                final ObjList<ExpressionNode> values = model.getColumnValues();
-                final int valueCount = values.size();
-                if (columnCount != valueCount) {
-                    throw SqlException.incorrectNumberOfValues(model.getEndOfCurrentValuesBlockPosition(), columnCount, values.size());
-                }
-                valueFunctions = new ObjList<>(columnCount);
-
-                for (int i = 0; i < columnCount; i++) {
-                    final ExpressionNode node = values.getQuick(i);
-                    Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                    assignTypeIfBindVar(metadata, i, function, executionContext.getBindVariableService());
-                    validateAndConsume(
-                            valueFunctions,
-                            metadata,
-                            i,
-                            writerTimestampIndex,
-                            function,
-                            node);
-
-                    if (i == writerTimestampIndex) {
-                        timestampFunction = function;
-                    }
-                }
-            }
-
-            // validate timestamp
-            if (writerTimestampIndex > -1 && timestampFunction == null) {
-                throw SqlException.$(0, "insert statement must populate timestamp");
-            }
-
-            if (model.getBindVariablesPosition() > 0) {
-                VirtualRecord record = new VirtualRecord(valueFunctions);
-                RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
-                return compiledQuery.ofInsertWithBindVariables(
-                        new InsertStatementImpl(engine, Chars.toString(name.token), record, copier, timestampFunction, structureVersion));
-            } else {
-                return insertNoBindVars(model, metadata, executionContext, valueFunctions, timestampFunction);
-            }
-        } catch (SqlException e) {
-            Misc.freeObjList(valueFunctions);
-            throw e;
-        }
-    }
-
-    private CompiledQuery insertNoBindVars(InsertModel model,
-                                           RecordMetadata metadata,
-                                           SqlExecutionContext executionContext,
-                                           ObjList<Function> valueFunctions,
-                                           Function timestampFunction) throws SqlException {
+        CharSequenceHashSet columnSet = model.getColumnSet();
+        int columnSetSize = model.getColumnSet().size();
+        int columnCount = columnSetSize > 0 ? columnSetSize : metadata.getColumnCount();
 
         TableWriter writer = null;
         try {
             writer = engine.getWriter(executionContext.getCairoSecurityContext(), Chars.toString(model.getTableName().token));
 
-            VirtualRecord record = new VirtualRecord(valueFunctions);
-            RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
+            boolean hasMoreRows = true;
+            boolean isFirstRow = true;
 
-            initInsertAndClear(copier, writer, timestampFunction, record, executionContext);
+            VirtualRecord record = null;
+            RecordToRowCopier copier = null;
 
-            int expectedColumnCount = model.getColumnValues().size();
-            while (model.getEndOfValuesPosition() < 0) {
+            valueFunctions = new ObjList<>(columnCount);
 
-                parser.parseNextInsertRow(lexer, model);
+            while (hasMoreRows) {
 
-                if (expectedColumnCount != model.getColumnValues().size()) {
-                    throw SqlException.incorrectNumberOfValues(model.getEndOfCurrentValuesBlockPosition(), valueFunctions.size(), model.getColumnValues().size());
+                listColumnFilter.clear();
+                if (columnCount != model.getColumnValues().size()) {
+                    throw SqlException.incorrectNumberOfValues(model.getEndOfCurrentValuesBlockPosition(), columnCount, model.getColumnValues().size());
                 }
-
-                if (model.getBindVariablesPosition() > 0){
+                if (model.getBindVariablesPosition() > 0) {
                     throw SqlException.bindVarsNotAllowed(model.getBindVariablesPosition());
                 }
 
-                int writerTimestampIndex = metadata.getTimestampIndex();
-
                 for (int i = 0; i < model.getColumnValues().size(); i++) {
-
-                    int index = model.getColumnSet().size() == 0 ? i : metadata.getColumnIndexQuiet(model.getColumnSet().get(i));
-                    ExpressionNode node = model.getColumnValues().getQuick(i);
-                    Function function = functionParser.parseFunction(model.getColumnValues().getQuick(i), GenericRecordMetadata.EMPTY, executionContext);
+                    int columnIndex = columnSetSize > 0 ? metadata.getColumnIndexQuiet(columnSet.get(i)) : i;
+                    final ExpressionNode node = model.getColumnValues().getQuick(i);
+                    Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
                     validateAndConsume(
                             valueFunctions,
                             metadata,
-                            index,
-                            writerTimestampIndex,
+                            columnIndex,
+                            metadata.getTimestampIndex(),
                             function,
                             node);
 
-                    if (i == writerTimestampIndex) {
+                    if (columnIndex == metadata.getTimestampIndex()) {
                         timestampFunction = function;
                     }
                 }
-                initInsertAndClear(copier, writer, timestampFunction, record, executionContext);
+
+                if (isFirstRow){
+                    record = new VirtualRecord(valueFunctions);
+                    copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
+                    isFirstRow = false;
+                }
+
+                Function.init(valueFunctions, null, executionContext);
+                if (timestampFunction != null) {
+                    timestampFunction.init(null, executionContext);
+                }
+
+                insertRecord(copier, writer, timestampFunction, record);
+                valueFunctions.clear();
+
+                hasMoreRows = model.getEndOfValuesPosition() < 0;
+                if (hasMoreRows) {
+                    parser.parseNextValues(lexer, model);
+                }
             }
             writer.commit();
-        } catch (SqlException | CairoException e) {
+        }
+        catch (SqlException | CairoException e) {
+            Misc.freeObjList(valueFunctions);
             if (writer != null) {
                 writer.rollback();
-                writer.close();
             }
             throw e;
         } finally {
@@ -1715,13 +1671,70 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofInsert();
     }
 
-    private static void initInsertAndClear(RecordToRowCopier copier, TableWriter writer, Function timestampFunction, VirtualRecord record,
-                                           SqlExecutionContext executionContext) {
+    private CompiledQuery insertBindVars(SqlExecutionContext executionContext, InsertModel model,
+                                         ExpressionNode name, long structureVersion, RecordMetadata metadata) throws SqlException {
+        listColumnFilter.clear();
+        ObjList<Function> valueFunctions = null;
+        Function timestampFunction = null;
 
-        Function.init(record.getFunctions(), null, executionContext);
-        if (timestampFunction != null){
-            timestampFunction.init(null, executionContext);
+        CharSequenceHashSet columnSet = model.getColumnSet();
+        int columnSetSize = model.getColumnSet().size();
+        try {
+            int columnCount = columnSetSize > 0 ? columnSetSize : metadata.getColumnCount();
+            if (columnCount != model.getColumnValues().size()) {
+                throw SqlException.incorrectNumberOfValues(model.getEndOfCurrentValuesBlockPosition(), columnCount, model.getColumnValues().size());
+            }
+
+            valueFunctions = new ObjList<>(columnCount);
+            for (int i = 0; i < model.getColumnValues().size(); i++) {
+                int index = columnSetSize > 0 ? metadata.getColumnIndexQuiet(columnSet.get(i)) : i;
+                final ExpressionNode node = model.getColumnValues().getQuick(i);
+                Function function = functionParser.parseFunction(node, GenericRecordMetadata.EMPTY, executionContext);
+                assignTypeIfBindVar(metadata, index, function, executionContext.getBindVariableService());
+                validateAndConsume(
+                        valueFunctions,
+                        metadata,
+                        index,
+                        metadata.getTimestampIndex(),
+                        function,
+                        node);
+
+                if (index == metadata.getTimestampIndex()) {
+                    timestampFunction = function;
+                }
+            }
+
+            VirtualRecord record = new VirtualRecord(valueFunctions);
+            RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
+            return compiledQuery.ofInsertWithBindVariables(
+                    new InsertStatementImpl(engine, Chars.toString(name.token), record, copier, timestampFunction, structureVersion));
         }
+        catch (SqlException e) {
+            Misc.freeObjList(valueFunctions);
+            throw e;
+        }
+    }
+
+    private void validateColumnSet(InsertModel model, RecordMetadata metadata, CharSequenceHashSet columnSet) throws SqlException {
+        int columnSetSize = columnSet.size();
+        if (columnSetSize > 0) {
+            boolean containsTimestampFunction = false;
+            for (int i = 0; i < columnSetSize; i++) {
+                int index = metadata.getColumnIndexQuiet(columnSet.get(i));
+                if (index < 0) {
+                    throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
+                }
+                if (index == metadata.getTimestampIndex()) {
+                    containsTimestampFunction = true;
+                }
+            }
+            if (metadata.getTimestampIndex() > -1 && !containsTimestampFunction) {
+                throw SqlException.$(0, "insert statement must populate timestamp");
+            }
+        }
+    }
+
+    private static void insertRecord(RecordToRowCopier copier, TableWriter writer, Function timestampFunction, VirtualRecord record) {
 
         TableWriter.Row row;
         if (timestampFunction != null) {
@@ -1729,10 +1742,8 @@ public class SqlCompiler implements Closeable {
         } else {
             row = writer.newRow();
         }
-
         copier.copy(record, row);
         row.append();
-        record.getFunctions().clear();
     }
 
     private CompiledQuery insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
@@ -1853,7 +1864,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(model.getColumnPosition(0), "value count does not match column count");
         }
 
-        if (model.getBindVariablesPosition() > 0 && model.getEndOfValuesPosition() < 0){
+        if (model.getBindVariablesPosition() > 0 && model.getEndOfValuesPosition() < 0) {
             throw SqlException.bindVarsNotAllowed(model.getBindVariablesPosition());
         }
 
