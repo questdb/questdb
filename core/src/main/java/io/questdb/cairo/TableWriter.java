@@ -575,20 +575,32 @@ public class TableWriter implements Closeable {
 
             if (ff.exists(path.$())) {
                 // find out lo, hi ranges of partition attached
-                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem16b);
-                readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem16b, partitionSize);
-                long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
-                long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
+                final long partitionSize = scanPartitionSizeByTimestampColumn(ff, path.chopZ(), timestampCol, timestamp);
+                if (partitionSize > 0) {
+                    readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem16b, partitionSize);
+                    long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
+                    long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
 
-                long nextMinTimestamp = Math.min(minPartitionTimestamp, txFile.getMinTimestamp());
-                long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txFile.getMaxTimestamp());
+                    assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
 
-                txFile.startOutOfOrderUpdate();
-                txFile.updatePartitionSizeByTimestamp(timestamp, partitionSize);
-                txFile.finishOutOfOrderUpdate(nextMinTimestamp, nextMaxTimestamp);
-                txFile.commit(defaultCommitMode, denseSymbolMapWriters);
+                    long nextMinTimestamp = Math.min(minPartitionTimestamp, txFile.getMinTimestamp());
+                    long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txFile.getMaxTimestamp());
+                    boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txFile.getMaxTimestamp());
 
-                LOG.info().$("partition attached [path=").$(path).$(']').$();
+                    txFile.startOutOfOrderUpdate();
+                    txFile.updatePartitionSizeByTimestamp(timestamp, partitionSize);
+                    txFile.finishOutOfOrderUpdate(nextMinTimestamp, nextMaxTimestamp);
+                    txFile.commit(defaultCommitMode, denseSymbolMapWriters);
+
+                    if (appendPartitionAttached) {
+                        freeColumns(true);
+                        configureAppendPosition();
+                    }
+
+                    LOG.info().$("partition attached [path=").$(path).$(']').$();
+                } else {
+                    LOG.error().$("cannot detect partition size [path=").$(path).$(",timestampColumn=").$(timestampCol).$(']').$();
+                }
             } else {
                 LOG.error().$("cannot attach missing partition [path=").$(path).$(']').$();
                 return CANNOT_ATTACH_MISSING_PARTITION;
@@ -2048,7 +2060,7 @@ public class TableWriter implements Closeable {
 
     private void freeTempMem() {
         if (tempMem16b != 0) {
-            Unsafe.free(tempMem16b, 8);
+            Unsafe.free(tempMem16b, 16);
             tempMem16b = 0;
         }
     }
@@ -2175,7 +2187,7 @@ public class TableWriter implements Closeable {
 
                 setStateForTimestamp(path, timestamp, true);
 
-                if (ff.exists(path.$())) {
+                if (txFile.attachedPartitionsContains(timestamp) && ff.exists(path.$())) {
 
                     final int plen = path.length();
 
@@ -2189,7 +2201,7 @@ public class TableWriter implements Closeable {
 
                         createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-                        final long partitionSize = TableUtils.readPartitionSize(ff, path.trimTo(plen), tempMem16b);
+                        final long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(timestamp);
                         final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
 
                         if (partitionSize > columnTop) {
@@ -2520,7 +2532,7 @@ public class TableWriter implements Closeable {
                             LOG.debug().$("reused FDs").$();
                         } else {
 
-                            dataIndexMax = readPartitionSize(ff, path, tempMem16b);
+                            dataIndexMax = txFile.getPartitionSizeByPartitionTimestamp(ooTimestampLo);
                             // out of order data is going into archive partition
                             // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                             // and "high" being newest
@@ -4027,12 +4039,8 @@ public class TableWriter implements Closeable {
                     int p = path.length();
 
                     long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(ts);
-                    if (partitionSize >= 0 && ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
-                        long sizeInsidePartitionDir = TableUtils.readLongAtOffset(ff, path, tempMem16b, 0);
-                        if (sizeInsidePartitionDir != partitionSize) {
-                            LOG.info().$("partition size is different between tx file and ").$(ARCHIVE_FILE_NAME).$(" file [name=").$(path.trimTo(p).$()).$(']').$();
-                        }
-                        actualSize += sizeInsidePartitionDir;
+                    if (partitionSize >= 0 && ff.exists(path.$())) {
+                        actualSize += partitionSize;
                         lastTimestamp = ts;
                     } else {
                         LOG.info().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
@@ -4050,7 +4058,7 @@ public class TableWriter implements Closeable {
                         path.trimTo(rootLen);
                         setStateForTimestamp(path, lastTimestamp, false);
                         int p = path.length();
-                        transientRowCount = TableUtils.readLongAtOffset(ff, path.concat(ARCHIVE_FILE_NAME).$(), tempMem16b, 0);
+                        transientRowCount = txFile.getPartitionSizeByPartitionTimestamp(lastTimestamp);
 
                         // 2. read max timestamp
                         TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()));

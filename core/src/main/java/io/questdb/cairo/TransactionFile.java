@@ -144,10 +144,8 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
 
         symbolsCount = denseSymbolMapWriters.size();
-        int attachedPositionDirtyIndex = this.attachedPositionDirtyIndex;
         saveAttachedPartitionsToTx(symbolsCount);
         if (txPartitionCount > 1) {
-            commitPendingPartitions(attachedPositionDirtyIndex);
             txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
             txPartitionCount = 1;
         }
@@ -302,29 +300,6 @@ public final class TransactionFile extends TransactionFileReader implements Clos
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
-    }
-
-    private void commitPendingPartitions(int attachedPositionDirtyIndex) {
-        int size = attachedPartitions.size();
-        for (int i = attachedPositionDirtyIndex; i < size - 1; i += LONGS_PER_PARTITION) {
-            try {
-                long partitionTimestamp = attachedPartitions.getQuick(i + PARTITION_TS_OFFSET);
-                long partitionSize = attachedPartitions.getQuick(i + PARTITION_SIZE_OFFSET);
-
-                setPathForPartition(path, partitionBy, partitionTimestamp);
-                long fd = openReadWriteOrFail(ff, path.concat(ARCHIVE_FILE_NAME).$());
-                try {
-                    Unsafe.getUnsafe().putLong(tempMem8b, partitionSize);
-                    if (ff.write(fd, tempMem8b, Long.BYTES, 0) != Long.BYTES) {
-                        throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
     }
 
     private long getTxEofOffset() {

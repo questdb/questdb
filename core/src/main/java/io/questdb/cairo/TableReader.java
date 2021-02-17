@@ -811,9 +811,12 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private long openPartition0(int partitionIndex) {
         // is this table partitioned?
-        if (timestampAddMethod != null && !txFile.attachedPartitionsContains(
-                timestampAddMethod.calculate(minTimestamp, partitionIndex))) {
-            return -1;
+        long partitionTimestamp = 0;
+        if (timestampAddMethod != null) {
+            partitionTimestamp = timestampAddMethod.calculate(minTimestamp, partitionIndex);
+            if (!txFile.attachedPartitionsContains(partitionTimestamp)) {
+                return -1;
+            }
         }
 
         if (maxTimestamp == Numbers.LONG_NaN && txFile.getTransientRowCount() == 0) {
@@ -827,7 +830,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 path.chopZ();
 
                 final boolean lastPartition = partitionIndex == partitionCount - 1;
-                final long partitionSize = lastPartition ? txFile.getTransientRowCount() : TableUtils.readPartitionSize(ff, path, tempMem8b);
+                final long partitionSize = lastPartition ? txFile.getTransientRowCount() : txFile.getPartitionSizeByPartitionTimestamp(partitionTimestamp);
 
                 LOG.info()
                         .$("open partition ").utf8(path.$())
@@ -1182,7 +1185,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     incrementPartitionCountBy(delta);
                     Path path = partitionPathGenerator.generate(this, partitionIndex);
                     try {
-                        reloadPartition(partitionIndex, TableUtils.readPartitionSize(ff, path.chopZ(), tempMem8b));
+                        reloadPartition(partitionIndex, txFile.getPartitionSizeByPartitionTimestamp(currentPartitionTimestamp));
                     } finally {
                         path.trimTo(rootLen);
                     }

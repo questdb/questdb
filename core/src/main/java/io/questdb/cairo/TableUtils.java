@@ -63,7 +63,6 @@ public final class TableUtils {
     static final DateFormat fmtDay;
     static final DateFormat fmtMonth;
     static final DateFormat fmtYear;
-    static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
@@ -623,27 +622,44 @@ public final class TableUtils {
         }
     }
 
-    static long readPartitionSize(FilesFacade ff, Path path, long tempMem8b) {
+    // Scan timestamp column and find size of the partition
+    // by finding record count in ascending order
+    static long scanPartitionSizeByTimestampColumn(FilesFacade ff, Path path, CharSequence timestampCol, long minTimestamp) {
+        long pageSize = ff.getPageSize();
         int plen = path.length();
+        long buff = Unsafe.malloc(pageSize);
+        long size = 0;
         try {
-            if (ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
+            if (!ff.exists(path.concat(timestampCol).put(FILE_SUFFIX_D).$())) {
+                return -1;
+            }
+            long fd = ff.openRO(path);
+            if (fd == -1) {
+                return -1;
+            }
+
+            try {
+                long read;
+                long fileRead = 0;
+                while ((read = ff.read(fd, buff, pageSize, fileRead)) > 0) {
+                    long lo = buff;
+                    long hi = buff + read;
+                    fileRead += read;
+
+                    long ts = minTimestamp;
+                    for (long i = lo; i < hi && ts >= minTimestamp; ts = Unsafe.getUnsafe().getLong(i), i += Long.BYTES) {
+                        minTimestamp = ts;
+                        size++;
+                    }
                 }
 
-                try {
-                    if (ff.read(fd, tempMem8b, 8, 0) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
-                    }
-                    return Unsafe.getUnsafe().getLong(tempMem8b);
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
+                return size;
+            } finally {
+                ff.close(fd);
             }
+
         } finally {
+            Unsafe.free(buff, pageSize);
             path.trimTo(plen);
         }
     }

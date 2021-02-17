@@ -51,7 +51,6 @@ public class AbstractCairoTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
-    protected static CharSequence backupRoot;
     protected static long currentMicros = -1;
     protected static MicrosecondClock testMicrosClock =
             () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
@@ -65,11 +64,6 @@ public class AbstractCairoTest {
         LOG.info().$("begin").$();
         root = temp.newFolder("dbRoot").getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public CharSequence getBackupRoot() {
-                return backupRoot;
-            }
-
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 return testMicrosClock;

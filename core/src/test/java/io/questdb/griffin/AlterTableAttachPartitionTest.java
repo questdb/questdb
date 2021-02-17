@@ -24,10 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
@@ -48,9 +46,9 @@ import java.io.IOException;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 
-public class AlterTableAttachPartition extends AbstractGriffinTest {
-    private final static Log LOG = LogFactory.getLog(AlterTableAttachPartition.class);
-    private int DIR_MODE = configuration.getMkDirMode();
+public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
+    private final static Log LOG = LogFactory.getLog(AlterTableAttachPartitionTest.class);
+    private final int DIR_MODE = configuration.getMkDirMode();
 
     @Test
     public void testAttachPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
@@ -74,6 +72,26 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
                 TestUtils.assertEquals(
                         "cnt\n" +
                                 "0\n",
+                        executeSql("with " +
+                                "t2 as (select 1 as id, count() as cnt from dst)\n" +
+                                ", t1 as (select 1 as id, count() as cnt from src WHERE ts='2020-01-01')\n" +
+                                "select t1.cnt - t2.cnt as cnt\n" +
+                                "from t2 cross join t1"
+                        )
+                );
+
+                // Check table is writable after partition attach
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
+                    var row = writer.newRow(Timestamps.toMicros(2020, 1, 1, 23, 59) + 59 * 1000L * 1000L);
+                    row.putLong(0, 1L);
+                    row.putInt(1, 1);
+                    row.append();
+                    writer.commit();
+                }
+
+                TestUtils.assertEquals(
+                        "cnt\n" +
+                                "-1\n",
                         executeSql("with " +
                                 "t2 as (select 1 as id, count() as cnt from dst)\n" +
                                 ", t1 as (select 1 as id, count() as cnt from src WHERE ts='2020-01-01')\n" +
@@ -117,25 +135,25 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
         long increment = totalRows > 0 ? Math.max((Timestamps.addDays(fromTimestamp, partitionCount - 1) - fromTimestamp) / totalRows, 1) : 0;
 
         StringBuilder sql = new StringBuilder();
-        sql.append("create table " + tableModel.getName() + " as (" + Misc.EOL + "select" + Misc.EOL);
+        sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
             int colType = tableModel.getColumnType(i);
             CharSequence colName = tableModel.getColumnName(i);
             switch (colType) {
                 case ColumnType.INT:
-                    sql.append("cast(x as int) " + colName);
+                    sql.append("cast(x as int) ").append(colName);
                     break;
                 case ColumnType.STRING:
-                    sql.append("CAST(x as STRING) " + colName);
+                    sql.append("CAST(x as STRING) ").append(colName);
                     break;
                 case ColumnType.LONG:
-                    sql.append("x " + colName);
+                    sql.append("x ").append(colName);
                     break;
                 case ColumnType.DOUBLE:
-                    sql.append("x / 1000.0 " + colName);
+                    sql.append("x / 1000.0 ").append(colName);
                     break;
                 case ColumnType.TIMESTAMP:
-                    sql.append("CAST(" + fromTimestamp + "L AS TIMESTAMP) + x * " + increment + "  " + colName);
+                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
                     break;
                 default:
                     throw new UnsupportedOperationException();
@@ -145,11 +163,11 @@ public class AlterTableAttachPartition extends AbstractGriffinTest {
             }
         }
 
-        sql.append(Misc.EOL + "from long_sequence(" + totalRows + ")");
+        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
         sql.append(")" + Misc.EOL);
         if (tableModel.getTimestampIndex() != -1) {
             CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
-            sql.append(" timestamp(" + timestampCol + ") Partition By DAY");
+            sql.append(" timestamp(").append(timestampCol).append(") Partition By DAY");
         }
         compiler.compile(sql.toString(), sqlExecutionContext);
     }
