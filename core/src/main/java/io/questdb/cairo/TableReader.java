@@ -68,10 +68,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountBits;
-    private long structVersion;
-    private long dataVersion;
     private long prevStructVersion;
-    private long partitionTableVersion;
     private long prevPartitionTableVersion;
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
@@ -81,7 +78,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long prevMinTimestamp = Long.MAX_VALUE;
     private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
-    private long transientRowCount;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
@@ -131,8 +127,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             txFile.initPartitionBy(timestampFloorMethod, partitionBy);
             readTxnSlow();
             openSymbolMaps();
-            this.prevStructVersion = structVersion;
-            this.prevPartitionTableVersion = partitionTableVersion;
+            this.prevStructVersion = this.txFile.getStructureVersion();
+            this.prevPartitionTableVersion = this.txFile.getPartitionTableVersion();
             if (metadata.getPartitionBy() == PartitionBy.NONE) {
                 checkDefaultPartitionExistsAndUpdatePartitionCount();
             } else {
@@ -259,7 +255,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public long getDataVersion() {
-        return dataVersion;
+        return this.txFile.getDataVersion();
     }
 
     public long getMaxTimestamp() {
@@ -304,7 +300,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public long getVersion() {
-        return this.structVersion;
+        return this.txFile.getStructureVersion();
     }
 
     public boolean isOpen() {
@@ -545,7 +541,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void checkDefaultPartitionExistsAndUpdatePartitionCount() {
-        if (maxTimestamp == Numbers.LONG_NaN && transientRowCount == 0) {
+        if (maxTimestamp == Numbers.LONG_NaN && txFile.getTransientRowCount() == 0) {
             partitionCount = 0;
         } else {
             Path path = pathGenDefault();
@@ -754,7 +750,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     long getTransientRowCount() {
-        return transientRowCount;
+        return txFile.getTransientRowCount();
     }
 
     long getTxn() {
@@ -820,7 +816,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             return -1;
         }
 
-        if (maxTimestamp == Numbers.LONG_NaN && transientRowCount == 0) {
+        if (maxTimestamp == Numbers.LONG_NaN && txFile.getTransientRowCount() == 0) {
             return -1;
         }
 
@@ -831,12 +827,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                 path.chopZ();
 
                 final boolean lastPartition = partitionIndex == partitionCount - 1;
-                final long partitionSize = lastPartition ? transientRowCount : TableUtils.readPartitionSize(ff, path, tempMem8b);
+                final long partitionSize = lastPartition ? txFile.getTransientRowCount() : TableUtils.readPartitionSize(ff, path, tempMem8b);
 
                 LOG.info()
                         .$("open partition ").utf8(path.$())
                         .$(" [rowCount=").$(partitionSize)
-                        .$(", transientRowCount=").$(transientRowCount)
+                        .$(", transientRowCount=").$(txFile.getTransientRowCount())
                         .$(", partitionIndex=").$(partitionIndex)
                         .$(", partitionCount=").$(partitionCount)
                         .$(']').$();
@@ -949,8 +945,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (txn == txFile.getTxn()) {
                     // good, very stable, congrats
                     this.txn = txn;
-                    this.transientRowCount = txFile.getTransientRowCount();
-                    this.rowCount = txFile.getFixedRowCount() + transientRowCount;
+                    this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
                     this.prevMinTimestamp = this.minTimestamp;
                     if (txFile.getMinTimestamp() == Long.MAX_VALUE) {
                         this.minTimestamp = Long.MAX_VALUE;
@@ -958,12 +953,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                         this.minTimestamp = timestampFloorMethod.floor(txFile.getMinTimestamp());
                     }
                     this.maxTimestamp = txFile.getMaxTimestamp();
-                    this.structVersion = txFile.getStructureVersion();
-                    this.dataVersion = txFile.getDataVersion();
-                    this.partitionTableVersion = txFile.getPartitionTableVersion();
                     LOG.info()
                             .$("new transaction [txn=").$(txn)
-                            .$(", transientRowCount=").$(transientRowCount)
+                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", fixedRowCount=").$(txFile.getFixedRowCount())
                             .$(", minTimestamp=").$ts(this.minTimestamp)
                             .$(", maxTimestamp=").$ts(this.maxTimestamp)
@@ -1079,9 +1071,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private boolean reloadInitialNonPartitioned() {
-        final long dataVersion = this.dataVersion;
-        final long structVersion = this.structVersion;
-        final long partitionTableVersion = this.partitionTableVersion;
+        final long dataVersion = this.txFile.getDataVersion();
+        final long structVersion = this.txFile.getStructureVersion();
+        final long partitionTableVersion = this.txFile.getPartitionTableVersion();
 
         if (readTxn()) {
             reloadStruct();
@@ -1093,9 +1085,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 return true;
             }
         }
-        return dataVersion != this.dataVersion
-                || structVersion != this.structVersion
-                || partitionTableVersion != this.partitionTableVersion;
+        return dataVersion != this.txFile.getDataVersion()
+                || structVersion != this.txFile.getStructureVersion()
+                || partitionTableVersion != this.txFile.getPartitionTableVersion();
     }
 
     private boolean reloadInitialPartitioned() {
@@ -1164,10 +1156,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean reloadPartitioned() {
         assert timestampFloorMethod != null;
         final long currentPartitionTimestamp = maxTimestamp == Long.MIN_VALUE ? maxTimestamp : floorToPartitionTimestamp(maxTimestamp);
-        final long dataVersion = this.dataVersion;
+        final long dataVersion = this.txFile.getDataVersion();
         if (readTxn()) {
             reloadStruct();
-            if (this.dataVersion != dataVersion) {
+            if (this.txFile.getDataVersion() != dataVersion) {
                 applyTruncate();
                 return true;
             }
@@ -1195,7 +1187,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         path.trimTo(rootLen);
                     }
                 } else {
-                    reloadPartition(partitionIndex, transientRowCount);
+                    reloadPartition(partitionIndex, txFile.getTransientRowCount());
                 }
                 return true;
             }
@@ -1213,21 +1205,21 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void reloadStruct() {
         // fast path
-        if (this.prevStructVersion == this.structVersion && this.prevPartitionTableVersion == this.partitionTableVersion) {
+        if (this.prevStructVersion == this.txFile.getStructureVersion() && this.prevPartitionTableVersion == this.txFile.getPartitionTableVersion()) {
             return;
         }
         reloadStructSlow();
     }
 
     private void reloadStructSlow() {
-        if (this.prevStructVersion != this.structVersion) {
+        if (this.prevStructVersion != this.txFile.getStructureVersion()) {
             reloadColumnChanges();
-            this.prevStructVersion = this.structVersion;
+            this.prevStructVersion = this.txFile.getStructureVersion();
         }
 
-        if (this.prevPartitionTableVersion != this.partitionTableVersion) {
+        if (this.prevPartitionTableVersion != this.txFile.getPartitionTableVersion()) {
             closeRemovedPartitions();
-            this.prevPartitionTableVersion = partitionTableVersion;
+            this.prevPartitionTableVersion = this.txFile.getPartitionTableVersion();
         }
     }
 

@@ -73,7 +73,11 @@ public class TransactionFileReader implements Closeable {
     }
 
     public long getAttachedPartitionTimestamp(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_PARTITION);
+        return attachedPartitions.getQuick(i * LONGS_PER_PARTITION + PARTITION_TS_OFFSET);
+    }
+
+    public long getPartitionSize(int i) {
+        return attachedPartitions.getQuick(i * LONGS_PER_PARTITION + PARTITION_SIZE_OFFSET);
     }
 
     public int getAttachedPartitionsSize() {
