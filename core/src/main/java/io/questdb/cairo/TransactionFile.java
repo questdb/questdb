@@ -61,10 +61,6 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         this.transientRowCount += nRowsAdded;
     }
 
-    public void appendRowNoTimestamp(long nRowsAdded) {
-        transientRowCount += nRowsAdded;
-    }
-
     public void bumpStructureVersion(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
@@ -115,6 +111,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
     @Override
     public void close() {
         txMem = Misc.free(txMem);
+        path = Misc.free(path);
         Unsafe.free(tempMem8b, Long.BYTES);
     }
 
@@ -144,6 +141,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         Unsafe.getUnsafe().storeFence();
 
         txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
+        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
 
         symbolsCount = denseSymbolMapWriters.size();
         int attachedPositionDirtyIndex = this.attachedPositionDirtyIndex;
@@ -202,31 +200,6 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         txPartitionCount = 1;
     }
 
-    public void removePartition(long timestamp, long nextMinTimestamp) {
-        final long partitionSize = getPartitionSizeByPartitionTimestamp(timestamp);
-        final long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
-        txMem.putLong(TX_OFFSET_TXN, txn);
-        Unsafe.getUnsafe().storeFence();
-        final long partitionVersion = txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1;
-        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionVersion);
-
-        if (nextMinTimestamp != minTimestamp) {
-            txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, nextMinTimestamp);
-            minTimestamp = nextMinTimestamp;
-        }
-
-        // decrement row count
-        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT) - partitionSize);
-
-        removeAttachedPartitions(timestamp);
-        saveAttachedPartitionsToTx(symbolsCount);
-
-        Unsafe.getUnsafe().storeFence();
-        // txn check
-        txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-        fixedRowCount -= partitionSize;
-    }
-
     public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp) {
         long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
         txMem.putLong(TX_OFFSET_TXN, txn);
@@ -282,6 +255,12 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         transientRowCount = 0;
 
         txPartitionCount++;
+    }
+
+    public void startOutOfOrderUpdate() {
+        if (maxTimestamp != Long.MIN_VALUE) {
+            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
+        }
     }
 
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
@@ -356,15 +335,17 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         attachedPartitions.truncateTo(attachedPartitions.size() - LONGS_PER_PARTITION);
     }
 
-    private void removeAttachedPartitions(long timestamp) {
-        int index = findAttachedPartitionIndex(timestamp);
-        assert index >= 0;
-        int size = attachedPartitions.size();
-        if (size > index + 1) {
-            attachedPartitions.arrayCopy(index + LONGS_PER_PARTITION, index, size - index - LONGS_PER_PARTITION);
-            attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
+    public void removeAttachedPartitions(long timestamp) {
+        int index = findAttachedPartitionIndex(getPartitionLo(timestamp));
+        if (index > -1) {
+            int size = attachedPartitions.size();
+            if (index + LONGS_PER_PARTITION < size) {
+                attachedPartitions.arrayCopy(index + LONGS_PER_PARTITION, index, size - index - LONGS_PER_PARTITION);
+                attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
+            }
+            attachedPartitions.truncateTo(size - LONGS_PER_PARTITION);
+            partitionTableVersion++;
         }
-        attachedPartitions.truncateTo(size - LONGS_PER_PARTITION);
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {

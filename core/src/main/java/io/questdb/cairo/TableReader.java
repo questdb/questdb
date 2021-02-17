@@ -128,7 +128,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     timestampAddMethod = null;
                     break;
             }
-            txFile.initPartitionFloor(timestampFloorMethod, partitionBy);
+            txFile.initPartitionBy(timestampFloorMethod, partitionBy);
             readTxnSlow();
             openSymbolMaps();
             this.prevStructVersion = structVersion;

@@ -42,9 +42,9 @@ public class TransactionFileReader implements Closeable {
     protected static final int PARTITION_TX_OFFSET = 2;
 
     protected final FilesFacade ff;
-    protected final Path path;
     protected final int rootLen;
     protected final LongList attachedPartitions = new LongList();
+    protected Path path;
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
@@ -56,18 +56,20 @@ public class TransactionFileReader implements Closeable {
     protected int partitionBy = -1;
     private VirtualMemory roTxMem;
     private ReadOnlyMemory readOnlyTxMem;
-    private long partitionTableVersion;
+    protected long partitionTableVersion;
     private Timestamps.TimestampFloorMethod timestampFloorMethod;
 
     public TransactionFileReader(FilesFacade ff, Path path) {
         this.ff = ff;
-        this.path = path;
+        this.path = new Path(path.length() + 10);
+        this.path.put(path);
         this.rootLen = path.length();
     }
 
     @Override
     public void close() {
         roTxMem = Misc.free(roTxMem);
+        path = Misc.free(path);
     }
 
     public long getAttachedPartitionTimestamp(int i) {
@@ -176,7 +178,7 @@ public class TransactionFileReader implements Closeable {
         return findAttachedPartitionIndex(ts) >= 0;
     }
 
-    public void initPartitionFloor(Timestamps.TimestampFloorMethod timestampFloorMethod, int partitionBy) {
+    public void initPartitionBy(Timestamps.TimestampFloorMethod timestampFloorMethod, int partitionBy) {
         assert this.timestampFloorMethod == null;
         this.timestampFloorMethod = timestampFloorMethod;
         this.partitionBy = partitionBy;

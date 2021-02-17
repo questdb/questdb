@@ -281,7 +281,7 @@ public class TableWriter implements Closeable {
                     partitionDirFmt = null;
                     break;
             }
-            this.txFile.initPartitionFloor(timestampFloorMethod, partitionBy);
+            this.txFile.initPartitionBy(timestampFloorMethod, partitionBy);
 
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
@@ -583,6 +583,7 @@ public class TableWriter implements Closeable {
                 long nextMinTimestamp = Math.min(minPartitionTimestamp, txFile.getMinTimestamp());
                 long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txFile.getMaxTimestamp());
 
+                txFile.startOutOfOrderUpdate();
                 txFile.updatePartitionSizeByTimestamp(timestamp, partitionSize);
                 txFile.finishOutOfOrderUpdate(nextMinTimestamp, nextMaxTimestamp);
                 txFile.commit(defaultCommitMode, denseSymbolMapWriters);
@@ -866,7 +867,11 @@ public class TableWriter implements Closeable {
                 if (timestamp == txFile.getAttachedPartitionTimestamp(0)) {
                     nextMinTimestamp = readMinTimestamp(txFile.getAttachedPartitionTimestamp(1));
                 }
-                txFile.removePartition(timestamp, nextMinTimestamp);
+                txFile.startOutOfOrderUpdate();
+                txFile.removeAttachedPartitions(timestamp);
+                txFile.setMinTimestamp(nextMinTimestamp);
+                txFile.finishOutOfOrderUpdate(nextMinTimestamp, txFile.getMaxTimestamp());
+                txFile.commit(defaultCommitMode, denseSymbolMapWriters);
 
                 if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
                     LOG.info().$("partition directory delete is postponed [path=").$(path).$(']').$();
@@ -1525,7 +1530,6 @@ public class TableWriter implements Closeable {
         }
 
         masterRef++;
-        txFile.append();
         commit();
 
         setAppendPosition(txFile.getTransientRowCount(), true);
@@ -4625,6 +4629,7 @@ public class TableWriter implements Closeable {
                     LOG.info().$("out-of-order").$();
                     // todo: do we need this?
                     TableWriter.this.transientRowCountBeforeOutOfOrder = TableWriter.this.txFile.getTransientRowCount();
+                    txFile.startOutOfOrderUpdate();
                     openMergePartition();
                     TableWriter.this.mergeRowCount = 0;
                     assert timestampMergeMem != null;
