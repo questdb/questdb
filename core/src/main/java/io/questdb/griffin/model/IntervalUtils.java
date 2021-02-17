@@ -586,7 +586,25 @@ public final class IntervalUtils {
         intervals.truncateTo(writeIndex);
     }
 
-    static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
+    public static boolean isInIntervals(LongList intervals, long timestamp) {
+        int left = 0;
+        int right = intervals.size() / 2 - 1;
+        while (left <= right) {
+            int mid = (left + right) / 2;
+            long lo = getEncodedPeriodLo(intervals, mid * 2);
+            long hi = getEncodedPeriodHi(intervals, mid * 2);
+            if (lo > timestamp) {
+                right = mid - 1;
+            } else if (hi < timestamp) {
+                left = mid + 1;
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out, short operation) throws SqlException {
         int writeIndex = out.size();
         int[] pos = new int[3];
         int p = -1;

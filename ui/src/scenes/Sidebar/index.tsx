@@ -85,7 +85,7 @@ const Sidebar = () => {
     <Wrapper>
       <Logo>
         <a href="https://questdb.io" rel="noreferrer" target="_blank">
-          <img alt="QuestDB Logo" height="30px" src="/assets/favicon.png" />
+          <img alt="QuestDB Logo" height="26" src="/assets/favicon.svg" />
         </a>
       </Logo>
 

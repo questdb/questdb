@@ -373,7 +373,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.keepAliveHeader = null;
             }
 
-            final String publicDirectory = getString(properties, env, "http.static.pubic.directory", "public");
+            final String publicDirectory = getString(properties, env, "http.static.public.directory", "public");
             // translate public directory into absolute path
             // this will generate some garbage, but this is ok - we just doing this once on startup
             if (new File(publicDirectory).isAbsolute()) {

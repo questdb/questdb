@@ -34,13 +34,10 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalOperation;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
-import static io.questdb.std.datetime.microtime.TimestampFormatUtils.TIMESTAMP_FORMAT_MIN_LENGTH;
+import static io.questdb.griffin.model.IntervalUtils.*;
 
 public class EqTimestampStrFunctionFactory implements FunctionFactory {
 
@@ -58,36 +55,24 @@ public class EqTimestampStrFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function rightFn = args.getQuick(1);
         if (rightFn.isConstant()) {
-            try {
-                return new EqTimestampStrConstantFunction(position, args.getQuick(0), rightFn.getStr(null));
-            } catch (NumericException e) {
-                throw SqlException.$(position, "could not parse timestamp [value='").put(rightFn.getStr(null)).put("']");
-            }
+            return new EqTimestampStrConstantFunction(position, args.getQuick(0), rightFn.getStr(null), rightFn.getPosition());
         }
         return new EqTimestampStrFunction(position, args.getQuick(0), rightFn);
     }
 
     private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final Function left;
-        private final long beginning;
-        private final long end;
+        private final LongList intervals = new LongList();
 
-        public EqTimestampStrConstantFunction(int position, Function left, CharSequence right) throws NumericException {
+        public EqTimestampStrConstantFunction(int position, Function left, CharSequence right, int rightPosition) throws SqlException {
             super(position);
             this.left = left;
-            if (right.length() >= TIMESTAMP_FORMAT_MIN_LENGTH) {
-                beginning = end = TimestampFormatUtils.parseTimestamp(right);
-            } else {
-                LongList out = new LongList();
-                IntervalUtils.parseInterval(right, 0, right.length(), IntervalOperation.INTERSECT, out);
-                beginning = IntervalUtils.getEncodedPeriodLo(out, 0);
-                end = IntervalUtils.getEncodedPeriodHi(out, 0);
-            }
+            parseAndApplyIntervalEx(right, intervals, rightPosition);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != isTimestampInRange(left.getTimestamp(rec), beginning, end);
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
         }
 
         @Override
@@ -110,21 +95,13 @@ public class EqTimestampStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             CharSequence timestampAsString = right.getStr(rec);
+            intervals.clear();
             try {
-                intervals.clear();
-                long beginning;
-                long end;
-                if (timestampAsString.length() >= TIMESTAMP_FORMAT_MIN_LENGTH) {
-                    beginning = end = TimestampFormatUtils.parseTimestamp(timestampAsString);
-                } else {
-                    IntervalUtils.parseInterval(timestampAsString, 0, timestampAsString.length(), IntervalOperation.INTERSECT, intervals);
-                    beginning = IntervalUtils.getEncodedPeriodLo(intervals, 0);
-                    end = IntervalUtils.getEncodedPeriodHi(intervals, 0);
-                }
-                return negated != isTimestampInRange(left.getTimestamp(rec), beginning, end);
-            } catch (NumericException e) {
+                parseAndApplyIntervalEx(timestampAsString, intervals, right.getPosition());
+            } catch (SqlException e) {
                 return false;
             }
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
         }
 
         @Override
@@ -138,7 +115,8 @@ public class EqTimestampStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static boolean isTimestampInRange(long timestamp, long begin, long end) {
-        return timestamp >= begin && timestamp <= end;
+    private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
+        parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+        applyLastEncodedIntervalEx(out);
     }
 }

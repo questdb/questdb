@@ -1012,6 +1012,36 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilterOnSubQueryIndexedAndFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
+        final String expected = "b\tk\ta\n" +
+                "HYRX\t1970-01-07T22:40:00.000000Z\t97.71103146051203\n" +
+                "HYRX\t1970-01-11T10:00:00.000000Z\t12.026122412833129\n";
+
+        assertQuery(expected,
+                "select b, k, a from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and b = 'HYRX'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'HYRX'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "HYRX\t1971-01-01T00:00:00.000000Z\t56.594291398612405\n");
+    }
+
+    @Test
     public void testFilterOnSubQueryIndexedDeferred() throws Exception {
 
         assertQuery(null,
