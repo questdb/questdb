@@ -88,6 +88,7 @@ public class TableWriter implements Closeable {
     private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
     private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
     private final RowFunction noPartitionFunction = new NoPartitionFunction();
+    private final RowFunction noTimestampFunction = new NoTimestampFunction();
     private final RowFunction mergePartitionFunction = new MergePartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
@@ -1552,7 +1553,11 @@ public class TableWriter implements Closeable {
         if (this.txFile.getMaxTimestamp() > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.txFile.getMaxTimestamp());
             if (partitionBy == PartitionBy.NONE) {
-                rowFunction = noPartitionFunction;
+                if (metadata.getTimestampIndex() < 0) {
+                    rowFunction = noTimestampFunction;
+                } else {
+                    rowFunction = noPartitionFunction;
+                }
             } else {
                 rowFunction = switchPartitionFunction;
             }
@@ -4607,6 +4612,14 @@ public class TableWriter implements Closeable {
                 return row;
             }
             throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+        }
+    }
+
+    private class NoTimestampFunction implements RowFunction {
+        @Override
+        public Row newRow(long timestamp) {
+            bumpMasterRef();
+            return row;
         }
     }
 

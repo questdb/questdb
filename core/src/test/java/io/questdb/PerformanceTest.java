@@ -85,8 +85,7 @@ public class PerformanceTest extends AbstractCairoTest {
             }
             result = System.nanoTime() - t;
         }
-
-        LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
+        long appendDuration = result / count;
 
         try (TableReader reader = new TableReader(configuration, "quote")) {
             for (int i = -count; i < count; i++) {
@@ -109,6 +108,8 @@ public class PerformanceTest extends AbstractCairoTest {
             }
             result = (System.nanoTime() - t) / count;
         }
+
+        LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(appendDuration)).$("ms").$();
         LOG.info().$("Cairo read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result)).$("ms").$();
     }
 }

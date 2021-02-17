@@ -1771,7 +1771,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testOutOfOrderAfterReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+            CairoTestUtils.createAllTableWithTimestamp(configuration, PartitionBy.NONE);
             Rnd rnd = new Rnd();
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
             testAppendNulls(rnd, ts);
