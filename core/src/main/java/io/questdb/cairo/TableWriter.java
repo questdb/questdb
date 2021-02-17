@@ -2539,7 +2539,7 @@ public class TableWriter implements Closeable {
             if (srcOooPartitionHi + 1 >= srcOooMax) {
                 // no more out of order data and we just pre-pended data to existing
                 // partitions
-                this.minTimestamp = oooTimestampMin;
+                this.minTimestamp = Math.min(oooTimestampMin, this.minTimestamp);
                 // when we exit here we need to rollback transientRowCount we've been incrementing
                 // while adding out-of-order data
                 this.transientRowCount = this.transientRowCountBeforeOutOfOrder;
