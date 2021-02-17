@@ -129,7 +129,7 @@ public class TableWriter implements Closeable {
     private long partitionHi;
     private long masterRef = 0;
     private boolean removeDirOnCancelRow = true;
-    private long tempMem8b = Unsafe.malloc(8);
+    private long tempMem16b = Unsafe.malloc(16);
     private int metaSwapIndex;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFrommTodoWriteFailure;
@@ -575,10 +575,10 @@ public class TableWriter implements Closeable {
 
             if (ff.exists(path.$())) {
                 // find out lo, hi ranges of partition attached
-                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem8b);
-                readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem8b, partitionSize);
-                long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem8b);
-                long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem8b + 8);
+                final long partitionSize = readPartitionSize(ff, path.chopZ(), tempMem16b);
+                readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem16b, partitionSize);
+                long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
+                long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
 
                 long nextMinTimestamp = Math.min(minPartitionTimestamp, txFile.getMinTimestamp());
                 long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txFile.getMaxTimestamp());
@@ -701,7 +701,7 @@ public class TableWriter implements Closeable {
     }
 
     public boolean isOpen() {
-        return tempMem8b != 0;
+        return tempMem16b != 0;
     }
 
     public TableBlockWriter newBlock() {
@@ -2047,9 +2047,9 @@ public class TableWriter implements Closeable {
     }
 
     private void freeTempMem() {
-        if (tempMem8b != 0) {
-            Unsafe.free(tempMem8b, 8);
-            tempMem8b = 0;
+        if (tempMem16b != 0) {
+            Unsafe.free(tempMem16b, 8);
+            tempMem16b = 0;
         }
     }
 
@@ -2065,11 +2065,11 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(Os.errno()).put("could not open [file=").put(other).put(']');
                 }
                 try {
-                    long n = ff.read(fd, tempMem8b, Long.BYTES, 0);
+                    long n = ff.read(fd, tempMem16b, Long.BYTES, 0);
                     if (n != Long.BYTES) {
                         throw CairoException.instance(Os.errno()).put("could not read timestamp value");
                     }
-                    return Unsafe.getUnsafe().getLong(tempMem8b);
+                    return Unsafe.getUnsafe().getLong(tempMem16b);
                 } finally {
                     ff.close(fd);
                 }
@@ -2189,8 +2189,8 @@ public class TableWriter implements Closeable {
 
                         createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-                        final long partitionSize = TableUtils.readPartitionSize(ff, path.trimTo(plen), tempMem8b);
-                        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem8b);
+                        final long partitionSize = TableUtils.readPartitionSize(ff, path.trimTo(plen), tempMem16b);
+                        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
 
                         if (partitionSize > columnTop) {
                             TableUtils.dFile(path.trimTo(plen), columnName);
@@ -2214,7 +2214,7 @@ public class TableWriter implements Closeable {
 
         createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem8b);
+        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b);
 
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
@@ -2520,7 +2520,7 @@ public class TableWriter implements Closeable {
                             LOG.debug().$("reused FDs").$();
                         } else {
 
-                            dataIndexMax = readPartitionSize(ff, path, tempMem8b);
+                            dataIndexMax = readPartitionSize(ff, path, tempMem16b);
                             // out of order data is going into archive partition
                             // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                             // and "high" being newest
@@ -2534,18 +2534,18 @@ public class TableWriter implements Closeable {
                             }
 
                             // read bottom of file
-                            if (ff.read(timestampFd, tempMem8b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
+                            if (ff.read(timestampFd, tempMem16b, Long.BYTES, (dataIndexMax - 1) * Long.BYTES) != Long.BYTES) {
                                 throw CairoException.instance(ff.errno()).put("could not read bottom 8 bytes from `").put(path).put('`');
                             }
-                            dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem8b);
+                            dataTimestampHi = Unsafe.getUnsafe().getLong(tempMem16b);
                         }
 
                         // read the top value
-                        if (ff.read(Math.abs(timestampFd), tempMem8b, Long.BYTES, 0) != Long.BYTES) {
+                        if (ff.read(Math.abs(timestampFd), tempMem16b, Long.BYTES, 0) != Long.BYTES) {
                             throw CairoException.instance(ff.errno()).put("could not read top 8 bytes from `").put(path).put('`');
                         }
 
-                        dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem8b);
+                        dataTimestampLo = Unsafe.getUnsafe().getLong(tempMem16b);
 
                         LOG.debug()
                                 .$("read data top [dataTimestampLo=").microTime(dataTimestampLo)
@@ -3583,7 +3583,7 @@ public class TableWriter implements Closeable {
                 }
 
                 openColumnFiles(name, i, plen);
-                columnTop = readColumnTop(ff, path, name, plen, tempMem8b);
+                columnTop = readColumnTop(ff, path, name, plen, tempMem16b);
                 columnTops.extendAndSet(i, columnTop);
 
                 if (indexed) {
@@ -3629,13 +3629,13 @@ public class TableWriter implements Closeable {
                 if (todoFd == -1) {
                     throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
                 }
-                long len = ff.read(todoFd, tempMem8b, 8, 0);
+                long len = ff.read(todoFd, tempMem16b, 8, 0);
                 ff.close(todoFd);
                 if (len != 8L) {
                     LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring. [file=").$(path).$(']').$();
                     return -1;
                 }
-                return Unsafe.getUnsafe().getLong(tempMem8b);
+                return Unsafe.getUnsafe().getLong(tempMem16b);
             }
             return -1;
         } finally {
@@ -4028,7 +4028,7 @@ public class TableWriter implements Closeable {
 
                     long partitionSize = txFile.getPartitionSizeByPartitionTimestamp(ts);
                     if (partitionSize >= 0 && ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
-                        long sizeInsidePartitionDir = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
+                        long sizeInsidePartitionDir = TableUtils.readLongAtOffset(ff, path, tempMem16b, 0);
                         if (sizeInsidePartitionDir != partitionSize) {
                             LOG.info().$("partition size is different between tx file and ").$(ARCHIVE_FILE_NAME).$(" file [name=").$(path.trimTo(p).$()).$(']').$();
                         }
@@ -4050,11 +4050,11 @@ public class TableWriter implements Closeable {
                         path.trimTo(rootLen);
                         setStateForTimestamp(path, lastTimestamp, false);
                         int p = path.length();
-                        transientRowCount = TableUtils.readLongAtOffset(ff, path.concat(ARCHIVE_FILE_NAME).$(), tempMem8b, 0);
+                        transientRowCount = TableUtils.readLongAtOffset(ff, path.concat(ARCHIVE_FILE_NAME).$(), tempMem16b, 0);
 
                         // 2. read max timestamp
                         TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()));
-                        maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem8b, (transientRowCount - 1) * Long.BYTES);
+                        maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem16b, (transientRowCount - 1) * Long.BYTES);
                         actualSize -= transientRowCount;
                         LOG.info()
                                 .$("updated active partition [name=").$(path.trimTo(p).$())
@@ -4172,7 +4172,7 @@ public class TableWriter implements Closeable {
                     getSecondaryColumn(i),
                     getColumnType(metaMem, i),
                     position - columnTops.getQuick(i),
-                    tempMem8b,
+                    tempMem16b,
                     ensureFileSize
             );
         }
@@ -4508,8 +4508,8 @@ public class TableWriter implements Closeable {
     private void writeColumnTop(CharSequence name, long columnTop) {
         long fd = openAppend(path.concat(name).put(".top").$());
         try {
-            Unsafe.getUnsafe().putLong(tempMem8b, columnTop);
-            if (ff.append(fd, tempMem8b, Long.BYTES) != Long.BYTES) {
+            Unsafe.getUnsafe().putLong(tempMem16b, columnTop);
+            if (ff.append(fd, tempMem16b, Long.BYTES) != Long.BYTES) {
                 throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
             }
         } finally {
@@ -4529,8 +4529,8 @@ public class TableWriter implements Closeable {
         try {
             long fd = openAppend(path.concat(TODO_FILE_NAME).$());
             try {
-                Unsafe.getUnsafe().putLong(tempMem8b, code);
-                if (ff.append(fd, tempMem8b, 8) != 8) {
+                Unsafe.getUnsafe().putLong(tempMem16b, code);
+                if (ff.append(fd, tempMem16b, 8) != 8) {
                     throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
                 }
             } finally {

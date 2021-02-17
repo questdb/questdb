@@ -296,17 +296,6 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static int moveFolder(FilesFacade ff, Path from, Path to, boolean overwrite) {
-        if (ff.exists(to) && overwrite) {
-            ff.rmdir(to);
-        }
-
-        if (!ff.rename(from, to)) {
-            return ff.errno();
-        }
-        return 0;
-    }
-
     public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
         long fd = ff.openRW(path);
         if (fd > 0) {
@@ -675,36 +664,6 @@ public final class TableUtils {
                     if (ff.read(fd, tempMem8b + 8, 8, (partitionSize - 1) * 8) != 8) {
                         throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
                     }
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
-            }
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
-    static long readPartitionMaxTimestamp(FilesFacade ff, Path path, CharSequence timestampCol, long tempMem8b) {
-        int plen = path.length();
-        try {
-            if (ff.exists(path.concat(timestampCol).put(FILE_SUFFIX_D).$())) {
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
-                }
-
-                try {
-                    if (ff.read(fd, tempMem8b, 8, 8L) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
-                    }
-                    long offset = Unsafe.getUnsafe().getLong(tempMem8b);
-
-                    if (ff.read(fd, tempMem8b, 8, 8L * offset) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
-                    }
-                    return Unsafe.getUnsafe().getLong(tempMem8b);
                 } finally {
                     ff.close(fd);
                 }
