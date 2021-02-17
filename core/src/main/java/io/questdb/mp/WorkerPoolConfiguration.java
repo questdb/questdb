@@ -38,4 +38,12 @@ public interface WorkerPoolConfiguration {
     default String getPoolName() {
         return "worker";
     }
+
+    default long getYieldThreshold() {
+        return 10;
+    }
+
+    default long getSleepThreshold() {
+        return 10000;
+    }
 }

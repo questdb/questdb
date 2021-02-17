@@ -158,6 +158,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
+    private final long sharedWorkerYieldThreshold;
+    private final long sharedWorkerSleepThreshold;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
@@ -226,6 +228,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int responseHeaderBufferSize;
     private int httpWorkerCount;
     private boolean httpWorkerHaltOnError;
+    private long httpWorkerYieldThreshold;
+    private long httpWorkerSleepThreshold;
     private boolean httpServerKeepAlive;
     private int sendBufferSize;
     private CharSequence indexFileName;
@@ -291,6 +295,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int[] pgWorkerAffinity;
     private int pgWorkerCount;
     private boolean pgHaltOnError;
+    private long pgWorkerYieldThreshold;
+    private long pgWorkerSleepThreshold;
     private boolean pgDaemonPool;
     private int pgInsertCacheBlockCount;
     private int pgInsertCacheRowCount;
@@ -315,9 +321,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpWriterWorkerCount;
     private int[] lineTcpWriterWorkerAffinity;
     private boolean lineTcpWriterWorkerPoolHaltOnError;
+    private long lineTcpWriterWorkerYieldThreshold;
+    private long lineTcpWriterWorkerSleepThreshold;
     private int lineTcpIOWorkerCount;
     private int[] lineTcpIOWorkerAffinity;
     private boolean lineTcpIOWorkerPoolHaltOnError;
+    private long lineTcpIOWorkerYieldThreshold;
+    private long lineTcpIOWorkerSleepThreshold;
     private int lineTcpNUpdatesPerLoadRebalance;
     private double lineTcpMaxLoadRatio;
     private int lineTcpMaxUncommittedRows;
@@ -329,6 +339,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
+    private long httpMinWorkerYieldThreshold;
+    private long httpMinWorkerSleepThreshold;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
     private int httpMinEventCapacity;
@@ -350,6 +362,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
         this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
+        this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 10);
+        this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10000);
 
         final String databaseRoot = getString(properties, env, "cairo.root", "db");
         if (new File(databaseRoot).isAbsolute()) {
@@ -363,6 +377,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpMinWorkerAffinity = getAffinity(properties, env, "http.min.worker.affinity", httpWorkerCount);
             this.httpMinWorkerHaltOnError = getBoolean(properties, env, "http.min.worker.haltOnError", false);
             this.httpMinWorkerCount = getInt(properties, env, "http.min.worker.count", 0);
+            this.httpMinWorkerYieldThreshold = getLong(properties, env, "http.min.worker.yield.threshold", 10);
+            this.httpMinWorkerSleepThreshold = getLong(properties, env, "http.min.worker.sleep.threshold", 10000);
 
             parseBindTo(properties, env, "http.min.bind.to", "0.0.0.0:9003", (a, p) -> {
                 httpMinBindIPv4Address = a;
@@ -390,6 +406,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerCount = getInt(properties, env, "http.worker.count", 0);
             this.httpWorkerAffinity = getAffinity(properties, env, "http.worker.affinity", httpWorkerCount);
             this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
+            this.httpWorkerYieldThreshold = getLong(properties, env, "http.worker.yield.threshold", 10);
+            this.httpWorkerSleepThreshold = getLong(properties, env, "http.worker.sleep.threshold", 10000);
             this.sendBufferSize = getIntSize(properties, env, "http.send.buffer.size", 2 * 1024 * 1024);
             this.indexFileName = getString(properties, env, "http.static.index.file.name", "index.html");
             this.httpFrozenClock = getBoolean(properties, env, "http.frozen.clock", false);
@@ -500,6 +518,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.pgWorkerCount = getInt(properties, env, "pg.worker.count", 0);
             this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
             this.pgHaltOnError = getBoolean(properties, env, "pg.halt.on.error", false);
+            this.pgWorkerYieldThreshold = getLong(properties, env, "pg.worker.yield.threshold", 10);
+            this.pgWorkerSleepThreshold = getLong(properties, env, "pg.worker.sleep.threshold", 10000);
             this.pgDaemonPool = getBoolean(properties, env, "pg.daemon.pool", true);
             this.pgInsertCacheBlockCount = getInt(properties, env, "pg.insert.cache.block.count", 8);
             this.pgInsertCacheRowCount = getInt(properties, env, "pg.insert.cache.row.count", 8);
@@ -654,9 +674,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpWriterWorkerCount = getInt(properties, env, "line.tcp.writer.worker.count", 0);
             this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, "line.tcp.writer.worker.affinity", lineTcpWriterWorkerCount);
             this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.writer.halt.on.error", false);
+            this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, "line.tcp.writer.yield.threshold", 10);
+            this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, "line.tcp.writer.sleep.threshold", 10000);
             this.lineTcpIOWorkerCount = getInt(properties, env, "line.tcp.io.worker.count", 0);
             this.lineTcpIOWorkerAffinity = getAffinity(properties, env, "line.tcp.io.worker.affinity", lineTcpIOWorkerCount);
             this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.io.halt.on.error", false);
+            this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, "line.tcp.io.worker.yield.threshold", 10);
+            this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, "line.tcp.io.worker.sleep.threshold", 10000);
             this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000);
             this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
             this.lineTcpMaxUncommittedRows = getInt(properties, env, "line.tcp.max.uncommitted.rows", 1000);
@@ -1324,6 +1348,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean haltOnError() {
             return httpWorkerHaltOnError;
         }
+
+        @Override
+        public long getYieldThreshold() {
+            return httpWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return httpWorkerSleepThreshold;
+        }
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
@@ -1914,6 +1948,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public String getPoolName() {
             return "ilpwriter";
         }
+
+        @Override
+        public long getYieldThreshold() {
+            return lineTcpWriterWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return lineTcpWriterWorkerSleepThreshold;
+        }
     }
 
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
@@ -1940,6 +1984,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getPoolName() {
             return "ilpio";
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return lineTcpIOWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return lineTcpIOWorkerSleepThreshold;
         }
     }
 
@@ -2106,6 +2160,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return sharedWorkerHaltOnError;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return sharedWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return sharedWorkerSleepThreshold;
         }
     }
 
@@ -2348,6 +2412,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getYieldThreshold() {
+            return pgWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return pgWorkerSleepThreshold;
+        }
+
+        @Override
         public boolean isDaemonPool() {
             return pgDaemonPool;
         }
@@ -2406,6 +2480,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return httpMinServerEnabled;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return httpMinWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return httpMinWorkerSleepThreshold;
         }
     }
 }

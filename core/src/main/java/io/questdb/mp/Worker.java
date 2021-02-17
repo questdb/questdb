@@ -34,8 +34,8 @@ import java.util.concurrent.locks.LockSupport;
 
 public class Worker extends Thread {
     private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
-    private static final long YIELD_THRESHOLD = 10L;
-    private static final long SLEEP_THRESHOLD = 10000L;
+    // private static final long YIELD_THRESHOLD = 10L;
+    // private static final long SLEEP_THRESHOLD = 10000L;
     private final static AtomicInteger COUNTER = new AtomicInteger();
     private final ObjHashSet<? extends Job> jobs;
     private final SOCountDownLatch haltLatch;
@@ -46,6 +46,8 @@ public class Worker extends Thread {
     private final int workerId;
     private volatile int running = 0;
     private volatile int fence;
+    private final long yieldThreshold;
+    private final long sleepThreshold;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
@@ -55,7 +57,9 @@ public class Worker extends Thread {
             final WorkerCleaner cleaner,
             final boolean haltOnError,
             final int workerId,
-            String poolName
+            String poolName,
+            long yieldThreshold,
+            long sleepThreshold
     ) {
         this.log = log;
         this.jobs = jobs;
@@ -65,6 +69,8 @@ public class Worker extends Thread {
         this.cleaner = cleaner;
         this.haltOnError = haltOnError;
         this.workerId = workerId;
+        this.yieldThreshold = yieldThreshold;
+        this.sleepThreshold = sleepThreshold;
     }
 
     public int getWorkerId() {
@@ -123,14 +129,14 @@ public class Worker extends Thread {
 
                     if (uselessCounter < 0) {
                         // deal with overflow
-                        uselessCounter = SLEEP_THRESHOLD + 1;
+                        uselessCounter = sleepThreshold + 1;
                     }
 
-                    if (uselessCounter > YIELD_THRESHOLD) {
+                    if (uselessCounter > yieldThreshold) {
                         Thread.yield();
                     }
 
-                    if (uselessCounter > SLEEP_THRESHOLD) {
+                    if (uselessCounter > sleepThreshold) {
                         LockSupport.parkNanos(1000000);
                     }
                 }
