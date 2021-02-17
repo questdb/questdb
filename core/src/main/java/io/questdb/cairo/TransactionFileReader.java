@@ -39,6 +39,7 @@ public class TransactionFileReader implements Closeable {
     protected static final int LONGS_PER_PARTITION = 4;
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
+    protected static final int PARTITION_TX_OFFSET = 2;
 
     protected final FilesFacade ff;
     protected final Path path;
@@ -136,7 +137,7 @@ public class TransactionFileReader implements Closeable {
         this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
         this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
         partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-        loadAttachedPartitions();
+        loadAttachedPartitions(this.maxTimestamp, this.transientRowCount);
     }
 
     public long readFixedRowCount() {
@@ -181,18 +182,59 @@ public class TransactionFileReader implements Closeable {
         this.partitionBy = partitionBy;
     }
 
-    private void loadAttachedPartitions() {
+    private void loadAttachedPartitions(long maxTimestamp, long transientRowCount) {
         attachedPartitions.clear();
-        int symbolWriterCount = symbolsCount;
-        int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
-        if (partitionTableSize > 0) {
-            if (this.readOnlyTxMem != null) {
-                this.readOnlyTxMem.grow(TableUtils.getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
+        if (partitionBy != PartitionBy.NONE) {
+            int symbolWriterCount = symbolsCount;
+            int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
+            if (partitionTableSize > 0) {
+                if (this.readOnlyTxMem != null) {
+                    this.readOnlyTxMem.grow(TableUtils.getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
+                }
+                for (int i = 0; i < partitionTableSize; i++) {
+                    attachedPartitions.add(roTxMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
+                }
             }
-            for (int i = 0; i < partitionTableSize; i++) {
-                attachedPartitions.add(roTxMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
+
+            if (maxTimestamp != Long.MIN_VALUE) {
+                updateAttachedPartitionSizeByTimestamp(maxTimestamp, transientRowCount);
             }
         }
+    }
+
+    protected int updateAttachedPartitionSizeByTimestamp(long maxTimestamp, long partitionSize) {
+        long partitionTimestamp = getPartitionLo(maxTimestamp);
+        int index = findAttachedPartitionIndex(partitionTimestamp);
+        if (index > -1) {
+            // Update
+            updatePartitionSizeByIndex(index, partitionSize);
+            return index;
+        }
+
+        return insertPartitionSizeByTimestamp(index, partitionTimestamp, partitionSize);
+    }
+
+    private void updatePartitionSizeByIndex(int index, long partitionSize) {
+        if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
+            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+        }
+    }
+
+    private int insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize) {
+        // Insert
+        int size = attachedPartitions.size();
+        attachedPartitions.extendAndSet(size + LONGS_PER_PARTITION - 1, 0);
+        index = -(index + 1);
+        if (index < size) {
+            // Insert in the middle
+            attachedPartitions.arrayCopy(index, index + LONGS_PER_PARTITION, LONGS_PER_PARTITION);
+        }
+
+        attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestamp);
+        attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
+        // Out of order transaction which added this partition
+        attachedPartitions.setQuick(index + PARTITION_TX_OFFSET, (index < size) ? txn + 1 : 0);
+        return index;
     }
 
     protected VirtualMemory openTxnFile(FilesFacade ff, Path path, int rootLen) {
@@ -220,6 +262,10 @@ public class TransactionFileReader implements Closeable {
             }
         }
 
+        return scanIndex(ts, hi);
+    }
+
+    private int scanIndex(long ts, int hi) {
         // attachedPartitions should be too small to do binary search, scan backwards
         for (int i = hi - LONGS_PER_PARTITION; i > -1; i -= LONGS_PER_PARTITION) {
             long partitionTs = attachedPartitions.getQuick(i);

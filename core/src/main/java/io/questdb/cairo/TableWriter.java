@@ -1525,7 +1525,7 @@ public class TableWriter implements Closeable {
         }
 
         masterRef++;
-        txFile.startRow();
+        txFile.append();
         commit();
 
         setAppendPosition(txFile.getTransientRowCount(), true);
@@ -4657,9 +4657,8 @@ public class TableWriter implements Closeable {
                         activeNullSetters.getQuick(i).run();
                     }
                 }
-                txFile.appendRowNoTimestamp(1);
                 masterRef++;
-                txFile.startRow();
+                txFile.append();
             }
         }
 

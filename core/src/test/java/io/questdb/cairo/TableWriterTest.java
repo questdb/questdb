@@ -2459,12 +2459,12 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(Path name) {
-                if (Chars.endsWith(name, "2013-03-12")) {
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "2013-03-12")) {
                     removeAttempted = true;
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rename(from, to);
             }
         }
 
@@ -2514,12 +2514,12 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(Path name) {
-                if (Chars.endsWith(name, "2013-03-12")) {
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "2013-03-12")) {
                     removeAttempted = true;
                     return false;
                 }
-                return super.rmdir(name);
+                return super.rename(from, to);
             }
         }
 

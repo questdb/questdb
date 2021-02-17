@@ -264,13 +264,14 @@ public final class TransactionFile extends TransactionFileReader implements Clos
     }
 
     public void setMinTimestamp(long firstTimestamp) {
-        this.minTimestamp = firstTimestamp;
-    }
-
-    public void startRow() {
+        minTimestamp = firstTimestamp;
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
         }
+    }
+
+    public void append() {
+        transientRowCount++;
     }
 
     public void switchPartitions() {
@@ -281,6 +282,10 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         transientRowCount = 0;
 
         txPartitionCount++;
+    }
+
+    public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
+        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
     }
 
     public void truncate() {
@@ -356,42 +361,20 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         assert index >= 0;
         int size = attachedPartitions.size();
         if (size > index + 1) {
-            attachedPartitions.arrayCopy(index + LONGS_PER_PARTITION, index, size - index - 1);
+            attachedPartitions.arrayCopy(index + LONGS_PER_PARTITION, index, size - index - LONGS_PER_PARTITION);
             attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
         }
         attachedPartitions.truncateTo(size - LONGS_PER_PARTITION);
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {
-        if (maxTimestamp != Long.MIN_VALUE) {
-            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
-        }
-        int n = attachedPartitions.size();
-        txMem.putInt(getPartitionTableSizeOffset(symCount), n);
-        for (int i = attachedPositionDirtyIndex; i < n; i++) {
-            txMem.putLong(getPartitionTableIndexOffset(symCount, i), attachedPartitions.get(i));
-        }
-        attachedPositionDirtyIndex = n;
-    }
-
-    public void updatePartitionSizeByTimestamp(long maxTimestamp, long partitionSize) {
-        long partitionTimestamp = getPartitionLo(maxTimestamp);
-        int index = findAttachedPartitionIndex(partitionTimestamp);
         int size = attachedPartitions.size();
-        if (index >= 0) {
-            // Update
-            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-        } else {
-            // Insert
-            attachedPartitions.extendAndSet(size + LONGS_PER_PARTITION - 1, 0);
-            index = -(index + 1);
-            if (index < size) {
-                // Insert in the middle
-                attachedPartitions.arrayCopy(index, index + LONGS_PER_PARTITION, LONGS_PER_PARTITION);
+        txMem.putInt(getPartitionTableSizeOffset(symCount), size);
+        if (maxTimestamp != Long.MIN_VALUE) {
+            for (int i = attachedPositionDirtyIndex; i < size; i++) {
+                txMem.putLong(getPartitionTableIndexOffset(symCount, i), attachedPartitions.getQuick(i));
             }
-            attachedPartitions.set(index + PARTITION_TS_OFFSET, partitionTimestamp);
-            attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
+            attachedPositionDirtyIndex = size;
         }
-        attachedPositionDirtyIndex = Math.min(index, attachedPositionDirtyIndex);
     }
 }
