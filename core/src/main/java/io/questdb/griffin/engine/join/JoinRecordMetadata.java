@@ -141,7 +141,11 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         final int dot = Chars.indexOf(columnName, lo, '.');
         if (dot == -1) {
             key.putStrLowerCase(null);
+<<<<<<< HEAD
             key.putStr(columnName, lo, hi);
+=======
+            key.putStrLowerCase(columnName, lo, hi);
+>>>>>>> upstream/master
         } else {
             key.putStrLowerCase(columnName, 0, dot);
             key.putStrLowerCase(columnName, dot + 1, columnName.length());
