@@ -558,17 +558,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        long dstKFd = 0;
-        long dstVFd = 0;
-        long dstIndexOffset = 0;
         long dstFixFd;
-        long dstFixSize;
-        long dstFixAddr;
-        long dstFixOffset;
-        long dstVarFd = 0;
-        long dstVarAddr = 0;
-        long dstVarSize = 0;
-        long dstVarOffset = 0;
+        long dstVarFd;
 
         if (srcDataTop == -1) {
             srcDataTop = getSrcDataTop(workerId, ff, path, plen, columnName, srcDataMax);
@@ -584,51 +575,403 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 // index files are opened as normal
                 iFile(path.trimTo(plen), columnName);
                 dstFixFd = openRW(ff, path);
-                dstFixSize = dstLen * Long.BYTES;
-                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
-                dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
-
                 // open data file now
                 dFile(path.trimTo(plen), columnName);
                 dstVarFd = openRW(ff, path);
-                if (dstFixOffset > 0) {
-                    dstVarOffset = getVarColumnSize(
-                            ff,
-                            columnType,
-                            dstVarFd,
-                            Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES),
-                            workerId
-                    );
-                } else {
-                    dstVarOffset = 0;
-                }
-                dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
-                dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
+                appendVarColumn(
+                        workerId,
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        pathToTable,
+                        partCounter,
+                        columnCounter,
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampHi,
+                        srcDataTop,
+                        srcDataMax,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        doneLatch,
+                        dstFixFd,
+                        dstVarFd,
+                        dstLen
+                );
                 break;
             case -ColumnType.TIMESTAMP:
-                dstFixSize = dstLen * Long.BYTES;
-                dstFixOffset = srcDataMax * Long.BYTES;
-                dstFixFd = -srcTimestampFd;
-                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize);
+                appendTimestampColumn(
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff, pathToTable,
+                        partCounter,
+                        columnCounter,
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampHi,
+                        srcDataTop,
+                        srcDataMax,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        doneLatch,
+                        dstLen
+                );
                 break;
             default:
-                final int shl = ColumnType.pow2SizeOf(columnType);
                 dFile(path.trimTo(plen), columnName);
                 dstFixFd = openRW(ff, path);
-                dstFixSize = dstLen << shl;
-                dstFixOffset = (srcDataMax - srcDataTop) << shl;
-                dstFixAddr = mapRW(ff, dstFixFd, dstFixSize);
-
-                dstIndexOffset = dstFixOffset;
-                if (isIndexed) {
-                    BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                    dstKFd = openRW(ff, path);
-                    BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                    dstVFd = openRW(ff, path);
-                }
+                appendFixColumn(
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        path,
+                        plen,
+                        pathToTable,
+                        columnName,
+                        partCounter,
+                        columnCounter,
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampHi,
+                        srcDataTop,
+                        srcDataMax,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        doneLatch,
+                        dstFixFd,
+                        dstLen
+                );
                 break;
         }
+    }
 
+    private static void appendFixColumn(
+            CairoConfiguration configuration,
+            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            Sequence outboundPubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
+            FilesFacade ff,
+            Path path,
+            int plen,
+            CharSequence pathToTable,
+            CharSequence columnName,
+            AtomicInteger partCounter,
+            AtomicInteger columnCounter,
+            int columnType,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampHi,
+            long srcDataTop,
+            long srcDataMax,
+            long tableFloorOfMaxTimestamp,
+            long dataTimestampHi,
+            boolean isIndexed,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch,
+            long dstFixFd,
+            long dstLen
+    ) {
+        long dstKFd;
+        long dstVFd;
+        long dstFixOffset;
+        long dstIndexOffset;
+        long dstFixSize;
+        long dstFixAddr;
+        final int shl = ColumnType.pow2SizeOf(columnType);
+        dstFixSize = dstLen << shl;
+        dstFixOffset = (srcDataMax - srcDataTop) << shl;
+        dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+        dstIndexOffset = dstFixOffset;
+        if (isIndexed) {
+            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+            dstKFd = openRW(ff, path);
+            BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
+            dstVFd = openRW(ff, path);
+        } else {
+            dstKFd = 0;
+            dstVFd = 0;
+        }
+
+        publishCopyTask(
+                configuration,
+                outboundQueue,
+                outboundPubSeq,
+                updPartitionSizeTaskQueue,
+                updPartitionSizePubSeq,
+                columnCounter,
+                partCounter,
+                ff,
+                pathToTable,
+                columnType,
+                OO_BLOCK_OO,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                srcDataTop,
+                srcOooLo,
+                srcOooHi,
+                srcDataMax,
+                tableFloorOfMaxTimestamp,
+                dataTimestampHi,
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
+                srcOooLo,
+                srcOooHi,
+                srcOooMax,
+                srcOooLo,
+                srcOooHi,
+                oooTimestampMin,
+                oooTimestampMax,
+                oooTimestampHi,
+                dstFixFd,
+                dstFixAddr,
+                dstFixOffset,
+                dstFixSize,
+                0,
+                0,
+                0,
+                0,
+                dstKFd,
+                dstVFd,
+                dstIndexOffset,
+                isIndexed,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                false,
+                tableWriter,
+                doneLatch
+        );
+    }
+
+    private static void appendTimestampColumn(
+            CairoConfiguration configuration,
+            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            Sequence outboundPubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
+            FilesFacade ff,
+            CharSequence pathToTable,
+            AtomicInteger partCounter,
+            AtomicInteger columnCounter,
+            int columnType,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampHi,
+            long srcDataTop,
+            long srcDataMax,
+            long tableFloorOfMaxTimestamp,
+            long dataTimestampHi,
+            boolean isIndexed,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch,
+            long dstLen
+    ) {
+        long dstFixFd;
+        long dstFixOffset;
+        long dstFixSize;
+        long dstFixAddr;
+        dstFixSize = dstLen * Long.BYTES;
+        dstFixOffset = srcDataMax * Long.BYTES;
+        dstFixFd = -srcTimestampFd;
+        dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+
+        publishCopyTask(
+                configuration,
+                outboundQueue,
+                outboundPubSeq,
+                updPartitionSizeTaskQueue,
+                updPartitionSizePubSeq,
+                columnCounter,
+                partCounter,
+                ff,
+                pathToTable,
+                columnType,
+                OO_BLOCK_OO,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                srcDataTop,
+                srcOooLo,
+                srcOooHi,
+                srcDataMax,
+                tableFloorOfMaxTimestamp,
+                dataTimestampHi,
+                srcOooFixAddr,
+                srcOooFixSize,
+                srcOooVarAddr,
+                srcOooVarSize,
+                srcOooLo,
+                srcOooHi,
+                srcOooMax,
+                srcOooLo,
+                srcOooHi,
+                oooTimestampMin,
+                oooTimestampMax,
+                oooTimestampHi,
+                dstFixFd,
+                dstFixAddr,
+                dstFixOffset,
+                dstFixSize,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                isIndexed,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                false,
+                tableWriter,
+                doneLatch
+        );
+    }
+
+    private static void appendVarColumn(
+            int workerId,
+            CairoConfiguration configuration,
+            RingQueue<OutOfOrderCopyTask> outboundQueue,
+            Sequence outboundPubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue,
+            MPSequence updPartitionSizePubSeq,
+            FilesFacade ff,
+            CharSequence pathToTable,
+            AtomicInteger partCounter,
+            AtomicInteger columnCounter,
+            int columnType,
+            long srcOooFixAddr,
+            long srcOooFixSize,
+            long srcOooVarAddr,
+            long srcOooVarSize,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampHi,
+            long srcDataTop,
+            long srcDataMax,
+            long tableFloorOfMaxTimestamp,
+            long dataTimestampHi,
+            boolean isIndexed,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch,
+            long dstFixFd,
+            long dstVarFd,
+            long dstLen
+    ) {
+        long dstVarAddr;
+        long dstVarOffset;
+        long dstFixOffset;
+        long dstVarSize;
+        long dstFixSize;
+        long dstFixAddr;
+        dstFixSize = dstLen * Long.BYTES;
+        dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+        dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
+        if (dstFixOffset > 0) {
+            dstVarOffset = getVarColumnSize(
+                    ff,
+                    columnType,
+                    Math.abs(dstVarFd),
+                    Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES),
+                    workerId
+            );
+        } else {
+            dstVarOffset = 0;
+        }
+
+        dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
+        dstVarAddr = mapRW(ff, Math.abs(dstVarFd), dstVarSize);
         publishCopyTask(
                 configuration,
                 outboundQueue,
@@ -676,9 +1019,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVarAddr,
                 dstVarOffset,
                 dstVarSize,
-                dstKFd,
-                dstVFd,
-                dstIndexOffset,
+                0,
+                0,
+                0,
                 isIndexed,
                 srcTimestampFd,
                 srcTimestampAddr,
@@ -1198,113 +1541,126 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        long dstFixFd;
-        long dstFixAddr;
-        long dstFixOffset;
-        long dstFixSize;
-        long dstVarFd = 0;
-        long dstVarSize = 0;
-        long dstVarAddr = 0;
-        long dstVarOffset = 0;
-        long dstKFd = 0;
-        long dstVFd = 0;
-        long dstIndexOffset = 0;
-        final long dstLen = srcOooHi - srcOooLo + 1;
+        if (srcDataTop == -1) {
+            srcDataTop = getSrcDataTop(workerId, ff, path, plen, columnName, srcDataMax);
+        }
 
+        final long dstLen = srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop;
         switch (columnType) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                dstFixOffset = srcDataMax * Long.BYTES;
-                dstFixFd = -activeFixFd;
-                dstFixSize = dstLen * Long.BYTES + dstFixOffset;
-                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize);
-
-                dstVarFd = -activeVarFd;
-                dstVarOffset = getVarColumnSize(
+                appendVarColumn(
+                        workerId,
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
                         ff,
+                        pathToTable,
+                        partCounter,
+                        columnCounter,
                         columnType,
-                        -dstVarFd,
-                        Unsafe.getUnsafe().getLong(dstFixAddr + dstFixOffset - Long.BYTES),
-                        workerId
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampHi,
+                        srcDataTop,
+                        srcDataMax,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        doneLatch,
+                        -activeFixFd,
+                        -activeVarFd,
+                        dstLen
                 );
-                dstVarSize = dstVarOffset + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-                dstVarAddr = mapRW(ff, -dstVarFd, dstVarSize);
+                break;
+            case -ColumnType.TIMESTAMP:
+                appendTimestampColumn(
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        pathToTable,
+                        partCounter,
+                        columnCounter,
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampHi,
+                        srcDataTop,
+                        srcDataMax,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        doneLatch,
+                        dstLen
+                );
                 break;
             default:
-                int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
-                long oooSize = dstLen << shl;
-                dstFixOffset = srcDataMax << shl;
-                dstFixFd = -activeFixFd;
-                dstFixSize = oooSize + dstFixOffset;
-                dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize);
-                if (isIndexed) {
-                    BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-                    dstKFd = openRW(ff, path);
-                    BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-                    dstVFd = openRW(ff, path);
-                    dstIndexOffset = dstFixOffset;
-                }
+                appendFixColumn(
+                        configuration,
+                        outboundQueue,
+                        outboundPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        path,
+                        plen,
+                        pathToTable,
+                        columnName,
+                        partCounter,
+                        columnCounter,
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampHi,
+                        srcDataTop,
+                        srcDataMax,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        isIndexed,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter,
+                        doneLatch,
+                        -activeFixFd,
+                        dstLen
+                );
                 break;
         }
-
-        publishCopyTask(
-                configuration,
-                outboundQueue,
-                outboundPubSeq,
-                updPartitionSizeTaskQueue,
-                updPartitionSizePubSeq,
-                columnCounter,
-                partCounter,
-                ff,
-                pathToTable,
-                columnType,
-                OO_BLOCK_OO,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                srcDataTop,
-                0,
-                0,
-                srcDataMax,
-                tableFloorOfMaxTimestamp,
-                dataTimestampHi,
-                srcOooFixAddr,
-                srcOooFixSize,
-                srcOooVarAddr,
-                srcOooVarSize,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                srcOooLo, // the entire OOO block gets appended
-                srcOooHi, // its size is the same as partition size
-                oooTimestampMin,
-                oooTimestampMax,
-                oooTimestampHi,
-                dstFixFd,
-                dstFixAddr,
-                dstFixOffset,
-                dstFixSize,
-                dstVarFd,
-                dstVarAddr,
-                dstVarOffset,
-                dstVarSize,
-                dstKFd,
-                dstVFd,
-                dstIndexOffset,
-                isIndexed,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                false, // this is append, rest of the partition does not mutate
-                tableWriter,
-                doneLatch
-        );
     }
 
     private static void mergeLastPartition(
