@@ -47,7 +47,7 @@ class SymbolCache implements Closeable {
 
     void of(CairoConfiguration configuration, Path path, CharSequence name, int symIndex) {
         FilesFacade ff = configuration.getFilesFacade();
-        long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex);
+        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symIndex);
         int plen = path.length();
         txMem.of(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), transientSymCountOffset + Integer.BYTES);
         int symCount = txMem.getInt(transientSymCountOffset);

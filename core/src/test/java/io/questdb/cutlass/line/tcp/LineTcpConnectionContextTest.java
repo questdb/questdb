@@ -1068,6 +1068,41 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSymbolOrder1() throws Exception {
+        addTable();
+        runInContext(() -> {
+            recvBuffer = "weather,location=us-midwest,sensor=type3 temperature=82 1465839830100400200\n" +
+                    "weather,location=us-midwest,sensor=type1 temperature=83 1465839830100500200\n" +
+                    "weather,location=us-eastcoast,sensor=type6 temperature=81 1465839830101400200\n" +
+                    "weather,location=us-midwest,sensor=type1 temperature=85 1465839830102400200\n" +
+                    "weather,location=us-eastcoast,sensor=type1 temperature=89 1465839830102400200\n" +
+                    "weather,location=us-eastcoast,sensor=type3 temperature=80 1465839830102400200\n" +
+                    "weather,sensor=type1,location=us-midwest temperature=85 1465839830102401200\n" +
+                    "weather,location=us-eastcoast,sensor=type1 temperature=89 1465839830102402200\n" +
+                    "weather,sensor=type3,location=us-eastcoast temperature=80 1465839830102403200\n" +
+                    "weather,location=us-westcost,sensor=type1 temperature=82 1465839830102504200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tsensor\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\ttype3\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\ttype1\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\ttype6\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102400Z\ttype1\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\ttype1\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\ttype3\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102401Z\ttype1\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102402Z\ttype1\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102403Z\ttype3\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102504Z\ttype1\n";
+            assertTable(expected, "weather");
+        });
+    }
+
     private void addTable() {
         try (
                 @SuppressWarnings("resource")
@@ -1097,19 +1132,6 @@ public class LineTcpConnectionContextTest extends AbstractCairoTest {
                 nRows++;
             }
             Assert.assertEquals(nExpectedRows, nRows);
-        }
-    }
-
-    private int getTableCount(CharSequence tableName) {
-        try (TableReader reader = new TableReader(configuration, tableName)) {
-            TableReaderRecordCursor recordCursor = reader.getCursor();
-            int nRows = 0;
-            while (recordCursor.hasNext()) {
-                nRows++;
-            }
-            return nRows;
-        } catch (CairoException ex) {
-            return 0;
         }
     }
 
