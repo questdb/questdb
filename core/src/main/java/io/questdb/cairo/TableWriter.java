@@ -1968,27 +1968,22 @@ public class TableWriter implements Closeable {
         freeColumns(truncate);
         freeSymbolMapWriters();
         freeIndexers();
+        Misc.free(txFile);
+        if (null != blockWriter) {
+            blockWriter.close();
+        }
+        Misc.free(metaMem);
+        Misc.free(ddlMem);
+        Misc.free(other);
+        Misc.free(tmpShuffleData);
+        Misc.free(tmpShuffleIndex);
+        Misc.free(timestampSearchColumn);
         try {
-            if (txFile != null) {
-                txFile.freeTxMem();
-            }
+            releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
-            if (null != blockWriter) {
-                blockWriter.close();
-            }
-            Misc.free(metaMem);
-            Misc.free(ddlMem);
-            Misc.free(other);
-            Misc.free(tmpShuffleData);
-            Misc.free(tmpShuffleIndex);
-            Misc.free(timestampSearchColumn);
-            try {
-                releaseLock(!truncate | tx | performRecovery | distressed);
-            } finally {
-                Misc.free(path);
-                freeTempMem();
-                LOG.info().$("closed '").utf8(name).$('\'').$();
-            }
+            Misc.free(path);
+            freeTempMem();
+            LOG.info().$("closed '").utf8(name).$('\'').$();
         }
     }
 

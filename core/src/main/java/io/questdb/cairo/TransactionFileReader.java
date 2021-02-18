@@ -36,7 +36,6 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TransactionFileReader implements Closeable {
-    protected static final int LONGS_PER_PARTITION = 4;
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_TX_OFFSET = 2;
@@ -73,11 +72,11 @@ public class TransactionFileReader implements Closeable {
     }
 
     public long getAttachedPartitionTimestamp(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_PARTITION + PARTITION_TS_OFFSET);
+        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
     }
 
     public long getPartitionSize(int i) {
-        return attachedPartitions.getQuick(i * LONGS_PER_PARTITION + PARTITION_SIZE_OFFSET);
+        return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET);
     }
 
     public int getAttachedPartitionsSize() {
@@ -153,9 +152,8 @@ public class TransactionFileReader implements Closeable {
     public void readSymbolCounts(IntList symbolCountSnapshot) {
         int symbolMapCount = roTxMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
         if (symbolMapCount > 0) {
-            if (this.readOnlyTxMem != null) {
-                this.readOnlyTxMem.grow(TableUtils.getSymbolWriterIndexOffset(symbolMapCount));
-            }
+            // No need to call grow here, file mapped beyond symbol section already
+            // while reading attached partitions
             for (int i = 0; i < symbolMapCount; i++) {
                 symbolCountSnapshot.add(roTxMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
             }
@@ -192,10 +190,14 @@ public class TransactionFileReader implements Closeable {
         attachedPartitions.clear();
         if (partitionBy != PartitionBy.NONE) {
             int symbolWriterCount = symbolsCount;
+            if (this.readOnlyTxMem != null) {
+                this.readOnlyTxMem.grow(getPartitionTableIndexOffset(symbolWriterCount, 0));
+            }
             int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
             if (partitionTableSize > 0) {
                 if (this.readOnlyTxMem != null) {
-                    this.readOnlyTxMem.grow(TableUtils.getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
+                    this.readOnlyTxMem.grow(
+                            getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
                 }
                 for (int i = 0; i < partitionTableSize; i++) {
                     attachedPartitions.add(roTxMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
@@ -229,11 +231,11 @@ public class TransactionFileReader implements Closeable {
     private int insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize) {
         // Insert
         int size = attachedPartitions.size();
-        attachedPartitions.extendAndSet(size + LONGS_PER_PARTITION - 1, 0);
+        attachedPartitions.extendAndSet(size + LONGS_PER_TX_ATTACHED_PARTITION - 1, 0);
         index = -(index + 1);
         if (index < size) {
             // Insert in the middle
-            attachedPartitions.arrayCopy(index, index + LONGS_PER_PARTITION, LONGS_PER_PARTITION);
+            attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, LONGS_PER_TX_ATTACHED_PARTITION);
         }
 
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestamp);
@@ -246,7 +248,7 @@ public class TransactionFileReader implements Closeable {
     protected VirtualMemory openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (this.ff.exists(this.path.concat(TXN_FILE_NAME).$())) {
-                return new ReadOnlyMemory(ff, path, this.ff.getPageSize(), this.ff.getPageSize());
+                return new ReadOnlyMemory(ff, path, this.ff.getPageSize(), getPartitionTableIndexOffset(0, 0));
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(this.path);
         } finally {
@@ -257,11 +259,11 @@ public class TransactionFileReader implements Closeable {
     protected int findAttachedPartitionIndex(long ts) {
         ts = getPartitionLo(ts);
         // Start from the end, usually it will be last partition searched / appended
-        int hi = attachedPartitions.size() - LONGS_PER_PARTITION;
+        int hi = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
         if (hi > -1) {
             long last = attachedPartitions.getQuick(hi);
             if (last < ts) {
-                return -(hi + LONGS_PER_PARTITION + 1);
+                return -(hi + LONGS_PER_TX_ATTACHED_PARTITION + 1);
             }
             if (last == ts) {
                 return hi;
@@ -273,10 +275,10 @@ public class TransactionFileReader implements Closeable {
 
     private int scanIndex(long ts, int hi) {
         // attachedPartitions should be too small to do binary search, scan backwards
-        for (int i = hi - LONGS_PER_PARTITION; i > -1; i -= LONGS_PER_PARTITION) {
+        for (int i = hi - LONGS_PER_TX_ATTACHED_PARTITION; i > -1; i -= LONGS_PER_TX_ATTACHED_PARTITION) {
             long partitionTs = attachedPartitions.getQuick(i);
             if (partitionTs < ts) {
-                return -(i + LONGS_PER_PARTITION + 1);
+                return -(i + LONGS_PER_TX_ATTACHED_PARTITION + 1);
             }
             if (partitionTs == ts) {
                 return i;

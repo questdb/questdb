@@ -37,8 +37,6 @@ import static io.questdb.cairo.TableUtils.*;
 public final class TransactionFile extends TransactionFileReader implements Closeable {
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
-    private final long tempMem8b = Unsafe.malloc(Long.BYTES);
-
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
     private long prevTransientRowCount;
@@ -47,6 +45,10 @@ public final class TransactionFile extends TransactionFileReader implements Clos
 
     public TransactionFile(FilesFacade ff, Path path) {
         super(ff, path);
+    }
+
+    public void append() {
+        transientRowCount++;
     }
 
     public void appendBlock(long timestampLo, long timestampHi, long nRowsAdded) {
@@ -110,9 +112,14 @@ public final class TransactionFile extends TransactionFileReader implements Clos
 
     @Override
     public void close() {
-        txMem = Misc.free(txMem);
-        path = Misc.free(path);
-        Unsafe.free(tempMem8b, Long.BYTES);
+        try {
+            if (txMem != null) {
+                txMem.jumpTo(getTxEofOffset());
+            }
+        } finally {
+            txMem = Misc.free(txMem);
+            path = Misc.free(path);
+        }
     }
 
     @Override
@@ -168,14 +175,16 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         prevTransientRowCount = transientRowCount;
     }
 
-    public void freeTxMem() {
-        try {
-            if (txMem != null) {
-                txMem.jumpTo(getTxEofOffset());
-            }
-        } finally {
-            close();
+    public void finishOutOfOrderUpdate(long minTimestamp, long maxTimestamp) {
+        this.minTimestamp = minTimestamp;
+        this.maxTimestamp = maxTimestamp;
+        assert attachedPartitions.size() > 0;
+        this.transientRowCount = attachedPartitions.getQuick(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET);
+        this.fixedRowCount = 0;
+        for (int i = 0, hi = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION; i < hi; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            this.fixedRowCount += attachedPartitions.getQuick(i + PARTITION_SIZE_OFFSET);
         }
+        txPartitionCount++;
     }
 
     public long getLastTxSize() {
@@ -196,6 +205,19 @@ public final class TransactionFile extends TransactionFileReader implements Clos
 
     public void openFirstPartition() {
         txPartitionCount = 1;
+    }
+
+    public void removeAttachedPartitions(long timestamp) {
+        int index = findAttachedPartitionIndex(getPartitionLo(timestamp));
+        if (index > -1) {
+            int size = attachedPartitions.size();
+            if (index + LONGS_PER_TX_ATTACHED_PARTITION < size) {
+                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, size - index - LONGS_PER_TX_ATTACHED_PARTITION);
+                attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
+            }
+            attachedPartitions.truncateTo(size - LONGS_PER_TX_ATTACHED_PARTITION);
+            partitionTableVersion++;
+        }
     }
 
     public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp) {
@@ -241,8 +263,10 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         }
     }
 
-    public void append() {
-        transientRowCount++;
+    public void startOutOfOrderUpdate() {
+        if (maxTimestamp != Long.MIN_VALUE) {
+            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
+        }
     }
 
     public void switchPartitions() {
@@ -253,16 +277,6 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         transientRowCount = 0;
 
         txPartitionCount++;
-    }
-
-    public void startOutOfOrderUpdate() {
-        if (maxTimestamp != Long.MIN_VALUE) {
-            updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
-        }
-    }
-
-    public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
-        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
     }
 
     public void truncate() {
@@ -282,16 +296,8 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         maxTimestamp = timestamp;
     }
 
-    public void finishOutOfOrderUpdate(long minTimestamp, long maxTimestamp) {
-        this.minTimestamp = minTimestamp;
-        this.maxTimestamp = maxTimestamp;
-        assert attachedPartitions.size() > 0;
-        this.transientRowCount = attachedPartitions.getQuick(attachedPartitions.size() - LONGS_PER_PARTITION + PARTITION_SIZE_OFFSET);
-        this.fixedRowCount = 0;
-        for (int i = 0, hi = attachedPartitions.size() - LONGS_PER_PARTITION; i < hi; i += LONGS_PER_PARTITION) {
-            this.fixedRowCount += attachedPartitions.getQuick(i + PARTITION_SIZE_OFFSET);
-        }
-        txPartitionCount++;
+    public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
+        attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
     }
 
     private static long openReadWriteOrFail(FilesFacade ff, Path path) {
@@ -307,20 +313,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
     }
 
     private void popAttachedPartitions() {
-        attachedPartitions.truncateTo(attachedPartitions.size() - LONGS_PER_PARTITION);
-    }
-
-    public void removeAttachedPartitions(long timestamp) {
-        int index = findAttachedPartitionIndex(getPartitionLo(timestamp));
-        if (index > -1) {
-            int size = attachedPartitions.size();
-            if (index + LONGS_PER_PARTITION < size) {
-                attachedPartitions.arrayCopy(index + LONGS_PER_PARTITION, index, size - index - LONGS_PER_PARTITION);
-                attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
-            }
-            attachedPartitions.truncateTo(size - LONGS_PER_PARTITION);
-            partitionTableVersion++;
-        }
+        attachedPartitions.truncateTo(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {

@@ -57,6 +57,7 @@ public final class TableUtils {
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -229,8 +230,8 @@ public final class TableUtils {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
-    public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
-        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8L;
+    public static long getPartitionTableIndexOffset(int symbolWriterCount, int attachedPartitionsSize) {
+        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + attachedPartitionsSize * 8L;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
@@ -241,8 +242,8 @@ public final class TableUtils {
         return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 4L;
     }
 
-    public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsCount) {
-        return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsCount);
+    public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsSize) {
+        return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
     }
 
     public static boolean isValidColumnName(CharSequence seq) {
