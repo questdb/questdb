@@ -1667,12 +1667,12 @@ public class TableWriter implements Closeable {
 
             if (type == ColumnType.SYMBOL) {
                 assert nextSymbolCountOffset < getSymbolWriterIndexOffset(expectedMapWriters);
-                final int colIndex = i;
+                final int symbolIndex = denseSymbolMapWriters.size();
                 // keep symbol map writers list sparse for ease of access
                 SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), metadata.getColumnName(i), txMem.getInt(nextSymbolCountOffset),
                         (symCount) -> {
                             Unsafe.getUnsafe().storeFence();
-                            txMem.putInt(TableUtils.getSymbolWriterTransientIndexOffset(colIndex), symCount);
+                            txMem.putInt(TableUtils.getSymbolWriterTransientIndexOffset(symbolIndex), symCount);
                         });
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);

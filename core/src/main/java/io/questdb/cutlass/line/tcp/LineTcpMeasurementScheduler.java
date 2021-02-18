@@ -845,10 +845,21 @@ class LineTcpMeasurementScheduler implements Closeable {
                     } else {
                         symCache = new SymbolCache();
                     }
-                    symCache.of(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), colIndex);
+                    int symIndex = resolveSymbolIndex(reader.getMetadata(), colIndex);
+                    symCache.of(cairoConfiguration, path, reader.getMetadata().getColumnName(colIndex), symIndex);
                     symbolCacheByColumnIndex.extendAndSet(colIndex, symCache);
                     return symCache;
                 }
+            }
+
+            private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
+                int symIndex = 0;
+                for (int n = 0; n < colIndex; n++) {
+                    if (metadata.getColumnType(n) == ColumnType.SYMBOL) {
+                        symIndex++;
+                    }
+                }
+                return symIndex;
             }
 
             void clear() {
