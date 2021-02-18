@@ -110,122 +110,130 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        switch (blockType) {
-            case OO_BLOCK_MERGE:
-                if (srcDataFixOffset == 0 && srcDataTopOffset == 0) {
-                    oooMergeCopy(
+        boolean success = false;
+        try {
+            switch (blockType) {
+                case OO_BLOCK_MERGE:
+                    if (srcDataFixOffset == 0 && srcDataTopOffset == 0) {
+                        oooMergeCopy(
+                                columnType,
+                                timestampMergeIndexAddr,
+                                srcDataFixAddr,
+                                srcDataVarAddr,
+                                srcDataLo,
+                                srcDataHi,
+                                srcOooFixAddr,
+                                srcOooVarAddr,
+                                srcOooLo,
+                                srcOooHi,
+                                dstFixAddr + dstFixOffset,
+                                dstVarAddr,
+                                dstVarOffset
+                        );
+                    } else {
+                        oooMergeCopyWithOffset(
+                                columnType,
+                                timestampMergeIndexAddr,
+                                srcDataFixAddr,
+                                // this is a hack, when we have column top we can have only of of the two:
+                                // srcDataFixOffset, when we had to shift data to back fill nulls or
+                                // srcDataTopOffset - if we kept the column top
+                                // when one value is present the other will be 0
+                                srcDataFixOffset - srcDataTopOffset,
+                                srcDataVarAddr,
+                                srcDataVarOffset,
+                                srcDataLo,
+                                srcDataHi,
+                                srcOooFixAddr,
+                                srcOooVarAddr,
+                                srcOooLo,
+                                srcOooHi,
+                                dstFixAddr + dstFixOffset,
+                                dstVarAddr,
+                                dstVarOffset
+                        );
+                    }
+                    break;
+                case OO_BLOCK_OO:
+                    oooCopyOOO(
                             columnType,
-                            timestampMergeIndexAddr,
-                            srcDataFixAddr,
-                            srcDataVarAddr,
-                            srcDataLo,
-                            srcDataHi,
                             srcOooFixAddr,
+                            srcOooFixSize,
                             srcOooVarAddr,
+                            srcOooVarSize,
                             srcOooLo,
                             srcOooHi,
                             dstFixAddr + dstFixOffset,
                             dstVarAddr,
                             dstVarOffset
                     );
-                } else {
-                    oooMergeCopyWithOffset(
+                    break;
+                case OO_BLOCK_DATA:
+                    oooCopyData(
                             columnType,
-                            timestampMergeIndexAddr,
-                            srcDataFixAddr,
-                            // this is a hack, when we have column top we can have only of of the two:
-                            // srcDataFixOffset, when we had to shift data to back fill nulls or
-                            // srcDataTopOffset - if we kept the column top
-                            // when one value is present the other will be 0
-                            srcDataFixOffset - srcDataTopOffset,
-                            srcDataVarAddr,
-                            srcDataVarOffset,
+                            srcDataFixAddr + srcDataFixOffset,
+                            srcDataFixSize - srcDataFixOffset,
+                            srcDataVarAddr + srcDataVarOffset,
+                            srcDataVarSize - srcDataVarOffset,
                             srcDataLo,
                             srcDataHi,
-                            srcOooFixAddr,
-                            srcOooVarAddr,
-                            srcOooLo,
-                            srcOooHi,
                             dstFixAddr + dstFixOffset,
                             dstVarAddr,
                             dstVarOffset
                     );
-                }
-                break;
-            case OO_BLOCK_OO:
-                oooCopyOOO(
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        dstFixAddr + dstFixOffset,
-                        dstVarAddr,
-                        dstVarOffset
-                );
-                break;
-            case OO_BLOCK_DATA:
-                oooCopyData(
-                        columnType,
-                        srcDataFixAddr + srcDataFixOffset,
-                        srcDataFixSize - srcDataFixOffset,
-                        srcDataVarAddr + srcDataVarOffset,
-                        srcDataVarSize - srcDataVarOffset,
-                        srcDataLo,
-                        srcDataHi,
-                        dstFixAddr + dstFixOffset,
-                        dstVarAddr,
-                        dstVarOffset
-                );
-                break;
-            default:
-                break;
-        }
-
-        // decrement part counter and if we are the last task - perform final steps
-        if (partCounter.decrementAndGet() == 0) {
-            // todo: pool indexer
-            if (isIndexed) {
-                // dstKFd & dstVFd are closed by the indexer
-                updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
+                    break;
+                default:
+                    break;
             }
-
-            // unmap memory
-            unmapAndClose(srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
-            unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
-            if (columnCounter.decrementAndGet() == 0) {
-                // last part of the last column
-                touchPartition(
-                        ff,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        pathToTable,
-                        srcOooPartitionLo,
-                        srcOooPartitionHi,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampHi,
-                        srcOooMax,
-                        srcDataMax,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        partitionMutates,
-                        tableWriter
-                );
-
-                if (timestampMergeIndexAddr != 0) {
-                    Vect.freeMergedIndex(timestampMergeIndexAddr);
+            success = true;
+        } finally {
+            // decrement part counter and if we are the last task - perform final steps
+            if (partCounter.decrementAndGet() == 0) {
+                // todo: pool indexer
+                if (isIndexed && success) {
+                    // dstKFd & dstVFd are closed by the indexer
+                    updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
                 }
-                doneLatch.countDown();
+
+                // unmap memory
+                unmapAndClose(srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+                unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+                unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
+                unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
+                if (columnCounter.decrementAndGet() == 0) {
+                    // last part of the last column
+                    try {
+                        touchPartition(
+                                ff,
+                                updPartitionSizeTaskQueue,
+                                updPartitionSizePubSeq,
+                                pathToTable,
+                                srcOooPartitionLo,
+                                srcOooPartitionHi,
+                                oooTimestampMin,
+                                oooTimestampMax,
+                                oooTimestampHi,
+                                srcOooMax,
+                                srcDataMax,
+                                tableFloorOfMaxTimestamp,
+                                dataTimestampHi,
+                                srcTimestampFd,
+                                srcTimestampAddr,
+                                srcTimestampSize,
+                                partitionMutates,
+                                tableWriter,
+                                success
+                        );
+                    } finally {
+                        if (timestampMergeIndexAddr != 0) {
+                            Vect.freeMergedIndex(timestampMergeIndexAddr);
+                        }
+                        doneLatch.countDown();
+                    }
+                }
             }
         }
+
     }
 
     public static void copy(
@@ -366,36 +374,61 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcTimestampAddr,
             long srcTimestampSize,
             boolean partitionMutates,
-            TableWriter tableWriter
+            TableWriter tableWriter,
+            boolean success
     ) {
-        if (partitionMutates) {
-            if (srcTimestampFd < 0) {
-                // srcTimestampFd negative indicates that we are reusing existing file descriptor
-                // as opposed to opening file by name. This also indicated that "this" partition
-                // is, or used to be, active for the writer. So we have to close existing files so thatT
-                // rename on Windows does not fall flat.
-                tableWriter.closeActivePartition();
-            } else {
-                // this timestamp column was opened by file name
-                // so we can close it as not needed (and to enable table rename on Windows)
+        try {
+            if (partitionMutates && success) {
+                if (srcTimestampFd < 0) {
+                    // srcTimestampFd negative indicates that we are reusing existing file descriptor
+                    // as opposed to opening file by name. This also indicated that "this" partition
+                    // is, or used to be, active for the writer. So we have to close existing files so thatT
+                    // rename on Windows does not fall flat.
+                    tableWriter.closeActivePartition();
+                } else {
+                    // this timestamp column was opened by file name
+                    // so we can close it as not needed (and to enable table rename on Windows)
+                    ff.close(srcTimestampFd);
+                }
+
+                success = false;
+                renamePartition(
+                        ff,
+                        pathToTable,
+                        oooTimestampHi,
+                        tableWriter
+                );
+                success = true;
+
+            } else if (srcTimestampFd > 0) {
                 ff.close(srcTimestampFd);
             }
 
-            renamePartition(
-                    ff,
-                    pathToTable,
+        } finally {
+
+            if (srcTimestampAddr != 0) {
+                ff.munmap(srcTimestampAddr, srcTimestampSize);
+            }
+
+            notifyWriter(
+                    updPartitionSizeQueue,
+                    updPartitionPubSeq,
+                    srcOooPartitionLo,
+                    srcOooPartitionHi,
+                    oooTimestampMin,
+                    oooTimestampMax,
                     oooTimestampHi,
-                    tableWriter
+                    srcOooMax,
+                    srcDataMax,
+                    tableFloorOfMaxTimestamp,
+                    dataTimestampHi,
+                    tableWriter,
+                    success
             );
-
-        } else if (srcTimestampFd > 0) {
-            ff.close(srcTimestampFd);
         }
+    }
 
-        if (srcTimestampAddr != 0) {
-            ff.munmap(srcTimestampAddr, srcTimestampSize);
-        }
-
+    private static void notifyWriter(RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue, MPSequence updPartitionPubSeq, long srcOooPartitionLo, long srcOooPartitionHi, long oooTimestampMin, long oooTimestampMax, long oooTimestampHi, long srcOooMax, long srcDataMax, long tableFloorOfMaxTimestamp, long dataTimestampHi, TableWriter tableWriter, boolean success) {
         final long cursor = updPartitionPubSeq.next();
         if (cursor > -1) {
             publishUpdPartitionSizeTaskHarmonized(
@@ -406,7 +439,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     srcOooPartitionHi,
                     oooTimestampHi,
                     srcDataMax,
-                    dataTimestampHi
+                    dataTimestampHi,
+                    success
             );
         } else {
             publishUpdPartitionSizeTaskContended(
@@ -422,7 +456,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     srcDataMax,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
-                    tableWriter
+                    tableWriter,
+                    success
             );
         }
     }
@@ -440,7 +475,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataMax,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
-            TableWriter tableWriter
+            TableWriter tableWriter,
+            boolean success
     ) {
         while (cursor == -2) {
             cursor = updPartitionPubSeq.next();
@@ -455,7 +491,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     srcOooPartitionHi,
                     oooTimestampHi,
                     srcDataMax,
-                    dataTimestampHi
+                    dataTimestampHi,
+                    success
             );
         } else {
             tableWriter.oooUpdatePartitionSizeSynchronized(
@@ -467,7 +504,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     srcOooMax,
-                    srcDataMax
+                    srcDataMax,
+                    success
             );
         }
     }
@@ -479,7 +517,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooPartitionHi,
             long oooTimestampHi,
             long srcDataMax,
-            long dataTimestampHi
+            long dataTimestampHi,
+            boolean success
     ) {
         final OutOfOrderUpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
         task.of(
@@ -487,7 +526,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcOooPartitionLo,
                 srcOooPartitionHi,
                 srcDataMax,
-                dataTimestampHi
+                dataTimestampHi,
+                success
         );
         updPartitionPubSeq.done(cursor);
     }
@@ -498,7 +538,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final int plen = path.length();
 
         path.$();
-        final Path other = Path.getThreadLocal2(path).put("x-").put(tableWriter.getTxn()).$();
+        final Path other = Path.getThreadLocal2(path).put("-x-").put(tableWriter.getTxn()).$();
         boolean renamed;
         if (renamed = ff.rename(path, other)) {
             TableUtils.appendTxnToPath(other.trimTo(plen), tableWriter.getTxn());
@@ -509,22 +549,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             throw CairoException.instance(ff.errno())
                     .put("could not rename [from=").put(other)
                     .put(", to=").put(path).put(']');
-        }
-    }
-
-    private static void copyFromTimestampIndex(
-            long src,
-            long srcLo,
-            long srcHi,
-            long dstAddr
-    ) {
-        final int shl = 4;
-        final long lo = srcLo << shl;
-        final long hi = (srcHi + 1) << shl;
-        final long start = src + lo;
-        final long len = hi - lo;
-        for (long l = 0; l < len; l += 16) {
-            Unsafe.getUnsafe().putLong(dstAddr + l / 2, Unsafe.getUnsafe().getLong(start + l));
         }
     }
 
@@ -571,6 +595,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst, (srcHi - srcLo + 1) << shl);
     }
 
+    // todo: move to C++
     private static void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr) {
         for (long l = 0; l < mergeIndexSize; l++) {
             Unsafe.getUnsafe().putLong(dstAddr + l * Long.BYTES, getTimestampIndexValue(mergeIndexAddr, l));
@@ -627,7 +652,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
                 break;
             case -ColumnType.TIMESTAMP:
-                copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
+                TableUtils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
                 break;
             default:
                 break;

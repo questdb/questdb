@@ -34,8 +34,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -45,10 +48,11 @@ import org.junit.Test;
 import java.io.File;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class OutOfOrderTest extends AbstractGriffinTest {
+public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
-    private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
+    private final static Log LOG = LogFactory.getLog(OutOfOrderFailureTest.class);
 
     @Before
     public void setUp3() {
@@ -108,6 +112,25 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopLastAppend() throws Exception {
+        executeVanilla(() -> testColumnTopLastAppendColumn0(
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
+    }
+
+    @Test
+    public void testColumnTopLastAppendBlankContended() throws Exception {
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastAppendBlankColumn0);
+    }
+
+    @Test
+    public void testColumnTopLastAppendContended() throws Exception {
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastAppendColumn0);
+    }
+
+    @Test
     public void testColumnTopLastDataMerge() throws Exception {
         executeVanilla(() -> testColumnTopLastDataMergeData0(
                 engine,
@@ -127,27 +150,27 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopLastDataMerge2DataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataMerge2Data0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataMerge2Data0);
     }
 
     @Test
     public void testColumnTopLastDataMerge2DataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastDataMerge2Data0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastDataMerge2Data0);
     }
 
     @Test
     public void testColumnTopLastDataMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataMergeData0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataMergeData0);
     }
 
     @Test
     public void testColumnTopLastDataMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastDataMergeData0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataMergeData0);
     }
 
     @Test
     public void testColumnTopLastDataOOOData() throws Exception {
-        executeVanilla(() -> testColumnTopLastDataOOOData0(
+        executeVanilla(() -> testColumnTopRenameToBackupFail0(
                 engine,
                 compiler,
                 sqlExecutionContext
@@ -156,12 +179,21 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopLastDataOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastDataOOOData0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopRenameToBackupFail0);
     }
 
     @Test
-    public void testColumnTopLastDataOOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastDataOOOData0);
+    public void testColumnTopRenameToBackupFailParallel() throws Exception {
+        final AtomicInteger counter = new AtomicInteger(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopRenameToBackupFail0, new FilesFacadeImpl() {
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, "1970-01-07") && counter.incrementAndGet() == 1) {
+                    return false;
+                }
+                return super.rename(from, to);
+            }
+        });
     }
 
     @Test
@@ -175,12 +207,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopLastOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastOOOData0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastOOOData0);
     }
 
     @Test
     public void testColumnTopLastOOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastOOOData0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastOOOData0);
     }
 
     @Test
@@ -194,12 +226,26 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopLastOOOPrefixContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastOOOPrefix0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastOOOPrefix0);
     }
 
     @Test
     public void testColumnTopLastOOOPrefixParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastOOOPrefix0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastOOOPrefix0);
+    }
+
+    @Test
+    public void testColumnTopLastParallel() throws Exception {
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastAppendColumn0);
+    }
+
+    @Test
+    public void testColumnTopMidAppend() throws Exception {
+        executeVanilla(() -> testColumnTopMidAppendColumn0(
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
     }
 
     @Test
@@ -213,74 +259,22 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopMidAppendBlankContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidAppendBlankColumn0);
-    }
-
-    @Test
-    public void testColumnTopLastAppendBlankContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastAppendBlankColumn0);
-    }
-
-    @Test
-    public void testColumnTopMidMergeBlankContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
-    }
-
-    @Test
-    public void testColumnTopMidMergeBlankParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidMergeBlankColumn0);
-    }
-
-    @Test
-    public void testColumnTopMidMergeBlank() throws Exception {
-        executeVanilla(() -> testColumnTopMidMergeBlankColumn0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidAppendBlankColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendBlankParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidAppendBlankColumn0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidAppendBlankColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidAppendColumn0);
-    }
-
-    @Test
-    public void testColumnTopLastAppendContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopLastAppendColumn0);
-    }
-
-    @Test
-    public void testColumnTopLastParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopLastAppendColumn0);
-    }
-
-    @Test
-    public void testColumnTopLastAppend() throws Exception {
-        executeVanilla(() -> testColumnTopLastAppendColumn0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidAppendColumn0);
     }
 
     @Test
     public void testColumnTopMidAppendParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidAppendColumn0);
-    }
-
-    @Test
-    public void testColumnTopMidAppend() throws Exception {
-        executeVanilla(() -> testColumnTopMidAppendColumn0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidAppendColumn0);
     }
 
     @Test
@@ -294,12 +288,31 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopMidDataMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidDataMergeData0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeData0);
     }
 
     @Test
     public void testColumnTopMidDataMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidDataMergeData0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeData0);
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlank() throws Exception {
+        executeVanilla(() -> testColumnTopMidMergeBlankColumn0(
+                engine,
+                compiler,
+                sqlExecutionContext
+        ));
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankContended() throws Exception {
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumn0);
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankParallel() throws Exception {
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumn0);
     }
 
     @Test
@@ -313,12 +326,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopMidOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testColumnTopMidOOOData0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidOOOData0);
     }
 
     @Test
     public void testColumnTopMidOOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testColumnTopMidOOOData0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidOOOData0);
     }
 
     @Test
@@ -334,7 +347,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataAppendOOData0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOData0);
     }
 
     @Test
@@ -349,12 +362,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataIndexedContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataAppendOODataIndexed0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataIndexed0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataIndexedParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOODataIndexed0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOODataIndexed0);
     }
 
     @Test
@@ -364,17 +377,17 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTail0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOODataNotNullStrTail0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTail0);
     }
 
     @Test
     public void testPartitionedDataAppendOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataAppendOOData0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOOData0);
     }
 
     @Test
@@ -459,12 +472,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataMergeData0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataMergeData0);
     }
 
     @Test
     public void testPartitionedDataMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataMergeData0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataMergeData0);
     }
 
     @Test
@@ -474,12 +487,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataMergeEndContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataMergeEnd0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataMergeEnd0);
     }
 
     @Test
     public void testPartitionedDataMergeEndParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataMergeEnd0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataMergeEnd0);
     }
 
     @Test
@@ -489,12 +502,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOOData0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataOOData0);
     }
 
     @Test
     public void testPartitionedDataOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataOOData0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataOOData0);
     }
 
     @Test
@@ -508,12 +521,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataOODataPbOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOODataPbOOData0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataOODataPbOOData0);
     }
 
     @Test
     public void testPartitionedDataOODataPbOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataOODataPbOOData0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataOODataPbOOData0);
     }
 
     @Test
@@ -523,12 +536,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataOOIntoLastIndexSearchBugContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataOOIntoLastIndexSearchBug0);
     }
 
     @Test
     public void testPartitionedDataOOIntoLastIndexSearchBugParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataOOIntoLastIndexSearchBug0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataOOIntoLastIndexSearchBug0);
     }
 
     @Test
@@ -538,12 +551,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartitionContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
     }
 
     @Test
     public void testPartitionedDataOOIntoLastOverflowIntoNewPartitionParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataOOIntoLastOverflowIntoNewPartition0);
     }
 
     @Test
@@ -553,7 +566,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOData0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOData0);
     }
 
     @Test
@@ -563,17 +576,17 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOODataOOCollapsedContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOODataOOCollapsed0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOODataOOCollapsed0);
     }
 
     @Test
     public void testPartitionedOODataOOCollapsedParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOODataOOCollapsed0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedOODataOOCollapsed0);
     }
 
     @Test
     public void testPartitionedOODataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOData0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedOOData0);
     }
 
     @Test
@@ -583,12 +596,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOODataUpdateMinTimestampContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOODataUpdateMinTimestamp0);
     }
 
     @Test
     public void testPartitionedOODataUpdateMinTimestampParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOODataUpdateMinTimestamp0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedOODataUpdateMinTimestamp0);
     }
 
     @Test
@@ -598,7 +611,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOMergeContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOMerge0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOMerge0);
     }
 
     @Test
@@ -608,12 +621,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOMergeData0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOMergeData0);
     }
 
     @Test
     public void testPartitionedOOMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOMergeData0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedOOMergeData0);
     }
 
     @Test
@@ -623,17 +636,17 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOMergeOOContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOMergeOO0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOMergeOO0);
     }
 
     @Test
     public void testPartitionedOOMergeOOParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOMergeOO0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedOOMergeOO0);
     }
 
     @Test
     public void testPartitionedOOMergeParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOMerge0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedOOMerge0);
     }
 
     @Test
@@ -689,12 +702,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitionsContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitions0);
     }
 
     @Test
     public void testPartitionedOOPrefixesExistingPartitionsParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOPrefixesExistingPartitions0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitions0);
     }
 
     @Test
@@ -704,12 +717,12 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedOOTopAndBottomContended() throws Exception {
-        executeWithPool(0, OutOfOrderTest::testPartitionedOOTopAndBottom0);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOTopAndBottom0);
     }
 
     @Test
     public void testPartitionedOOTopAndBottomParallel() throws Exception {
-        executeWithPool(4, OutOfOrderTest::testPartitionedOOTopAndBottom0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedOOTopAndBottom0);
     }
 
     private static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
@@ -2114,7 +2127,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
     }
 
-    private static void testColumnTopLastDataOOOData0(
+    private static void testColumnTopRenameToBackupFail0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -2250,18 +2263,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        compiler.compile("insert into x select * from append", sqlExecutionContext);
+        try {
+            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException e) {
+        }
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
                 compiler,
@@ -2269,6 +2277,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 "x",
                 "/oo/testColumnTopLastDataOOOData.txt"
         );
+
     }
 
     private static void testColumnTopLastDataMergeData0(
@@ -3232,7 +3241,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             }
         }
 
-        URL url = OutOfOrderTest.class.getResource(resourceName);
+        URL url = OutOfOrderFailureTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
 //        System.out.println(sink);
         TestUtils.assertEquals(new File(url.toURI()), sink);
@@ -4051,49 +4060,70 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     private void executeWithPool(int workerCount, OutOfOrderCode runnable) throws Exception {
+        executeWithPool(workerCount, runnable, FilesFacadeImpl.INSTANCE);
+    }
+
+    private void executeWithPool(int workerCount, OutOfOrderCode runnable, FilesFacade ff) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                int[] affinity = new int[workerCount];
-                for (int i = 0; i < workerCount; i++) {
-                    affinity[i] = -1;
-                }
+                CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return ff;
+                    }
 
-                WorkerPool pool = new WorkerPool(
-                        new WorkerPoolAwareConfiguration() {
-                            @Override
-                            public int[] getWorkerAffinity() {
-                                return affinity;
+                    @Override
+                    public boolean isOutOfOrderEnabled() {
+                        return true;
+                    }
+                };
+
+                try (
+                        final CairoEngine engine = new CairoEngine(configuration);
+                        final SqlCompiler compiler = new SqlCompiler(engine);
+                        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+                ) {
+                    final int[] affinity = new int[workerCount];
+                    for (int i = 0; i < workerCount; i++) {
+                        affinity[i] = -1;
+                    }
+                    WorkerPool pool = new WorkerPool(
+                            new WorkerPoolAwareConfiguration() {
+                                @Override
+                                public int[] getWorkerAffinity() {
+                                    return affinity;
+                                }
+
+                                @Override
+                                public int getWorkerCount() {
+                                    return workerCount;
+                                }
+
+                                @Override
+                                public boolean haltOnError() {
+                                    return false;
+                                }
+
+                                @Override
+                                public boolean isEnabled() {
+                                    return true;
+                                }
                             }
+                    );
 
-                            @Override
-                            public int getWorkerCount() {
-                                return workerCount;
-                            }
+                    pool.assignCleaner(Path.CLEANER);
+                    pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
+                    pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus(), pool.getWorkerCount()));
+                    pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
 
-                            @Override
-                            public boolean haltOnError() {
-                                return false;
-                            }
+                    pool.start(LOG);
 
-                            @Override
-                            public boolean isEnabled() {
-                                return true;
-                            }
-                        }
-                );
-
-                pool.assignCleaner(Path.CLEANER);
-                pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
-                pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus(), pool.getWorkerCount()));
-                pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
-
-                pool.start(LOG);
-
-                try {
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                } finally {
-                    pool.halt();
+                    try {
+                        runnable.run(engine, compiler, sqlExecutionContext);
+                    } finally {
+                        pool.halt();
+                    }
                 }
             } else {
                 // we need to create entire engine
@@ -4116,6 +4146,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     @Override
                     public int getOutOfOrderCopyQueueCapacity() {
                         return 0;
+                    }
+
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return ff;
                     }
 
                     @Override

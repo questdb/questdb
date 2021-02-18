@@ -1494,9 +1494,7 @@ public class TableWriter implements Closeable {
     void closeActivePartition() {
         closeAppendMemoryNoTruncate(false);
         Misc.freeObjList(denseIndexers);
-        // we also indicate that "active" partition has to be reloaded
-        // after rename
-//        reopenLastPartition = true;
+        denseIndexers.clear();
     }
 
     private void closeAppendMemoryNoTruncate(boolean truncate) {
@@ -2071,7 +2069,7 @@ public class TableWriter implements Closeable {
         return oooPartitions;
     }
 
-    private void oooConsumeUpdPartitionSizeTasks(
+    private boolean oooConsumeUpdPartitionSizeTasks(
             int workerId,
             long srcOooMax,
             long oooTimestampMin,
@@ -2090,6 +2088,7 @@ public class TableWriter implements Closeable {
         final RingQueue<OutOfOrderCopyTask> copyQueue = messageBus.getOutOfOrderCopyQueue();
 
         boolean updRemaining;
+        boolean success = true;
         do {
             long cursor = updSizeSubSeq.next();
             if (cursor > -1) {
@@ -2099,69 +2098,95 @@ public class TableWriter implements Closeable {
                 final long srcOooPartitionHi = task.getSrcOooPartitionHi();
                 final long srcDataMax = task.getSrcDataMax();
                 final long dataTimestampHi = task.getDataTimestampHi();
+                success = success && task.isSuccess();
 
                 updRemaining = this.oooUpdRemaining.decrementAndGet() > 0;
                 updSizeSubSeq.done(cursor);
 
-                oooUpdatePartitionSize(
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampHi,
-                        srcOooPartitionLo,
-                        srcOooPartitionHi,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        srcOooMax,
-                        srcDataMax
-                );
+                if (success) {
+                    oooUpdatePartitionSize(
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            oooTimestampHi,
+                            srcOooPartitionLo,
+                            srcOooPartitionHi,
+                            tableFloorOfMaxTimestamp,
+                            dataTimestampHi,
+                            srcOooMax,
+                            srcDataMax
+                    );
+                }
             } else {
                 if (updRemaining = this.oooUpdRemaining.get() > 0) {
                     cursor = partitionSubSeq.next();
                     if (cursor > -1) {
-                        OutOfOrderPartitionJob.processPartition(
-                                workerId,
-                                configuration,
-                                openColumnQueue,
-                                messageBus.getOutOfOrderOpenColumnPubSequence(),
-                                copyQueue,
-                                copyPubSeq,
-                                updSizeQueue,
-                                updSizePubSeq,
-                                partitionQueue.get(cursor),
-                                cursor,
-                                partitionSubSeq
-                        );
-                    } else {
-                        cursor = openColumnSubSeq.next();
-                        if (cursor > -1) {
-                            OutOfOrderOpenColumnJob.openColumn(
+                        final OutOfOrderPartitionTask partitionTask = partitionQueue.get(cursor);
+                        if (success) {
+                            OutOfOrderPartitionJob.processPartition(
                                     workerId,
                                     configuration,
+                                    openColumnQueue,
+                                    messageBus.getOutOfOrderOpenColumnPubSequence(),
                                     copyQueue,
                                     copyPubSeq,
                                     updSizeQueue,
                                     updSizePubSeq,
-                                    openColumnQueue.get(cursor),
+                                    partitionTask,
                                     cursor,
-                                    openColumnSubSeq
+                                    partitionSubSeq
                             );
+                        } else {
+                            partitionTask.getDoneLatch().countDown();
+                            partitionSubSeq.done(cursor);
+                        }
+                    } else {
+                        cursor = openColumnSubSeq.next();
+                        if (cursor > -1) {
+                            OutOfOrderOpenColumnTask openColumnTask = openColumnQueue.get(cursor);
+                            if (success) {
+                                OutOfOrderOpenColumnJob.openColumn(
+                                        workerId,
+                                        configuration,
+                                        copyQueue,
+                                        copyPubSeq,
+                                        updSizeQueue,
+                                        updSizePubSeq,
+                                        openColumnTask,
+                                        cursor,
+                                        openColumnSubSeq
+                                );
+                            } else {
+                                if (openColumnTask.getColumnCounter().decrementAndGet() == 0) {
+                                    // todo: we need to free things here
+                                    openColumnTask.getDoneLatch().countDown();
+                                }
+                            }
                         } else {
                             cursor = copySubSeq.next();
                             if (cursor > -1) {
-                                OutOfOrderCopyJob.copy(
-                                        configuration,
-                                        updSizeQueue,
-                                        updSizePubSeq,
-                                        copyQueue.get(cursor),
-                                        cursor,
-                                        copySubSeq
-                                );
+                                OutOfOrderCopyTask copyTask = copyQueue.get(cursor);
+                                if (success) {
+                                    OutOfOrderCopyJob.copy(
+                                            configuration,
+                                            updSizeQueue,
+                                            updSizePubSeq,
+                                            copyQueue.get(cursor),
+                                            cursor,
+                                            copySubSeq
+                                    );
+                                } else {
+                                    if (copyTask.getPartCounter().decrementAndGet() == 0 && copyTask.getColumnCounter().decrementAndGet() == 0) {
+                                        // todo: free
+                                        copyTask.getDoneLatch().countDown();
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
         } while (updRemaining);
+        return success;
     }
 
     private void oooMergeParallel() {
@@ -2562,7 +2587,8 @@ public class TableWriter implements Closeable {
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long srcOooMax,
-            long srcDataMax
+            long srcDataMax,
+            boolean success
     ) {
         oooUpdRemaining.decrementAndGet();
         oooUpdatePartitionSize(
@@ -3403,7 +3429,6 @@ public class TableWriter implements Closeable {
         // When partition is new, the data timestamp is MIN_LONG
         this.maxTimestamp = maxTimestamp;
         this.minTimestamp = Math.min(this.minTimestamp, minTimestamp);
-
     }
 
     private void updateIndexes() {

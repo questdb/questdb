@@ -720,6 +720,22 @@ public final class TableUtils {
         }
     }
 
+    static void copyFromTimestampIndex(
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstAddr
+    ) {
+        final int shl = 4;
+        final long lo = srcLo << shl;
+        final long hi = (srcHi + 1) << shl;
+        final long start = src + lo;
+        final long len = hi - lo;
+        for (long l = 0; l < len; l += 16) {
+            Unsafe.getUnsafe().putLong(dstAddr + l / 2, Unsafe.getUnsafe().getLong(start + l));
+        }
+    }
+
     static {
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");
