@@ -72,9 +72,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         final int count = denseSymbolMapWriters.size();
         final int oldCount = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, count);
-        for (int i = 0; i < count; i++) {
-            txMem.putInt(getSymbolWriterIndexOffset(i), denseSymbolMapWriters.getQuick(i).getSymbolCount());
-        }
+        storeSymbolCounts(denseSymbolMapWriters);
 
         // when symbol column is removed partition table has to be moved up
         // to do that we just write partition table behind symbol writer table
@@ -154,8 +152,6 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
 
-        symbolsCount = denseSymbolMapWriters.size();
-        saveAttachedPartitionsToTx(symbolsCount);
         if (txPartitionCount > 1) {
             txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
             txPartitionCount = 1;
@@ -165,13 +161,11 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
 
         // store symbol counts
-        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-            long offset = getSymbolWriterIndexOffset(i);
-            int symCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
-            txMem.putInt(offset, symCount);
-            offset += Integer.BYTES;
-            txMem.putInt(offset, symCount);
-        }
+        storeSymbolCounts(denseSymbolMapWriters);
+
+        // store attached partitions
+        symbolsCount = denseSymbolMapWriters.size();
+        saveAttachedPartitionsToTx(symbolsCount);
 
         Unsafe.getUnsafe().storeFence();
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
@@ -180,6 +174,16 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         }
 
         prevTransientRowCount = transientRowCount;
+    }
+
+    private void storeSymbolCounts(ObjList<SymbolMapWriter> denseSymbolMapWriters) {
+        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+            long offset = getSymbolWriterIndexOffset(i);
+            int symCount = denseSymbolMapWriters.getQuick(i).getSymbolCount();
+            txMem.putInt(offset, symCount);
+            offset += Integer.BYTES;
+            txMem.putInt(offset, symCount);
+        }
     }
 
     public void finishOutOfOrderUpdate(long minTimestamp, long maxTimestamp) {
@@ -305,14 +309,6 @@ public final class TransactionFile extends TransactionFileReader implements Clos
 
     public void updatePartitionSizeByTimestamp(long timestamp, long rowCount) {
         attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
-    }
-
-    private static long openReadWriteOrFail(FilesFacade ff, Path path) {
-        final long fd = ff.openRW(path);
-        if (fd != -1) {
-            return fd;
-        }
-        throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
     }
 
     private long getTxEofOffset() {

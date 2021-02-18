@@ -230,8 +230,8 @@ public final class TableUtils {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
-    public static long getPartitionTableIndexOffset(int symbolWriterCount, int attachedPartitionsSize) {
-        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + attachedPartitionsSize * 8L;
+    public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
+        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8L;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
