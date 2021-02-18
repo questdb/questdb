@@ -378,6 +378,10 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             boolean success
     ) {
         try {
+            if (srcTimestampAddr != 0) {
+                ff.munmap(srcTimestampAddr, srcTimestampSize);
+            }
+
             if (partitionMutates && success) {
                 if (srcTimestampFd < 0) {
                     // srcTimestampFd negative indicates that we are reusing existing file descriptor
@@ -405,11 +409,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             }
 
         } finally {
-
-            if (srcTimestampAddr != 0) {
-                ff.munmap(srcTimestampAddr, srcTimestampSize);
-            }
-
             notifyWriter(
                     updPartitionSizeQueue,
                     updPartitionPubSeq,
@@ -478,6 +477,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             TableWriter tableWriter,
             boolean success
     ) {
+        if (!success) {
+            System.out.println("ok");
+        }
         while (cursor == -2) {
             cursor = updPartitionPubSeq.next();
         }
@@ -536,19 +538,20 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final Path path = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), oooTimestampHi);
         final int plen = path.length();
-
         path.$();
         final Path other = Path.getThreadLocal2(path).put("-x-").put(tableWriter.getTxn()).$();
-        boolean renamed;
-        if (renamed = ff.rename(path, other)) {
+        if (ff.rename(path, other)) {
             TableUtils.appendTxnToPath(other.trimTo(plen), tableWriter.getTxn());
-            renamed = ff.rename(other.$(), path);
-        }
-
-        if (!renamed) {
+            if (ff.rename(other.$(), path)) {
+                return;
+            }
             throw CairoException.instance(ff.errno())
                     .put("could not rename [from=").put(other)
                     .put(", to=").put(path).put(']');
+        } else {
+            throw CairoException.instance(ff.errno())
+                    .put("could not rename [from=").put(path)
+                    .put(", to=").put(other).put(']');
         }
     }
 

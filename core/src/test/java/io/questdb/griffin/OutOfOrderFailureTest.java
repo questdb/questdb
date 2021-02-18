@@ -53,6 +53,26 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     private final static Log LOG = LogFactory.getLog(OutOfOrderFailureTest.class);
+    private final static AtomicInteger counter = new AtomicInteger(0);
+    private static final FilesFacade ff1970Backup = new FilesFacadeImpl() {
+        @Override
+        public boolean rename(LPSZ from, LPSZ to) {
+            if (Chars.endsWith(from, "1970-01-07") && counter.incrementAndGet() == 1) {
+                return false;
+            }
+            return super.rename(from, to);
+        }
+    };
+
+    private static final FilesFacade ff1970Fwd = new FilesFacadeImpl() {
+        @Override
+        public boolean rename(LPSZ from, LPSZ to) {
+            if (Chars.endsWith(to, "1970-01-07") && counter.incrementAndGet() == 1) {
+                return false;
+            }
+            return super.rename(from, to);
+        }
+    };
 
     @Before
     public void setUp3() {
@@ -166,34 +186,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     @Test
     public void testColumnTopLastDataMergeDataParallel() throws Exception {
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataMergeData0);
-    }
-
-    @Test
-    public void testColumnTopLastDataOOOData() throws Exception {
-        executeVanilla(() -> testColumnTopRenameToBackupFail0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
-    }
-
-    @Test
-    public void testColumnTopLastDataOOODataContended() throws Exception {
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopRenameToBackupFail0);
-    }
-
-    @Test
-    public void testColumnTopRenameToBackupFailParallel() throws Exception {
-        final AtomicInteger counter = new AtomicInteger(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopRenameToBackupFail0, new FilesFacadeImpl() {
-            @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, "1970-01-07") && counter.incrementAndGet() == 1) {
-                    return false;
-                }
-                return super.rename(from, to);
-            }
-        });
     }
 
     @Test
@@ -332,6 +324,24 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     @Test
     public void testColumnTopMidOOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidOOOData0);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailRetryRename1Parallel() throws Exception {
+        counter.set(0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff1970Backup);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailRetryRename1Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff1970Backup);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailRetryRename2Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff1970Fwd);
     }
 
     @Test
@@ -2127,7 +2137,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         );
     }
 
-    private static void testColumnTopRenameToBackupFail0(
+    private static void testColumnTopLastDataOOODataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -4129,6 +4139,11 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
+                    public FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+
+                    @Override
                     public int getOutOfOrderSortQueueCapacity() {
                         return 0;
                     }
@@ -4146,11 +4161,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                     @Override
                     public int getOutOfOrderCopyQueueCapacity() {
                         return 0;
-                    }
-
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
                     }
 
                     @Override
