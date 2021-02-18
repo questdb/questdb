@@ -22,22 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.model;
+package io.questdb.cairo;
 
-import io.questdb.griffin.SqlException;
-
-public interface IntervalModel {
-    boolean hasIntervals();
-
-    void intersectEmpty();
-
-    void intersectIntervals(long lo, long hi);
-
-    void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;
-
-    void subtractIntervals(long lo, long hi);
-
-    void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException;
-
-    boolean isEmptySet();
+public final class StatusCode {
+    public final static int OK = 0;
+    public final static int TABLE_NOT_PARTITIONED = 1;
+    public final static int TABLE_HAS_SYMBOLS = 2;
+    public final static int CANNOT_ATTACH_IN_TRANSACTION = 3;
+    public final static int CANNOT_ATTACH_MISSING_PARTITION = 4;
 }

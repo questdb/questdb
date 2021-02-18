@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
-import io.questdb.std.Transient;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     static final int SCAN_UP = -1;

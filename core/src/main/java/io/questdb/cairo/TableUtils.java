@@ -43,6 +43,7 @@ public final class TableUtils {
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
+    public static final String DETACHED_DIR_MARKER = ".detached";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_VERSION = -1;
@@ -56,13 +57,13 @@ public final class TableUtils {
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final DateFormat fmtDay;
     static final DateFormat fmtMonth;
     static final DateFormat fmtYear;
-    static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
@@ -229,8 +230,8 @@ public final class TableUtils {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
-    public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
-        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8L;
+    public static long getPartitionTableIndexOffset(int symbolWriterCount, int attachedPartitionsSize) {
+        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + attachedPartitionsSize * 8L;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
@@ -245,8 +246,8 @@ public final class TableUtils {
         return getSymbolWriterIndexOffset(index) + Integer.BYTES;
     }
 
-    public static long getTxMemSize(int symbolWriterCount, int removedPartitionsCount) {
-        return getPartitionTableIndexOffset(symbolWriterCount, removedPartitionsCount);
+    public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsSize) {
+        return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
     }
 
     public static boolean isValidColumnName(CharSequence seq) {
@@ -629,10 +630,51 @@ public final class TableUtils {
         }
     }
 
-    static long readPartitionSize(FilesFacade ff, Path path, long tempMem8b) {
+    // Scan timestamp column and find size of the partition
+    // by finding record count in ascending order
+    static long scanPartitionSizeByTimestampColumn(FilesFacade ff, Path path, CharSequence timestampCol, long minTimestamp) {
+        long pageSize = ff.getPageSize();
+        int plen = path.length();
+        long buff = Unsafe.malloc(pageSize);
+        long size = 0;
+        try {
+            if (!ff.exists(path.concat(timestampCol).put(FILE_SUFFIX_D).$())) {
+                return -1;
+            }
+            long fd = ff.openRO(path);
+            if (fd == -1) {
+                return -1;
+            }
+
+            try {
+                long read;
+                long fileRead = 0;
+                while ((read = ff.read(fd, buff, pageSize, fileRead)) > 0) {
+                    long hi = buff + read;
+                    fileRead += read;
+
+                    long ts = minTimestamp;
+                    for (long i = buff; i < hi && ts >= minTimestamp; ts = Unsafe.getUnsafe().getLong(i), i += Long.BYTES) {
+                        minTimestamp = ts;
+                        size++;
+                    }
+                }
+
+                return size;
+            } finally {
+                ff.close(fd);
+            }
+
+        } finally {
+            Unsafe.free(buff, pageSize);
+            path.trimTo(plen);
+        }
+    }
+
+    static void readFileLastFirstLong(FilesFacade ff, Path path, CharSequence columnName, long tempMem8b, long partitionSize) {
         int plen = path.length();
         try {
-            if (ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
+            if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
                 long fd = ff.openRO(path);
                 if (fd == -1) {
                     throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
@@ -642,7 +684,9 @@ public final class TableUtils {
                     if (ff.read(fd, tempMem8b, 8, 0) != 8) {
                         throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
                     }
-                    return Unsafe.getUnsafe().getLong(tempMem8b);
+                    if (ff.read(fd, tempMem8b + 8, 8, (partitionSize - 1) * 8) != 8) {
+                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    }
                 } finally {
                     ff.close(fd);
                 }

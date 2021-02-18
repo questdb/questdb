@@ -153,7 +153,7 @@ public final class TestUtils {
         if (expected.length() != actual.length()) {
             Assert.assertEquals(message, expected, actual);
         }
-        Assert.assertEquals(expected.length(), actual.length());
+
         for (int i = 0; i < expected.length(); i++) {
             if (expected.charAt(i) != actual.charAt(i)) {
                 Assert.assertEquals(message, expected, actual);
