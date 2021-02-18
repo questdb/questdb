@@ -674,8 +674,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpWriterWorkerCount = getInt(properties, env, "line.tcp.writer.worker.count", 0);
             this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, "line.tcp.writer.worker.affinity", lineTcpWriterWorkerCount);
             this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.writer.halt.on.error", false);
-            this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, "line.tcp.writer.yield.threshold", 10);
-            this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, "line.tcp.writer.sleep.threshold", 10000);
+            this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, "line.tcp.writer.worker.yield.threshold", 10);
+            this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, "line.tcp.writer.worker.sleep.threshold", 10000);
             this.lineTcpIOWorkerCount = getInt(properties, env, "line.tcp.io.worker.count", 0);
             this.lineTcpIOWorkerAffinity = getAffinity(properties, env, "line.tcp.io.worker.affinity", lineTcpIOWorkerCount);
             this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.io.halt.on.error", false);
