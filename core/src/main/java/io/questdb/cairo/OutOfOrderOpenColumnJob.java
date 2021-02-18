@@ -1613,7 +1613,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         tableFloorOfMaxTimestamp,
                         dataTimestampHi,
                         isIndexed,
-                        srcTimestampFd,
+                        -srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
