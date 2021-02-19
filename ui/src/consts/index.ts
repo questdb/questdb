@@ -22,15 +22,32 @@
  *
  ******************************************************************************/
 
-import { ConsoleAction } from "./Console/types"
-import { QueryAction } from "./Query/types"
-import { TelemetryAction } from "./Telemetry/types"
-import rootReducer from "./reducers"
+export enum BusEvent {
+  MSG_ACTIVE_PANEL = "active.panel",
+  MSG_EDITOR_EXECUTE = "editor.execute",
+  MSG_EDITOR_EXECUTE_ALT = "editor.execute.alt",
+  MSG_EDITOR_FOCUS = "editor.focus",
+  MSG_EDITOR_SET = "editor.set",
+  MSG_QUERY_CANCEL = "query.in.cancel",
+  MSG_QUERY_DATASET = "query.out.dataset",
+  MSG_QUERY_ERROR = "query.out.error",
+  MSG_QUERY_EXEC = "query.in.exec",
+  MSG_QUERY_EXPORT = "query.in.export",
+  MSG_QUERY_FIND_N_EXEC = "query.build.execute",
+  MSG_QUERY_OK = "query.out.ok",
+  MSG_QUERY_RUNNING = "query.out.running",
+  REACT_READY = "react.ready",
+}
 
-export type StoreAction = ConsoleAction | QueryAction | TelemetryAction
+export enum ModalId {
+  POWER_USER = "POWER_USER",
+}
 
-export type StoreShape = ReturnType<typeof rootReducer>
+export enum TelemetryTable {
+  MAIN = "telemetry",
+  CONFIG = "telemetry_config",
+}
 
-export * from "./Console/types"
-export * from "./Query/types"
-export * from "./Telemetry/types"
+const BASE = process.env.NODE_ENV === "production" ? "fara" : "alurin"
+
+export const API = `https://${BASE}.questdb.io`
