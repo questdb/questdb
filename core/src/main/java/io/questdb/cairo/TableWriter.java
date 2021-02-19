@@ -49,6 +49,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.std.Files.isDots;
 
 public class TableWriter implements Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
@@ -121,6 +122,7 @@ public class TableWriter implements Closeable {
     private final SOUnboundedCountDownLatch oooLatch = new SOUnboundedCountDownLatch();
     private final LongList oooPartitions = new LongList();
     private final AtomicLong oooUpdRemaining = new AtomicLong();
+    private final FindVisitor removePartitionDirsCreatedByOOOVisitor = this::removePartitionDirsCreatedByOOO0;
     private ContiguousVirtualMemory timestampMergeMem;
     private int txPartitionCount = 0;
     private long lockFd;
@@ -174,6 +176,8 @@ public class TableWriter implements Closeable {
     private long oooRowCount;
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
+    private long removePartitionDirsNewerThanTimestamp;
+    private final FindVisitor removePartitionDirsNewerThanVisitor = this::removePartitionDirsNewerThanTimestamp;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -2121,21 +2125,17 @@ public class TableWriter implements Closeable {
                     cursor = partitionSubSeq.next();
                     if (cursor > -1) {
                         final OutOfOrderPartitionTask partitionTask = partitionQueue.get(cursor);
-                        if (success) {
-                            OutOfOrderPartitionJob.processPartition(
-                                    workerId,
-                                    configuration,
-                                    openColumnQueue,
-                                    messageBus.getOutOfOrderOpenColumnPubSequence(),
-                                    copyQueue,
-                                    copyPubSeq,
-                                    updSizeQueue,
-                                    updSizePubSeq,
-                                    partitionTask,
-                                    cursor,
-                                    partitionSubSeq
-                            );
-                        } else {
+                        if (!success || !oooProcessPartitionSafe(
+                                workerId,
+                                updSizePubSeq,
+                                updSizeQueue,
+                                partitionSubSeq,
+                                openColumnQueue,
+                                copyPubSeq,
+                                copyQueue,
+                                cursor,
+                                partitionTask
+                        )) {
                             partitionTask.getDoneLatch().countDown();
                             partitionSubSeq.done(cursor);
                         }
@@ -2143,42 +2143,37 @@ public class TableWriter implements Closeable {
                         cursor = openColumnSubSeq.next();
                         if (cursor > -1) {
                             OutOfOrderOpenColumnTask openColumnTask = openColumnQueue.get(cursor);
-                            if (success) {
-                                OutOfOrderOpenColumnJob.openColumn(
-                                        workerId,
-                                        configuration,
-                                        copyQueue,
-                                        copyPubSeq,
-                                        updSizeQueue,
-                                        updSizePubSeq,
-                                        openColumnTask,
-                                        cursor,
-                                        openColumnSubSeq
-                                );
-                            } else {
-                                if (openColumnTask.getColumnCounter().decrementAndGet() == 0) {
-                                    // todo: we need to free things here
-                                    openColumnTask.getDoneLatch().countDown();
-                                }
+                            if ((!success ||
+                                    !oooOpenColumnSafe(
+                                            workerId,
+                                            updSizePubSeq,
+                                            updSizeQueue,
+                                            openColumnSubSeq,
+                                            copyPubSeq,
+                                            copyQueue,
+                                            cursor,
+                                            openColumnTask
+                                    )) && openColumnTask.getColumnCounter().decrementAndGet() == 0) {
+                                // todo: we need to free things here
+                                openColumnTask.getDoneLatch().countDown();
                             }
                         } else {
                             cursor = copySubSeq.next();
                             if (cursor > -1) {
                                 OutOfOrderCopyTask copyTask = copyQueue.get(cursor);
-                                if (success) {
-                                    OutOfOrderCopyJob.copy(
-                                            configuration,
-                                            updSizeQueue,
-                                            updSizePubSeq,
-                                            copyQueue.get(cursor),
-                                            cursor,
-                                            copySubSeq
-                                    );
-                                } else {
-                                    if (copyTask.getPartCounter().decrementAndGet() == 0 && copyTask.getColumnCounter().decrementAndGet() == 0) {
-                                        // todo: free
-                                        copyTask.getDoneLatch().countDown();
-                                    }
+                                if ((!success ||
+                                        !oooCopySafe(
+                                                updSizePubSeq,
+                                                updSizeQueue,
+                                                copySubSeq,
+                                                copyQueue,
+                                                cursor
+                                        )) &&
+                                        copyTask.getPartCounter().decrementAndGet() == 0 &&
+                                        copyTask.getColumnCounter().decrementAndGet() == 0
+                                ) {
+                                    // todo: free
+                                    copyTask.getDoneLatch().countDown();
                                 }
                             }
                         }
@@ -2187,6 +2182,62 @@ public class TableWriter implements Closeable {
             }
         } while (updRemaining);
         return success;
+    }
+
+    private boolean oooCopySafe(
+            MPSequence updSizePubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
+            Sequence copySubSeq,
+            RingQueue<OutOfOrderCopyTask> copyQueue,
+            long cursor
+    ) {
+        try {
+            OutOfOrderCopyJob.copy(
+                    configuration,
+                    updSizeQueue,
+                    updSizePubSeq,
+                    copyQueue.get(cursor),
+                    cursor,
+                    copySubSeq
+            );
+            return true;
+        } catch (CairoException | CairoError e) {
+            LOG.error().$((Sinkable) e).$();
+        } catch (Throwable e) {
+            LOG.error().$(e).$();
+        }
+        return false;
+    }
+
+    private boolean oooOpenColumnSafe(
+            int workerId,
+            MPSequence updSizePubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
+            Sequence openColumnSubSeq,
+            Sequence copyPubSeq,
+            RingQueue<OutOfOrderCopyTask> copyQueue,
+            long cursor,
+            OutOfOrderOpenColumnTask openColumnTask
+    ) {
+        try {
+            OutOfOrderOpenColumnJob.openColumn(
+                    workerId,
+                    configuration,
+                    copyQueue,
+                    copyPubSeq,
+                    updSizeQueue,
+                    updSizePubSeq,
+                    openColumnTask,
+                    cursor,
+                    openColumnSubSeq
+            );
+            return true;
+        } catch (CairoException | CairoError e) {
+            LOG.error().$((Sinkable) e).$();
+        } catch (Throwable e) {
+            LOG.error().$(e).$();
+        }
+        return false;
     }
 
     private void oooProcess() {
@@ -2312,13 +2363,19 @@ public class TableWriter implements Closeable {
                 LOG.error().$((Sinkable) e).$();
                 throw e;
             } finally {
-                boolean asyncSuccess = oooConsumeUpdPartitionSizeTasks(
-                        workerId,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        tableFloorOfMaxTimestamp
-                );
+                boolean asyncSuccess = false;
+                try {
+                    // we are stealing work here it is possible we get exception from this method
+                    asyncSuccess = oooConsumeUpdPartitionSizeTasks(
+                            workerId,
+                            srcOooMax,
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            tableFloorOfMaxTimestamp
+                    );
+                } catch (CairoException | CairoError ignored) {
+                    System.out.println("fook");
+                }
 
                 oooLatch.await(latchCount);
 
@@ -2349,6 +2406,41 @@ public class TableWriter implements Closeable {
             timestampSetter = prevTimestampSetter;
             transientRowCountBeforeOutOfOrder = 0;
         }
+    }
+
+    private boolean oooProcessPartitionSafe(
+            int workerId,
+            MPSequence updSizePubSeq,
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
+            Sequence partitionSubSeq,
+            RingQueue<OutOfOrderOpenColumnTask> openColumnQueue,
+            Sequence copyPubSeq,
+            RingQueue<OutOfOrderCopyTask> copyQueue,
+            long cursor,
+            OutOfOrderPartitionTask partitionTask
+    ) {
+        try {
+            OutOfOrderPartitionJob.processPartition(
+                    workerId,
+                    configuration,
+                    openColumnQueue,
+                    messageBus.getOutOfOrderOpenColumnPubSequence(),
+                    copyQueue,
+                    copyPubSeq,
+                    updSizeQueue,
+                    updSizePubSeq,
+                    partitionTask,
+                    cursor,
+                    partitionSubSeq
+            );
+
+            return true;
+        } catch (CairoException | CairoError e) {
+            LOG.error().$((Sinkable) e).$();
+        } catch (Throwable e) {
+            LOG.error().$(e).$();
+        }
+        return false;
     }
 
     private void oooSort(long mergedTimestamps, int timestampIndex) {
@@ -2769,6 +2861,7 @@ public class TableWriter implements Closeable {
     void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirsNewerThan(maxTimestamp);
+            removePartitionDirsCreatedByOOO();
         }
     }
 
@@ -2973,36 +3066,64 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void removePartitionDirsCreatedByOOO() {
+        LOG.debug().$("purging OOO artefacts [path=").$(path.$()).$(']').$();
+        try {
+            ff.iterateDir(path.$(), removePartitionDirsCreatedByOOOVisitor);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void removePartitionDirsCreatedByOOO0(long pName, int type) {
+        path.trimTo(rootLen);
+        path.concat(pName).$();
+        nativeLPSZ.of(pName);
+        if (!isDots(nativeLPSZ) && type == Files.DT_DIR) {
+            if (Chars.contains(nativeLPSZ, "-n-")) {
+                if (ff.rmdir(path)) {
+                    LOG.info().$("removing partition dir: ").$(path).$();
+                } else {
+                    LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
+                }
+            }
+        }
+    }
+
     private void removePartitionDirsNewerThan(long timestamp) {
         if (timestamp > Long.MIN_VALUE) {
             LOG.info().$("purging [newerThen=").$ts(timestamp).$(", path=").$(path.$()).$(']').$();
         } else {
             LOG.debug().$("cleaning [path=").$(path.$()).$(']').$();
         }
+        this.removePartitionDirsNewerThanTimestamp = timestamp;
         try {
-            ff.iterateDir(path.$(), (pName, type) -> {
-                path.trimTo(rootLen);
-                path.concat(pName).$();
-                nativeLPSZ.of(pName);
-                if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR) {
-                    try {
-                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, null);
-                        if (dirTimestamp <= timestamp) {
-                            return;
-                        }
-                    } catch (NumericException ignore) {
-                        // not a date?
-                        // ignore exception and remove directory
-                    }
-                    if (ff.rmdir(path)) {
-                        LOG.info().$("removing partition dir: ").$(path).$();
-                    } else {
-                        LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
-                    }
-                }
-            });
+            ff.iterateDir(path.$(), removePartitionDirsNewerThanVisitor);
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private void removePartitionDirsNewerThanTimestamp(long pName, int type) {
+        path.trimTo(rootLen);
+        path.concat(pName).$();
+        nativeLPSZ.of(pName);
+        if (!isDots(nativeLPSZ) && type == Files.DT_DIR) {
+            try {
+                long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, null);
+                if (dirTimestamp <= removePartitionDirsNewerThanTimestamp) {
+                    return;
+                }
+            } catch (NumericException ignore) {
+                // not a date?
+                // ignore exception and remove directory
+                // we rely on this behaviour to remove leftover directories created by OOO processing
+            }
+            if (ff.rmdir(path)) {
+                LOG.info().$("removing partition dir: ").$(path).$();
+            } else {
+                LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
+            }
         }
     }
 
@@ -3178,25 +3299,35 @@ public class TableWriter implements Closeable {
                     path.trimTo(rootLen);
                     setStateForTimestamp(path, tsLimit, false);
                     if (!ff.exists(path.$())) {
-                        LOG.error().$("last partition does not exist [name=").$(path).$(']').$();
+                        Path other = Path.getThreadLocal2(path);
+                        TableUtils.oldPartitionName(other, txn);
+                        if (ff.exists(other.$())) {
+                            if (!ff.rename(other, path)) {
+                                LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).$(']').$();
+                                throw new CairoError("could not restore directory, see log for details");
+                            } else {
+                                LOG.info().$("restored [path=").$(path).$(']').$();
+                            }
+                        } else {
+                            LOG.error().$("last partition does not exist [name=").$(path).$(']').$();
+                            // ok, create last partition we discovered the active
+                            // 1. read its size
+                            path.trimTo(rootLen);
+                            setStateForTimestamp(path, lastTimestamp, false);
+                            int p = path.length();
+                            transientRowCount = TableUtils.readLongAtOffset(ff, path.concat(ARCHIVE_FILE_NAME).$(), tempMem8b, 0);
 
-                        // ok, create last partition we discovered the active
-                        // 1. read its size
-                        path.trimTo(rootLen);
-                        setStateForTimestamp(path, lastTimestamp, false);
-                        int p = path.length();
-                        transientRowCount = TableUtils.readLongAtOffset(ff, path.concat(ARCHIVE_FILE_NAME).$(), tempMem8b, 0);
-
-                        // 2. read max timestamp
-                        TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()));
-                        maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem8b, (transientRowCount - 1) * Long.BYTES);
-                        actualSize -= transientRowCount;
-                        LOG.info()
-                                .$("updated active partition [name=").$(path.trimTo(p).$())
-                                .$(", maxTimestamp=").$ts(maxTimestamp)
-                                .$(", transientRowCount=").$(transientRowCount)
-                                .$(", fixedRowCount=").$(fixedRowCount)
-                                .$(']').$();
+                            // 2. read max timestamp
+                            TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()));
+                            maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem8b, (transientRowCount - 1) * Long.BYTES);
+                            actualSize -= transientRowCount;
+                            LOG.info()
+                                    .$("updated active partition [name=").$(path.trimTo(p).$())
+                                    .$(", maxTimestamp=").$ts(maxTimestamp)
+                                    .$(", transientRowCount=").$(transientRowCount)
+                                    .$(", fixedRowCount=").$(fixedRowCount)
+                                    .$(']').$();
+                        }
                     }
                 }
             } finally {

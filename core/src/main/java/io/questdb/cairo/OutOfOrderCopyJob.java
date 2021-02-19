@@ -535,13 +535,15 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
     }
 
     private static void renamePartition(FilesFacade ff, CharSequence pathToTable, long oooTimestampHi, TableWriter tableWriter) {
+        final long txn = tableWriter.getTxn();
         final Path path = Path.getThreadLocal(pathToTable);
         TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), oooTimestampHi);
         final int plen = path.length();
         path.$();
-        final Path other = Path.getThreadLocal2(path).put("-x-").put(tableWriter.getTxn()).$();
-        if (ff.rename(path, other)) {
-            TableUtils.appendTxnToPath(other.trimTo(plen), tableWriter.getTxn());
+        final Path other = Path.getThreadLocal2(path);
+        TableUtils.oldPartitionName(other, txn);
+        if (ff.rename(path, other.$())) {
+            TableUtils.newPartitionName(other.trimTo(plen), txn);
             if (ff.rename(other.$(), path)) {
                 return;
             }

@@ -414,7 +414,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
                 }
             } else {
-                appendTxnToPath(path.trimTo(plen), txn);
+                newPartitionName(path.trimTo(plen), txn);
                 createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
                 if (srcTimestampFd > -1) {
                     openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;

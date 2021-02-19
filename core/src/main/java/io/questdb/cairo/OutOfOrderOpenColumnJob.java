@@ -2108,7 +2108,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         final long srcFixFd = Math.abs(srcDataFixFd);
 
         final int shl = ColumnType.pow2SizeOf(Math.abs(columnType));
-        appendTxnToPath(path.trimTo(plen), txn);
+        newPartitionName(path.trimTo(plen), txn);
         pDirNameLen = path.length();
 
         if (srcDataTop > 0) {
@@ -2321,7 +2321,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         long dstVarAppendOffset1 = 0;
         final long srcFixFd = Math.abs(srcDataFixFd);
         final long srcVarFd = Math.abs(srcDataVarFd);
-        appendTxnToPath(path.trimTo(plen), txn);
+        newPartitionName(path.trimTo(plen), txn);
         pDirNameLen = path.length();
 
         if (srcDataTop > 0) {

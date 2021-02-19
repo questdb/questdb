@@ -108,8 +108,12 @@ public final class TableUtils {
     private TableUtils() {
     }
 
-    public static void appendTxnToPath(Path path, long txn) {
+    public static void newPartitionName(Path path, long txn) {
         path.put("-n-").put(txn);
+    }
+
+    public static void oldPartitionName(Path path, long txn) {
+        path.put("-x-").put(txn);
     }
 
     public static void createTable(

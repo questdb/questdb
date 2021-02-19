@@ -4094,6 +4094,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     runnable.run(engine, compiler, sqlExecutionContext);
                 } finally {
                     pool.halt();
+                    OutOfOrderOpenColumnJob.freeBuf();
                 }
             } else {
                 // we need to create entire engine

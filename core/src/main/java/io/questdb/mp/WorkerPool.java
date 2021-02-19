@@ -109,10 +109,6 @@ public class WorkerPool {
 
             for (int i = 0; i < workerCount; i++) {
                 Misc.free(workers.getQuick(i));
-                final ObjHashSet<Job> jobs = workerJobs.getQuick(i);
-                for (int j = 0, k = jobs.size(); j < k; j++) {
-                    Misc.free(jobs.get(j));
-                }
             }
         }
     }

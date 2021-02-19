@@ -54,7 +54,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     private final static Log LOG = LogFactory.getLog(OutOfOrderFailureTest.class);
     private final static AtomicInteger counter = new AtomicInteger(0);
-    private static final FilesFacade ff1970Backup = new FilesFacadeImpl() {
+    private static final FilesFacade ff19700107Backup = new FilesFacadeImpl() {
         @Override
         public boolean rename(LPSZ from, LPSZ to) {
             if (Chars.endsWith(from, "1970-01-07") && counter.incrementAndGet() == 1) {
@@ -64,10 +64,30 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         }
     };
 
-    private static final FilesFacade ff1970Fwd = new FilesFacadeImpl() {
+    private static final FilesFacade ff19700106Backup = new FilesFacadeImpl() {
+        @Override
+        public boolean rename(LPSZ from, LPSZ to) {
+            if (Chars.endsWith(from, "1970-01-06") && counter.incrementAndGet() == 1) {
+                return false;
+            }
+            return super.rename(from, to);
+        }
+    };
+
+    private static final FilesFacade ff19700107Fwd = new FilesFacadeImpl() {
         @Override
         public boolean rename(LPSZ from, LPSZ to) {
             if (Chars.endsWith(to, "1970-01-07") && counter.incrementAndGet() == 1) {
+                return false;
+            }
+            return super.rename(from, to);
+        }
+    };
+
+    private static final FilesFacade ff19700106Fwd = new FilesFacadeImpl() {
+        @Override
+        public boolean rename(LPSZ from, LPSZ to) {
+            if (Chars.endsWith(to, "1970-01-06") && counter.incrementAndGet() == 1) {
                 return false;
             }
             return super.rename(from, to);
@@ -270,41 +290,51 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testColumnTopMidDataMergeData() throws Exception {
-        executeVanilla(() -> testColumnTopMidDataMergeData0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+    public void testColumnTopMidDataMergeDataFailRetryRename1Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
     }
 
     @Test
-    public void testColumnTopMidDataMergeDataContended() throws Exception {
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeData0);
+    public void testColumnTopMidDataMergeDataFailRetryRename2Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
     }
 
     @Test
-    public void testColumnTopMidDataMergeDataParallel() throws Exception {
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeData0);
+    public void testColumnTopMidDataMergeDataFailRetryRename1Parallel() throws Exception {
+        counter.set(0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
     }
 
     @Test
-    public void testColumnTopMidMergeBlank() throws Exception {
-        executeVanilla(() -> testColumnTopMidMergeBlankColumn0(
-                engine,
-                compiler,
-                sqlExecutionContext
-        ));
+    public void testColumnTopMidDataMergeDataFailRetryRename2Parallel() throws Exception {
+        counter.set(0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
     }
 
     @Test
-    public void testColumnTopMidMergeBlankContended() throws Exception {
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumn0);
+    public void testColumnTopMidMergeBlankFailRetryRename1Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
     }
 
     @Test
-    public void testColumnTopMidMergeBlankParallel() throws Exception {
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumn0);
+    public void testColumnTopMidMergeBlankFailRetryRename1Parallel() throws Exception {
+        counter.set(0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryRename2Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryRename2Parallel() throws Exception {
+        counter.set(0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
     }
 
     @Test
@@ -329,19 +359,19 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     @Test
     public void testColumnTopLastDataOOODataFailRetryRename1Parallel() throws Exception {
         counter.set(0);
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff1970Backup);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
     }
 
     @Test
     public void testColumnTopLastDataOOODataFailRetryRename1Contended() throws Exception {
         counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff1970Backup);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
     }
 
     @Test
     public void testColumnTopLastDataOOODataFailRetryRename2Contended() throws Exception {
         counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff1970Fwd);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Fwd);
     }
 
     @Test
@@ -2276,7 +2306,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         try {
             compiler.compile("insert into x select * from append", sqlExecutionContext);
             Assert.fail();
-        } catch (CairoException e) {
+        } catch (CairoException ignored) {
         }
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
@@ -2428,17 +2458,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
-//
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
@@ -2448,7 +2467,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
 
-    private static void testColumnTopMidDataMergeData0(
+    private static void testColumnTopMidDataMergeDataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -2570,18 +2589,13 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        compiler.compile("insert into x select * from append", sqlExecutionContext);
+        try {
+            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
 
         assertSqlResultAgainstFile(
                 compiler,
@@ -2718,17 +2732,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
-
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
@@ -2859,17 +2862,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         );
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
 
         assertSqlResultAgainstFile(
                 compiler,
@@ -3002,17 +2994,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
-
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
@@ -3144,17 +3125,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // use this code to debug
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                sqlExecutionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x'"
-//        );
-
         assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
@@ -3193,19 +3163,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
             SqlExecutionContext sqlExecutionContext,
             String resourceName
     ) throws SqlException, URISyntaxException {
-        // file contains output of this SQL
-        // we use file comparison because result set containing duplicate timestamps
-        // order of records with duplicate timestamps is non-deterministic
-/*
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    String expected = Chars.toString(sink);
-*/
         assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
     }
 
@@ -3523,7 +3480,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
-    private static void testColumnTopMidMergeBlankColumn0(
+    private static void testColumnTopMidMergeBlankColumnFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext executionContext
@@ -3606,6 +3563,12 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
+
+        try {
+            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
 
         // create third table, which will contain both X and 1AM
         assertOutOfOrderDataConsistency(
@@ -3743,17 +3706,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-//         create third table, which will contain both X and 1AM
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                executionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x"
-//        );
-
         assertOutOfOrderDataConsistency(
                 engine,
                 compiler,
@@ -3887,17 +3839,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
-
-//         create third table, which will contain both X and 1AM
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                executionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x"
-//        );
 
         assertOutOfOrderDataConsistency(
                 engine,
@@ -4133,6 +4074,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         runnable.run(engine, compiler, sqlExecutionContext);
                     } finally {
                         pool.halt();
+                        OutOfOrderOpenColumnJob.freeBuf();
                     }
                 }
             } else {
