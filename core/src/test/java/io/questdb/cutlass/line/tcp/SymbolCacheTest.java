@@ -128,10 +128,10 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     r.putSym(symColIndex2, "sym26");
                     r.append();
                     Assert.assertEquals(5, txMem.getInt(symCountOffset));
-                    // Assert.assertEquals(6, txMem.getInt(transientSymCountOffset));
-                    // rc = cache.getSymIndex("sym26");
-                    // Assert.assertEquals(5, rc);
-                    // Assert.assertEquals(2, cache.getNCached());
+                    Assert.assertEquals(6, txMem.getInt(transientSymCountOffset));
+                    rc = cache.getSymIndex("sym26");
+                    Assert.assertEquals(5, rc);
+                    Assert.assertEquals(2, cache.getNCached());
                     writer.commit();
                     Assert.assertEquals(6, txMem.getInt(symCountOffset));
                     Assert.assertEquals(6, txMem.getInt(transientSymCountOffset));
