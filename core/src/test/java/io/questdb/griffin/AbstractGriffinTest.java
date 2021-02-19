@@ -24,14 +24,13 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -46,6 +45,58 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static SqlExecutionContext sqlExecutionContext;
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
+
+    protected void createPopulateTable(
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount) throws NumericException, SqlException {
+        long fromTimestamp = TimestampFormatUtils.parseTimestamp(startDate + "T00:00:00.000Z");
+        long increment = totalRows > 0 ? Math.max((Timestamps.addDays(fromTimestamp, partitionCount - 1) - fromTimestamp) / totalRows, 1) : 0;
+
+        StringBuilder sql = new StringBuilder();
+        sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            int colType = tableModel.getColumnType(i);
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (colType) {
+                case ColumnType.INT:
+                    sql.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    sql.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    sql.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    sql.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    sql.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                sql.append("," + Misc.EOL);
+            }
+        }
+
+        sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
+        sql.append(")" + Misc.EOL);
+        if (tableModel.getTimestampIndex() != -1) {
+            CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
+            sql.append(" timestamp(").append(timestampCol).append(")");
+        }
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
+        }
+        compiler.compile(sql.toString(), sqlExecutionContext);
+    }
 
     public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

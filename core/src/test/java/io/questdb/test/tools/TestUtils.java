@@ -24,10 +24,15 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.Unsafe;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 

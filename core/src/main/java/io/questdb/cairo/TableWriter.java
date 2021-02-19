@@ -282,7 +282,7 @@ public class TableWriter implements Closeable {
                     partitionDirFmt = null;
                     break;
             }
-            this.txFile.initPartitionBy(timestampFloorMethod, partitionBy);
+            this.txFile.initPartitionBy(partitionBy);
 
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
@@ -841,7 +841,7 @@ public class TableWriter implements Closeable {
             return false;
         }
         timestamp = getPartitionLo(timestamp);
-        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp || txFile.getAttachedPartitionsSize() < 2) {
+        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp || txFile.getAttachedPartitionsCount() < 2) {
             return false;
         }
 
@@ -877,8 +877,8 @@ public class TableWriter implements Closeable {
                 //     add partitions we cannot read sizes of to partition table
 
                 long nextMinTimestamp = minTimestamp;
-                if (timestamp == txFile.getAttachedPartitionTimestamp(0)) {
-                    nextMinTimestamp = readMinTimestamp(txFile.getAttachedPartitionTimestamp(1));
+                if (timestamp == txFile.getPartitionTimestamp(0)) {
+                    nextMinTimestamp = readMinTimestamp(txFile.getPartitionTimestamp(1));
                 }
                 txFile.startOutOfOrderUpdate();
                 txFile.removeAttachedPartitions(timestamp);

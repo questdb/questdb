@@ -307,7 +307,6 @@ public final class TableUtils {
         }
 
         throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
-
     }
 
     public static void resetTxn(VirtualMemory txMem, int symbolMapCount, long txn, long dataVersion) {
@@ -510,6 +509,13 @@ public final class TableUtils {
         } finally {
             ff.close(fd);
         }
+    }
+
+    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long offset, long fd) {
+        if (ff.read(fd, tempMem4b, Integer.BYTES, offset) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getInt(tempMem4b);
     }
 
     /**
