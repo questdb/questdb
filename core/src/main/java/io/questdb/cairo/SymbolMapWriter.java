@@ -239,7 +239,7 @@ public class SymbolMapWriter implements Closeable {
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
         int symIndex = offsetToKey(offsetOffset);
-        transientSymbolCountChangeHandler.handleTansientymbolCountChange(symIndex);
+        transientSymbolCountChangeHandler.handleTansientymbolCountChange(symIndex + 1);
         return symIndex;
     }
 

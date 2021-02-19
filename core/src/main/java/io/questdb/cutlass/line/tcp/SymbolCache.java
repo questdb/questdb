@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ReadOnlyMemory;
@@ -73,14 +72,12 @@ class SymbolCache implements Closeable {
         return symIndex;
     }
 
-    void clear() {
-        symMapReader.close();
-        indexBySym.clear();
-        txMem.close();
+    int getNCached() {
+        return indexBySym.size();
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         symMapReader.close();
         indexBySym.clear();
         txMem.close();
