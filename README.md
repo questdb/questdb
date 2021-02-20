@@ -102,7 +102,7 @@ The easiest way to get started is with Docker:
 docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
-You can more information about Docker usage on the
+You can find more information about Docker usage on the
 [dedicated page](https://questdb.io/docs/get-started/docker/).
 
 #### Alternative methods
