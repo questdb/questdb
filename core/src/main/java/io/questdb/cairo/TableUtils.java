@@ -659,10 +659,15 @@ public final class TableUtils {
                     long hi = buff + read;
                     fileRead += read;
 
-                    long ts = minTimestamp;
-                    for (long i = buff; i < hi && ts >= minTimestamp; ts = Unsafe.getUnsafe().getLong(i), i += Long.BYTES) {
-                        minTimestamp = ts;
-                        size++;
+                    long ts;
+                    for (long i = buff; i < hi; i += Long.BYTES) {
+                        ts = Unsafe.getUnsafe().getLong(i);
+                        if (ts >= minTimestamp) {
+                            minTimestamp = ts;
+                            size++;
+                        } else {
+                            return size;
+                        }
                     }
                 }
 

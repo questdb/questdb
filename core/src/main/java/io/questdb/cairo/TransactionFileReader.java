@@ -230,7 +230,7 @@ public class TransactionFileReader implements Closeable {
         index = -(index + 1);
         if (index < size) {
             // Insert in the middle
-            attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, LONGS_PER_TX_ATTACHED_PARTITION);
+            attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, size - index);
         }
 
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestamp);

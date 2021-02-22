@@ -276,6 +276,11 @@ public final class TransactionFile extends TransactionFileReader implements Clos
 
     public void startOutOfOrderUpdate() {
         if (maxTimestamp != Long.MIN_VALUE) {
+            // Last partition size is usually not stored in attached partitions list
+            // but in transientRowCount only.
+            // To resolve transientRowCount after out of order partition update
+            // let's store it in attached partitions list
+            // before out of order partition update happens
             updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
         }
     }
