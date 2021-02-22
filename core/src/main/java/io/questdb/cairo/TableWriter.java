@@ -567,6 +567,7 @@ public class TableWriter implements Closeable {
                 // find out lo, hi ranges of partition attached
                 final long partitionSize = scanPartitionSizeByTimestampColumn(ff, path.chopZ(), timestampCol, timestamp);
                 if (partitionSize > 0) {
+                    checkFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
                     readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem16b, partitionSize);
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);

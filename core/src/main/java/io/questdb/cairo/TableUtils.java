@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -680,6 +681,90 @@ public final class TableUtils {
             Unsafe.free(buff, pageSize);
             path.trimTo(plen);
         }
+    }
+
+    static void checkFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
+        // for each column, check that file exist in the partition folder
+        int rootLen = path.length();
+        for (int columnIndex = 0; columnIndex < metadata.getColumnCount(); columnIndex++) {
+            try {
+                int columnType = metadata.getColumnType(columnIndex);
+                var columnName = metadata.getColumnName(columnIndex);
+                path.concat(columnName);
+
+                switch (columnType) {
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.BYTE:
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.DATE:
+                    case ColumnType.DOUBLE:
+                    case ColumnType.CHAR:
+                    case ColumnType.SHORT:
+                    case ColumnType.FLOAT:
+                    case ColumnType.LONG256:
+                        // Consider Symbols as fixed, check data file
+                    case ColumnType.SYMBOL:
+                        checkFilesMatchFixedColumn(ff, path, columnType, partitionSize);
+                        break;
+                    case ColumnType.STRING:
+                    case ColumnType.BINARY:
+                        checkFilesMatchVarLenColumn(ff, path, columnType, partitionSize);
+                        break;
+                }
+            } finally {
+                path.trimTo(rootLen);
+            }
+        }
+    }
+
+    private static void checkFilesMatchVarLenColumn(FilesFacade ff, Path path, int columnType, long partitionSize) {
+        int pathLen = path.length();
+        path.put(FILE_SUFFIX_I).$();
+
+        if (ff.exists(path)) {
+            int typeSize = 4;
+            long fileSize = ff.length(path);
+            if (fileSize < partitionSize * typeSize) {
+                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
+                        "Partition files inconsistent [file=")
+                        .put(path)
+                        .put(",expectedSize=")
+                        .put(partitionSize * typeSize)
+                        .put(",actual=")
+                        .put(fileSize)
+                        .put(']');
+            }
+
+            path.trimTo(pathLen);
+            path.put(FILE_SUFFIX_D).$();
+            if (ff.exists(path)) {
+                // good
+                return;
+            }
+        }
+        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
+    }
+
+    private static void checkFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize) {
+        path.put(FILE_SUFFIX_D).$();
+        if (ff.exists(path)) {
+            int typeSize = ColumnType.sizeOf(columnType);
+            long fileSize = ff.length(path);
+            if (fileSize < partitionSize * typeSize) {
+                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
+                        "Partition files inconsistent [file=")
+                        .put(path)
+                        .put(",expectedSize=")
+                        .put(partitionSize * typeSize)
+                        .put(",actual=")
+                        .put(fileSize)
+                        .put(']');
+            }
+            return;
+        }
+        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
     static DateFormat getPartitionDateFmt(int partitionBy) {

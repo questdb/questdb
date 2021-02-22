@@ -66,7 +66,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                coyAttachPartition(src, dst, "2020-01-09", "2020-01-10");
+                copyAttachPartition(src, dst, "2020-01-09", "2020-01-10");
             }
         });
     }
@@ -90,7 +90,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("l", ColumnType.LONG));
 
                 // 3 partitions unordered
-                coyAttachPartition(src, dst, "2020-01-09", "2020-01-10", "2020-01-01");
+                copyAttachPartition(src, dst, "2020-01-09", "2020-01-10", "2020-01-01");
             }
         });
     }
@@ -113,7 +113,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                coyAttachPartition(src, dst, "2020-01-10");
+                copyAttachPartition(src, dst, "2020-01-10");
             }
         });
     }
@@ -138,6 +138,39 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAttachPartitionMissingColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertMemoryLeak(() -> {
+                try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
+
+                    createPopulateTable(
+                            src.col("l", ColumnType.LONG)
+                                    .col("i", ColumnType.INT)
+                                    .timestamp("ts"),
+                            10000,
+                            "2020-01-01",
+                            10);
+
+                    assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING));
+                    assertSchemaMismatch(src, dst -> dst.col("sym", ColumnType.SYMBOL));
+                    assertSchemaMismatch(src, dst -> dst.col("l1", ColumnType.LONG));
+                    assertSchemaMismatch(src, dst -> dst.col("i1", ColumnType.INT));
+                    assertSchemaMismatch(src, dst -> dst.col("b", ColumnType.BOOLEAN));
+                    assertSchemaMismatch(src, dst -> dst.col("db", ColumnType.DOUBLE));
+                    assertSchemaMismatch(src, dst -> dst.col("fl", ColumnType.FLOAT));
+                    assertSchemaMismatch(src, dst -> dst.col("dt", ColumnType.DATE));
+                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.TIMESTAMP));
+                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.LONG256));
+                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.BINARY));
+                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.BYTE));
+                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.CHAR));
+                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.SHORT));
+                }
+            });
+        });
+    }
+
+    @Test
     public void testAttachPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
@@ -155,39 +188,77 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                coyAttachPartition(src, dst, "2020-01-01");
+                copyAttachPartition(src, dst, "2020-01-01");
             }
         });
     }
 
-    private void copyDirectory(Path from, Path to) throws IOException {
-        LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
-        if (Files.mkdir(to, DIR_MODE) != 0) {
-            Assert.fail("Cannot create " + to.toString() + ". Error: " + Os.errno());
-        }
-
-        java.nio.file.Path dest = java.nio.file.Path.of(to.toString() + Files.SEPARATOR);
-        java.nio.file.Path src = java.nio.file.Path.of(from.toString() + Files.SEPARATOR);
-        java.nio.file.Files.walk(src)
-                .forEach(file -> {
-                    java.nio.file.Path destination = dest.resolve(src.relativize(file));
-                    try {
-                        java.nio.file.Files.copy(file, destination, REPLACE_EXISTING);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                });
+    @Test
+    public void testAttachPartitionWithColumnTypes() throws Exception {
+        assertSchemaMatch(dst -> dst.col("str", ColumnType.STRING));
+        assertSchemaMatch(dst -> dst.col("l1", ColumnType.LONG));
+        assertSchemaMatch(dst -> dst.col("i1", ColumnType.INT));
+        assertSchemaMatch(dst -> dst.col("b", ColumnType.BOOLEAN));
+        assertSchemaMatch(dst -> dst.col("db", ColumnType.DOUBLE));
+        assertSchemaMatch(dst -> dst.col("fl", ColumnType.FLOAT));
+        assertSchemaMatch(dst -> dst.col("dt", ColumnType.DATE));
+        assertSchemaMatch(dst -> dst.col("ts1", ColumnType.TIMESTAMP));
+        assertSchemaMatch(dst -> dst.col("l256", ColumnType.LONG256));
+        assertSchemaMatch(dst -> dst.col("byt", ColumnType.BYTE));
+        assertSchemaMatch(dst -> dst.col("ch", ColumnType.CHAR));
+        assertSchemaMatch(dst -> dst.col("sh", ColumnType.SHORT));
     }
 
-    private void copyPartitionToBackup(String src, String partitionFolder, String dst) throws IOException {
-        try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(partitionFolder).$();
-             Path backup = new Path().of(configuration.getRoot())) {
+    private void assertSchemaMatch(AddColumn tm) throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+                src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .timestamp("ts");
+                tm.add(src);
 
-            copyDirectory(p1, backup.concat(dst).concat(partitionFolder).$());
+                createPopulateTable(
+                        src,
+                        10000,
+                        "2020-01-01",
+                        10);
+
+                dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG);
+                tm.add(dst);
+
+                CairoTestUtils.create(dst);
+                copyAttachPartition(src, dst, "2020-01-01");
+            }
+        });
+        tearDownAfterTest();
+        tearDown0();
+        setUp0();
+    }
+
+    private void assertSchemaMismatch(TableModel src, AddColumn tm) throws IOException, NumericException {
+        try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY);
+             Path path = new Path()) {
+            dst.timestamp("ts")
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG);
+
+            tm.add(dst);
+            CairoTestUtils.create(dst);
+
+            try {
+                copyAttachPartition(src, dst, "2020-01-10");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("Column file does not exist"));
+            }
+            Files.rmdir(path.concat(root).concat("dst").concat("2020-01-10").$());
         }
     }
 
-    private void coyAttachPartition(TableModel src, TableModel dst, String... partitionList) throws IOException, SqlException, NumericException {
+    private void copyAttachPartition(TableModel src, TableModel dst, String... partitionList) throws IOException, SqlException, NumericException {
         StringBuilder partitions = new StringBuilder();
         for (int i = 0; i < partitionList.length; i++) {
             if (i > 0) {
@@ -257,6 +328,33 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         );
     }
 
+    private void copyDirectory(Path from, Path to) throws IOException {
+        LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
+        if (Files.mkdir(to, DIR_MODE) != 0) {
+            Assert.fail("Cannot create " + to.toString() + ". Error: " + Os.errno());
+        }
+
+        java.nio.file.Path dest = java.nio.file.Path.of(to.toString() + Files.SEPARATOR);
+        java.nio.file.Path src = java.nio.file.Path.of(from.toString() + Files.SEPARATOR);
+        java.nio.file.Files.walk(src)
+                .forEach(file -> {
+                    java.nio.file.Path destination = dest.resolve(src.relativize(file));
+                    try {
+                        java.nio.file.Files.copy(file, destination, REPLACE_EXISTING);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                });
+    }
+
+    private void copyPartitionToBackup(String src, String partitionFolder, String dst) throws IOException {
+        try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(partitionFolder).$();
+             Path backup = new Path().of(configuration.getRoot())) {
+
+            copyDirectory(p1, backup.concat(dst).concat(partitionFolder).$());
+        }
+    }
+
     private CharSequence executeSql(String sql) throws SqlException {
         try (RecordCursorFactory rcf = compiler.compile(sql
                 , sqlExecutionContext).getRecordCursorFactory()) {
@@ -266,5 +364,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 return sink;
             }
         }
+    }
+
+    @FunctionalInterface
+    private interface AddColumn {
+        void add(TableModel tm);
     }
 }
