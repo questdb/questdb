@@ -1366,6 +1366,14 @@ public class TableWriter implements Closeable {
         }
     }
 
+    void bumpOooErrorCount() {
+        oooErrorCount.incrementAndGet();
+    }
+
+    void bumpPartitionUpdateCount() {
+        oooUpdRemaining.decrementAndGet();
+    }
+
     private void bumpStructureVersion() {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
@@ -2093,7 +2101,7 @@ public class TableWriter implements Closeable {
         final Sequence copySubSeq = messageBus.getOutOfOrderCopySubSequence();
         final RingQueue<OutOfOrderCopyTask> copyQueue = messageBus.getOutOfOrderCopyQueue();
 
-        boolean updRemaining;
+        boolean updRemaining = true;
         do {
             long cursor = updSizeSubSeq.next();
             if (cursor > -1) {
@@ -2104,7 +2112,8 @@ public class TableWriter implements Closeable {
                 final long srcDataMax = task.getSrcDataMax();
                 final long dataTimestampHi = task.getDataTimestampHi();
 
-                updRemaining = this.oooUpdRemaining.decrementAndGet() > 0;
+                this.oooUpdRemaining.decrementAndGet();
+
                 updSizeSubSeq.done(cursor);
 
                 if (oooErrorCount.get() == 0) {
@@ -2121,11 +2130,15 @@ public class TableWriter implements Closeable {
                     );
                 }
             } else {
-                if (updRemaining = this.oooUpdRemaining.get() > 0) {
-                    cursor = partitionSubSeq.next();
-                    if (cursor > -1) {
-                        final OutOfOrderPartitionTask partitionTask = partitionQueue.get(cursor);
-                        if (oooErrorCount.get() > 0 || !oooProcessPartitionSafe(
+                cursor = partitionSubSeq.next();
+                if (cursor > -1) {
+                    final OutOfOrderPartitionTask partitionTask = partitionQueue.get(cursor);
+                    if (oooErrorCount.get() > 0) {
+                        // do we need to free anything on the task?
+                        partitionSubSeq.done(cursor);
+                        partitionTask.getDoneLatch().countDown();
+                    } else {
+                        oooProcessPartitionSafe(
                                 workerId,
                                 updSizePubSeq,
                                 updSizeQueue,
@@ -2135,55 +2148,81 @@ public class TableWriter implements Closeable {
                                 copyQueue,
                                 cursor,
                                 partitionTask
-                        )) {
-                            partitionTask.getDoneLatch().countDown();
-                            partitionSubSeq.done(cursor);
+                        );
+                    }
+                } else {
+                    cursor = openColumnSubSeq.next();
+                    if (cursor > -1) {
+                        OutOfOrderOpenColumnTask openColumnTask = openColumnQueue.get(cursor);
+                        if (oooErrorCount.get() > 0) {
+                            OutOfOrderOpenColumnJob.openColumnIdle(
+                                    ff,
+                                    openColumnTask.getColumnCounter(),
+                                    openColumnTask.getSrcTimestampFd(),
+                                    openColumnTask.getSrcTimestampAddr(),
+                                    openColumnTask.getSrcTimestampSize(),
+                                    this,
+                                    openColumnTask.getDoneLatch()
+                            );
+                            openColumnSubSeq.done(cursor);
+                        } else {
+                            oooOpenColumnSafe(
+                                    workerId,
+                                    updSizePubSeq,
+                                    updSizeQueue,
+                                    openColumnSubSeq,
+                                    copyPubSeq,
+                                    copyQueue,
+                                    cursor,
+                                    openColumnTask
+                            );
                         }
                     } else {
-                        cursor = openColumnSubSeq.next();
+                        cursor = copySubSeq.next();
                         if (cursor > -1) {
-                            OutOfOrderOpenColumnTask openColumnTask = openColumnQueue.get(cursor);
-                            if ((oooErrorCount.get() > 0 ||
-                                    !oooOpenColumnSafe(
-                                            workerId,
-                                            updSizePubSeq,
-                                            updSizeQueue,
-                                            openColumnSubSeq,
-                                            copyPubSeq,
-                                            copyQueue,
-                                            cursor,
-                                            openColumnTask
-                                    )) && openColumnTask.getColumnCounter().decrementAndGet() == 0) {
-                                // todo: we need to free things here
-                                openColumnTask.getDoneLatch().countDown();
-                            }
-                        } else {
-                            cursor = copySubSeq.next();
-                            if (cursor > -1) {
-                                OutOfOrderCopyTask copyTask = copyQueue.get(cursor);
-                                if ((oooErrorCount.get() > 0 ||
-                                        !oooCopySafe(
-                                                updSizePubSeq,
-                                                updSizeQueue,
-                                                copySubSeq,
-                                                copyQueue,
-                                                cursor
-                                        )) &&
-                                        copyTask.getPartCounter().decrementAndGet() == 0 &&
-                                        copyTask.getColumnCounter().decrementAndGet() == 0
-                                ) {
-                                    // todo: free
-                                    copyTask.getDoneLatch().countDown();
-                                }
+                            OutOfOrderCopyTask copyTask = copyQueue.get(cursor);
+                            if (oooErrorCount.get() > 0) {
+                                OutOfOrderCopyJob.copyIdle(
+                                        copyTask.getColumnCounter(),
+                                        copyTask.getPartCounter(),
+                                        ff,
+                                        copyTask.getTimestampMergeIndexAddr(),
+                                        copyTask.getSrcDataFixFd(),
+                                        copyTask.getSrcDataFixAddr(),
+                                        copyTask.getSrcDataFixSize(),
+                                        copyTask.getSrcDataVarFd(),
+                                        copyTask.getSrcDataVarAddr(),
+                                        copyTask.getSrcDataVarSize(),
+                                        copyTask.getDstFixFd(),
+                                        copyTask.getDstFixAddr(),
+                                        copyTask.getDstFixSize(),
+                                        copyTask.getDstVarFd(),
+                                        copyTask.getDstVarAddr(),
+                                        copyTask.getDstVarSize(),
+                                        copyTask.getSrcTimestampFd(),
+                                        copyTask.getSrcTimestampAddr(),
+                                        copyTask.getSrcTimestampSize(),
+                                        this,
+                                        copyTask.getDoneLatch()
+                                );
+                                copySubSeq.done(cursor);
+                            } else {
+                                oooCopySafe(
+                                        updSizePubSeq,
+                                        updSizeQueue,
+                                        copySubSeq,
+                                        copyQueue,
+                                        cursor
+                                );
                             }
                         }
                     }
                 }
             }
-        } while (updRemaining);
+        } while (this.oooUpdRemaining.get() > 0);
     }
 
-    private boolean oooCopySafe(
+    private void oooCopySafe(
             MPSequence updSizePubSeq,
             RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
             Sequence copySubSeq,
@@ -2199,18 +2238,14 @@ public class TableWriter implements Closeable {
                     cursor,
                     copySubSeq
             );
-            return true;
         } catch (CairoException | CairoError e) {
-            oooErrorCount.incrementAndGet();
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
-            oooErrorCount.incrementAndGet();
             LOG.error().$(e).$();
         }
-        return false;
     }
 
-    private boolean oooOpenColumnSafe(
+    private void oooOpenColumnSafe(
             int workerId,
             MPSequence updSizePubSeq,
             RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
@@ -2232,19 +2267,11 @@ public class TableWriter implements Closeable {
                     cursor,
                     openColumnSubSeq
             );
-            return true;
         } catch (CairoException | CairoError e) {
-            oooErrorCount.incrementAndGet();
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
-            oooErrorCount.incrementAndGet();
             LOG.error().$(e).$();
         }
-        return false;
-    }
-
-    void bumpOooErrorCount() {
-        oooErrorCount.incrementAndGet();
     }
 
     private void oooProcess() {
@@ -2411,7 +2438,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private boolean oooProcessPartitionSafe(
+    private void oooProcessPartitionSafe(
             int workerId,
             MPSequence updSizePubSeq,
             RingQueue<OutOfOrderUpdPartitionSizeTask> updSizeQueue,
@@ -2436,16 +2463,11 @@ public class TableWriter implements Closeable {
                     cursor,
                     partitionSubSeq
             );
-
-            return true;
         } catch (CairoException | CairoError e) {
-            oooErrorCount.incrementAndGet();
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
-            oooErrorCount.incrementAndGet();
             LOG.error().$(e).$();
         }
-        return false;
     }
 
     private void oooSort(long mergedTimestamps, int timestampIndex) {
@@ -2685,10 +2707,6 @@ public class TableWriter implements Closeable {
                     partitionSize
             );
         }
-    }
-
-    void bumpPartitionUpdateCount() {
-        oooUpdRemaining.decrementAndGet();
     }
 
     synchronized void oooUpdatePartitionSizeSynchronized(

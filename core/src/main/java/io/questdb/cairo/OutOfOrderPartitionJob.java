@@ -105,71 +105,88 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         long dataTimestampHi;
         long srcDataMax;
 
-        try {
-            // is out of order data hitting the last partition?
-            // if so we do not need to re-open files and and write to existing file descriptors
+        // is out of order data hitting the last partition?
+        // if so we do not need to re-open files and and write to existing file descriptors
 
-            if (oooTimestampHi > tableCeilOfMaxTimestamp || oooTimestampHi < tableFloorOfMinTimestamp) {
+        if (oooTimestampHi > tableCeilOfMaxTimestamp || oooTimestampHi < tableFloorOfMinTimestamp) {
 
-                // this has to be a brand new partition for either of two cases:
-                // - this partition is above min partition of the table
-                // - this partition is below max partition of the table
-                // pure OOO data copy into new partition
+            // this has to be a brand new partition for either of two cases:
+            // - this partition is above min partition of the table
+            // - this partition is below max partition of the table
+            // pure OOO data copy into new partition
 
-                // todo: handle errors
+            try {
                 LOG.debug().$("would create [path=").$(path.chopZ().put(Files.SEPARATOR).$()).$(']').$();
                 createDirsOrFail(ff, path, configuration.getMkDirMode());
+            } catch (Throwable e) {
+                System.out.println("GOOOOOOOOOOOO 31");
+                doneLatch.countDown();
+                throw e;
+            }
 
-                publishOpenColumnTasks(
-                        workerId,
-                        configuration,
-                        openColumnTaskOutboundQueue,
-                        openColumnPubSeq,
-                        copyTaskOutboundQueue,
-                        copyTaskPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        txn,
-                        columns,
-                        oooColumns,
-                        pathToTable,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampLo,
-                        oooTimestampHi,
-                        // below parameters are unused by this type of append
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0,
-                        tableFloorOfMaxTimestamp,
-                        0,
-                        OPEN_NEW_PARTITION_FOR_APPEND,
-                        -1,  // timestamp fd
-                        0,
-                        0,
-                        timestampIndex,
-                        sortedTimestampsAddr,
-                        tableWriter,
-                        doneLatch
-                );
-            } else {
+            publishOpenColumnTasks(
+                    workerId,
+                    configuration,
+                    openColumnTaskOutboundQueue,
+                    openColumnPubSeq,
+                    copyTaskOutboundQueue,
+                    copyTaskPubSeq,
+                    updPartitionSizeTaskQueue,
+                    updPartitionSizePubSeq,
+                    ff,
+                    txn,
+                    columns,
+                    oooColumns,
+                    pathToTable,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    oooTimestampMin,
+                    oooTimestampMax,
+                    oooTimestampLo,
+                    oooTimestampHi,
+                    // below parameters are unused by this type of append
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    tableFloorOfMaxTimestamp,
+                    0,
+                    OPEN_NEW_PARTITION_FOR_APPEND,
+                    -1,  // timestamp fd
+                    0,
+                    0,
+                    timestampIndex,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    doneLatch
+            );
+        } else {
+            final long srcTimestampAddr;
+            final long srcTimestampSize;
+            int prefixType;
+            long prefixLo;
+            long prefixHi;
+            int mergeType;
+            long mergeDataLo;
+            long mergeDataHi;
+            long mergeOOOLo;
+            long mergeOOOHi;
+            int suffixType;
+            long suffixLo;
+            long suffixHi;
+            final int openColumnMode;
 
+            try {
                 // out of order is hitting existing partition
-                final long srcTimestampAddr;
-                final long srcTimestampSize;
                 if (oooTimestampHi == tableCeilOfMaxTimestamp) {
                     dataTimestampHi = tableMaxTimestamp;
                     srcDataMax = lastPartitionSize;
@@ -213,17 +230,17 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 // so for prefix and suffix we will need a flag indicating source of the data
                 // as well as range of rows in that source
 
-                int prefixType = OO_BLOCK_NONE;
-                long prefixLo = -1;
-                long prefixHi = -1;
-                int mergeType = OO_BLOCK_NONE;
-                long mergeDataLo = -1;
-                long mergeDataHi = -1;
-                long mergeOOOLo = -1;
-                long mergeOOOHi = -1;
-                int suffixType = OO_BLOCK_NONE;
-                long suffixLo = -1;
-                long suffixHi = -1;
+                prefixType = OO_BLOCK_NONE;
+                prefixLo = -1;
+                prefixHi = -1;
+                mergeType = OO_BLOCK_NONE;
+                mergeDataLo = -1;
+                mergeDataHi = -1;
+                mergeOOOLo = -1;
+                mergeOOOHi = -1;
+                suffixType = OO_BLOCK_NONE;
+                suffixLo = -1;
+                suffixHi = -1;
 
                 if (oooTimestampLo > dataTimestampLo) {
                     //   +------+
@@ -406,7 +423,6 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 }
 
                 path.trimTo(plen);
-                final int openColumnMode;
                 if (prefixType == OO_BLOCK_NONE) {
                     // We do not need to create a copy of partition when we simply need to append
                     // existing the one.
@@ -424,55 +440,56 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     }
                 }
-
-                publishOpenColumnTasks(
-                        workerId,
-                        configuration,
-                        openColumnTaskOutboundQueue,
-                        openColumnPubSeq,
-                        copyTaskOutboundQueue,
-                        copyTaskPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        txn,
-                        columns,
-                        oooColumns,
-                        pathToTable,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampLo,
-                        oooTimestampHi,
-                        prefixType,
-                        prefixLo,
-                        prefixHi,
-                        mergeType,
-                        mergeDataLo,
-                        mergeDataHi,
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        suffixType,
-                        suffixLo,
-                        suffixHi,
-                        srcDataMax,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        openColumnMode,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        timestampIndex,
-                        sortedTimestampsAddr,
-                        tableWriter,
-                        doneLatch
-                );
+            } catch (Throwable e) {
+                System.out.println("GOOOOOOOOOOOO 32");
+                doneLatch.countDown();
+                throw e;
             }
-        } catch (CairoException | CairoError e) {
-            doneLatch.countDown();
-            throw e;
+
+            publishOpenColumnTasks(
+                    workerId,
+                    configuration,
+                    openColumnTaskOutboundQueue,
+                    openColumnPubSeq,
+                    copyTaskOutboundQueue,
+                    copyTaskPubSeq,
+                    updPartitionSizeTaskQueue,
+                    updPartitionSizePubSeq,
+                    ff,
+                    txn,
+                    columns,
+                    oooColumns,
+                    pathToTable,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    oooTimestampMin,
+                    oooTimestampMax,
+                    oooTimestampLo,
+                    oooTimestampHi,
+                    prefixType,
+                    prefixLo,
+                    prefixHi,
+                    mergeType,
+                    mergeDataLo,
+                    mergeDataHi,
+                    mergeOOOLo,
+                    mergeOOOHi,
+                    suffixType,
+                    suffixLo,
+                    suffixHi,
+                    srcDataMax,
+                    tableFloorOfMaxTimestamp,
+                    dataTimestampHi,
+                    openColumnMode,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    timestampIndex,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    doneLatch
+            );
         }
     }
 
@@ -731,145 +748,166 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         // todo: cache
         final AtomicInteger columnCounter = new AtomicInteger(columnCount);
 
-        for (int i = 0; i < columnCount; i++) {
-            final int colOffset = TableWriter.getPrimaryColumnIndex(i);
-            final boolean notTheTimestamp = i != timestampIndex;
-            final int columnType = metadata.getColumnType(i);
-            final ContiguousVirtualMemory oooMem1 = oooColumns.getQuick(colOffset);
-            final ContiguousVirtualMemory oooMem2 = oooColumns.getQuick(colOffset + 1);
-            final AppendMemory mem1 = columns.getQuick(colOffset);
-            final AppendMemory mem2 = columns.getQuick(colOffset + 1);
-            final long activeFixFd;
-            final long activeVarFd;
-            final long srcDataTop;
-            final long srcOooFixAddr;
-            final long srcOooFixSize;
-            final long srcOooVarAddr;
-            final long srcOooVarSize;
-            if (columnType != ColumnType.STRING && columnType != ColumnType.BINARY) {
-                activeFixFd = mem1.getFd();
-                activeVarFd = 0;
-                srcOooFixAddr = oooMem1.addressOf(0);
-                srcOooFixSize = oooMem1.getAppendOffset();
-                srcOooVarAddr = 0;
-                srcOooVarSize = 0;
-            } else {
-                activeFixFd = mem2.getFd();
-                activeVarFd = mem1.getFd();
-                srcOooFixAddr = oooMem2.addressOf(0);
-                srcOooFixSize = oooMem2.getAppendOffset();
-                srcOooVarAddr = oooMem1.addressOf(0);
-                srcOooVarSize = oooMem1.getAppendOffset();
-            }
+        int columnsInFlight = columnCount;
 
-            final CharSequence columnName = metadata.getColumnName(i);
-            final boolean isIndexed = metadata.isColumnIndexed(i);
-            if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
-                srcDataTop = tableWriter.getColumnTop(i);
-            } else {
-                srcDataTop = -1; // column open job will have to find out if top exists and its value
-            }
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                final int colOffset = TableWriter.getPrimaryColumnIndex(i);
+                final boolean notTheTimestamp = i != timestampIndex;
+                final int columnType = metadata.getColumnType(i);
+                final ContiguousVirtualMemory oooMem1 = oooColumns.getQuick(colOffset);
+                final ContiguousVirtualMemory oooMem2 = oooColumns.getQuick(colOffset + 1);
+                final AppendMemory mem1 = columns.getQuick(colOffset);
+                final AppendMemory mem2 = columns.getQuick(colOffset + 1);
+                final long activeFixFd;
+                final long activeVarFd;
+                final long srcDataTop;
+                final long srcOooFixAddr;
+                final long srcOooFixSize;
+                final long srcOooVarAddr;
+                final long srcOooVarSize;
+                if (columnType != ColumnType.STRING && columnType != ColumnType.BINARY) {
+                    activeFixFd = mem1.getFd();
+                    activeVarFd = 0;
+                    srcOooFixAddr = oooMem1.addressOf(0);
+                    srcOooFixSize = oooMem1.getAppendOffset();
+                    srcOooVarAddr = 0;
+                    srcOooVarSize = 0;
+                } else {
+                    activeFixFd = mem2.getFd();
+                    activeVarFd = mem1.getFd();
+                    srcOooFixAddr = oooMem2.addressOf(0);
+                    srcOooFixSize = oooMem2.getAppendOffset();
+                    srcOooVarAddr = oooMem1.addressOf(0);
+                    srcOooVarSize = oooMem1.getAppendOffset();
+                }
 
-            final long cursor = openColumnPubSeq.next();
-            if (cursor > -1) {
-                publishOpenColumnTaskHarmonized(
-                        openColumnTaskOutboundQueue,
-                        openColumnPubSeq,
-                        cursor,
-                        openColumnMode,
+                final CharSequence columnName = metadata.getColumnName(i);
+                final boolean isIndexed = metadata.isColumnIndexed(i);
+                if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
+                    srcDataTop = tableWriter.getColumnTop(i);
+                } else {
+                    srcDataTop = -1; // column open job will have to find out if top exists and its value
+                }
+
+                try {
+                    final long cursor = openColumnPubSeq.next();
+                    if (cursor > -1) {
+                        publishOpenColumnTaskHarmonized(
+                                openColumnTaskOutboundQueue,
+                                openColumnPubSeq,
+                                cursor,
+                                openColumnMode,
+                                ff,
+                                pathToTable,
+                                columnName,
+                                columnCounter,
+                                notTheTimestamp ? columnType : -columnType,
+                                timestampMergeIndexAddr,
+                                srcOooFixAddr,
+                                srcOooFixSize,
+                                srcOooVarAddr,
+                                srcOooVarSize,
+                                srcOooLo,
+                                srcOooHi,
+                                srcOooMax,
+                                oooTimestampMin,
+                                oooTimestampMax,
+                                oooTimestampLo,
+                                oooTimestampHi,
+                                srcDataTop,
+                                srcDataMax,
+                                tableFloorOfMaxTimestamp,
+                                dataTimestampHi,
+                                txn,
+                                prefixType,
+                                prefixLo,
+                                prefixHi,
+                                mergeType,
+                                mergeDataLo,
+                                mergeDataHi,
+                                mergeOOOLo,
+                                mergeOOOHi,
+                                suffixType,
+                                suffixLo,
+                                suffixHi,
+                                isIndexed,
+                                srcTimestampFd,
+                                srcTimestampAddr,
+                                srcTimestampSize,
+                                activeFixFd,
+                                activeVarFd,
+                                tableWriter,
+                                doneLatch
+                        );
+                    } else {
+                        publishOpenColumnTaskContended(
+                                workerId,
+                                configuration,
+                                openColumnTaskOutboundQueue,
+                                openColumnPubSeq,
+                                cursor,
+                                copyTaskOutboundQueue,
+                                copyTaskPubSeq,
+                                updPartitionSizeTaskQueue,
+                                updPartitionSizePubSeq,
+                                openColumnMode,
+                                ff,
+                                pathToTable,
+                                columnName,
+                                columnCounter,
+                                notTheTimestamp ? columnType : -columnType,
+                                timestampMergeIndexAddr,
+                                srcOooFixAddr,
+                                srcOooFixSize,
+                                srcOooVarAddr,
+                                srcOooVarSize,
+                                srcOooLo,
+                                srcOooHi,
+                                srcOooMax,
+                                oooTimestampMin,
+                                oooTimestampMax,
+                                oooTimestampLo,
+                                oooTimestampHi,
+                                tableFloorOfMaxTimestamp,
+                                dataTimestampHi,
+                                srcDataTop,
+                                srcDataMax,
+                                txn,
+                                prefixType,
+                                prefixLo,
+                                prefixHi,
+                                mergeType,
+                                mergeDataLo,
+                                mergeDataHi,
+                                mergeOOOLo,
+                                mergeOOOHi,
+                                suffixType,
+                                suffixLo,
+                                suffixHi,
+                                srcTimestampFd,
+                                srcTimestampAddr,
+                                srcTimestampSize,
+                                isIndexed,
+                                activeFixFd,
+                                activeVarFd,
+                                tableWriter,
+                                doneLatch
+                        );
+                    }
+                } catch (Throwable e) {
+                    columnsInFlight = i + 1;
+                    throw e;
+                }
+            }
+        } finally {
+            for (; columnsInFlight < columnCount; columnsInFlight++) {
+                OutOfOrderOpenColumnJob.openColumnIdle(
                         ff,
-                        pathToTable,
-                        columnName,
                         columnCounter,
-                        notTheTimestamp ? columnType : -columnType,
-                        timestampMergeIndexAddr,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampLo,
-                        oooTimestampHi,
-                        srcDataTop,
-                        srcDataMax,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        txn,
-                        prefixType,
-                        prefixLo,
-                        prefixHi,
-                        mergeType,
-                        mergeDataLo,
-                        mergeDataHi,
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        suffixType,
-                        suffixLo,
-                        suffixHi,
-                        isIndexed,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
-                        activeFixFd,
-                        activeVarFd,
-                        tableWriter,
-                        doneLatch
-                );
-            } else {
-                publishOpenColumnTaskContended(
-                        workerId,
-                        configuration,
-                        openColumnTaskOutboundQueue,
-                        openColumnPubSeq,
-                        cursor,
-                        copyTaskOutboundQueue,
-                        copyTaskPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        openColumnMode,
-                        ff,
-                        pathToTable,
-                        columnName,
-                        columnCounter,
-                        notTheTimestamp ? columnType : -columnType,
-                        timestampMergeIndexAddr,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampLo,
-                        oooTimestampHi,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        srcDataTop,
-                        srcDataMax,
-                        txn,
-                        prefixType,
-                        prefixLo,
-                        prefixHi,
-                        mergeType,
-                        mergeDataLo,
-                        mergeDataHi,
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        suffixType,
-                        suffixLo,
-                        suffixHi,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        isIndexed,
-                        activeFixFd,
-                        activeVarFd,
                         tableWriter,
                         doneLatch
                 );
@@ -907,7 +945,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             long oooTimestampHi,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
-            long srcDataTop, long srcDataMax,
+            long srcDataTop,
+            long srcDataMax,
             long txn,
             int prefixType,
             long prefixLo,

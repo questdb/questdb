@@ -41,7 +41,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.TableWriter.*;
 
 public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTask> {
-
     private static final Log LOG = LogFactory.getLog(OutOfOrderCopyJob.class);
     private final CairoConfiguration configuration;
     private final RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue;
@@ -200,8 +199,14 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
                 unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
                 unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
-                if (columnCounter.decrementAndGet() == 0) {
+
+                final int columnsRemaining = columnCounter.decrementAndGet();
+                LOG.debug().$("organic [columnsRemaining=").$(columnsRemaining).$(']').$();
+                if (columnsRemaining == 0) {
                     // last part of the last column
+                    if (srcTimestampAddr != 0) {
+                        ff.munmap(srcTimestampAddr, srcTimestampSize);
+                    }
                     try {
                         touchPartition(
                                 ff,
@@ -218,8 +223,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                                 tableFloorOfMaxTimestamp,
                                 dataTimestampHi,
                                 srcTimestampFd,
-                                srcTimestampAddr,
-                                srcTimestampSize,
                                 partitionMutates,
                                 tableWriter,
                                 success
@@ -233,7 +236,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 }
             }
         }
-
     }
 
     public static void copy(
@@ -356,6 +358,100 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         );
     }
 
+    static void copyIdle(
+            AtomicInteger columnCounter,
+            AtomicInteger partCounter,
+            FilesFacade ff,
+            long timestampMergeIndexAddr,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
+        if (partCounter.decrementAndGet() == 0) {
+            // unmap memory
+            copyIdleQuick(
+                    columnCounter,
+                    ff,
+                    timestampMergeIndexAddr,
+                    srcDataFixFd,
+                    srcDataFixAddr,
+                    srcDataFixSize,
+                    srcDataVarFd,
+                    srcDataVarAddr,
+                    srcDataVarSize,
+                    dstFixFd,
+                    dstFixAddr,
+                    dstFixSize,
+                    dstVarFd,
+                    dstVarAddr,
+                    dstVarSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter,
+                    doneLatch
+            );
+        }
+    }
+
+    static void copyIdleQuick(
+            AtomicInteger columnCounter,
+            FilesFacade ff,
+            long timestampMergeIndexAddr,
+            long srcDataFixFd,
+            long srcDataFixAddr,
+            long srcDataFixSize,
+            long srcDataVarFd,
+            long srcDataVarAddr,
+            long srcDataVarSize,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstVarFd,
+            long dstVarAddr,
+            long dstVarSize,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
+        unmapAndClose(srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+        unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+        unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
+        unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
+        final int columnsRemaining = columnCounter.decrementAndGet();
+        LOG.debug().$("idle [columnsRemaining=").$(columnsRemaining).$(']').$();
+        if (columnsRemaining == 0) {
+            // last part of the last column
+            if (srcTimestampAddr != 0) {
+                ff.munmap(srcTimestampAddr, srcTimestampSize);
+            }
+            if (srcTimestampFd > 0) {
+                ff.close(srcTimestampFd);
+            }
+            if (timestampMergeIndexAddr != 0) {
+                Vect.freeMergedIndex(timestampMergeIndexAddr);
+            }
+            tableWriter.bumpPartitionUpdateCount();
+            doneLatch.countDown();
+        }
+    }
+
     private static void touchPartition(
             FilesFacade ff,
             RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue,
@@ -371,17 +467,11 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
             boolean partitionMutates,
             TableWriter tableWriter,
             boolean success
     ) {
         try {
-            if (srcTimestampAddr != 0) {
-                ff.munmap(srcTimestampAddr, srcTimestampSize);
-            }
-
             if (partitionMutates && success) {
                 if (srcTimestampFd < 0) {
                     // srcTimestampFd negative indicates that we are reusing existing file descriptor

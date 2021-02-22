@@ -2055,6 +2055,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         } catch (CairoException ignored) {
         }
 
+        System.out.println("next");
         assertOutOfOrderDataConsistency(
                 engine,
                 compiler,
