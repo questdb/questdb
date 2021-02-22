@@ -30,7 +30,9 @@ public class OutOfOrderUpdPartitionSizeTask {
     private long srcOooPartitionHi;
     private long srcDataMax;
     private long dataTimestampHi;
+    // todo: consider replacing both flags with single status
     private boolean success;
+    private boolean outOfBandErrorReport;
 
     public long getDataTimestampHi() {
         return dataTimestampHi;
@@ -56,13 +58,18 @@ public class OutOfOrderUpdPartitionSizeTask {
         return success;
     }
 
+    public boolean isOutOfBandErrorReport() {
+        return outOfBandErrorReport;
+    }
+
     public void of(
             long oooTimestampHi,
             long srcOooPartitionLo,
             long srcOooPartitionHi,
             long srcDataMax,
             long dataTimestampHi,
-            boolean success
+            boolean success,
+            boolean outOfBandErrorReport
     ) {
         this.oooTimestampHi = oooTimestampHi;
         this.srcOooPartitionLo = srcOooPartitionLo;
@@ -70,5 +77,6 @@ public class OutOfOrderUpdPartitionSizeTask {
         this.srcDataMax = srcDataMax;
         this.dataTimestampHi = dataTimestampHi;
         this.success = success;
+        this.outOfBandErrorReport = outOfBandErrorReport;
     }
 }

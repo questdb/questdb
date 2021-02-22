@@ -135,226 +135,252 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         // append jobs do not set value of part counter, we do it here for those
         // todo: cache
         final AtomicInteger partCounter = new AtomicInteger(1);
-        switch (openColumnMode) {
-            case OPEN_MID_PARTITION_FOR_APPEND:
-                appendMidPartition(
-                        workerId,
-                        configuration,
-                        outboundQueue,
-                        outboundPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        path,
-                        plen,
-                        pathToTable,
-                        columnName,
-                        partCounter,
-                        columnCounter,
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampHi,
-                        srcDataTop,
-                        srcDataMax,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        isIndexed,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        doneLatch
-                );
-                break;
-            case OPEN_LAST_PARTITION_FOR_APPEND:
-                appendLastPartition(
-                        workerId,
-                        configuration,
-                        outboundQueue,
-                        outboundPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        path,
-                        plen,
-                        pathToTable,
-                        columnName,
-                        partCounter,
-                        columnCounter,
-                        columnType,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampHi,
-                        srcDataTop,
-                        srcDataMax,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        isIndexed,
-                        activeFixFd,
-                        activeVarFd,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        doneLatch
-                );
-                break;
-            case OPEN_MID_PARTITION_FOR_MERGE:
-                mergeMidPartition(
-                        workerId,
-                        configuration,
-                        outboundQueue,
-                        outboundPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        path,
-                        plen,
-                        pathToTable,
-                        columnName,
-                        partCounter,
-                        columnCounter,
-                        columnType,
-                        timestampMergeIndexAddr,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampHi,
-                        srcDataTop,
-                        srcDataMax,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        txn,
-                        prefixType,
-                        prefixLo,
-                        prefixHi,
-                        mergeType,
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        mergeDataLo,
-                        mergeDataHi,
-                        mergeLen,
-                        suffixType,
-                        suffixLo,
-                        suffixHi,
-                        isIndexed,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        doneLatch
-                );
-                break;
-            case OPEN_LAST_PARTITION_FOR_MERGE:
-                mergeLastPartition(
-                        workerId,
-                        configuration,
-                        outboundQueue,
-                        outboundPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        path,
-                        plen,
-                        pathToTable,
-                        columnName,
-                        partCounter,
-                        columnCounter,
-                        columnType,
-                        timestampMergeIndexAddr,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampHi,
-                        srcDataTop, srcDataMax,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        txn,
-                        prefixType,
-                        prefixLo,
-                        prefixHi,
-                        mergeType,
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        mergeDataLo,
-                        mergeDataHi,
-                        mergeLen,
-                        suffixType,
-                        suffixLo,
-                        suffixHi,
-                        isIndexed,
-                        activeFixFd,
-                        activeVarFd,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter,
-                        doneLatch
-                );
-                break;
-            case OPEN_NEW_PARTITION_FOR_APPEND:
-                appendNewPartition(
-                        configuration,
-                        outboundQueue,
-                        outboundPubSeq,
-                        updPartitionSizeTaskQueue,
-                        updPartitionSizePubSeq,
-                        ff,
-                        path,
-                        plen,
-                        pathToTable,
-                        columnName,
-                        partCounter,
-                        columnCounter,
-                        columnType,
-                        timestampMergeIndexAddr,
-                        srcOooFixAddr,
-                        srcOooFixSize,
-                        srcOooVarAddr,
-                        srcOooVarSize,
-                        srcOooLo,
-                        srcOooHi,
-                        srcOooMax,
-                        oooTimestampMin,
-                        oooTimestampMax,
-                        oooTimestampHi,
-                        srcDataMax,
-                        tableFloorOfMaxTimestamp,
-                        dataTimestampHi,
-                        isIndexed,
-                        tableWriter,
-                        doneLatch
-                );
-                break;
-            default:
-                break;
+        try {
+            switch (openColumnMode) {
+                case OPEN_MID_PARTITION_FOR_APPEND:
+                    appendMidPartition(
+                            workerId,
+                            configuration,
+                            outboundQueue,
+                            outboundPubSeq,
+                            updPartitionSizeTaskQueue,
+                            updPartitionSizePubSeq,
+                            ff,
+                            path,
+                            plen,
+                            pathToTable,
+                            columnName,
+                            partCounter,
+                            columnCounter,
+                            columnType,
+                            srcOooFixAddr,
+                            srcOooFixSize,
+                            srcOooVarAddr,
+                            srcOooVarSize,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            oooTimestampHi,
+                            srcDataTop,
+                            srcDataMax,
+                            tableFloorOfMaxTimestamp,
+                            dataTimestampHi,
+                            isIndexed,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            tableWriter,
+                            doneLatch
+                    );
+                    break;
+                case OPEN_LAST_PARTITION_FOR_APPEND:
+                    appendLastPartition(
+                            workerId,
+                            configuration,
+                            outboundQueue,
+                            outboundPubSeq,
+                            updPartitionSizeTaskQueue,
+                            updPartitionSizePubSeq,
+                            ff,
+                            path,
+                            plen,
+                            pathToTable,
+                            columnName,
+                            partCounter,
+                            columnCounter,
+                            columnType,
+                            srcOooFixAddr,
+                            srcOooFixSize,
+                            srcOooVarAddr,
+                            srcOooVarSize,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            oooTimestampHi,
+                            srcDataTop,
+                            srcDataMax,
+                            tableFloorOfMaxTimestamp,
+                            dataTimestampHi,
+                            isIndexed,
+                            activeFixFd,
+                            activeVarFd,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            tableWriter,
+                            doneLatch
+                    );
+                    break;
+                case OPEN_MID_PARTITION_FOR_MERGE:
+                    mergeMidPartition(
+                            workerId,
+                            configuration,
+                            outboundQueue,
+                            outboundPubSeq,
+                            updPartitionSizeTaskQueue,
+                            updPartitionSizePubSeq,
+                            ff,
+                            path,
+                            plen,
+                            pathToTable,
+                            columnName,
+                            partCounter,
+                            columnCounter,
+                            columnType,
+                            timestampMergeIndexAddr,
+                            srcOooFixAddr,
+                            srcOooFixSize,
+                            srcOooVarAddr,
+                            srcOooVarSize,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            oooTimestampHi,
+                            srcDataTop,
+                            srcDataMax,
+                            tableFloorOfMaxTimestamp,
+                            dataTimestampHi,
+                            txn,
+                            prefixType,
+                            prefixLo,
+                            prefixHi,
+                            mergeType,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            mergeDataLo,
+                            mergeDataHi,
+                            mergeLen,
+                            suffixType,
+                            suffixLo,
+                            suffixHi,
+                            isIndexed,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            tableWriter,
+                            doneLatch
+                    );
+                    break;
+                case OPEN_LAST_PARTITION_FOR_MERGE:
+                    mergeLastPartition(
+                            workerId,
+                            configuration,
+                            outboundQueue,
+                            outboundPubSeq,
+                            updPartitionSizeTaskQueue,
+                            updPartitionSizePubSeq,
+                            ff,
+                            path,
+                            plen,
+                            pathToTable,
+                            columnName,
+                            partCounter,
+                            columnCounter,
+                            columnType,
+                            timestampMergeIndexAddr,
+                            srcOooFixAddr,
+                            srcOooFixSize,
+                            srcOooVarAddr,
+                            srcOooVarSize,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            oooTimestampHi,
+                            srcDataTop, srcDataMax,
+                            tableFloorOfMaxTimestamp,
+                            dataTimestampHi,
+                            txn,
+                            prefixType,
+                            prefixLo,
+                            prefixHi,
+                            mergeType,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            mergeDataLo,
+                            mergeDataHi,
+                            mergeLen,
+                            suffixType,
+                            suffixLo,
+                            suffixHi,
+                            isIndexed,
+                            activeFixFd,
+                            activeVarFd,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            tableWriter,
+                            doneLatch
+                    );
+                    break;
+                case OPEN_NEW_PARTITION_FOR_APPEND:
+                    appendNewPartition(
+                            configuration,
+                            outboundQueue,
+                            outboundPubSeq,
+                            updPartitionSizeTaskQueue,
+                            updPartitionSizePubSeq,
+                            ff,
+                            path,
+                            plen,
+                            pathToTable,
+                            columnName,
+                            partCounter,
+                            columnCounter,
+                            columnType,
+                            timestampMergeIndexAddr,
+                            srcOooFixAddr,
+                            srcOooFixSize,
+                            srcOooVarAddr,
+                            srcOooVarSize,
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            oooTimestampHi,
+                            srcDataMax,
+                            tableFloorOfMaxTimestamp,
+                            dataTimestampHi,
+                            isIndexed,
+                            tableWriter,
+                            doneLatch
+                    );
+                    break;
+                default:
+                    break;
+            }
+        } catch (CairoException | CairoError e) {
+            boolean outOfBandErrorReport = columnCounter.decrementAndGet() != 0;
+            OutOfOrderCopyJob.notifyWriter(
+                    updPartitionSizeTaskQueue,
+                    updPartitionSizePubSeq,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    tableWriter,
+                    false,
+                    outOfBandErrorReport
+            );
+
+            if (!outOfBandErrorReport && srcTimestampFd > 0) {
+                ff.close(srcTimestampFd);
+            }
+
+            throw e;
         }
     }
 
@@ -493,7 +519,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             return;
         }
         if (!ff.allocate(fd, size)) {
-            throw CairoException.instance(ff.errno()).put("could allocate file [size=").put(size).put(", fd=").put(fd).put(']');
+            throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
 
@@ -730,25 +756,36 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             long dstFixFd,
             long dstLen
     ) {
-        long dstKFd;
-        long dstVFd;
+        long dstKFd = 0;
+        long dstVFd = 0;
         long dstFixOffset;
         long dstIndexOffset;
-        long dstFixSize;
-        long dstFixAddr;
+        long dstFixSize = 0;
+        long dstFixAddr = 0;
         final int shl = ColumnType.pow2SizeOf(columnType);
-        dstFixSize = dstLen << shl;
-        dstFixOffset = (srcDataMax - srcDataTop) << shl;
-        dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize);
-        dstIndexOffset = dstFixOffset;
-        if (isIndexed) {
-            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-            dstKFd = openRW(ff, path);
-            BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-            dstVFd = openRW(ff, path);
-        } else {
-            dstKFd = 0;
-            dstVFd = 0;
+
+        try {
+            dstFixSize = dstLen << shl;
+            dstFixOffset = (srcDataMax - srcDataTop) << shl;
+            dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize);
+            dstIndexOffset = dstFixOffset;
+            if (isIndexed) {
+                BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+                dstKFd = openRW(ff, path);
+                BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
+                dstVFd = openRW(ff, path);
+            }
+        } catch (CairoException | CairoError e) {
+            freeFixColumnArtefacts(
+                    ff,
+                    dstFixFd,
+                    dstFixAddr,
+                    dstFixSize,
+                    dstKFd,
+                    dstVFd
+            );
+
+            throw e;
         }
 
         publishCopyTask(
@@ -809,6 +846,31 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 tableWriter,
                 doneLatch
         );
+    }
+
+    private static void freeFixColumnArtefacts(
+            FilesFacade ff,
+            long dstFixFd,
+            long dstFixAddr,
+            long dstFixSize,
+            long dstKFd,
+            long dstVFd
+    ) {
+        if (dstFixAddr != 0) {
+            ff.munmap(dstFixAddr, dstFixSize);
+        }
+
+        if (dstFixAddr > 0) {
+            ff.close(dstFixFd);
+        }
+
+        if (dstKFd > 0) {
+            ff.close(dstKFd);
+        }
+
+        if (dstVFd > 0) {
+            ff.close(dstVFd);
+        }
     }
 
     private static void appendTimestampColumn(

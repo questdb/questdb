@@ -105,368 +105,374 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         long dataTimestampHi;
         long srcDataMax;
 
-        // is out of order data hitting the last partition?
-        // if so we do not need to re-open files and and write to existing file descriptors
+        try {
+            // is out of order data hitting the last partition?
+            // if so we do not need to re-open files and and write to existing file descriptors
 
-        if (oooTimestampHi > tableCeilOfMaxTimestamp || oooTimestampHi < tableFloorOfMinTimestamp) {
+            if (oooTimestampHi > tableCeilOfMaxTimestamp || oooTimestampHi < tableFloorOfMinTimestamp) {
 
-            // this has to be a brand new partition for either of two cases:
-            // - this partition is above min partition of the table
-            // - this partition is below max partition of the table
-            // pure OOO data copy into new partition
+                // this has to be a brand new partition for either of two cases:
+                // - this partition is above min partition of the table
+                // - this partition is below max partition of the table
+                // pure OOO data copy into new partition
 
-            // todo: handle errors
-            LOG.debug().$("would create [path=").$(path.chopZ().put(Files.SEPARATOR).$()).$(']').$();
-            createDirsOrFail(ff, path, configuration.getMkDirMode());
+                // todo: handle errors
+                LOG.debug().$("would create [path=").$(path.chopZ().put(Files.SEPARATOR).$()).$(']').$();
+                createDirsOrFail(ff, path, configuration.getMkDirMode());
 
-            publishOpenColumnTasks(
-                    workerId,
-                    configuration,
-                    openColumnTaskOutboundQueue,
-                    openColumnPubSeq,
-                    copyTaskOutboundQueue,
-                    copyTaskPubSeq,
-                    updPartitionSizeTaskQueue,
-                    updPartitionSizePubSeq,
-                    ff,
-                    txn,
-                    columns,
-                    oooColumns,
-                    pathToTable,
-                    srcOooLo,
-                    srcOooHi,
-                    srcOooMax,
-                    oooTimestampMin,
-                    oooTimestampMax,
-                    oooTimestampLo,
-                    oooTimestampHi,
-                    // below parameters are unused by this type of append
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    tableFloorOfMaxTimestamp,
-                    0,
-                    OPEN_NEW_PARTITION_FOR_APPEND,
-                    -1,  // timestamp fd
-                    0,
-                    0,
-                    timestampIndex,
-                    sortedTimestampsAddr,
-                    tableWriter,
-                    doneLatch
-            );
-        } else {
-
-            // out of order is hitting existing partition
-            final long srcTimestampAddr;
-            final long srcTimestampSize;
-            if (oooTimestampHi == tableCeilOfMaxTimestamp) {
-                dataTimestampHi = tableMaxTimestamp;
-                srcDataMax = lastPartitionSize;
-                srcTimestampSize = srcDataMax * 8L;
-                // negative fd indicates descriptor reuse
-                srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-                srcTimestampAddr = mapRO(ff, -srcTimestampFd, srcTimestampSize);
+                publishOpenColumnTasks(
+                        workerId,
+                        configuration,
+                        openColumnTaskOutboundQueue,
+                        openColumnPubSeq,
+                        copyTaskOutboundQueue,
+                        copyTaskPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        txn,
+                        columns,
+                        oooColumns,
+                        pathToTable,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampLo,
+                        oooTimestampHi,
+                        // below parameters are unused by this type of append
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        tableFloorOfMaxTimestamp,
+                        0,
+                        OPEN_NEW_PARTITION_FOR_APPEND,
+                        -1,  // timestamp fd
+                        0,
+                        0,
+                        timestampIndex,
+                        sortedTimestampsAddr,
+                        tableWriter,
+                        doneLatch
+                );
             } else {
-                long tempMem8b = Unsafe.malloc(Long.BYTES);
-                try {
-                    srcDataMax = readPartitionSize(ff, path, tempMem8b);
-                } finally {
-                    Unsafe.free(tempMem8b, Long.BYTES);
-                }
-                srcTimestampSize = srcDataMax * 8L;
-                // out of order data is going into archive partition
-                // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
-                // and "high" being newest
 
-                dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
-
-                // also track the fd that we need to eventually close
-                srcTimestampFd = ff.openRW(path);
-                if (srcTimestampFd == -1) {
-                    throw CairoException.instance(ff.errno()).put("could not open `").put(pathToTable).put('`');
-                }
-                srcTimestampAddr = mapRO(ff, srcTimestampFd, srcTimestampSize);
-                dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
-            }
-            dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);
-
-
-            // create copy jobs
-            // we will have maximum of 3 stages:
-            // - prefix data
-            // - merge job
-            // - suffix data
-            //
-            // prefix and suffix can be sourced either from OO fully or from Data (written to disk) fully
-            // so for prefix and suffix we will need a flag indicating source of the data
-            // as well as range of rows in that source
-
-            int prefixType = OO_BLOCK_NONE;
-            long prefixLo = -1;
-            long prefixHi = -1;
-            int mergeType = OO_BLOCK_NONE;
-            long mergeDataLo = -1;
-            long mergeDataHi = -1;
-            long mergeOOOLo = -1;
-            long mergeOOOHi = -1;
-            int suffixType = OO_BLOCK_NONE;
-            long suffixLo = -1;
-            long suffixHi = -1;
-
-            if (oooTimestampLo > dataTimestampLo) {
-                //   +------+
-                //   | data |  +-----+
-                //   |      |  | OOO |
-                //   |      |  |     |
-
-                if (oooTimestampLo > dataTimestampHi) {
-
-                    // +------+
-                    // | data |
-                    // |      |
-                    // +------+
-                    //
-                    //           +-----+
-                    //           | OOO |
-                    //           |     |
-                    //
-                    suffixType = OO_BLOCK_OO;
-                    suffixLo = srcOooLo;
-                    suffixHi = srcOooHi;
+                // out of order is hitting existing partition
+                final long srcTimestampAddr;
+                final long srcTimestampSize;
+                if (oooTimestampHi == tableCeilOfMaxTimestamp) {
+                    dataTimestampHi = tableMaxTimestamp;
+                    srcDataMax = lastPartitionSize;
+                    srcTimestampSize = srcDataMax * 8L;
+                    // negative fd indicates descriptor reuse
+                    srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
+                    srcTimestampAddr = mapRO(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
+                    // todo: do not allocate
+                    long tempMem8b = Unsafe.malloc(Long.BYTES);
+                    try {
+                        srcDataMax = readPartitionSize(ff, path, tempMem8b);
+                    } finally {
+                        Unsafe.free(tempMem8b, Long.BYTES);
+                    }
+                    srcTimestampSize = srcDataMax * 8L;
+                    // out of order data is going into archive partition
+                    // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
+                    // and "high" being newest
 
-                    //
-                    // +------+
-                    // |      |
-                    // |      | +-----+
-                    // | data | | OOO |
-                    // +------+
+                    dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
 
-                    prefixType = OO_BLOCK_DATA;
-                    prefixLo = 0;
-                    prefixHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampLo, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
-                    mergeDataLo = prefixHi + 1;
-                    mergeOOOLo = srcOooLo;
+                    // also track the fd that we need to eventually close
+                    srcTimestampFd = ff.openRW(path);
+                    if (srcTimestampFd == -1) {
+                        throw CairoException.instance(ff.errno()).put("could not open `").put(pathToTable).put('`');
+                    }
+                    srcTimestampAddr = mapRO(ff, srcTimestampFd, srcTimestampSize);
+                    dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
+                }
+                dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);
 
-                    if (oooTimestampMax < dataTimestampHi) {
 
-                        //
-                        // |      | +-----+
-                        // | data | | OOO |
-                        // |      | +-----+
+                // create copy jobs
+                // we will have maximum of 3 stages:
+                // - prefix data
+                // - merge job
+                // - suffix data
+                //
+                // prefix and suffix can be sourced either from OO fully or from Data (written to disk) fully
+                // so for prefix and suffix we will need a flag indicating source of the data
+                // as well as range of rows in that source
+
+                int prefixType = OO_BLOCK_NONE;
+                long prefixLo = -1;
+                long prefixHi = -1;
+                int mergeType = OO_BLOCK_NONE;
+                long mergeDataLo = -1;
+                long mergeDataHi = -1;
+                long mergeOOOLo = -1;
+                long mergeOOOHi = -1;
+                int suffixType = OO_BLOCK_NONE;
+                long suffixLo = -1;
+                long suffixHi = -1;
+
+                if (oooTimestampLo > dataTimestampLo) {
+                    //   +------+
+                    //   | data |  +-----+
+                    //   |      |  | OOO |
+                    //   |      |  |     |
+
+                    if (oooTimestampLo > dataTimestampHi) {
+
                         // +------+
-
-                        mergeOOOHi = srcOooHi;
-                        mergeDataHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampMax - 1, mergeDataLo, srcDataMax - 1, BinarySearch.SCAN_DOWN) + 1;
-
-                        if (mergeDataLo < mergeDataHi) {
-                            mergeType = OO_BLOCK_MERGE;
-                        } else {
-                            // the OO data implodes right between rows of existing data
-                            // so we will have both data prefix and suffix and the middle bit
-
-                            // is the out of order
-                            mergeType = OO_BLOCK_OO;
-                            mergeDataHi--;
-                        }
-
-                        suffixType = OO_BLOCK_DATA;
-                        suffixLo = mergeDataHi + 1;
-                        suffixHi = srcDataMax - 1;
-                    } else if (oooTimestampMax > dataTimestampHi) {
-
+                        // | data |
+                        // |      |
+                        // +------+
                         //
-                        // |      | +-----+
-                        // | data | | OOO |
-                        // |      | |     |
-                        // +------+ |     |
-                        //          |     |
-                        //          +-----+
-
-                        mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi, srcOooLo, srcOooHi, BinarySearch.SCAN_UP);
-                        mergeDataHi = srcDataMax - 1;
-
-                        mergeType = OO_BLOCK_MERGE;
+                        //           +-----+
+                        //           | OOO |
+                        //           |     |
+                        //
                         suffixType = OO_BLOCK_OO;
-                        suffixLo = mergeOOOHi + 1;
+                        suffixLo = srcOooLo;
                         suffixHi = srcOooHi;
                     } else {
 
                         //
+                        // +------+
+                        // |      |
                         // |      | +-----+
                         // | data | | OOO |
-                        // |      | |     |
-                        // +------+ +-----+
-                        //
-
-                        mergeType = OO_BLOCK_MERGE;
-                        mergeOOOHi = srcOooHi;
-                        mergeDataHi = srcDataMax - 1;
-                    }
-                }
-            } else {
-
-                //            +-----+
-                //            | OOO |
-                //
-                //  +------+
-                //  | data |
-
-
-                prefixType = OO_BLOCK_OO;
-                prefixLo = srcOooLo;
-                if (dataTimestampLo < oooTimestampMax) {
-
-                    //
-                    //  +------+  | OOO |
-                    //  | data |  +-----+
-                    //  |      |
-
-                    mergeDataLo = 0;
-                    prefixHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampLo, srcOooLo, srcOooHi, BinarySearch.SCAN_DOWN);
-                    mergeOOOLo = prefixHi + 1;
-
-                    if (oooTimestampMax < dataTimestampHi) {
-
-                        // |      | |     |
-                        // |      | | OOO |
-                        // | data | +-----+
-                        // |      |
                         // +------+
 
-                        mergeType = OO_BLOCK_MERGE;
-                        mergeOOOHi = srcOooHi;
-                        mergeDataHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampMax, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                        prefixType = OO_BLOCK_DATA;
+                        prefixLo = 0;
+                        prefixHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampLo, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+                        mergeDataLo = prefixHi + 1;
+                        mergeOOOLo = srcOooLo;
 
-                        suffixLo = mergeDataHi + 1;
-                        suffixType = OO_BLOCK_DATA;
-                        suffixHi = srcDataMax - 1;
+                        if (oooTimestampMax < dataTimestampHi) {
 
-                    } else if (oooTimestampMax > dataTimestampHi) {
+                            //
+                            // |      | +-----+
+                            // | data | | OOO |
+                            // |      | +-----+
+                            // +------+
 
-                        // |      | |     |
-                        // |      | | OOO |
-                        // | data | |     |
-                        // +------+ |     |
-                        //          +-----+
+                            mergeOOOHi = srcOooHi;
+                            mergeDataHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampMax - 1, mergeDataLo, srcDataMax - 1, BinarySearch.SCAN_DOWN) + 1;
 
-                        mergeDataHi = srcDataMax - 1;
-                        mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi - 1, mergeOOOLo, srcOooHi, BinarySearch.SCAN_DOWN) + 1;
+                            if (mergeDataLo < mergeDataHi) {
+                                mergeType = OO_BLOCK_MERGE;
+                            } else {
+                                // the OO data implodes right between rows of existing data
+                                // so we will have both data prefix and suffix and the middle bit
 
-                        if (mergeOOOLo < mergeOOOHi) {
+                                // is the out of order
+                                mergeType = OO_BLOCK_OO;
+                                mergeDataHi--;
+                            }
+
+                            suffixType = OO_BLOCK_DATA;
+                            suffixLo = mergeDataHi + 1;
+                            suffixHi = srcDataMax - 1;
+                        } else if (oooTimestampMax > dataTimestampHi) {
+
+                            //
+                            // |      | +-----+
+                            // | data | | OOO |
+                            // |      | |     |
+                            // +------+ |     |
+                            //          |     |
+                            //          +-----+
+
+                            mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi, srcOooLo, srcOooHi, BinarySearch.SCAN_UP);
+                            mergeDataHi = srcDataMax - 1;
+
                             mergeType = OO_BLOCK_MERGE;
-                        } else {
-                            mergeType = OO_BLOCK_DATA;
-                            mergeOOOHi--;
-                        }
-
-                        if (mergeOOOHi < srcOooHi) {
-                            suffixLo = mergeOOOHi + 1;
                             suffixType = OO_BLOCK_OO;
-                            suffixHi = Math.max(suffixLo, srcOooHi);
+                            suffixLo = mergeOOOHi + 1;
+                            suffixHi = srcOooHi;
                         } else {
-                            suffixType = OO_BLOCK_NONE;
+
+                            //
+                            // |      | +-----+
+                            // | data | | OOO |
+                            // |      | |     |
+                            // +------+ +-----+
+                            //
+
+                            mergeType = OO_BLOCK_MERGE;
+                            mergeOOOHi = srcOooHi;
+                            mergeDataHi = srcDataMax - 1;
                         }
-                    } else {
-
-                        // |      | |     |
-                        // |      | | OOO |
-                        // | data | |     |
-                        // +------+ +-----+
-
-                        mergeType = OO_BLOCK_MERGE;
-                        mergeOOOHi = srcOooHi;
-                        mergeDataHi = srcDataMax - 1;
                     }
                 } else {
+
                     //            +-----+
                     //            | OOO |
-                    //            +-----+
                     //
                     //  +------+
                     //  | data |
-                    //
-                    prefixHi = srcOooHi;
-                    suffixType = OO_BLOCK_DATA;
-                    suffixLo = 0;
-                    suffixHi = srcDataMax - 1;
-                }
-            }
 
-            path.trimTo(plen);
-            final int openColumnMode;
-            if (prefixType == OO_BLOCK_NONE) {
-                // We do not need to create a copy of partition when we simply need to append
-                // existing the one.
-                if (oooTimestampHi < tableFloorOfMaxTimestamp) {
-                    openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
-                } else {
-                    openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
-                }
-            } else {
-                newPartitionName(path.trimTo(plen), txn);
-                createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
-                if (srcTimestampFd > -1) {
-                    openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
-                } else {
-                    openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
-                }
-            }
 
-            publishOpenColumnTasks(
-                    workerId,
-                    configuration,
-                    openColumnTaskOutboundQueue,
-                    openColumnPubSeq,
-                    copyTaskOutboundQueue,
-                    copyTaskPubSeq,
-                    updPartitionSizeTaskQueue,
-                    updPartitionSizePubSeq,
-                    ff,
-                    txn,
-                    columns,
-                    oooColumns,
-                    pathToTable,
-                    srcOooLo,
-                    srcOooHi,
-                    srcOooMax,
-                    oooTimestampMin,
-                    oooTimestampMax,
-                    oooTimestampLo,
-                    oooTimestampHi,
-                    prefixType,
-                    prefixLo,
-                    prefixHi,
-                    mergeType,
-                    mergeDataLo,
-                    mergeDataHi,
-                    mergeOOOLo,
-                    mergeOOOHi,
-                    suffixType,
-                    suffixLo,
-                    suffixHi,
-                    srcDataMax,
-                    tableFloorOfMaxTimestamp,
-                    dataTimestampHi,
-                    openColumnMode,
-                    srcTimestampFd,
-                    srcTimestampAddr,
-                    srcTimestampSize,
-                    timestampIndex,
-                    sortedTimestampsAddr,
-                    tableWriter,
-                    doneLatch
-            );
+                    prefixType = OO_BLOCK_OO;
+                    prefixLo = srcOooLo;
+                    if (dataTimestampLo < oooTimestampMax) {
+
+                        //
+                        //  +------+  | OOO |
+                        //  | data |  +-----+
+                        //  |      |
+
+                        mergeDataLo = 0;
+                        prefixHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampLo, srcOooLo, srcOooHi, BinarySearch.SCAN_DOWN);
+                        mergeOOOLo = prefixHi + 1;
+
+                        if (oooTimestampMax < dataTimestampHi) {
+
+                            // |      | |     |
+                            // |      | | OOO |
+                            // | data | +-----+
+                            // |      |
+                            // +------+
+
+                            mergeType = OO_BLOCK_MERGE;
+                            mergeOOOHi = srcOooHi;
+                            mergeDataHi = Vect.binarySearch64Bit(srcTimestampAddr, oooTimestampMax, 0, srcDataMax - 1, BinarySearch.SCAN_DOWN);
+
+                            suffixLo = mergeDataHi + 1;
+                            suffixType = OO_BLOCK_DATA;
+                            suffixHi = srcDataMax - 1;
+
+                        } else if (oooTimestampMax > dataTimestampHi) {
+
+                            // |      | |     |
+                            // |      | | OOO |
+                            // | data | |     |
+                            // +------+ |     |
+                            //          +-----+
+
+                            mergeDataHi = srcDataMax - 1;
+                            mergeOOOHi = Vect.binarySearchIndexT(sortedTimestampsAddr, dataTimestampHi - 1, mergeOOOLo, srcOooHi, BinarySearch.SCAN_DOWN) + 1;
+
+                            if (mergeOOOLo < mergeOOOHi) {
+                                mergeType = OO_BLOCK_MERGE;
+                            } else {
+                                mergeType = OO_BLOCK_DATA;
+                                mergeOOOHi--;
+                            }
+
+                            if (mergeOOOHi < srcOooHi) {
+                                suffixLo = mergeOOOHi + 1;
+                                suffixType = OO_BLOCK_OO;
+                                suffixHi = Math.max(suffixLo, srcOooHi);
+                            } else {
+                                suffixType = OO_BLOCK_NONE;
+                            }
+                        } else {
+
+                            // |      | |     |
+                            // |      | | OOO |
+                            // | data | |     |
+                            // +------+ +-----+
+
+                            mergeType = OO_BLOCK_MERGE;
+                            mergeOOOHi = srcOooHi;
+                            mergeDataHi = srcDataMax - 1;
+                        }
+                    } else {
+                        //            +-----+
+                        //            | OOO |
+                        //            +-----+
+                        //
+                        //  +------+
+                        //  | data |
+                        //
+                        prefixHi = srcOooHi;
+                        suffixType = OO_BLOCK_DATA;
+                        suffixLo = 0;
+                        suffixHi = srcDataMax - 1;
+                    }
+                }
+
+                path.trimTo(plen);
+                final int openColumnMode;
+                if (prefixType == OO_BLOCK_NONE) {
+                    // We do not need to create a copy of partition when we simply need to append
+                    // existing the one.
+                    if (oooTimestampHi < tableFloorOfMaxTimestamp) {
+                        openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
+                    } else {
+                        openColumnMode = OPEN_LAST_PARTITION_FOR_APPEND;
+                    }
+                } else {
+                    newPartitionName(path.trimTo(plen), txn);
+                    createDirsOrFail(ff, path.put(Files.SEPARATOR).$(), configuration.getMkDirMode());
+                    if (srcTimestampFd > -1) {
+                        openColumnMode = OPEN_MID_PARTITION_FOR_MERGE;
+                    } else {
+                        openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
+                    }
+                }
+
+                publishOpenColumnTasks(
+                        workerId,
+                        configuration,
+                        openColumnTaskOutboundQueue,
+                        openColumnPubSeq,
+                        copyTaskOutboundQueue,
+                        copyTaskPubSeq,
+                        updPartitionSizeTaskQueue,
+                        updPartitionSizePubSeq,
+                        ff,
+                        txn,
+                        columns,
+                        oooColumns,
+                        pathToTable,
+                        srcOooLo,
+                        srcOooHi,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        oooTimestampLo,
+                        oooTimestampHi,
+                        prefixType,
+                        prefixLo,
+                        prefixHi,
+                        mergeType,
+                        mergeDataLo,
+                        mergeDataHi,
+                        mergeOOOLo,
+                        mergeOOOHi,
+                        suffixType,
+                        suffixLo,
+                        suffixHi,
+                        srcDataMax,
+                        tableFloorOfMaxTimestamp,
+                        dataTimestampHi,
+                        openColumnMode,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        timestampIndex,
+                        sortedTimestampsAddr,
+                        tableWriter,
+                        doneLatch
+                );
+            }
+        } catch (CairoException | CairoError e) {
+            doneLatch.countDown();
+            throw e;
         }
     }
 

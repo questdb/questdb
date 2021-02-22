@@ -2692,9 +2692,12 @@ public class TableWriter implements Closeable {
             long dataTimestampHi,
             long srcOooMax,
             long srcDataMax,
-            boolean success
+            boolean success,
+            boolean outOfBandErrorReport
     ) {
-        oooUpdRemaining.decrementAndGet();
+        if (!outOfBandErrorReport) {
+            oooUpdRemaining.decrementAndGet();
+        }
         oooUpdatePartitionSize(
                 oooTimestampMin,
                 oooTimestampMax,
@@ -3290,7 +3293,18 @@ public class TableWriter implements Closeable {
                         lastTimestamp = ts;
                     } else {
                         if (removedPartitions.excludes(ts)) {
-                            LOG.info().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
+                            Path other = Path.getThreadLocal2(path.trimTo(p).$());
+                            TableUtils.oldPartitionName(other, txn);
+                            if (ff.exists(other.$())) {
+                                if (!ff.rename(other, path)) {
+                                    LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).$(']').$();
+                                    throw new CairoError("could not restore directory, see log for details");
+                                } else {
+                                    LOG.info().$("restored [path=").$(path).$(']').$();
+                                }
+                            } else {
+                                LOG.info().$("missing partition [name=").$(path.trimTo(p).$()).$(']').$();
+                            }
                         }
                     }
                 }

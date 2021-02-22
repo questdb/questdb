@@ -64,6 +64,16 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         }
     };
 
+    private static final FilesFacade ffAllocateFailure = new FilesFacadeImpl() {
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (counter.decrementAndGet() == 0) {
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
+    };
+
     private static final FilesFacade ff19700106Backup = new FilesFacadeImpl() {
         @Override
         public boolean rename(LPSZ from, LPSZ to) {
@@ -411,18 +421,14 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        executeVanilla(() -> testPartitionedDataAppendOODataNotNullStrTail0(engine, compiler, sqlExecutionContext));
-    }
-
-    @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTail0);
+        counter.set(102);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTail0);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ff19700107Fwd);
     }
 
     @Test
@@ -1987,7 +1993,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
-    private static void testPartitionedDataAppendOODataNotNullStrTail0(
+    private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -2041,6 +2047,12 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
+
+        try {
+            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
 
         assertOutOfOrderDataConsistency(
                 engine,

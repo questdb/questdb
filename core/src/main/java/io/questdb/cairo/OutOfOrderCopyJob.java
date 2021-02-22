@@ -422,12 +422,28 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     tableWriter,
-                    success
+                    success,
+                    false
             );
         }
     }
 
-    private static void notifyWriter(RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue, MPSequence updPartitionPubSeq, long srcOooPartitionLo, long srcOooPartitionHi, long oooTimestampMin, long oooTimestampMax, long oooTimestampHi, long srcOooMax, long srcDataMax, long tableFloorOfMaxTimestamp, long dataTimestampHi, TableWriter tableWriter, boolean success) {
+    static void notifyWriter(
+            RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeQueue,
+            MPSequence updPartitionPubSeq,
+            long srcOooPartitionLo,
+            long srcOooPartitionHi,
+            long oooTimestampMin,
+            long oooTimestampMax,
+            long oooTimestampHi,
+            long srcOooMax,
+            long srcDataMax,
+            long tableFloorOfMaxTimestamp,
+            long dataTimestampHi,
+            TableWriter tableWriter,
+            boolean success,
+            boolean outOfBandErrorReport
+    ) {
         final long cursor = updPartitionPubSeq.next();
         if (cursor > -1) {
             publishUpdPartitionSizeTaskHarmonized(
@@ -439,7 +455,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     oooTimestampHi,
                     srcDataMax,
                     dataTimestampHi,
-                    success
+                    success,
+                    outOfBandErrorReport
             );
         } else {
             publishUpdPartitionSizeTaskContended(
@@ -456,7 +473,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     tableWriter,
-                    success
+                    success,
+                    outOfBandErrorReport
             );
         }
     }
@@ -475,11 +493,9 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             TableWriter tableWriter,
-            boolean success
+            boolean success,
+            boolean outOfBandErrorReport
     ) {
-        if (!success) {
-            System.out.println("ok");
-        }
         while (cursor == -2) {
             cursor = updPartitionPubSeq.next();
         }
@@ -494,7 +510,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     oooTimestampHi,
                     srcDataMax,
                     dataTimestampHi,
-                    success
+                    success,
+                    outOfBandErrorReport
             );
         } else {
             tableWriter.oooUpdatePartitionSizeSynchronized(
@@ -507,7 +524,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     dataTimestampHi,
                     srcOooMax,
                     srcDataMax,
-                    success
+                    success,
+                    outOfBandErrorReport
             );
         }
     }
@@ -520,7 +538,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long oooTimestampHi,
             long srcDataMax,
             long dataTimestampHi,
-            boolean success
+            boolean success,
+            boolean outOfBandErrorReport
     ) {
         final OutOfOrderUpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
         task.of(
@@ -529,7 +548,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcOooPartitionHi,
                 srcDataMax,
                 dataTimestampHi,
-                success
+                success,
+                outOfBandErrorReport
         );
         updPartitionPubSeq.done(cursor);
     }
