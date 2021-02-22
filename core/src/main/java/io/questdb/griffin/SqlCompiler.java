@@ -1094,8 +1094,20 @@ public class SqlCompiler implements Closeable {
                     }
                     break;
                 case PartitionAction.ATTACH:
-                    if (writer.attachPartition(timestamp) != StatusCode.OK) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "could not attach partition '").put(unquoted).put('\'');
+                    int statusCode = writer.attachPartition(timestamp);
+                    switch (statusCode) {
+                        case StatusCode.OK:
+                            break;
+                        case StatusCode.CANNOT_ATTACH_IN_TRANSACTION:
+                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach partition '").put(unquoted).put("' commit transaction first");
+                        case StatusCode.CANNOT_ATTACH_MISSING_PARTITION:
+                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach missing partition folder '").put(unquoted).put('\'');
+                        case StatusCode.TABLE_NOT_PARTITIONED:
+                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach partitions to non-partitioned table");
+                        case StatusCode.TABLE_HAS_SYMBOLS:
+                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach partitions to table with symbols");
+                        default:
+                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach partition '").put(unquoted).put("', error ").put(statusCode);
                     }
                     break;
                 default:

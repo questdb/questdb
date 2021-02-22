@@ -699,7 +699,7 @@ public final class TableUtils {
             case PartitionBy.YEAR:
                 return Timestamps.FLOOR_YYYY;
             default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have floor method");
         }
     }
 
@@ -712,7 +712,7 @@ public final class TableUtils {
             case PartitionBy.YEAR:
                 return Timestamps.ADD_YYYY;
             default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have add method");
         }
     }
 

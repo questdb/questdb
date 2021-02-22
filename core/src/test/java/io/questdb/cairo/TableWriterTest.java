@@ -1812,6 +1812,20 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveColumnBeforeTimestamp3Symbols() throws Exception {
+        try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
+                .col("productId", ColumnType.INT)
+                .col("supplier", ColumnType.SYMBOL)
+                .col("category", ColumnType.SYMBOL)
+                .col("productName", ColumnType.SYMBOL)
+                .col("price", ColumnType.DOUBLE)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+            testRemoveColumn(model);
+        }
+    }
+
+    @Test
     public void testRemoveColumnCannotAppendTodo() throws Exception {
         testRemoveColumnRecoverableFailure(new TodoAppendDenyingFacade());
     }
@@ -2763,11 +2777,16 @@ public class TableWriterTest extends AbstractCairoTest {
         int productName = writer.getColumnIndex("productName");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
+        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
             r.putInt(productId, rnd.nextPositiveInt());
-            r.putStr(productName, rnd.nextString(4));
+            if (!isSym) {
+                r.putStr(productName, rnd.nextString(4));
+            } else {
+                r.putSym(productName, rnd.nextString(4));
+            }
             r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());
             r.append();
@@ -2799,11 +2818,16 @@ public class TableWriterTest extends AbstractCairoTest {
         int supplier = writer.getColumnIndex("supplier");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
+        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
             r.putInt(productId, rnd.nextPositiveInt());
-            r.putStr(productName, rnd.nextString(10));
+            if (!isSym) {
+                r.putStr(productName, rnd.nextString(4));
+            } else {
+                r.putSym(productName, rnd.nextString(4));
+            }
             r.putSym(supplier, rnd.nextString(4));
             r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());
@@ -2819,11 +2843,16 @@ public class TableWriterTest extends AbstractCairoTest {
         int supplier = writer.getColumnIndex("sup");
         int category = writer.getColumnIndex("category");
         int price = writer.getColumnIndex("price");
+        boolean isSym = writer.getMetadata().getColumnType(productName) == ColumnType.SYMBOL;
 
         for (int i = 0; i < 10000; i++) {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
             r.putInt(productId, rnd.nextPositiveInt());
-            r.putStr(productName, rnd.nextString(4));
+            if (!isSym) {
+                r.putStr(productName, rnd.nextString(4));
+            } else {
+                r.putSym(productName, rnd.nextString(4));
+            }
             r.putSym(supplier, rnd.nextString(4));
             r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());
