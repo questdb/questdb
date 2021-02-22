@@ -2155,9 +2155,10 @@ public class TableWriter implements Closeable {
                     if (cursor > -1) {
                         OutOfOrderOpenColumnTask openColumnTask = openColumnQueue.get(cursor);
                         if (oooErrorCount.get() > 0) {
-                            OutOfOrderOpenColumnJob.openColumnIdle(
-                                    ff,
+                            OutOfOrderCopyJob.closeColumnIdle(
                                     openColumnTask.getColumnCounter(),
+                                    ff,
+                                    openColumnTask.getTimestampMergeIndexAddr(),
                                     openColumnTask.getSrcTimestampFd(),
                                     openColumnTask.getSrcTimestampAddr(),
                                     openColumnTask.getSrcTimestampSize(),
@@ -2202,6 +2203,8 @@ public class TableWriter implements Closeable {
                                         copyTask.getSrcTimestampFd(),
                                         copyTask.getSrcTimestampAddr(),
                                         copyTask.getSrcTimestampSize(),
+                                        copyTask.getDstKFd(),
+                                        copyTask.getDstVFd(),
                                         this,
                                         copyTask.getDoneLatch()
                                 );

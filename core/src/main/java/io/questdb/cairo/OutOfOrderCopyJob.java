@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -189,24 +188,26 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             // decrement part counter and if we are the last task - perform final steps
             if (partCounter.decrementAndGet() == 0) {
                 // todo: pool indexer
-                if (isIndexed && success) {
-                    // dstKFd & dstVFd are closed by the indexer
-                    updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
+                if (isIndexed) {
+                    if (success) {
+                        // dstKFd & dstVFd are closed by the indexer
+                        updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
+                    } else {
+                        ff.close(dstKFd);
+                        ff.close(dstVFd);
+                    }
                 }
 
                 // unmap memory
-                unmapAndClose(srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-                unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-                unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
-                unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
+                unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+                unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+                unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+                unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
 
                 final int columnsRemaining = columnCounter.decrementAndGet();
                 LOG.debug().$("organic [columnsRemaining=").$(columnsRemaining).$(']').$();
                 if (columnsRemaining == 0) {
-                    // last part of the last column
-                    if (srcTimestampAddr != 0) {
-                        ff.munmap(srcTimestampAddr, srcTimestampSize);
-                    }
+                    unmap(ff, srcTimestampAddr, srcTimestampSize);
                     try {
                         touchPartition(
                                 ff,
@@ -378,6 +379,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
+            long dstKFd,
+            long dstVFd,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
@@ -402,6 +405,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
+                    dstKFd,
+                    dstVFd,
                     tableWriter,
                     doneLatch
             );
@@ -427,23 +432,36 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
+            long dstKFd,
+            long dstVFd,
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        unmapAndClose(srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-        unmapAndClose(srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-        unmapAndClose(dstFixFd, dstFixAddr, dstFixSize);
-        unmapAndClose(dstVarFd, dstVarAddr, dstVarSize);
+        unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+        unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+        unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+        unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+        close(ff, dstKFd);
+        close(ff, dstVFd);
+
+        closeColumnIdle(
+                columnCounter,
+                ff,
+                timestampMergeIndexAddr,
+                srcTimestampFd,
+                srcTimestampAddr,
+                srcTimestampSize,
+                tableWriter,
+                doneLatch
+        );
+    }
+
+    static void closeColumnIdle(AtomicInteger columnCounter, FilesFacade ff, long timestampMergeIndexAddr, long srcTimestampFd, long srcTimestampAddr, long srcTimestampSize, TableWriter tableWriter, SOUnboundedCountDownLatch doneLatch) {
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug().$("idle [columnsRemaining=").$(columnsRemaining).$(']').$();
         if (columnsRemaining == 0) {
-            // last part of the last column
-            if (srcTimestampAddr != 0) {
-                ff.munmap(srcTimestampAddr, srcTimestampSize);
-            }
-            if (srcTimestampFd > 0) {
-                ff.close(srcTimestampFd);
-            }
+            unmap(ff, srcTimestampAddr, srcTimestampSize);
+            close(ff, srcTimestampFd);
             if (timestampMergeIndexAddr != 0) {
                 Vect.freeMergedIndex(timestampMergeIndexAddr);
             }
@@ -927,14 +945,21 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
-    private static void unmapAndClose(long dstFixFd, long dstFixAddr, long dstFixSize) {
-        if (dstFixAddr != 0 && dstFixSize != 0) {
-            Files.munmap(dstFixAddr, dstFixSize);
-        }
+    private static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
+        unmap(ff, dstFixAddr, dstFixSize);
+        close(ff, dstFixFd);
+    }
 
-        if (dstFixFd > 0) {
-            LOG.debug().$("closed [fd=").$(dstFixFd).$(']').$();
-            Files.close(dstFixFd);
+    private static void unmap(FilesFacade ff, long addr, long size) {
+        if (addr != 0 && size != 0) {
+            ff.munmap(addr, size);
+        }
+    }
+
+    private static void close(FilesFacade ff, long fd) {
+        if (fd > 0) {
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
+            ff.close(fd);
         }
     }
 

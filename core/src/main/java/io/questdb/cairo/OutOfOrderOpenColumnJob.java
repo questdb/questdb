@@ -767,6 +767,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
+                    dstKFd,
+                    dstVFd,
                     tableWriter,
                     doneLatch
             );
@@ -833,31 +835,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         );
     }
 
-    static void openColumnIdle(
-            FilesFacade ff,
-            AtomicInteger columnCounter,
-            long srcTimestampFd,
-            long srcTimestampAddr,
-            long srcTimestampSize,
-            TableWriter tableWriter,
-            SOUnboundedCountDownLatch doneLatch
-    ) {
-        final int columnsRemaining = columnCounter.decrementAndGet();
-        LOG.debug().$("idle [columnsRemaining=").$(columnsRemaining).$(']').$();
-        if (columnsRemaining == 0) {
-            if (srcTimestampFd > 0) {
-                ff.close(srcTimestampFd);
-            }
-
-            if (srcTimestampAddr > 0) {
-                ff.munmap(srcTimestampAddr, srcTimestampSize);
-            }
-
-            tableWriter.bumpPartitionUpdateCount();
-            doneLatch.countDown();
-        }
-    }
-
     private static void appendTimestampColumn(
             CairoConfiguration configuration,
             RingQueue<OutOfOrderCopyTask> outboundQueue,
@@ -922,6 +899,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
+                    0,
+                    0,
                     tableWriter,
                     doneLatch
             );
@@ -1070,6 +1049,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
+                    0,
+                    0,
                     tableWriter,
                     doneLatch
             );

@@ -902,9 +902,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             }
         } finally {
             for (; columnsInFlight < columnCount; columnsInFlight++) {
-                OutOfOrderOpenColumnJob.openColumnIdle(
-                        ff,
+                OutOfOrderCopyJob.closeColumnIdle(
                         columnCounter,
+                        ff,
+                        timestampMergeIndexAddr,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
