@@ -395,19 +395,19 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     ff.close(srcTimestampFd);
                 }
 
-                success = false;
                 renamePartition(
                         ff,
                         pathToTable,
                         oooTimestampHi,
                         tableWriter
                 );
-                success = true;
 
             } else if (srcTimestampFd > 0) {
                 ff.close(srcTimestampFd);
             }
-
+        } catch (Throwable e) {
+            tableWriter.bumpOooErrorCount();
+            throw e;
         } finally {
             notifyWriter(
                     updPartitionSizeQueue,
@@ -421,9 +421,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     srcDataMax,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
-                    tableWriter,
-                    success,
-                    false
+                    tableWriter
             );
         }
     }
@@ -440,9 +438,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataMax,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
-            TableWriter tableWriter,
-            boolean success,
-            boolean outOfBandErrorReport
+            TableWriter tableWriter
     ) {
         final long cursor = updPartitionPubSeq.next();
         if (cursor > -1) {
@@ -454,9 +450,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     srcOooPartitionHi,
                     oooTimestampHi,
                     srcDataMax,
-                    dataTimestampHi,
-                    success,
-                    outOfBandErrorReport
+                    dataTimestampHi
             );
         } else {
             publishUpdPartitionSizeTaskContended(
@@ -472,9 +466,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     srcDataMax,
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
-                    tableWriter,
-                    success,
-                    outOfBandErrorReport
+                    tableWriter
             );
         }
     }
@@ -492,9 +484,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcDataMax,
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
-            TableWriter tableWriter,
-            boolean success,
-            boolean outOfBandErrorReport
+            TableWriter tableWriter
     ) {
         while (cursor == -2) {
             cursor = updPartitionPubSeq.next();
@@ -509,9 +499,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     srcOooPartitionHi,
                     oooTimestampHi,
                     srcDataMax,
-                    dataTimestampHi,
-                    success,
-                    outOfBandErrorReport
+                    dataTimestampHi
             );
         } else {
             tableWriter.oooUpdatePartitionSizeSynchronized(
@@ -523,9 +511,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     tableFloorOfMaxTimestamp,
                     dataTimestampHi,
                     srcOooMax,
-                    srcDataMax,
-                    success,
-                    outOfBandErrorReport
+                    srcDataMax
             );
         }
     }
@@ -537,9 +523,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long srcOooPartitionHi,
             long oooTimestampHi,
             long srcDataMax,
-            long dataTimestampHi,
-            boolean success,
-            boolean outOfBandErrorReport
+            long dataTimestampHi
     ) {
         final OutOfOrderUpdPartitionSizeTask task = updPartitionSizeQueue.get(cursor);
         task.of(
@@ -547,9 +531,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 srcOooPartitionLo,
                 srcOooPartitionHi,
                 srcDataMax,
-                dataTimestampHi,
-                success,
-                outOfBandErrorReport
+                dataTimestampHi
         );
         updPartitionPubSeq.done(cursor);
     }

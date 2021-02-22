@@ -45,6 +45,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
@@ -123,6 +124,7 @@ public class TableWriter implements Closeable {
     private final LongList oooPartitions = new LongList();
     private final AtomicLong oooUpdRemaining = new AtomicLong();
     private final FindVisitor removePartitionDirsCreatedByOOOVisitor = this::removePartitionDirsCreatedByOOO0;
+    private final AtomicInteger oooErrorCount = new AtomicInteger();
     private ContiguousVirtualMemory timestampMergeMem;
     private int txPartitionCount = 0;
     private long lockFd;
@@ -2073,7 +2075,7 @@ public class TableWriter implements Closeable {
         return oooPartitions;
     }
 
-    private boolean oooConsumeUpdPartitionSizeTasks(
+    private void oooConsumeUpdPartitionSizeTasks(
             int workerId,
             long srcOooMax,
             long oooTimestampMin,
@@ -2092,7 +2094,6 @@ public class TableWriter implements Closeable {
         final RingQueue<OutOfOrderCopyTask> copyQueue = messageBus.getOutOfOrderCopyQueue();
 
         boolean updRemaining;
-        boolean success = true;
         do {
             long cursor = updSizeSubSeq.next();
             if (cursor > -1) {
@@ -2102,12 +2103,11 @@ public class TableWriter implements Closeable {
                 final long srcOooPartitionHi = task.getSrcOooPartitionHi();
                 final long srcDataMax = task.getSrcDataMax();
                 final long dataTimestampHi = task.getDataTimestampHi();
-                success = success && task.isSuccess();
 
                 updRemaining = this.oooUpdRemaining.decrementAndGet() > 0;
                 updSizeSubSeq.done(cursor);
 
-                if (success) {
+                if (oooErrorCount.get() == 0) {
                     oooUpdatePartitionSize(
                             oooTimestampMin,
                             oooTimestampMax,
@@ -2125,7 +2125,7 @@ public class TableWriter implements Closeable {
                     cursor = partitionSubSeq.next();
                     if (cursor > -1) {
                         final OutOfOrderPartitionTask partitionTask = partitionQueue.get(cursor);
-                        if (!success || !oooProcessPartitionSafe(
+                        if (oooErrorCount.get() > 0 || !oooProcessPartitionSafe(
                                 workerId,
                                 updSizePubSeq,
                                 updSizeQueue,
@@ -2143,7 +2143,7 @@ public class TableWriter implements Closeable {
                         cursor = openColumnSubSeq.next();
                         if (cursor > -1) {
                             OutOfOrderOpenColumnTask openColumnTask = openColumnQueue.get(cursor);
-                            if ((!success ||
+                            if ((oooErrorCount.get() > 0 ||
                                     !oooOpenColumnSafe(
                                             workerId,
                                             updSizePubSeq,
@@ -2161,7 +2161,7 @@ public class TableWriter implements Closeable {
                             cursor = copySubSeq.next();
                             if (cursor > -1) {
                                 OutOfOrderCopyTask copyTask = copyQueue.get(cursor);
-                                if ((!success ||
+                                if ((oooErrorCount.get() > 0 ||
                                         !oooCopySafe(
                                                 updSizePubSeq,
                                                 updSizeQueue,
@@ -2181,7 +2181,6 @@ public class TableWriter implements Closeable {
                 }
             }
         } while (updRemaining);
-        return success;
     }
 
     private boolean oooCopySafe(
@@ -2202,8 +2201,10 @@ public class TableWriter implements Closeable {
             );
             return true;
         } catch (CairoException | CairoError e) {
+            oooErrorCount.incrementAndGet();
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
+            oooErrorCount.incrementAndGet();
             LOG.error().$(e).$();
         }
         return false;
@@ -2233,14 +2234,21 @@ public class TableWriter implements Closeable {
             );
             return true;
         } catch (CairoException | CairoError e) {
+            oooErrorCount.incrementAndGet();
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
+            oooErrorCount.incrementAndGet();
             LOG.error().$(e).$();
         }
         return false;
     }
 
+    void bumpOooErrorCount() {
+        oooErrorCount.incrementAndGet();
+    }
+
     private void oooProcess() {
+        oooErrorCount.set(0);
         final int workerId;
         final Thread thread = Thread.currentThread();
         if (thread instanceof Worker) {
@@ -2363,23 +2371,18 @@ public class TableWriter implements Closeable {
                 LOG.error().$((Sinkable) e).$();
                 throw e;
             } finally {
-                boolean asyncSuccess = false;
-                try {
-                    // we are stealing work here it is possible we get exception from this method
-                    asyncSuccess = oooConsumeUpdPartitionSizeTasks(
-                            workerId,
-                            srcOooMax,
-                            oooTimestampMin,
-                            oooTimestampMax,
-                            tableFloorOfMaxTimestamp
-                    );
-                } catch (CairoException | CairoError ignored) {
-                    System.out.println("fook");
-                }
+                // we are stealing work here it is possible we get exception from this method
+                oooConsumeUpdPartitionSizeTasks(
+                        workerId,
+                        srcOooMax,
+                        oooTimestampMin,
+                        oooTimestampMax,
+                        tableFloorOfMaxTimestamp
+                );
 
                 oooLatch.await(latchCount);
 
-                if (success && !asyncSuccess) {
+                if (success && oooErrorCount.get() > 0) {
                     //noinspection ThrowFromFinallyBlock
                     throw CairoException.instance(0).put("bulk update failed and will be rolled back");
                 }
@@ -2436,8 +2439,10 @@ public class TableWriter implements Closeable {
 
             return true;
         } catch (CairoException | CairoError e) {
+            oooErrorCount.incrementAndGet();
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
+            oooErrorCount.incrementAndGet();
             LOG.error().$(e).$();
         }
         return false;
@@ -2682,6 +2687,10 @@ public class TableWriter implements Closeable {
         }
     }
 
+    void bumpPartitionUpdateCount() {
+        oooUpdRemaining.decrementAndGet();
+    }
+
     synchronized void oooUpdatePartitionSizeSynchronized(
             long oooTimestampMin,
             long oooTimestampMax,
@@ -2691,13 +2700,10 @@ public class TableWriter implements Closeable {
             long tableFloorOfMaxTimestamp,
             long dataTimestampHi,
             long srcOooMax,
-            long srcDataMax,
-            boolean success,
-            boolean outOfBandErrorReport
+            long srcDataMax
     ) {
-        if (!outOfBandErrorReport) {
-            oooUpdRemaining.decrementAndGet();
-        }
+        bumpPartitionUpdateCount();
+
         oooUpdatePartitionSize(
                 oooTimestampMin,
                 oooTimestampMax,

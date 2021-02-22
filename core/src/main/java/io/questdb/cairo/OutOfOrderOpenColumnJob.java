@@ -357,29 +357,18 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 default:
                     break;
             }
-        } catch (CairoException | CairoError e) {
-            boolean outOfBandErrorReport = columnCounter.decrementAndGet() != 0;
-            OutOfOrderCopyJob.notifyWriter(
-                    updPartitionSizeTaskQueue,
-                    updPartitionSizePubSeq,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    tableWriter,
-                    false,
-                    outOfBandErrorReport
-            );
+        } catch (Throwable e) {
+            tableWriter.bumpOooErrorCount();
+            // we are clearly done with the partition
+            tableWriter.bumpPartitionUpdateCount();
 
-            if (!outOfBandErrorReport && srcTimestampFd > 0) {
+            if (srcTimestampFd > 0) {
                 ff.close(srcTimestampFd);
             }
 
+            if(columnCounter.decrementAndGet() == 0) {
+                doneLatch.countDown();
+            }
             throw e;
         }
     }
@@ -515,9 +504,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     }
 
     private static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
-        if (ff.isRestrictedFileSystem()) {
-            return;
-        }
         if (!ff.allocate(fd, size)) {
             throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
@@ -776,6 +762,12 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVFd = openRW(ff, path);
             }
         } catch (CairoException | CairoError e) {
+            tableWriter.bumpOooErrorCount();
+
+            if (columnCounter.decrementAndGet() == 0) {
+                tableWriter.bumpPartitionUpdateCount();
+            }
+
             freeFixColumnArtefacts(
                     ff,
                     dstFixFd,

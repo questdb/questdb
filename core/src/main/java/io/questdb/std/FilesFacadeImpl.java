@@ -231,7 +231,10 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        return Files.allocate(fd, size);
+        if (Os.type != Os.WINDOWS) {
+            return Files.allocate(fd, size);
+        }
+        return true;
     }
 
     @Override

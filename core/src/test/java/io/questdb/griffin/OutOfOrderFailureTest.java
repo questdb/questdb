@@ -428,7 +428,8 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ff19700107Fwd);
+        counter.set(102);
+        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
@@ -2064,7 +2065,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 "x"
         );
 
-        assertIndexConsistency(compiler, sqlExecutionContext);
+//        assertIndexConsistency(compiler, sqlExecutionContext);
     }
 
     private static void assertOutOfOrderDataConsistency(
