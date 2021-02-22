@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -76,6 +77,7 @@ public class TableWriter implements Closeable {
     final ObjList<AppendMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
+    private final ObjList<WriterTransientSymbolCountChangeHandler> denseSymbolTransientCountHandlers;
     private final ObjList<ColumnIndexer> indexers;
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
@@ -255,6 +257,7 @@ public class TableWriter implements Closeable {
             this.symbolMapWriters = new ObjList<>(columnCount);
             this.indexers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
+            this.denseSymbolTransientCountHandlers = new ObjList<>(metadata.getSymbolMapCount());
             this.nullSetters = new ObjList<>(columnCount);
             this.oooNullSetters = new ObjList<>(columnCount);
             this.row.activeNullSetters = nullSetters;
@@ -1602,6 +1605,11 @@ public class TableWriter implements Closeable {
                             Unsafe.getUnsafe().storeFence();
                             txFile.writeTransientSymbolCount(symbolIndex, symCount);
                         });
+
+                WriterTransientSymbolCountChangeHandler transientSymbolCountChangeHandler = new WriterTransientSymbolCountChangeHandler(symbolIndex);
+                denseSymbolTransientCountHandlers.add(transientSymbolCountChangeHandler);
+                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), metadata.getColumnName(i), txMem.getInt(nextSymbolCountOffset),
+                        transientSymbolCountChangeHandler);
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
                 nextSymbolCountOffset += 8;
@@ -1958,6 +1966,11 @@ public class TableWriter implements Closeable {
             Unsafe.getUnsafe().storeFence();
             txFile.writeTransientSymbolCount(symIndex, symCount);
         });
+
+        WriterTransientSymbolCountChangeHandler transientSymbolCountChangeHandler = new WriterTransientSymbolCountChangeHandler(columnCount);
+        denseSymbolTransientCountHandlers.add(transientSymbolCountChangeHandler);
+        SymbolMapWriter w = new SymbolMapWriter(configuration, path, name, 0, transientSymbolCountChangeHandler);
+
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }
@@ -3893,7 +3906,13 @@ public class TableWriter implements Closeable {
         SymbolMapWriter writer = symbolMapWriters.getQuick(index);
         symbolMapWriters.remove(index);
         if (writer != null) {
-            denseSymbolMapWriters.remove(writer);
+            int symColIndex = denseSymbolMapWriters.remove(writer);
+            denseSymbolTransientCountHandlers.remove(symColIndex);
+            while (symColIndex < denseSymbolTransientCountHandlers.size()) {
+                WriterTransientSymbolCountChangeHandler transientCountHandler = denseSymbolTransientCountHandlers.getQuick(symColIndex);
+                transientCountHandler.symColIndex = symColIndex;
+                symColIndex++;
+            }
             Misc.free(writer);
         }
     }
@@ -4820,6 +4839,21 @@ public class TableWriter implements Closeable {
         private void notNull(int index) {
             refs.setQuick(index, masterRef);
         }
+    }
+
+    private class WriterTransientSymbolCountChangeHandler implements TransientSymbolCountChangeHandler {
+        private int symColIndex;
+
+        private WriterTransientSymbolCountChangeHandler(int symColIndex) {
+            this.symColIndex = symColIndex;
+        }
+
+        @Override
+        public void handleTansientymbolCountChange(int symbolCount) {
+            Unsafe.getUnsafe().storeFence();
+            txMem.putInt(TableUtils.getSymbolWriterTransientIndexOffset(symColIndex), symbolCount);
+        }
+
     }
 
     static {

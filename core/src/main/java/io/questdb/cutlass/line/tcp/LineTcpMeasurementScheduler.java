@@ -867,7 +867,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 for (int n = 0, sz = symbolCacheByColumnIndex.size(); n < sz; n++) {
                     SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
                     if (null != symCache) {
-                        symCache.clear();
+                        symCache.close();
                         unusedSymbolCaches.add(symCache);
                     }
                 }
