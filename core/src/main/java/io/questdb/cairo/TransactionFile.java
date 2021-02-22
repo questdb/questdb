@@ -321,7 +321,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
 
     private void saveAttachedPartitionsToTx(int symCount) {
         int size = attachedPartitions.size();
-        txMem.putInt(getPartitionTableSizeOffset(symCount), size);
+        txMem.putInt(getPartitionTableSizeOffset(symCount), size * Long.BYTES);
         if (maxTimestamp != Long.MIN_VALUE) {
             for (int i = attachedPositionDirtyIndex; i < size; i++) {
                 txMem.putLong(getPartitionTableIndexOffset(symCount, i), attachedPartitions.getQuick(i));

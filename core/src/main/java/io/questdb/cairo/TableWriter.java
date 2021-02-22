@@ -259,28 +259,14 @@ public class TableWriter implements Closeable {
             this.oooNullSetters = new ObjList<>(columnCount);
             this.row.activeNullSetters = nullSetters;
             this.columnTops = new LongList(columnCount);
-            switch (partitionBy) {
-                case PartitionBy.DAY:
-                    timestampFloorMethod = Timestamps.FLOOR_DD;
-                    timestampAddMethod = Timestamps.ADD_DD;
-                    partitionDirFmt = fmtDay;
-                    break;
-                case PartitionBy.MONTH:
-                    timestampFloorMethod = Timestamps.FLOOR_MM;
-                    timestampAddMethod = Timestamps.ADD_MM;
-                    partitionDirFmt = fmtMonth;
-                    break;
-                case PartitionBy.YEAR:
-                    // year
-                    timestampFloorMethod = Timestamps.FLOOR_YYYY;
-                    timestampAddMethod = Timestamps.ADD_YYYY;
-                    partitionDirFmt = fmtYear;
-                    break;
-                default:
-                    timestampFloorMethod = null;
-                    timestampAddMethod = null;
-                    partitionDirFmt = null;
-                    break;
+            if (partitionBy != PartitionBy.NONE) {
+                timestampFloorMethod = getPartitionFloor(partitionBy);
+                timestampAddMethod = getPartitionAdd(partitionBy);
+                partitionDirFmt = getPartitionDateFmt(partitionBy);
+            } else {
+                timestampFloorMethod = null;
+                timestampAddMethod = null;
+                partitionDirFmt = null;
             }
             this.txFile.initPartitionBy(partitionBy);
 

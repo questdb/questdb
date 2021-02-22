@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
@@ -41,9 +40,13 @@ public class EngineMigration {
     // in future code version
     public static final long TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT = 72;
     public static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
+    public static final long TX_STRUCT_UPDATE_1_OFFSET_MIN_TIMESTAMP = 24;
+    public static final long TX_STRUCT_UPDATE_1_OFFSET_MAX_TIMESTAMP = 32;
+    public static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
 
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final ObjList<MigrationAction> MIGRATIONS = new ObjList<>();
+    private static final IntList MIGRATIONS_CRITICALITY = new IntList();
     private static final int MIGRATIONS_LIST_OFFSET = VERSION_THAT_ADDED_TABLE_ID;
     private final CairoEngine engine;
     private final CairoConfiguration configuration;
@@ -60,9 +63,10 @@ public class EngineMigration {
         long mem = Unsafe.malloc(tempMemSize);
 
         try (var virtualMem = new VirtualMemory(ff.getPageSize(), 8);
-             var path = new Path()) {
+             var path = new Path();
+             var rwMemory = new ReadWriteMemory()) {
 
-            var context = new MigrationContext(mem, tempMemSize, virtualMem);
+            var context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
 
             // check if all tables have been upgraded already
@@ -106,8 +110,13 @@ public class EngineMigration {
         return MIGRATIONS.getQuick(version - MIGRATIONS_LIST_OFFSET);
     }
 
-    static void setByVersion(int version, MigrationAction action) {
+    private static int getMigrationToVersionCriticality(int version) {
+        return MIGRATIONS_CRITICALITY.getQuick(version - MIGRATIONS_LIST_OFFSET);
+    }
+
+    static void setByVersion(int version, MigrationAction action, int criticality) {
         MIGRATIONS.setQuick(version - MIGRATIONS_LIST_OFFSET, action);
+        MIGRATIONS_CRITICALITY.setQuick(version - MIGRATIONS_LIST_OFFSET, criticality);
     }
 
     private boolean upgradeTables(MigrationContext context, int latestVersion) {
@@ -142,35 +151,43 @@ public class EngineMigration {
                                         path.trimTo(plen);
                                         context.of(path, fd);
 
-                                        try {
-                                            for (int i = currentTableVersion + 1; i <= latestVersion; i++) {
-                                                var migration = getMigrationToVersion(i);
+                                        for (int i = currentTableVersion + 1; i <= latestVersion; i++) {
+                                            var migration = getMigrationToVersion(i);
+                                            try {
                                                 if (migration != null) {
                                                     LOG.info().$("upgrading table [path=").$(path).$(",toVersion=").$(i).I$();
                                                     migration.migrate(context);
                                                 }
-                                            }
-                                        } catch (CairoException e) {
-                                            LOG.error().$("failed to upgrade table path=")
-                                                    .$(path.trimTo(plen))
-                                                    .$(", exception: ")
-                                                    .$((Sinkable) e).$();
-                                            return;
-                                        }
+                                            } catch (Exception e) {
+                                                LOG.error().$("failed to upgrade table path=")
+                                                        .$(path.trimTo(plen))
+                                                        .$(", exception: ")
+                                                        .$((Sinkable) e).$();
 
-                                        Unsafe.getUnsafe().putInt(mem, latestVersion);
-                                        if (ff.write(fd, mem, Integer.BYTES, META_OFFSET_VERSION) != Integer.BYTES) {
-                                            LOG.error().$("failed to write updated version to table TX file [path=")
-                                                    .$(path.trimTo(plen))
-                                                    .$(",latestVersion=")
-                                                    .$(latestVersion).I$();
-                                            updateSuccess = false;
+                                                if (getMigrationToVersionCriticality(i) != 0) {
+                                                    throw e;
+                                                }
+                                                updateSuccess = false;
+                                                return;
+                                            }
+
+                                            Unsafe.getUnsafe().putInt(mem, i);
+                                            if (ff.write(fd, mem, Integer.BYTES, META_OFFSET_VERSION) != Integer.BYTES) {
+                                                // Table is migrated but we cannot write new version
+                                                // to meta file
+                                                // This is critical, table potentially left in unusable state
+                                                throw CairoException.instance(ff.errno())
+                                                        .put("failed to write updated version to table Metadata file [path=")
+                                                        .put(path.trimTo(plen))
+                                                        .put(",latestVersion=")
+                                                        .put(i);
+                                            }
                                         }
                                     }
                                     return;
                                 }
                                 updateSuccess = false;
-                                LOG.error().$("Could not update table id [path=").$(path).I$();
+                                throw CairoException.instance(ff.errno()).put("Could not update table [path=").put(path).put(']');
                             } finally {
                                 ff.close(fd);
                                 path.trimTo(plen);
@@ -196,9 +213,8 @@ public class EngineMigration {
             Path path = migrationContext.getTablePath();
 
             LOG.info().$("setting table id in [path=").$(path).I$();
-            Unsafe.getUnsafe().putInt(mem, ColumnType.VERSION);
-            Unsafe.getUnsafe().putInt(mem + Integer.BYTES, migrationContext.getNextTableId());
-            if (ff.write(migrationContext.getMetadataFd(), mem, 8, META_OFFSET_VERSION) == 8) {
+            Unsafe.getUnsafe().putInt(mem, migrationContext.getNextTableId());
+            if (ff.write(migrationContext.getMetadataFd(), mem, Integer.BYTES, META_OFFSET_TABLE_ID) == Integer.BYTES) {
                 return;
             }
             throw CairoException.instance(ff.errno()).put("Could not update table id [path=").put(path).put(']');
@@ -209,27 +225,27 @@ public class EngineMigration {
             // Before there was 1 int per symbol and list of removed partitions
             // Now there is 2 ints per symbol and 4 longs per each non-removed partition
 
-
             var path = migrationContext.getTablePath();
             final var ff = migrationContext.getFf();
             int pathDirLen = path.length();
 
             path.concat(TXN_FILE_NAME).$();
+            var txMem = migrationContext.getRwMemory();
+            LOG.debug().$("opening for rw [path=").$(path).I$();
+            txMem.of(ff, path.$(), ff.getPageSize());
             var tempMem8b = migrationContext.getTempMemory(8);
 
-            LOG.debug().$("opening for rw [path=").$(path).I$();
-            var fd = openFileRWOrFail(ff, path.$());
             var txFileUpdate = migrationContext.getTempVirtualMem();
             txFileUpdate.clear();
             txFileUpdate.jumpTo(0);
 
             try {
-                int symbolsCount = readIntAtOffset(ff, path, tempMem8b, TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, fd);
+                int symbolsCount = txMem.getInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT);
                 for (int i = 0; i < symbolsCount; i++) {
-                    long symbolCountOffset = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + i * Integer.BYTES;
-                    int symbolCount = readIntAtOffset(ff, path, tempMem8b, symbolCountOffset, fd);
-                    txFileUpdate.putInt(symbolCount);
-                    txFileUpdate.putInt(symbolCount);
+                    long symbolCountOffset = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + (i + 1L) * Integer.BYTES;
+                    int symDistinctCount = txMem.getInt(symbolCountOffset);
+                    txFileUpdate.putInt(symDistinctCount);
+                    txFileUpdate.putInt(symDistinctCount);
                 }
 
                 // Set partition segment size as 0 for now
@@ -239,139 +255,74 @@ public class EngineMigration {
                 int partitionBy = readIntAtOffset(ff, path, tempMem8b, TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY, migrationContext.getMetadataFd());
                 if (partitionBy != PartitionBy.NONE) {
                     path.trimTo(pathDirLen);
-                    long oldPartitionSectionOffset = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4L + 4L * symbolsCount;
-                    writeAttachedPartitions(path, ff, tempMem8b, fd, txFileUpdate, partitionBy, oldPartitionSectionOffset);
+                    writeAttachedPartitions(ff, tempMem8b, path, txMem, partitionBy, symbolsCount, txFileUpdate);
                 }
                 long updateSize = txFileUpdate.getAppendOffset();
-                long partitionSegmentSize = updateSize - partitionSegmentOffset - 4;
+                long partitionSegmentSize = updateSize - partitionSegmentOffset - Integer.BYTES;
                 txFileUpdate.putInt(partitionSegmentOffset, (int) partitionSegmentSize);
 
                 // Save txFileUpdate to tx file starting at LOCAL_TX_OFFSET_MAP_WRITER_COUNT + 4
-                long writeOffset = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4;
+                long writeOffset = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + Integer.BYTES;
+                txMem.jumpTo(writeOffset);
+
                 for (int i = 0, size = txFileUpdate.getPageCount(); i < size && updateSize > 0; i++) {
                     long writeSize = Math.min(updateSize, txFileUpdate.getPageSize(i));
-                    if (ff.write(fd, txFileUpdate.getPageAddress(i), writeSize, writeOffset) != writeSize) {
-                        throw CairoException.instance(ff.errno())
-                                .put("cannot write to transaction file [path=")
-                                .put(path)
-                                .put(",writeOffset=")
-                                .put(writeOffset)
-                                .put(",writeSize")
-                                .put(writeSize)
-                                .put(']');
-                    }
+                    txMem.putBlockOfBytes(txFileUpdate.getPageAddress(i), writeSize);
                     updateSize -= writeSize;
                 }
 
                 assert updateSize == 0;
             } finally {
-                ff.close(fd);
+                txMem.close();
             }
         }
 
-        private static void writeAttachedPartitions(Path path, FilesFacade ff, long tempMem8b, long fd, VirtualMemory txFileUpdate, int partitionBy, long removedPartitionsCountOffset) {
-            int pathDirLen = path.length();
-            int removedPartitionCount = readIntAtOffset(ff, path, tempMem8b, removedPartitionsCountOffset, fd);
-            int removedPartitionBuffSize = removedPartitionCount * Long.BYTES;
-            long removedPartitionsBuff = Unsafe.malloc(removedPartitionBuffSize);
-            var nativeLPSZ = new NativeLPSZ();
+        private static void writeAttachedPartitions(
+                FilesFacade ff,
+                long tempMem8b,
+                Path path,
+                ReadWriteMemory txMem,
+                int partitionBy,
+                int symbolsCount,
+                VirtualMemory writeTo) {
+            int rootLen = path.length();
 
-            try {
-                // read removed partitions
-                if (ff.read(fd, removedPartitionsBuff, removedPartitionBuffSize, removedPartitionsCountOffset + Integer.BYTES) != removedPartitionBuffSize) {
-                    // Corrupted removed partition segment. Ignore them.
-                    LOG.error().$("cannot read removed partitions list from transaction file, proceeding on assumption of no removed partitions").$();
-                    removedPartitionCount = 0;
+            long minTimestamp = txMem.getLong(TX_STRUCT_UPDATE_1_OFFSET_MIN_TIMESTAMP);
+            long maxTimestamp = txMem.getLong(TX_STRUCT_UPDATE_1_OFFSET_MAX_TIMESTAMP);
+
+            var timestampFloorMethod = getPartitionFloor(partitionBy);
+            var timestampAddMethod = getPartitionAdd(partitionBy);
+
+            final long tsLimit = timestampFloorMethod.floor(maxTimestamp);
+            for (long ts = timestampFloorMethod.floor(minTimestamp); ts < tsLimit; ts = timestampAddMethod.calculate(ts, 1)) {
+                path.trimTo(rootLen);
+                setPathForPartition(path, partitionBy, ts);
+                if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
+                    if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {
+                        long partitionSize = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
+
+                        // Update tx file with 4 longs per partition
+                        writeTo.putLong(ts);
+                        writeTo.putLong(partitionSize);
+                        writeTo.putLong(0L);
+                        writeTo.putLong(0L);
+                    }
                 }
-
-                // Discover all partition folders
-                path.trimTo(pathDirLen);
-                final int finalRemovedPartitionCount = removedPartitionCount;
-                final int plen = path.length();
-                ff.iterateDir(path.$(), (pName, type) -> {
-                    try {
-                        nativeLPSZ.of(pName);
-                        if (type == Files.DT_DIR && !Files.isDots(nativeLPSZ)) {
-                            long dirTimestamp = getPartitionDateFmt(partitionBy).parse(nativeLPSZ, null);
-
-                            // Check dir in removed list
-                            for (int i = 0; i < finalRemovedPartitionCount; i++) {
-                                long removedPartitionTs = Unsafe.getUnsafe().getLong(removedPartitionsBuff + i * Long.BYTES);
-                                if (dirTimestamp == removedPartitionTs) {
-                                    // Skip dir
-                                    return;
-                                }
-                            }
-
-                            // Dir is not in removed list
-                            path.concat(nativeLPSZ);
-                            long partitionSize = readPartitionSize(ff, path, tempMem8b);
-                            if (partitionSize > 0) {
-                                txFileUpdate.putLong(dirTimestamp);
-                                txFileUpdate.putLong(partitionSize);
-                                txFileUpdate.putLong(0L);
-                                txFileUpdate.putLong(0L);
-                            }
-                        }
-                    } catch (NumericException e) {
-                        // Ignore the directory
-                    } finally {
-                        path.trimTo(plen);
-                    }
-                });
-
-            } finally {
-                Unsafe.free(removedPartitionsBuff, removedPartitionBuffSize);
             }
         }
-//
-//        private static int countDirs(Path path, FilesFacade ff, long tempMem8b) {
-//            Unsafe.getUnsafe().putInt(tempMem8b, 0);
-//            ff.iterateDir(path, (pName, type) -> {
-//                if (type == Files.DT_DIR) {
-//                    int dirCount = Unsafe.getUnsafe().getInt(tempMem8b) + 1;
-//                    Unsafe.getUnsafe().putInt(tempMem8b, dirCount);
-//                }
-//            });
-//            return Unsafe.getUnsafe().getInt(tempMem8b);
-//        }
 
-        private static long readPartitionSize(FilesFacade ff, Path path, long tempMem8b) {
-            int plen = path.length();
-            try {
-                if (ff.exists(path.concat("_archive").$())) {
-                    long fd = ff.openRO(path);
-                    if (fd == -1) {
-                        throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
-                    }
+        private static boolean removedPartitionsIncludes(long ts, ReadWriteMemory txMem, int symbolsCount) {
+            long removedPartitionLo = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + (symbolsCount + 1L) * Integer.BYTES;
+            long removedPartitionCount = txMem.getInt(removedPartitionLo);
+            long removedPartitionsHi = removedPartitionLo + Long.BYTES * removedPartitionCount;
 
-                    try {
-                        if (ff.read(fd, tempMem8b, 8, 0) != 8) {
-                            throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
-                        }
-                        return Unsafe.getUnsafe().getLong(tempMem8b);
-                    } finally {
-                        ff.close(fd);
-                    }
-                } else {
-                    return -1;
+            for (long offset = removedPartitionLo + Integer.BYTES; offset < removedPartitionsHi; offset += Long.BYTES) {
+                long removedPartition = txMem.getLong(offset);
+                if (removedPartition == ts) {
+                    return true;
                 }
-            } finally {
-                path.trimTo(plen);
             }
-        }
-
-        private static DateFormat getPartitionDateFmt(int partitionBy) {
-            switch (partitionBy) {
-                case PartitionBy.DAY:
-                    return fmtDay;
-                case PartitionBy.MONTH:
-                    return fmtMonth;
-                case PartitionBy.YEAR:
-                    return fmtYear;
-                default:
-                    throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
-            }
+            return false;
         }
     }
 
@@ -379,13 +330,15 @@ public class EngineMigration {
         private final long tempMemory;
         private final int tempMemoryLen;
         private final VirtualMemory tempVirtualMem;
+        private final ReadWriteMemory rwMemory;
         private Path tablePath;
         private long metadataFd;
 
-        public MigrationContext(long mem, int tempMemSize, VirtualMemory tempVirtualMem) {
+        public MigrationContext(long mem, int tempMemSize, VirtualMemory tempVirtualMem, ReadWriteMemory rwMemory) {
             this.tempMemory = mem;
             this.tempMemoryLen = tempMemSize;
             this.tempVirtualMem = tempVirtualMem;
+            this.rwMemory = rwMemory;
         }
 
         public FilesFacade getFf() {
@@ -398,6 +351,10 @@ public class EngineMigration {
 
         public int getNextTableId() {
             return (int) engine.getNextTableId();
+        }
+
+        public ReadWriteMemory getRwMemory() {
+            return rwMemory;
         }
 
         public Path getTablePath() {
@@ -428,7 +385,7 @@ public class EngineMigration {
 
     static {
         MIGRATIONS.extendAndSet(ColumnType.VERSION - MIGRATIONS_LIST_OFFSET, null);
-        setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId);
-        setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile);
+        setByVersion(VERSION_THAT_ADDED_TABLE_ID, MigrationActions::assignTableId, 1);
+        setByVersion(VERSION_TX_STRUCT_UPDATE_1, MigrationActions::rebuildTransactionFile, 0);
     }
 }

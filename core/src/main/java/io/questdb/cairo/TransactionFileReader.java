@@ -247,7 +247,7 @@ public class TransactionFileReader implements Closeable {
             if (this.readOnlyTxMem != null) {
                 this.readOnlyTxMem.grow(getPartitionTableIndexOffset(symbolWriterCount, 0));
             }
-            int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
+            int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolWriterCount)) / Long.BYTES;
             if (partitionTableSize > 0) {
                 if (this.readOnlyTxMem != null) {
                     this.readOnlyTxMem.grow(getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));

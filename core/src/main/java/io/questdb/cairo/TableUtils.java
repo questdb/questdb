@@ -677,6 +677,45 @@ public final class TableUtils {
         }
     }
 
+    static DateFormat getPartitionDateFmt(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return fmtDay;
+            case PartitionBy.MONTH:
+                return fmtMonth;
+            case PartitionBy.YEAR:
+                return fmtYear;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+        }
+    }
+
+    static Timestamps.TimestampFloorMethod getPartitionFloor(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.FLOOR_DD;
+            case PartitionBy.MONTH:
+                return Timestamps.FLOOR_MM;
+            case PartitionBy.YEAR:
+                return Timestamps.FLOOR_YYYY;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+        }
+    }
+
+    static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.ADD_DD;
+            case PartitionBy.MONTH:
+                return Timestamps.ADD_MM;
+            case PartitionBy.YEAR:
+                return Timestamps.ADD_YYYY;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+        }
+    }
+
     static void readFileLastFirstLong(FilesFacade ff, Path path, CharSequence columnName, long tempMem8b, long partitionSize) {
         int plen = path.length();
         try {
