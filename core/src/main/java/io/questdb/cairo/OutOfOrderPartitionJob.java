@@ -100,7 +100,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
         final int plen = path.length();
-        long srcTimestampFd;
+        long srcTimestampFd = 0;
         long dataTimestampLo;
         long dataTimestampHi;
         long srcDataMax;
@@ -119,7 +119,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 LOG.debug().$("would create [path=").$(path.chopZ().put(Files.SEPARATOR).$()).$(']').$();
                 createDirsOrFail(ff, path, configuration.getMkDirMode());
             } catch (Throwable e) {
-                System.out.println("GOOOOOOOOOOOO 31");
+                LOG.debug().$("idle new").$();
+                tableWriter.bumpPartitionUpdateCount();
                 doneLatch.countDown();
                 throw e;
             }
@@ -170,8 +171,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     doneLatch
             );
         } else {
-            final long srcTimestampAddr;
-            final long srcTimestampSize;
+            long srcTimestampAddr = 0;
+            long srcTimestampSize = 0;
             int prefixType;
             long prefixLo;
             long prefixHi;
@@ -436,7 +437,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     }
                 }
             } catch (Throwable e) {
-                System.out.println("GOOOOOOOOOOOO 32");
+                LOG.debug().$("idle existing").$();
+                OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+                OutOfOrderUtils.close(ff, srcTimestampFd);
+                tableWriter.bumpPartitionUpdateCount();
                 doneLatch.countDown();
                 throw e;
             }
@@ -896,9 +900,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 }
             }
         } finally {
-            for (; columnsInFlight < columnCount; columnsInFlight++) {
-                OutOfOrderCopyJob.closeColumnIdle(
-                        columnCounter,
+            final int delta = columnsInFlight - columnCount;
+            LOG.debug().$("idle [delta=").$(delta).$(']').$();
+            if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
+                OutOfOrderCopyJob.closeColumnIdleQuick(
                         ff,
                         timestampMergeIndexAddr,
                         srcTimestampFd,

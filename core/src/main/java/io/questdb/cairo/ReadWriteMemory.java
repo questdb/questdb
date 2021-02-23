@@ -62,7 +62,7 @@ public class ReadWriteMemory extends VirtualMemory {
         final long pageSize = getMapPageSize();
 
         if (ff.length(fd) < offset + pageSize && !ff.allocate(fd, offset + pageSize)) {
-            throw CairoException.instance(ff.errno()).put("No space left [size=").put(offset + pageSize);
+            throw CairoException.instance(ff.errno()).put("No space left on device [need=").put(offset + pageSize).put(']');
         }
 
         final long address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);

@@ -2330,76 +2330,86 @@ public class TableWriter implements Closeable {
 
             this.oooLatch.reset();
             this.oooUpdRemaining.set(affectedPartitionCount - 1);
-            boolean success = false;
+            boolean success = true;
+            int partitionsInFlight = affectedPartitionCount;
             try {
                 for (int i = 1; i < affectedPartitionCount; i++) {
-                    final long srcOooLo = oooPartitions.getQuick(i * 2 - 2) + 1;
-                    final long srcOooHi = oooPartitions.getQuick(i * 2);
-                    final long oooTimestampHi = oooPartitions.getQuick(i * 2 + 1);
-                    final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
-                    long cursor = oooPartitionPubSeq.next();
-                    if (cursor > -1) {
-                        OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
-                        task.of(
-                                ff,
-                                path,
-                                partitionBy,
-                                columns,
-                                oooColumns,
-                                srcOooLo,
-                                srcOooHi,
-                                srcOooMax,
-                                oooTimestampMin,
-                                oooTimestampMax,
-                                oooTimestampHi,
-                                txn,
-                                sortedTimestampsAddr,
-                                lastPartitionSize,
-                                tableCeilOfMaxTimestamp,
-                                tableFloorOfMinTimestamp,
-                                tableFloorOfMaxTimestamp,
-                                tableMaxTimestamp,
-                                this,
-                                this.oooLatch
-                        );
-                        oooPartitionPubSeq.done(cursor);
-                    } else {
-                        OutOfOrderPartitionJob.processPartition(
-                                workerId,
-                                configuration,
-                                messageBus.getOutOfOrderOpenColumnQueue(),
-                                messageBus.getOutOfOrderOpenColumnPubSequence(),
-                                messageBus.getOutOfOrderCopyQueue(),
-                                messageBus.getOutOfOrderCopyPubSequence(),
-                                messageBus.getOutOfOrderUpdPartitionSizeQueue(),
-                                messageBus.getOutOfOrderUpdPartitionSizePubSequence(),
-                                ff,
-                                path,
-                                partitionBy,
-                                columns,
-                                oooColumns,
-                                srcOooLo,
-                                srcOooHi,
-                                srcOooMax,
-                                oooTimestampMin,
-                                oooTimestampMax,
-                                oooTimestampHi,
-                                txn,
-                                sortedTimestampsAddr,
-                                lastPartitionSize,
-                                tableCeilOfMaxTimestamp,
-                                tableFloorOfMinTimestamp,
-                                tableFloorOfMaxTimestamp,
-                                tableMaxTimestamp,
-                                this,
-                                oooLatch
-                        );
+                    try {
+                        final long srcOooLo = oooPartitions.getQuick(i * 2 - 2) + 1;
+                        final long srcOooHi = oooPartitions.getQuick(i * 2);
+                        final long oooTimestampHi = oooPartitions.getQuick(i * 2 + 1);
+                        final long lastPartitionSize = transientRowCountBeforeOutOfOrder;
+                        long cursor = oooPartitionPubSeq.next();
+                        if (cursor > -1) {
+                            OutOfOrderPartitionTask task = oooPartitionQueue.get(cursor);
+                            task.of(
+                                    ff,
+                                    path,
+                                    partitionBy,
+                                    columns,
+                                    oooColumns,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    srcOooMax,
+                                    oooTimestampMin,
+                                    oooTimestampMax,
+                                    oooTimestampHi,
+                                    txn,
+                                    sortedTimestampsAddr,
+                                    lastPartitionSize,
+                                    tableCeilOfMaxTimestamp,
+                                    tableFloorOfMinTimestamp,
+                                    tableFloorOfMaxTimestamp,
+                                    tableMaxTimestamp,
+                                    this,
+                                    this.oooLatch
+                            );
+                            oooPartitionPubSeq.done(cursor);
+                        } else {
+                            OutOfOrderPartitionJob.processPartition(
+                                    workerId,
+                                    configuration,
+                                    messageBus.getOutOfOrderOpenColumnQueue(),
+                                    messageBus.getOutOfOrderOpenColumnPubSequence(),
+                                    messageBus.getOutOfOrderCopyQueue(),
+                                    messageBus.getOutOfOrderCopyPubSequence(),
+                                    messageBus.getOutOfOrderUpdPartitionSizeQueue(),
+                                    messageBus.getOutOfOrderUpdPartitionSizePubSequence(),
+                                    ff,
+                                    path,
+                                    partitionBy,
+                                    columns,
+                                    oooColumns,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    srcOooMax,
+                                    oooTimestampMin,
+                                    oooTimestampMax,
+                                    oooTimestampHi,
+                                    txn,
+                                    sortedTimestampsAddr,
+                                    lastPartitionSize,
+                                    tableCeilOfMaxTimestamp,
+                                    tableFloorOfMinTimestamp,
+                                    tableFloorOfMaxTimestamp,
+                                    tableMaxTimestamp,
+                                    this,
+                                    oooLatch
+                            );
+                        }
+                    } catch (CairoException | CairoError e) {
+                        LOG.error().$((Sinkable) e).$();
+                        success = false;
+                        partitionsInFlight = i + 1;
+                        throw e;
+                    } finally {
+                        for (; partitionsInFlight < affectedPartitionCount; partitionsInFlight++) {
+                            if (oooUpdRemaining.decrementAndGet() == 0) {
+                                oooLatch.countDown();
+                            }
+                        }
                     }
                 }
-                success = true;
-            } catch (CairoException | CairoError e) {
-                LOG.error().$((Sinkable) e).$();
-                throw e;
             } finally {
                 // we are stealing work here it is possible we get exception from this method
                 oooConsumeUpdPartitionSizeTasks(

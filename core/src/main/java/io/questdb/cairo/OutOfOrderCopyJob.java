@@ -108,132 +108,150 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        boolean success = false;
-        try {
-            switch (blockType) {
-                case OO_BLOCK_MERGE:
-                    if (srcDataFixOffset == 0 && srcDataTopOffset == 0) {
-                        oooMergeCopy(
-                                columnType,
-                                timestampMergeIndexAddr,
-                                srcDataFixAddr,
-                                srcDataVarAddr,
-                                srcDataLo,
-                                srcDataHi,
-                                srcOooFixAddr,
-                                srcOooVarAddr,
-                                srcOooLo,
-                                srcOooHi,
-                                dstFixAddr + dstFixOffset,
-                                dstVarAddr,
-                                dstVarOffset
-                        );
-                    } else {
-                        oooMergeCopyWithOffset(
-                                columnType,
-                                timestampMergeIndexAddr,
-                                srcDataFixAddr,
-                                // this is a hack, when we have column top we can have only of of the two:
-                                // srcDataFixOffset, when we had to shift data to back fill nulls or
-                                // srcDataTopOffset - if we kept the column top
-                                // when one value is present the other will be 0
-                                srcDataFixOffset - srcDataTopOffset,
-                                srcDataVarAddr,
-                                srcDataVarOffset,
-                                srcDataLo,
-                                srcDataHi,
-                                srcOooFixAddr,
-                                srcOooVarAddr,
-                                srcOooLo,
-                                srcOooHi,
-                                dstFixAddr + dstFixOffset,
-                                dstVarAddr,
-                                dstVarOffset
-                        );
-                    }
-                    break;
-                case OO_BLOCK_OO:
-                    oooCopyOOO(
+        switch (blockType) {
+            case OO_BLOCK_MERGE:
+                if (srcDataFixOffset == 0 && srcDataTopOffset == 0) {
+                    oooMergeCopy(
                             columnType,
+                            timestampMergeIndexAddr,
+                            srcDataFixAddr,
+                            srcDataVarAddr,
+                            srcDataLo,
+                            srcDataHi,
                             srcOooFixAddr,
-                            srcOooFixSize,
                             srcOooVarAddr,
-                            srcOooVarSize,
                             srcOooLo,
                             srcOooHi,
                             dstFixAddr + dstFixOffset,
                             dstVarAddr,
                             dstVarOffset
                     );
-                    break;
-                case OO_BLOCK_DATA:
-                    oooCopyData(
+                } else {
+                    oooMergeCopyWithOffset(
                             columnType,
-                            srcDataFixAddr + srcDataFixOffset,
-                            srcDataFixSize - srcDataFixOffset,
-                            srcDataVarAddr + srcDataVarOffset,
-                            srcDataVarSize - srcDataVarOffset,
+                            timestampMergeIndexAddr,
+                            srcDataFixAddr,
+                            // this is a hack, when we have column top we can have only of of the two:
+                            // srcDataFixOffset, when we had to shift data to back fill nulls or
+                            // srcDataTopOffset - if we kept the column top
+                            // when one value is present the other will be 0
+                            srcDataFixOffset - srcDataTopOffset,
+                            srcDataVarAddr,
+                            srcDataVarOffset,
                             srcDataLo,
                             srcDataHi,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            srcOooLo,
+                            srcOooHi,
                             dstFixAddr + dstFixOffset,
                             dstVarAddr,
                             dstVarOffset
                     );
-                    break;
-                default:
-                    break;
-            }
-            success = true;
-        } finally {
-            // decrement part counter and if we are the last task - perform final steps
-            if (partCounter.decrementAndGet() == 0) {
-                // todo: pool indexer
-                if (isIndexed) {
-                    if (success) {
-                        // dstKFd & dstVFd are closed by the indexer
-                        updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
-                    } else {
-                        ff.close(dstKFd);
-                        ff.close(dstVFd);
-                    }
                 }
+                break;
+            case OO_BLOCK_OO:
+                oooCopyOOO(
+                        columnType,
+                        srcOooFixAddr,
+                        srcOooFixSize,
+                        srcOooVarAddr,
+                        srcOooVarSize,
+                        srcOooLo,
+                        srcOooHi,
+                        dstFixAddr + dstFixOffset,
+                        dstVarAddr,
+                        dstVarOffset
+                );
+                break;
+            case OO_BLOCK_DATA:
+                oooCopyData(
+                        columnType,
+                        srcDataFixAddr + srcDataFixOffset,
+                        srcDataFixSize - srcDataFixOffset,
+                        srcDataVarAddr + srcDataVarOffset,
+                        srcDataVarSize - srcDataVarOffset,
+                        srcDataLo,
+                        srcDataHi,
+                        dstFixAddr + dstFixOffset,
+                        dstVarAddr,
+                        dstVarOffset
+                );
+                break;
+            default:
+                break;
+        }
+        // decrement part counter and if we are the last task - perform final steps
+        if (partCounter.decrementAndGet() == 0) {
+            // todo: pool indexer
+            if (isIndexed) {
+                // dstKFd & dstVFd are closed by the indexer
+                try {
+                    updateIndex(configuration, dstFixAddr, dstFixSize, dstKFd, dstVFd, dstIndexOffset);
+                } catch (Throwable e) {
+                    tableWriter.bumpOooErrorCount();
+                    copyIdleQuick(
+                            columnCounter,
+                            ff,
+                            timestampMergeIndexAddr,
+                            srcDataFixFd,
+                            srcDataFixAddr,
+                            srcDataFixSize,
+                            srcDataVarFd,
+                            srcDataVarAddr,
+                            srcDataVarSize,
+                            dstFixFd,
+                            dstFixAddr,
+                            dstFixSize,
+                            dstVarFd,
+                            dstVarAddr,
+                            dstVarSize,
+                            srcTimestampFd,
+                            srcTimestampAddr,
+                            srcTimestampSize,
+                            dstKFd,
+                            dstVFd,
+                            tableWriter,
+                            doneLatch
+                    );
+                    throw e;
+                }
+            }
 
-                // unmap memory
-                OutOfOrderUtils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-                OutOfOrderUtils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-                OutOfOrderUtils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-                OutOfOrderUtils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+            // unmap memory
+            OutOfOrderUtils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+            OutOfOrderUtils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+            OutOfOrderUtils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+            OutOfOrderUtils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
 
-                final int columnsRemaining = columnCounter.decrementAndGet();
-                LOG.debug().$("organic [columnsRemaining=").$(columnsRemaining).$(']').$();
-                if (columnsRemaining == 0) {
-                    OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-                    try {
-                        touchPartition(
-                                ff,
-                                updPartitionSizeTaskQueue,
-                                updPartitionSizePubSeq,
-                                pathToTable,
-                                srcOooPartitionLo,
-                                srcOooPartitionHi,
-                                oooTimestampMin,
-                                oooTimestampMax,
-                                oooTimestampHi,
-                                srcOooMax,
-                                srcDataMax,
-                                tableFloorOfMaxTimestamp,
-                                dataTimestampHi,
-                                srcTimestampFd,
-                                partitionMutates,
-                                tableWriter,
-                                success
-                        );
-                    } finally {
-                        if (timestampMergeIndexAddr != 0) {
-                            Vect.freeMergedIndex(timestampMergeIndexAddr);
-                        }
-                        doneLatch.countDown();
+            final int columnsRemaining = columnCounter.decrementAndGet();
+            LOG.debug().$("organic [columnsRemaining=").$(columnsRemaining).$(']').$();
+            if (columnsRemaining == 0) {
+                OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+                try {
+                    touchPartition(
+                            ff,
+                            updPartitionSizeTaskQueue,
+                            updPartitionSizePubSeq,
+                            pathToTable,
+                            srcOooPartitionLo,
+                            srcOooPartitionHi,
+                            oooTimestampMin,
+                            oooTimestampMax,
+                            oooTimestampHi,
+                            srcOooMax,
+                            srcDataMax,
+                            tableFloorOfMaxTimestamp,
+                            dataTimestampHi,
+                            srcTimestampFd,
+                            partitionMutates,
+                            tableWriter
+                    );
+                } finally {
+                    if (timestampMergeIndexAddr != 0) {
+                        Vect.freeMergedIndex(timestampMergeIndexAddr);
                     }
+                    doneLatch.countDown();
                 }
             }
         }
@@ -456,18 +474,47 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         );
     }
 
-    static void closeColumnIdle(AtomicInteger columnCounter, FilesFacade ff, long timestampMergeIndexAddr, long srcTimestampFd, long srcTimestampAddr, long srcTimestampSize, TableWriter tableWriter, SOUnboundedCountDownLatch doneLatch) {
+    static void closeColumnIdle(
+            AtomicInteger columnCounter,
+            FilesFacade ff,
+            long timestampMergeIndexAddr,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug().$("idle [columnsRemaining=").$(columnsRemaining).$(']').$();
         if (columnsRemaining == 0) {
-            OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
-            OutOfOrderUtils.close(ff, srcTimestampFd);
-            if (timestampMergeIndexAddr != 0) {
-                Vect.freeMergedIndex(timestampMergeIndexAddr);
-            }
-            tableWriter.bumpPartitionUpdateCount();
-            doneLatch.countDown();
+            closeColumnIdleQuick(
+                    ff,
+                    timestampMergeIndexAddr,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter,
+                    doneLatch
+            );
         }
+    }
+
+    static void closeColumnIdleQuick(
+            FilesFacade ff,
+            long timestampMergeIndexAddr,
+            long srcTimestampFd,
+            long srcTimestampAddr,
+            long srcTimestampSize,
+            TableWriter tableWriter,
+            SOUnboundedCountDownLatch doneLatch
+    ) {
+        OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+        OutOfOrderUtils.close(ff, srcTimestampFd);
+        if (timestampMergeIndexAddr != 0) {
+            Vect.freeMergedIndex(timestampMergeIndexAddr);
+        }
+        tableWriter.bumpPartitionUpdateCount();
+        doneLatch.countDown();
     }
 
     private static void touchPartition(
@@ -486,11 +533,10 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long dataTimestampHi,
             long srcTimestampFd,
             boolean partitionMutates,
-            TableWriter tableWriter,
-            boolean success
+            TableWriter tableWriter
     ) {
         try {
-            if (partitionMutates && success) {
+            if (partitionMutates) {
                 if (srcTimestampFd < 0) {
                     // srcTimestampFd negative indicates that we are reusing existing file descriptor
                     // as opposed to opening file by name. This also indicated that "this" partition
