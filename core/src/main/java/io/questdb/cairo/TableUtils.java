@@ -637,136 +637,6 @@ public final class TableUtils {
         }
     }
 
-    // Scan timestamp column and find size of the partition
-    // by finding record count in ascending order
-    static long scanPartitionSizeByTimestampColumn(FilesFacade ff, Path path, CharSequence timestampCol, long minTimestamp) {
-        long pageSize = ff.getPageSize();
-        int plen = path.length();
-        long buff = Unsafe.malloc(pageSize);
-        long size = 0;
-        try {
-            if (!ff.exists(path.concat(timestampCol).put(FILE_SUFFIX_D).$())) {
-                return -1;
-            }
-            long fd = ff.openRO(path);
-            if (fd == -1) {
-                return -1;
-            }
-
-            try {
-                long read;
-                long fileRead = 0;
-                while ((read = ff.read(fd, buff, pageSize, fileRead)) > 0) {
-                    long hi = buff + read;
-                    fileRead += read;
-
-                    long ts;
-                    for (long i = buff; i < hi; i += Long.BYTES) {
-                        ts = Unsafe.getUnsafe().getLong(i);
-                        if (ts >= minTimestamp) {
-                            minTimestamp = ts;
-                            size++;
-                        } else {
-                            return size;
-                        }
-                    }
-                }
-
-                return size;
-            } finally {
-                ff.close(fd);
-            }
-
-        } finally {
-            Unsafe.free(buff, pageSize);
-            path.trimTo(plen);
-        }
-    }
-
-    static void checkFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
-        // for each column, check that file exist in the partition folder
-        int rootLen = path.length();
-        for (int columnIndex = 0; columnIndex < metadata.getColumnCount(); columnIndex++) {
-            try {
-                int columnType = metadata.getColumnType(columnIndex);
-                var columnName = metadata.getColumnName(columnIndex);
-                path.concat(columnName);
-
-                switch (columnType) {
-                    case ColumnType.INT:
-                    case ColumnType.LONG:
-                    case ColumnType.BOOLEAN:
-                    case ColumnType.BYTE:
-                    case ColumnType.TIMESTAMP:
-                    case ColumnType.DATE:
-                    case ColumnType.DOUBLE:
-                    case ColumnType.CHAR:
-                    case ColumnType.SHORT:
-                    case ColumnType.FLOAT:
-                    case ColumnType.LONG256:
-                        // Consider Symbols as fixed, check data file
-                    case ColumnType.SYMBOL:
-                        checkFilesMatchFixedColumn(ff, path, columnType, partitionSize);
-                        break;
-                    case ColumnType.STRING:
-                    case ColumnType.BINARY:
-                        checkFilesMatchVarLenColumn(ff, path, columnType, partitionSize);
-                        break;
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
-    }
-
-    private static void checkFilesMatchVarLenColumn(FilesFacade ff, Path path, int columnType, long partitionSize) {
-        int pathLen = path.length();
-        path.put(FILE_SUFFIX_I).$();
-
-        if (ff.exists(path)) {
-            int typeSize = 4;
-            long fileSize = ff.length(path);
-            if (fileSize < partitionSize * typeSize) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
-                        .put(path)
-                        .put(",expectedSize=")
-                        .put(partitionSize * typeSize)
-                        .put(",actual=")
-                        .put(fileSize)
-                        .put(']');
-            }
-
-            path.trimTo(pathLen);
-            path.put(FILE_SUFFIX_D).$();
-            if (ff.exists(path)) {
-                // good
-                return;
-            }
-        }
-        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
-    }
-
-    private static void checkFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize) {
-        path.put(FILE_SUFFIX_D).$();
-        if (ff.exists(path)) {
-            int typeSize = ColumnType.sizeOf(columnType);
-            long fileSize = ff.length(path);
-            if (fileSize < partitionSize * typeSize) {
-                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
-                        "Partition files inconsistent [file=")
-                        .put(path)
-                        .put(",expectedSize=")
-                        .put(partitionSize * typeSize)
-                        .put(",actual=")
-                        .put(fileSize)
-                        .put(']');
-            }
-            return;
-        }
-        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
-    }
-
     static DateFormat getPartitionDateFmt(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.DAY:
@@ -806,23 +676,48 @@ public final class TableUtils {
         }
     }
 
-    static void readFileLastFirstLong(FilesFacade ff, Path path, CharSequence columnName, long tempMem8b, long partitionSize) {
-        int plen = path.length();
+    // Scans timestamp file
+    // returns size of partition detected, e.g. size of monotonic increase
+    // of timestamp longs read from 0 offset to the end of the file
+    // It also writes min and max values found in tempMem16b
+    static long readPartitionSizeMinMax(FilesFacade ff, Path path, CharSequence columnName, long tempMem16b, long timestamp) {
+        int plen = path.chopZ().length();
         try {
             if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
                 long fd = ff.openRO(path);
                 if (fd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
+                    throw CairoException.instance(ff.errno()).put("Cannot open: ").put(path);
                 }
-
+                long fileSize = ff.length(fd);
+                long pageSize = ff.getPageSize();
+                long nPages = (fileSize / pageSize) + 1;
+                long mapSize = nPages * pageSize;
+                long mappedMem = ff.mmap(fd, mapSize, 0, Files.MAP_RO);
+                if (mappedMem < 0) {
+                    throw CairoException.instance(ff.errno()).put("Cannot map: ").put(path);
+                }
                 try {
-                    if (ff.read(fd, tempMem8b, 8, 0) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    long minTimestamp;
+                    long maxTimestamp = timestamp;
+                    long size = 0L;
+
+                    for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
+                        long ts = Unsafe.getUnsafe().getLong(ptr);
+                        if (ts >= maxTimestamp) {
+                            maxTimestamp = ts;
+                            size++;
+                        } else {
+                            break;
+                        }
                     }
-                    if (ff.read(fd, tempMem8b + 8, 8, (partitionSize - 1) * 8) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    if (size > 0) {
+                        minTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
+                        Unsafe.getUnsafe().putLong(tempMem16b, minTimestamp);
+                        Unsafe.getUnsafe().putLong(tempMem16b + Long.BYTES, maxTimestamp);
                     }
+                    return size;
                 } finally {
+                    ff.munmap(mappedMem, mapSize);
                     ff.close(fd);
                 }
             } else {

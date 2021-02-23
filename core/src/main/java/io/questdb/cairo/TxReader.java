@@ -35,7 +35,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class TransactionFileReader implements Closeable {
+public class TxReader implements Closeable {
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_TX_OFFSET = 2;
@@ -58,7 +58,7 @@ public class TransactionFileReader implements Closeable {
     private ReadOnlyMemory readOnlyTxMem;
     private Timestamps.TimestampFloorMethod timestampFloorMethod;
 
-    public TransactionFileReader(FilesFacade ff, Path path) {
+    public TxReader(FilesFacade ff, Path path) {
         this.ff = ff;
         this.path = new Path(path.length() + 10);
         this.path.put(path);
@@ -66,7 +66,7 @@ public class TransactionFileReader implements Closeable {
     }
 
     public boolean attachedPartitionsContains(long ts) {
-        return findAttachedPartitionIndex(ts) >= 0;
+        return findAttachedPartitionIndex(ts) > -1;
     }
 
     @Override
@@ -101,7 +101,7 @@ public class TransactionFileReader implements Closeable {
 
     public long getPartitionSizeByPartitionTimestamp(long ts) {
         final int index = findAttachedPartitionIndex(getPartitionLo(ts));
-        if (index >= 0) {
+        if (index > -1) {
             return attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET);
         }
         return -1;
@@ -128,7 +128,7 @@ public class TransactionFileReader implements Closeable {
     }
 
     public void initPartitionBy(int partitionBy) {
-        this.timestampFloorMethod = getTimestampFloorMethod(partitionBy);
+        this.timestampFloorMethod = partitionBy != PartitionBy.NONE ? getPartitionFloor(partitionBy) : null;
         this.partitionBy = partitionBy;
     }
 
@@ -203,24 +203,14 @@ public class TransactionFileReader implements Closeable {
             }
         }
 
-        return scanIndex(ts, hi);
+        int blockHint = 2;
+        //noinspection ConstantConditions
+        assert (1 << blockHint) == LONGS_PER_TX_ATTACHED_PARTITION;
+        return attachedPartitions.binarySearchBlock(0, hi, blockHint, ts);
     }
 
     protected long getPartitionLo(long timestamp) {
         return timestampFloorMethod != null ? timestampFloorMethod.floor(timestamp) : Long.MIN_VALUE;
-    }
-
-    private Timestamps.TimestampFloorMethod getTimestampFloorMethod(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return Timestamps.FLOOR_DD;
-            case PartitionBy.MONTH:
-                return Timestamps.FLOOR_MM;
-            case PartitionBy.YEAR:
-                return Timestamps.FLOOR_YYYY;
-            default:
-                return null;
-        }
     }
 
     private int insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize) {
@@ -272,20 +262,6 @@ public class TransactionFileReader implements Closeable {
         } finally {
             this.path.trimTo(rootLen);
         }
-    }
-
-    private int scanIndex(long ts, int hi) {
-        // attachedPartitions should be too small to do binary search, scan backwards
-        for (int i = hi - LONGS_PER_TX_ATTACHED_PARTITION; i > -1; i -= LONGS_PER_TX_ATTACHED_PARTITION) {
-            long partitionTs = attachedPartitions.getQuick(i);
-            if (partitionTs < ts) {
-                return -(i + LONGS_PER_TX_ATTACHED_PARTITION + 1);
-            }
-            if (partitionTs == ts) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     protected int updateAttachedPartitionSizeByTimestamp(long maxTimestamp, long partitionSize) {

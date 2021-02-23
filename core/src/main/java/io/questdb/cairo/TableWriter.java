@@ -164,7 +164,7 @@ public class TableWriter implements Closeable {
     private long mergeRowCount;
     private final LongConsumer mergeTimestampMethodRef = this::mergeTimestampSetter;
     private long transientRowCountBeforeOutOfOrder;
-    private final TransactionFile txFile;
+    private final TxWriter txFile;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
@@ -223,7 +223,7 @@ public class TableWriter implements Closeable {
             }
             this.ddlMem = new AppendMemory();
             this.metaMem = new ReadOnlyMemory();
-            this.txFile = new TransactionFile(this.ff, this.path);
+            this.txFile = new TxWriter(this.ff, this.path);
             this.txFile.open();
             this.txFile.read();
             openMetaFile();
@@ -559,16 +559,18 @@ public class TableWriter implements Closeable {
                 if (ff.exists(other.$())) {
                     if (ff.rename(other, path)) {
                         LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
+                    } else {
+                        throw CairoException.instance(ff.errno()).put("File system error on trying to rename [from=")
+                                .put(other).put(",to=").put(path);
                     }
                 }
             }
 
             if (ff.exists(path.$())) {
                 // find out lo, hi ranges of partition attached
-                final long partitionSize = scanPartitionSizeByTimestampColumn(ff, path.chopZ(), timestampCol, timestamp);
+                final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
                 if (partitionSize > 0) {
-                    checkFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
-                    readFileLastFirstLong(ff, path.chopZ(), timestampCol, tempMem16b, partitionSize);
+                    attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
 
@@ -578,7 +580,7 @@ public class TableWriter implements Closeable {
                     long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txFile.getMaxTimestamp());
                     boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txFile.getMaxTimestamp());
 
-                    txFile.startOutOfOrderUpdate();
+                    txFile.beginPartitionSizeUpdate();
                     txFile.updatePartitionSizeByTimestamp(timestamp, partitionSize);
                     txFile.finishOutOfOrderUpdate(nextMinTimestamp, nextMaxTimestamp);
                     txFile.commit(defaultCommitMode, denseSymbolMapWriters);
@@ -870,7 +872,7 @@ public class TableWriter implements Closeable {
                 if (timestamp == txFile.getPartitionTimestamp(0)) {
                     nextMinTimestamp = readMinTimestamp(txFile.getPartitionTimestamp(1));
                 }
-                txFile.startOutOfOrderUpdate();
+                txFile.beginPartitionSizeUpdate();
                 txFile.removeAttachedPartitions(timestamp);
                 txFile.setMinTimestamp(nextMinTimestamp);
                 txFile.finishOutOfOrderUpdate(nextMinTimestamp, txFile.getMaxTimestamp());
@@ -4553,6 +4555,90 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private static void attachPartitionCheckFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
+        // for each column, check that file exist in the partition folder
+        int rootLen = path.length();
+        for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
+            try {
+                int columnType = metadata.getColumnType(columnIndex);
+                var columnName = metadata.getColumnName(columnIndex);
+                path.concat(columnName);
+
+                switch (columnType) {
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.BYTE:
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.DATE:
+                    case ColumnType.DOUBLE:
+                    case ColumnType.CHAR:
+                    case ColumnType.SHORT:
+                    case ColumnType.FLOAT:
+                    case ColumnType.LONG256:
+                        // Consider Symbols as fixed, check data file size
+                    case ColumnType.SYMBOL:
+                        attachPartitionCheckFilesMatchFixedColumn(ff, path, columnType, partitionSize);
+                        break;
+                    case ColumnType.STRING:
+                    case ColumnType.BINARY:
+                        attachPartitionCheckFilesMatchVarLenColumn(ff, path, partitionSize);
+                        break;
+                }
+            } finally {
+                path.trimTo(rootLen);
+            }
+        }
+    }
+
+    private static void attachPartitionCheckFilesMatchVarLenColumn(FilesFacade ff, Path path, long partitionSize) {
+        int pathLen = path.length();
+        path.put(FILE_SUFFIX_I).$();
+
+        if (ff.exists(path)) {
+            int typeSize = 4;
+            long fileSize = ff.length(path);
+            if (fileSize < partitionSize * typeSize) {
+                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
+                        "Partition files inconsistent [file=")
+                        .put(path)
+                        .put(",expectedSize=")
+                        .put(partitionSize * typeSize)
+                        .put(",actual=")
+                        .put(fileSize)
+                        .put(']');
+            }
+
+            path.trimTo(pathLen);
+            path.put(FILE_SUFFIX_D).$();
+            if (ff.exists(path)) {
+                // good
+                return;
+            }
+        }
+        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
+    }
+
+    private static void attachPartitionCheckFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize) {
+        path.put(FILE_SUFFIX_D).$();
+        if (ff.exists(path)) {
+            long fileSize = ff.length(path);
+            if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
+                throw CairoException.instance(0).put("Column file row count does not match timestamp file row count. " +
+                        "Partition files inconsistent [file=")
+                        .put(path)
+                        .put(",expectedSize=")
+                        .put(partitionSize << ColumnType.pow2SizeOf(columnType))
+                        .put(",actual=")
+                        .put(fileSize)
+                        .put(']');
+            }
+            return;
+        }
+        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
+    }
+
+
     @FunctionalInterface
     private interface ShuffleOutOfOrderDataInternal {
         void shuffle(long pSrc, long pDest, long pIndex, long count);
@@ -4649,7 +4735,7 @@ public class TableWriter implements Closeable {
                     LOG.info().$("out-of-order").$();
                     // todo: do we need this?
                     TableWriter.this.transientRowCountBeforeOutOfOrder = TableWriter.this.txFile.getTransientRowCount();
-                    txFile.startOutOfOrderUpdate();
+                    txFile.beginPartitionSizeUpdate();
                     openMergePartition();
                     TableWriter.this.mergeRowCount = 0;
                     assert timestampMergeMem != null;

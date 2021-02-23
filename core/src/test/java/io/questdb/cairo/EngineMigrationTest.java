@@ -332,9 +332,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 }
             };
 
-            try (CairoEngine ignored = new CairoEngine(config)) {
-                // Migration should be successful, not exceptions
-            }
+            CairoEngine ignored = new CairoEngine(config);
+            // Migration should be successful, not exceptions
+            ignored.close();
         });
     }
 
@@ -425,7 +425,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             var symbolCounts = new IntList();
             path.trimTo(0).concat(root).concat(src.getName());
             var attachedPartitions = new LongList();
-            try (var txFile = new TransactionFileReader(ff, path.$())) {
+            try (var txFile = new TxReader(ff, path.$())) {
                 txFile.initPartitionBy(src.getPartitionBy());
                 txFile.open();
                 txFile.read();

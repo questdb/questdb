@@ -34,7 +34,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public final class TransactionFile extends TransactionFileReader implements Closeable {
+public final class TxWriter extends TxReader implements Closeable {
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
     private long prevMaxTimestamp;
@@ -43,7 +43,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
 
     private ReadWriteMemory txMem;
 
-    public TransactionFile(FilesFacade ff, Path path) {
+    public TxWriter(FilesFacade ff, Path path) {
         super(ff, path);
     }
 
@@ -274,7 +274,7 @@ public final class TransactionFile extends TransactionFileReader implements Clos
         }
     }
 
-    public void startOutOfOrderUpdate() {
+    public void beginPartitionSizeUpdate() {
         if (maxTimestamp != Long.MIN_VALUE) {
             // Last partition size is usually not stored in attached partitions list
             // but in transientRowCount only.
