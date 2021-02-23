@@ -219,6 +219,24 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopLastDataOOODataFailRetryRename1Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailRetryRename1Parallel() throws Exception {
+        counter.set(0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailRetryRename2Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Fwd);
+    }
+
+    @Test
     public void testColumnTopLastOOOData() throws Exception {
         executeVanilla(() -> testColumnTopLastOOOData0(
                 engine,
@@ -306,15 +324,15 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testColumnTopMidDataMergeDataFailRetryRename2Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
-    }
-
-    @Test
     public void testColumnTopMidDataMergeDataFailRetryRename1Parallel() throws Exception {
         counter.set(0);
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
+    }
+
+    @Test
+    public void testColumnTopMidDataMergeDataFailRetryRename2Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
     }
 
     @Test
@@ -367,24 +385,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testColumnTopLastDataOOODataFailRetryRename1Parallel() throws Exception {
-        counter.set(0);
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
-    }
-
-    @Test
-    public void testColumnTopLastDataOOODataFailRetryRename1Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
-    }
-
-    @Test
-    public void testColumnTopLastDataOOODataFailRetryRename2Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Fwd);
-    }
-
-    @Test
     public void testPartitionedDataAppendOOData() throws Exception {
         executeVanilla(
                 () -> testPartitionedDataAppendOOData0(
@@ -429,7 +429,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
         counter.set(102);
-        executeWithPool(4, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+        executeWithPool(2, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
@@ -438,78 +438,9 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        executeVanilla(() -> {
-                    // create table with roughly 2AM data
-                    compiler.compile(
-                            "create table x as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " rnd_symbol('msft','ibm', 'googl') sym," +
-                                    " round(rnd_double(0)*100, 3) amt," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                    " rnd_boolean() b," +
-                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) ik," +
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(500000000000L,100000000L) ts," +
-                                    " rnd_byte(2,50) l," +
-                                    " cast(null as binary) m," +
-                                    " rnd_str(5,16,2) n," +
-                                    " rnd_char() t" +
-                                    " from long_sequence(510)" +
-                                    "), index(sym) timestamp (ts) partition by DAY",
-                            sqlExecutionContext
-                    );
-
-                    // all records but one is appended to middle partition
-                    // last record is prepended to the last partition
-                    compiler.compile(
-                            "create table append as (" +
-                                    "select" +
-                                    " cast(x as int) i," +
-                                    " rnd_symbol('msft','ibm', 'googl') sym," +
-                                    " round(rnd_double(0)*100, 3) amt," +
-                                    " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                                    " rnd_boolean() b," +
-                                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                                    " rnd_double(2) d," +
-                                    " rnd_float(2) e," +
-                                    " rnd_short(10,1024) f," +
-                                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                    " rnd_symbol(4,4,4,2) ik," +
-                                    " rnd_long() j," +
-                                    " timestamp_sequence(518390000000L,100000L) ts," +
-                                    " rnd_byte(2,50) l," +
-                                    " rnd_bin(10, 20, 2) m," +
-                                    " rnd_str(5,16,2) n," +
-                                    " rnd_char() t" +
-                                    " from long_sequence(101)" +
-                                    ") timestamp (ts) partition by DAY",
-                            sqlExecutionContext
-                    );
-
-                    // create third table, which will contain both X and 1AM
-                    assertOutOfOrderDataConsistency(
-                            engine,
-                            compiler,
-                            sqlExecutionContext,
-                            "create table y as (x union all append)",
-                            "y order by ts",
-                            "insert into x select * from append",
-                            "x"
-                    );
-
-                    assertIndexConsistency(
-                            compiler,
-                            sqlExecutionContext
-                    );
-                }
-        );
+    public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
+        counter.set(150);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
@@ -773,11 +704,11 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     private static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        OutOfOrderOpenColumnJob.initBuf();
+        OutOfOrderUtils.initBuf();
         try {
             assertMemoryLeak(code);
         } finally {
-            OutOfOrderOpenColumnJob.freeBuf();
+            OutOfOrderUtils.freeBuf();
         }
     }
 
@@ -2480,7 +2411,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         );
     }
 
-
     private static void testColumnTopMidDataMergeDataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -4079,16 +4009,17 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                     pool.assignCleaner(Path.CLEANER);
                     pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                    pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus(), pool.getWorkerCount()));
+                    pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
                     pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
 
+                    OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
                     pool.start(LOG);
 
                     try {
                         runnable.run(engine, compiler, sqlExecutionContext);
                     } finally {
                         pool.halt();
-                        OutOfOrderOpenColumnJob.freeBuf();
+                        OutOfOrderUtils.freeBuf();
                     }
                 }
             } else {
@@ -4125,7 +4056,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                     }
                 };
 
-                OutOfOrderOpenColumnJob.initBuf();
+                OutOfOrderUtils.initBuf();
                 try (
                         final CairoEngine engine = new CairoEngine(configuration);
                         final SqlCompiler compiler = new SqlCompiler(engine);
@@ -4133,7 +4064,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                 ) {
                     runnable.run(engine, compiler, sqlExecutionContext);
                 } finally {
-                    OutOfOrderOpenColumnJob.freeBuf();
+                    OutOfOrderUtils.freeBuf();
                 }
             }
         });
@@ -4195,6 +4126,87 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
         engine.releaseAllReaders();
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+    }
+
+    private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " cast(null as binary) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(510)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // all records but one is appended to middle partition
+        // last record is prepended to the last partition
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(518390000000L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(101)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        try {
+            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
+
+        // create third table, which will contain both X and 1AM
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "y order by ts",
+                "insert into x select * from append",
+                "x"
+        );
+
+        assertIndexConsistency(
+                compiler,
+                sqlExecutionContext
+        );
     }
 
 }

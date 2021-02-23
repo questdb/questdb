@@ -190,9 +190,6 @@ public final class TestUtils {
         long mem = Unsafe.getMemUsed();
         long fileCount = Files.getOpenFileCount();
         runnable.run();
-        if (fileCount != Files.getOpenFileCount()) {
-            System.out.println("ok");
-        }
         Assert.assertEquals(fileCount, Files.getOpenFileCount());
         Assert.assertEquals(mem, Unsafe.getMemUsed());
     }

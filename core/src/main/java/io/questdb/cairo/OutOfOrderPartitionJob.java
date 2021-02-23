@@ -193,15 +193,10 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcTimestampSize = srcDataMax * 8L;
                     // negative fd indicates descriptor reuse
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
-                    srcTimestampAddr = mapRO(ff, -srcTimestampFd, srcTimestampSize);
+                    srcTimestampAddr = OutOfOrderUtils.mapRO(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
-                    // todo: do not allocate
-                    long tempMem8b = Unsafe.malloc(Long.BYTES);
-                    try {
-                        srcDataMax = readPartitionSize(ff, path, tempMem8b);
-                    } finally {
-                        Unsafe.free(tempMem8b, Long.BYTES);
-                    }
+                    long tempMem8b = OutOfOrderUtils.get8ByteBuf(workerId);
+                    srcDataMax = readPartitionSize(ff, path, tempMem8b);
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
@@ -214,7 +209,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     if (srcTimestampFd == -1) {
                         throw CairoException.instance(ff.errno()).put("could not open `").put(pathToTable).put('`');
                     }
-                    srcTimestampAddr = mapRO(ff, srcTimestampFd, srcTimestampSize);
+                    srcTimestampAddr = OutOfOrderUtils.mapRO(ff, srcTimestampFd, srcTimestampSize);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
                 dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);

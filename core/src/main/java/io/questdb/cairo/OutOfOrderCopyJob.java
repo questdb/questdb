@@ -199,15 +199,15 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 }
 
                 // unmap memory
-                unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-                unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-                unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-                unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+                OutOfOrderUtils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+                OutOfOrderUtils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+                OutOfOrderUtils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+                OutOfOrderUtils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
 
                 final int columnsRemaining = columnCounter.decrementAndGet();
                 LOG.debug().$("organic [columnsRemaining=").$(columnsRemaining).$(']').$();
                 if (columnsRemaining == 0) {
-                    unmap(ff, srcTimestampAddr, srcTimestampSize);
+                    OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                     try {
                         touchPartition(
                                 ff,
@@ -437,12 +437,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-        unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-        unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
-        unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
-        close(ff, dstKFd);
-        close(ff, dstVFd);
+        OutOfOrderUtils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+        OutOfOrderUtils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+        OutOfOrderUtils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
+        OutOfOrderUtils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+        OutOfOrderUtils.close(ff, dstKFd);
+        OutOfOrderUtils.close(ff, dstVFd);
 
         closeColumnIdle(
                 columnCounter,
@@ -460,8 +460,8 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug().$("idle [columnsRemaining=").$(columnsRemaining).$(']').$();
         if (columnsRemaining == 0) {
-            unmap(ff, srcTimestampAddr, srcTimestampSize);
-            close(ff, srcTimestampFd);
+            OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+            OutOfOrderUtils.close(ff, srcTimestampFd);
             if (timestampMergeIndexAddr != 0) {
                 Vect.freeMergedIndex(timestampMergeIndexAddr);
             }
@@ -767,7 +767,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 oooCopyFixedSizeCol(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr, 3);
                 break;
             case -ColumnType.TIMESTAMP:
-                TableUtils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
+                OutOfOrderUtils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
                 break;
             default:
                 break;
@@ -786,12 +786,12 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             long dstVarOffset
 
     ) {
-        final long lo = TableUtils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
+        final long lo = OutOfOrderUtils.findVarOffset(srcFixAddr, srcLo, srcHi, srcVarSize);
         final long hi;
         if (srcHi + 1 == srcFixSize / Long.BYTES) {
             hi = srcVarSize;
         } else {
-            hi = TableUtils.findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
+            hi = OutOfOrderUtils.findVarOffset(srcFixAddr, srcHi + 1, srcFixSize / Long.BYTES, srcVarSize);
         }
         // copy this before it changes
         final long dest = dstVarAddr + dstVarOffset;
@@ -800,7 +800,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         if (lo == dstVarOffset) {
             oooCopyFixedSizeCol(srcFixAddr, srcLo, srcHi, dstFixAddr, 3);
         } else {
-            TableUtils.shiftCopyFixedSizeColumnData(lo - dstVarOffset, srcFixAddr, srcLo, srcHi, dstFixAddr);
+            OutOfOrderUtils.shiftCopyFixedSizeColumnData(lo - dstVarOffset, srcFixAddr, srcLo, srcHi, dstFixAddr);
         }
     }
 
@@ -942,24 +942,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 break;
             default:
                 break;
-        }
-    }
-
-    private static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
-        unmap(ff, dstFixAddr, dstFixSize);
-        close(ff, dstFixFd);
-    }
-
-    private static void unmap(FilesFacade ff, long addr, long size) {
-        if (addr != 0 && size != 0) {
-            ff.munmap(addr, size);
-        }
-    }
-
-    private static void close(FilesFacade ff, long fd) {
-        if (fd > 0) {
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
-            ff.close(fd);
         }
     }
 

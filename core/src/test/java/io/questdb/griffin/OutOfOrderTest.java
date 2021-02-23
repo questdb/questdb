@@ -379,13 +379,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        executeVanilla(() -> {
-                    testPartitionedDataAppendOOPrependOOData0(
-                            engine,
-                            compiler,
-                            sqlExecutionContext
-                    );
-                }
+        executeVanilla(() -> testPartitionedDataAppendOOPrependOOData0(
+                engine,
+                compiler,
+                sqlExecutionContext
+                )
         );
     }
 
@@ -735,11 +733,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     }
 
     private static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        OutOfOrderOpenColumnJob.initBuf();
+        OutOfOrderUtils.initBuf();
         try {
             assertMemoryLeak(code);
         } finally {
-            OutOfOrderOpenColumnJob.freeBuf();
+            OutOfOrderUtils.freeBuf();
         }
     }
 
@@ -4107,16 +4105,17 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 pool.assignCleaner(Path.CLEANER);
                 pool.assign(new OutOfOrderSortJob(engine.getMessageBus()));
                 pool.assign(new OutOfOrderPartitionJob(engine.getMessageBus()));
-                pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus(), pool.getWorkerCount()));
+                pool.assign(new OutOfOrderOpenColumnJob(engine.getMessageBus()));
                 pool.assign(new OutOfOrderCopyJob(engine.getMessageBus()));
 
+                OutOfOrderUtils.initBuf(pool.getWorkerCount() + 1);
                 pool.start(LOG);
 
                 try {
                     runnable.run(engine, compiler, sqlExecutionContext);
                 } finally {
                     pool.halt();
-                    OutOfOrderOpenColumnJob.freeBuf();
+                    OutOfOrderUtils.freeBuf();
                 }
             } else {
                 // we need to create entire engine
@@ -4147,7 +4146,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                     }
                 };
 
-                OutOfOrderOpenColumnJob.initBuf();
+                OutOfOrderUtils.initBuf();
                 try (
                         final CairoEngine engine = new CairoEngine(configuration);
                         final SqlCompiler compiler = new SqlCompiler(engine);
@@ -4155,7 +4154,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 ) {
                     runnable.run(engine, compiler, sqlExecutionContext);
                 } finally {
-                    OutOfOrderOpenColumnJob.freeBuf();
+                    OutOfOrderUtils.freeBuf();
                 }
             }
         });

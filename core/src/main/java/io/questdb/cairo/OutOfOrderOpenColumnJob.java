@@ -38,6 +38,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.OutOfOrderUtils.get8ByteBuf;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
@@ -48,34 +49,19 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     public static final int OPEN_LAST_PARTITION_FOR_MERGE = 4;
     public static final int OPEN_NEW_PARTITION_FOR_APPEND = 5;
     private static final Log LOG = LogFactory.getLog(OutOfOrderOpenColumnJob.class);
-    private static long[] temp8ByteBuf;
     private final CairoConfiguration configuration;
     private final RingQueue<OutOfOrderCopyTask> outboundQueue;
     private final Sequence outboundPubSeq;
     private final RingQueue<OutOfOrderUpdPartitionSizeTask> updPartitionSizeTaskQueue;
     private final MPSequence updPartitionSizePubSeq;
 
-    public OutOfOrderOpenColumnJob(MessageBus messageBus, int workerCount) {
+    public OutOfOrderOpenColumnJob(MessageBus messageBus) {
         super(messageBus.getOutOfOrderOpenColumnQueue(), messageBus.getOutOfOrderOpenColumnSubSequence());
         this.configuration = messageBus.getConfiguration();
         this.outboundQueue = messageBus.getOutOfOrderCopyQueue();
         this.outboundPubSeq = messageBus.getOutOfOrderCopyPubSequence();
         this.updPartitionSizeTaskQueue = messageBus.getOutOfOrderUpdPartitionSizeQueue();
         this.updPartitionSizePubSeq = messageBus.getOutOfOrderUpdPartitionSizePubSequence();
-        initBuf(workerCount + 1);
-    }
-
-    public static void freeBuf() {
-        if (temp8ByteBuf != null) {
-            for (int i = 0, n = temp8ByteBuf.length; i < n; i++) {
-                Unsafe.free(temp8ByteBuf[i], Long.BYTES);
-            }
-            temp8ByteBuf = null;
-        }
-    }
-
-    public static void initBuf() {
-        initBuf(1);
     }
 
     public static void openColumn(
@@ -467,7 +453,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
     @Override
     public void close() throws IOException {
-        freeBuf();
+        OutOfOrderUtils.freeBuf();
     }
 
     private static long mapRW(FilesFacade ff, long fd, long size) {
@@ -1025,7 +1011,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 dstVarOffset = 0;
             }
 
-            dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
+            dstVarSize = OutOfOrderUtils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize) + dstVarOffset;
             dstVarAddr = mapRW(ff, Math.abs(dstVarFd), dstVarSize);
 
         } catch (Throwable e) {
@@ -2441,7 +2427,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
                     // we need to shift copy the original column so that new block points at strings "below" the
                     // nulls we created above
-                    TableUtils.shiftCopyFixedSizeColumnData(-srcDataTop * Integer.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
+                    OutOfOrderUtils.shiftCopyFixedSizeColumnData(-srcDataTop * Integer.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
                     Unsafe.getUnsafe().copyMemory(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Integer.BYTES, srcDataVarOffset);
                 } else {
                     srcDataVarOffset = srcDataVarSize;
@@ -2455,7 +2441,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
                     // we need to shift copy the original column so that new block points at strings "below" the
                     // nulls we created above
-                    TableUtils.shiftCopyFixedSizeColumnData(-srcDataTop * Long.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
+                    OutOfOrderUtils.shiftCopyFixedSizeColumnData(-srcDataTop * Long.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop, srcDataFixAddr + srcDataMaxBytes);
                     Unsafe.getUnsafe().copyMemory(srcDataVarAddr, srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES, srcDataVarOffset);
                 }
                 srcDataTop = 0;
@@ -2475,7 +2461,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                         Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - srcDataFixOffset - Long.BYTES),
                         workerId
                 );
-                srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize);
+                srcDataVarAddr = OutOfOrderUtils.mapRO(ff, srcVarFd, srcDataVarSize);
             }
         } else {
             srcDataFixSize = srcDataMax * Long.BYTES;
@@ -2489,7 +2475,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                     Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES),
                     workerId
             );
-            srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize);
+            srcDataVarAddr = OutOfOrderUtils.mapRO(ff, srcVarFd, srcDataVarSize);
         }
 
         // upgrade srcDataTop to offset
@@ -2505,7 +2491,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         path.trimTo(pColNameLen);
         path.put(FILE_SUFFIX_D).$();
         dstVarFd = openRW(ff, path);
-        dstVarSize = srcDataVarSize - srcDataVarOffset + getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+        dstVarSize = srcDataVarSize - srcDataVarOffset + OutOfOrderUtils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
         dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
 
         if (prefixType == OO_BLOCK_DATA) {
@@ -2523,11 +2509,11 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
         // configure offsets
         switch (prefixType) {
             case OO_BLOCK_OO:
-                dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                dstVarAppendOffset1 = OutOfOrderUtils.getVarColumnLength(prefixLo, prefixHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 partCount++;
                 break;
             case OO_BLOCK_DATA:
-                dstVarAppendOffset1 = getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr + srcDataFixOffset, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
+                dstVarAppendOffset1 = OutOfOrderUtils.getVarColumnLength(prefixLo, prefixHi, srcDataFixAddr + srcDataFixOffset, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
                 partCount++;
                 break;
             default:
@@ -2536,8 +2522,8 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
         // offset 2
         if (mergeDataLo > -1 && mergeOOOLo > -1) {
-            long oooLen = getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
-            long dataLen = getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr + srcDataFixOffset - srcDataTop * 8, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
+            long oooLen = OutOfOrderUtils.getVarColumnLength(mergeOOOLo, mergeOOOHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+            long dataLen = OutOfOrderUtils.getVarColumnLength(mergeDataLo, mergeDataHi, srcDataFixAddr + srcDataFixOffset - srcDataTop * 8, srcDataFixSize, srcDataVarSize - srcDataVarOffset);
             dstFixAppendOffset2 = dstFixAppendOffset1 + (mergeLen * Long.BYTES);
             dstVarAppendOffset2 = dstVarAppendOffset1 + oooLen + dataLen;
         } else {
@@ -2716,7 +2702,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
 
                 oooSetPath(path.trimTo(plen), columnName, FILE_SUFFIX_D);
                 dstVarFd = openRW(ff, path);
-                dstVarSize = getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
+                dstVarSize = OutOfOrderUtils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr, srcOooFixSize, srcOooVarSize);
                 dstVarAddr = mapRW(ff, dstVarFd, dstVarSize);
                 break;
             default:
@@ -3297,17 +3283,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 break;
             default:
                 break;
-        }
-    }
-
-    private static long get8ByteBuf(int worker) {
-        return temp8ByteBuf[worker];
-    }
-
-    private static void initBuf(int workerCount) {
-        temp8ByteBuf = new long[workerCount];
-        for (int i = 0; i < workerCount; i++) {
-            temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES);
         }
     }
 
