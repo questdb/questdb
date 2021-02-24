@@ -579,20 +579,20 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long append(long fd, long buf, int len) {
+            public long write(long fd, long address, long len, long offset) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
-                return super.append(fd, buf, len);
+                return super.write(fd, address, len, offset);
             }
 
             @Override
-            public long openAppend(LPSZ name) {
+            public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "abc.top")) {
-                    return fd = super.openAppend(name);
+                    return fd = super.openRW(name);
                 }
-                return super.openAppend(name);
+                return super.openRW(name);
             }
         });
     }

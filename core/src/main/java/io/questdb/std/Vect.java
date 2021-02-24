@@ -101,6 +101,8 @@ public final class Vect {
 
     public static native long minLong(long pLong, long count);
 
+    public static native void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr);
+
     public static native void oooMergeCopyBinColumn(
             long mergeIndexAddr,
             long mergeIndexSize,

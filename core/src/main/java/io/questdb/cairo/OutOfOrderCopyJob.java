@@ -756,13 +756,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         Unsafe.getUnsafe().copyMemory(src + (srcLo << shl), dst, (srcHi - srcLo + 1) << shl);
     }
 
-    // todo: move to C++
-    private static void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr) {
-        for (long l = 0; l < mergeIndexSize; l++) {
-            Unsafe.getUnsafe().putLong(dstAddr + l * Long.BYTES, getTimestampIndexValue(mergeIndexAddr, l));
-        }
-    }
-
     private static void oooCopyOOO(
             int columnType,
             long srcOooFixAddr,
@@ -913,7 +906,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                 Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, mergeIndexAddr, rowCount);
                 break;
             case -ColumnType.TIMESTAMP:
-                oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
+                Vect.oooCopyIndex(mergeIndexAddr, rowCount, dstFixAddr);
                 break;
             default:
                 break;

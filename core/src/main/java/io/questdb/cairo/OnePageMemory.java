@@ -256,13 +256,14 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
             this.page = ff.mmap(fd, size, 0, Files.MAP_RO);
             if (page == FilesFacade.MAP_FAILED) {
                 long fd = this.fd;
+                long flen = ff.length(fd);
                 close();
                 throw CairoException.instance(ff.errno())
                         .put("Could not mmap ").put(name)
                         .put(" [size=").put(size)
                         .put(", fd=").put(fd)
                         .put(", memUsed=").put(Unsafe.getMemUsed())
-                        .put(", fileLen=").put(ff.length(fd))
+                        .put(", fileLen=").put(flen)
                         .put(']');
             }
             this.absolutePointer = page;

@@ -661,6 +661,27 @@ public final class TableUtils {
         }
     }
 
+    public static void writeColumnTop(
+            FilesFacade ff,
+            Path path,
+            CharSequence columnName,
+            long columnTop,
+            long tempBuf
+    ) {
+        topFile(path, columnName);
+        final long fd = OutOfOrderUtils.openRW(ff, path);
+        try {
+            //noinspection SuspiciousNameCombination
+            Unsafe.getUnsafe().putLong(tempBuf, columnTop);
+            OutOfOrderUtils.allocateDiskSpace(ff, fd, Long.BYTES);
+            if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
+                throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     static {
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");

@@ -2839,19 +2839,13 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
     }
 
     private static void writeColumnTop(FilesFacade ff, Path path, CharSequence columnName, long columnTop, int workerId) {
-        topFile(path, columnName);
-        final long fd = OutOfOrderUtils.openRW(ff, path);
-        try {
-            final long buf = get8ByteBuf(workerId);
-            //noinspection SuspiciousNameCombination
-            Unsafe.getUnsafe().putLong(buf, columnTop);
-            OutOfOrderUtils.allocateDiskSpace(ff, fd, Long.BYTES);
-            if (ff.write(fd, buf, Long.BYTES, 0) != Long.BYTES) {
-                throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
-            }
-        } finally {
-            ff.close(fd);
-        }
+        TableUtils.writeColumnTop(
+                ff,
+                path,
+                columnName,
+                columnTop,
+                get8ByteBuf(workerId)
+        );
     }
 
     private static void appendNewPartition(

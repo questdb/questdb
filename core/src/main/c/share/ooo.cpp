@@ -555,6 +555,12 @@ inline void set_var_refs(int64_t *addr, int64_t offset, int64_t count) {
     }
 }
 
+inline void copy_index(index_t* index, int64_t index_size, int64_t* dest) {
+    for (int64_t i = 0; i < index_size; i++) {
+        dest[i] = index[i].ts;
+    }
+}
+
 extern "C" {
 
 JNIEXPORT void JNICALL
@@ -881,6 +887,16 @@ Java_io_questdb_std_Vect_setVarColumnRefs64Bit(JNIEnv *env, jclass cl, jlong pDa
             reinterpret_cast<int64_t *>(pData),
             reinterpret_cast<int64_t>(offset),
             reinterpret_cast<int64_t>(count)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooCopyIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong index_size,
+                                               jlong pDest) {
+    copy_index(
+            reinterpret_cast<index_t *>(pIndex),
+            reinterpret_cast<int64_t>(index_size),
+            reinterpret_cast<int64_t*>(pDest)
     );
 }
 }

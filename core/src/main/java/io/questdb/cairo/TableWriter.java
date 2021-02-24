@@ -2101,7 +2101,6 @@ public class TableWriter implements Closeable {
         final Sequence copySubSeq = messageBus.getOutOfOrderCopySubSequence();
         final RingQueue<OutOfOrderCopyTask> copyQueue = messageBus.getOutOfOrderCopyQueue();
 
-        boolean updRemaining = true;
         do {
             long cursor = updSizeSubSeq.next();
             if (cursor > -1) {
@@ -3814,17 +3813,14 @@ public class TableWriter implements Closeable {
         writeColumnTop(name, transientRowCount);
     }
 
-    @SuppressWarnings("SuspiciousNameCombination")
     private void writeColumnTop(CharSequence name, long columnTop) {
-        long fd = openAppend(topFile(path, name));
-        try {
-            Unsafe.getUnsafe().putLong(tempMem8b, columnTop);
-            if (ff.append(fd, tempMem8b, Long.BYTES) != Long.BYTES) {
-                throw CairoException.instance(ff.errno()).put("Cannot append ").put(path);
-            }
-        } finally {
-            ff.close(fd);
-        }
+        TableUtils.writeColumnTop(
+                ff,
+                path,
+                name,
+                columnTop,
+                tempMem8b
+        );
     }
 
     private void writeRestoreMetaTodo(CharSequence columnName) {
@@ -3948,8 +3944,7 @@ public class TableWriter implements Closeable {
             if (timestamp < maxTimestamp) {
                 if (outOfOrderEnabled) {
                     LOG.info().$("out-of-order").$();
-                    // todo: do we need this?
-                    TableWriter.this.transientRowCountBeforeOutOfOrder = TableWriter.this.transientRowCount;
+                    transientRowCountBeforeOutOfOrder = transientRowCount;
                     openMergePartition();
                     TableWriter.this.oooRowCount = 0;
                     assert timestampMergeMem != null;

@@ -1841,7 +1841,7 @@ public class SqlCompiler implements Closeable {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         // todo: configure the following
-        //   - when happens when data row errors out, max errors may be?
+        //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
         textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW, PartitionBy.NONE, null);
     }
