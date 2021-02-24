@@ -210,7 +210,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     if (srcTimestampFd == -1) {
                         throw CairoException.instance(ff.errno()).put("could not open `").put(pathToTable).put('`');
                     }
-                    srcTimestampAddr = OutOfOrderUtils.mapRO(ff, srcTimestampFd, srcTimestampSize);
+                    srcTimestampAddr = OutOfOrderUtils.mapRW(ff, srcTimestampFd, srcTimestampSize);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
                 dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);

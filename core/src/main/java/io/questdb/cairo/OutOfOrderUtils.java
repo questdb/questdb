@@ -29,6 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 
 public class OutOfOrderUtils {
 
@@ -44,10 +45,6 @@ public class OutOfOrderUtils {
         }
     }
 
-    static long get8ByteBuf(int worker) {
-        return temp8ByteBuf[worker];
-    }
-
     public static void initBuf() {
         initBuf(1);
     }
@@ -58,6 +55,10 @@ public class OutOfOrderUtils {
         for (int i = 0; i < workerCount; i++) {
             temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES);
         }
+    }
+
+    static long get8ByteBuf(int worker) {
+        return temp8ByteBuf[worker];
     }
 
     static long getVarColumnLength(
@@ -155,5 +156,29 @@ public class OutOfOrderUtils {
                     .put(']');
         }
         return address;
+    }
+
+    static long mapRW(FilesFacade ff, long fd, long size) {
+        allocateDiskSpace(ff, fd, size);
+        long addr = ff.mmap(fd, size, 0, Files.MAP_RW);
+        if (addr > -1) {
+            return addr;
+        }
+        throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
+    }
+
+    static long openRW(FilesFacade ff, Path path) {
+        final long fd = ff.openRW(path);
+        if (fd > -1) {
+            LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
+    }
+
+    static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
+        if (!ff.allocate(fd, size)) {
+            throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
     }
 }
