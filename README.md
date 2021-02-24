@@ -37,20 +37,20 @@ QuestDB is a high performance open source SQL database for time series data.
 It uses a column-oriented approach, heavy parallelized vectorized execution,
 SIMD instructions and a whole array of low-latency techniques. The whole code
 base is built from scratch, without dependencies and 100% free from garbage
-collection. 
+collection.
 
-QuestDB implements SQL and augments it for time-series with native extensions. 
-It exposes a PostgreSQL wire protocol, high-performance REST API and supports 
-ingestion with InfluxDB Line Protocol. QuestDB uses a relational model with 
-maintenance-free schemas. Relational and time-series joins make it easy to 
-correlate data over time. Writes are durably committed to disk, meaning that
-the data is safe - yet instantly accessible.
+QuestDB implements SQL and augments it for time-series with native extensions.
+It exposes a PostgreSQL wire protocol, high-performance REST API and supports
+ingestion with InfluxDB Line Protocol. QuestDB uses a relational model with
+maintenance-free schemas. Relational and time-series joins make it easy to
+correlate data over time. Writes are durably committed to disk, meaning that the
+data is safe - yet instantly accessible.
 
 [QuestDB's documentation](https://questdb.io/docs/introduction/)
 
 ## Live demo
 
-Query [our demo](http://try.questdb.io:9000) dataset with 1.6 billion rows in
+Query [our demo](https://demo.questdb.io) dataset with 1.6 billion rows in
 milliseconds.
 
 ## Web Console
@@ -102,7 +102,7 @@ The easiest way to get started is with Docker:
 docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
-You can more information about Docker usage on the
+You can find more information about Docker usage on the
 [dedicated page](https://questdb.io/docs/get-started/docker/).
 
 #### Alternative methods

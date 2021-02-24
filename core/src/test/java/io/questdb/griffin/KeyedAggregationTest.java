@@ -865,4 +865,76 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             }
         });
     }
+
+
+    @Test
+    public void testSumInTimestampRange() throws Exception {
+        long step = 1000000L;
+        long count = 1000000L;
+        long increment = count / 10;
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab as (select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(0, " + step + ") t from long_sequence(" + count + ")) timestamp(t) partition by DAY", sqlExecutionContext);
+
+            for (long ts = 0; ts < count; ts += increment) {
+                try (
+                        RecordCursorFactory factory = compiler.compile("select sum(val) s from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)", sqlExecutionContext).getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    String value = String.valueOf((ts - 1) * 0.5);
+                    String expected = "s\n" +
+                            (ts > 0 ? value : "NaN") + "\n";
+
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSumInTimestampRangeWithColTop() throws Exception {
+        final long step = 100000L;
+        final long count = 1000000L;
+        final long increment = count / 10;
+        assertMemoryLeak(() -> {
+            String createSql = "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(0, " + step + ") t from long_sequence(" + count + ")) timestamp(t) partition by DAY";
+            compiler.compile(createSql, sqlExecutionContext);
+            compiler.compile("alter table tab add val2 DOUBLE", sqlExecutionContext);
+            String insetSql = "insert into tab select rnd_symbol('s1','s2','s3', null) s1, 0.5 val, timestamp_sequence(" + count * step + ", " + step + ") t, 1 val2 from long_sequence(" + count + ")";
+            compiler.compile(insetSql, sqlExecutionContext);
+
+            // Move upper timestamp boundary
+            // [step, ts * step)
+            for (long ts = increment; ts < 2 * count; ts += increment) {
+                try (
+                        RecordCursorFactory factory = compiler.compile("select sum(val) s1,  sum(val2) s2 from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)", sqlExecutionContext).getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    String expected = "s1\ts2\n" +
+                            ((ts - 1) * 0.5) + "\t" + (ts <= count ? "NaN" : (ts - count) * 1.0) + "\n";
+
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals("iteration " + ts, expected, sink);
+                }
+            }
+
+            // Move lower timestamp boundary
+            // [ts * count, 2 * step * count - 1) time range
+            for (long ts = 0; ts < 2 * count; ts += increment) {
+                try (
+                        RecordCursorFactory factory = compiler.compile("select sum(val) s1, sum(val2) s2 from tab where t >= CAST(" + (ts * step) + " AS TIMESTAMP) AND t < CAST(" + ((2 * count - 1) * step) + " AS TIMESTAMP)", sqlExecutionContext).getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    String expected = "s1\ts2\n" +
+                            ((2 * count - ts - 1) * 0.5) + "\t" + (ts < count ? (count - 1) * 1.0 : (2 * count - ts - 1) * 1.0) + "\n";
+
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals("iteration " + ts, expected, sink);
+                }
+            }
+        });
+    }
 }

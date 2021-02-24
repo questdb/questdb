@@ -15,8 +15,10 @@ type SuccessShape<T> = Readonly<{
 export const fromFetch = <T extends Record<string, any>>(
   uri: string,
   init: RequestInit = {},
-): Observable<SuccessShape<T> | ErrorShape> =>
-  rxFromFetch(`http://${window.location.host}/${uri}`, init).pipe(
+): Observable<SuccessShape<T> | ErrorShape> => {
+  const separator = uri[0] === "/" ? "" : "/"
+
+  return rxFromFetch(`${window.location.origin}${separator}${uri}`, init).pipe(
     switchMap((response) => {
       if (response.ok) {
         return response.json()
@@ -41,3 +43,4 @@ export const fromFetch = <T extends Record<string, any>>(
       return response as ErrorShape
     }),
   )
+}
