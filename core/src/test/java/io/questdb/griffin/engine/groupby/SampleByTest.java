@@ -417,7 +417,7 @@ public class SampleByTest extends AbstractGriffinTest {
             engine.releaseAllReaders();
 
             final FilesFacade ff = new FilesFacadeImpl() {
-                int count = 6;
+                int count = 8;
 
                 @Override
                 public long mmap(long fd, long len, long offset, int mode) {
@@ -1487,7 +1487,7 @@ public class SampleByTest extends AbstractGriffinTest {
             );
 
             FilesFacade ff = new FilesFacadeImpl() {
-                int count = 6;
+                int count = 8;
 
                 @Override
                 public long mmap(long fd, long len, long offset, int mode) {

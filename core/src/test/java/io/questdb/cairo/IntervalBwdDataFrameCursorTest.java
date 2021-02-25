@@ -31,6 +31,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -448,6 +449,8 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }
+            } finally {
+                Path.clearThreadLocals();
             }
         });
     }

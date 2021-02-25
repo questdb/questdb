@@ -29,6 +29,7 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -490,7 +491,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         private final int id;
         private final Sequence sequence;
         private final CharSequenceObjHashMap<Parser> parserCache = new CharSequenceObjHashMap<>();
-        private final AppendMemory appendMemory = new AppendMemory();
+        private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
         private final Path path = new Path();
         private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
         private final String jobName;

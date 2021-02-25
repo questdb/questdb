@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.std.str.Path;
 
 public final class BitmapIndexUtils {
@@ -72,7 +73,7 @@ public final class BitmapIndexUtils {
     static void seekValueBlockRTL(
             long initialCount,
             long lastValueBlockOffset,
-            VirtualMemory valueMem,
+            ReadOnlyVirtualMemory valueMem,
             long maxValue,
             long blockValueCountMod,
             ValueBlockSeeker seeker
@@ -128,7 +129,7 @@ public final class BitmapIndexUtils {
     static void seekValueBlockLTR(
             long initialCount,
             long firstValueBlockOffset,
-            VirtualMemory valueMem,
+            ReadOnlyVirtualMemory valueMem,
             long minValue,
             long blockValueCountMod,
             ValueBlockSeeker seeker
@@ -196,7 +197,7 @@ public final class BitmapIndexUtils {
      * @param value     value we search of
      * @return index directly behind the searched value or group of values if list contains duplicate values.
      */
-    static long searchValueBlock(VirtualMemory memory, long offset, long cellCount, long value) {
+    static long searchValueBlock(ReadOnlyVirtualMemory memory, long offset, long cellCount, long value) {
         // when block is "small", we just scan it linearly
         if (cellCount < 64) {
             // this will definitely exit because we had checked that at least the last value is greater than value

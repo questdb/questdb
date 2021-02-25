@@ -2234,18 +2234,18 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             CharSequence columnName,
             long srcDataMax
     ) {
-        long srcDataTop;
         topFile(path.trimTo(plen), columnName);
         if (ff.exists(path)) {
-            long topFd = OutOfOrderUtils.openRW(ff, path);
             long buf = get8ByteBuf(workerId);
-            if (ff.read(topFd, buf, Long.BYTES, 0) != Long.BYTES) {
-                ff.close(topFd);
+            long topFd = OutOfOrderUtils.openRW(ff, path);
+            try {
+                if (ff.read(topFd, buf, Long.BYTES, 0) == Long.BYTES) {
+                    return Unsafe.getUnsafe().getLong(buf);
+                }
                 throw CairoException.instance(ff.errno()).put("could not read [file=").put(path).put(']');
+            } finally {
+                ff.close(topFd);
             }
-            srcDataTop = Unsafe.getUnsafe().getLong(buf);
-            ff.close(topFd);
-            return srcDataTop;
         }
         if (ff.exists(dFile(path.trimTo(plen), columnName))) {
             return 0;
@@ -3510,6 +3510,33 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             default:
                 break;
         }
+    }
+
+    static void openColumnIdle(OutOfOrderOpenColumnTask task) {
+        OutOfOrderCopyJob.copyIdleQuick(
+                task.getColumnCounter(),
+                task.getFf(),
+                task.getTimestampMergeIndexAddr(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                task.getSrcTimestampFd(),
+                task.getSrcTimestampAddr(),
+                task.getSrcTimestampSize(),
+                0,
+                0,
+                task.getTableWriter(),
+                task.getDoneLatch()
+        );
     }
 
     @Override

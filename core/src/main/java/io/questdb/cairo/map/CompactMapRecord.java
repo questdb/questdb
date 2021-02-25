@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;

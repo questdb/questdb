@@ -22,30 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
-import io.questdb.std.str.Path;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 
-public interface ColumnIndexer {
-    void distress();
+import java.io.Closeable;
+
+public interface Mappable extends Closeable {
+    @Override
+    void close();
+
+    void of(FilesFacade ff, LPSZ name, long pageSize, long size);
+
+    void of(FilesFacade ff, LPSZ name, long pageSize);
+
+    boolean isDeleted();
 
     long getFd();
-
-    long getSequence();
-
-    void refreshSourceAndIndex(long loRow, long hiRow);
-
-    void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow);
-
-    boolean isDistressed();
-
-    void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, AppendOnlyVirtualMemory columnMem, long columnTop);
-
-    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
-
-    void rollback(long maxRow);
-
-    boolean tryLock(long expectedSequence);
 }

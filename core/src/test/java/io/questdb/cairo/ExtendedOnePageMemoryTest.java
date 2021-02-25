@@ -1,5 +1,6 @@
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
@@ -25,7 +26,7 @@ public class ExtendedOnePageMemoryTest {
     @Test
     public void testFailOnInitialMap() throws IOException {
         createFile(FILE_SIZE);
-        try (ExtendableOnePageMemory mem = new ExtendableOnePageMemory()) {
+        try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory()) {
             FILE_MAP_FAIL.set(true);
             try {
                 mem.of(ff, path, FILE_SIZE, FILE_SIZE);
@@ -39,7 +40,7 @@ public class ExtendedOnePageMemoryTest {
     @Test
     public void testFailOnGrow() throws IOException {
         createFile(FILE_SIZE);
-        try (ExtendableOnePageMemory mem = new ExtendableOnePageMemory()) {
+        try (SinglePageMappedReadOnlyPageMemory mem = new SinglePageMappedReadOnlyPageMemory()) {
             int sz = FILE_SIZE / 2;
             mem.of(ff, path, sz, sz);
             FILE_MAP_FAIL.set(true);

@@ -64,7 +64,8 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         @Override
         public boolean allocate(long fd, long size) {
             if (counter.decrementAndGet() == 0) {
-                System.out.println("fail");
+                System.out.println("fail here:");
+                new Exception().printStackTrace();
                 return false;
             }
             return super.allocate(fd, size);
@@ -383,7 +384,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTopContended() throws Exception {
-        counter.set(1);
+        counter.set(2);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
             long theFd;
 
@@ -475,6 +476,35 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
     }
 
+/*
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryMergeFixMapRWContended() throws Exception {
+        counter.set(1);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+
+            long theFd = 0;
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-06-n-14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (fd != theFd) {
+                    return super.mmap(fd, len, offset, mode);
+                }
+
+                theFd = 0;
+                return -1;
+            }
+        });
+    }
+
+*/
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRw2Contended() throws Exception {
         counter.set(3);

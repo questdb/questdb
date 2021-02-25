@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
 
 public class CompactMapValue implements MapValue {
 

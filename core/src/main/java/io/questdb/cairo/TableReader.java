@@ -26,6 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -53,7 +57,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final FilesFacade ff;
     private final Path path;
     private final int rootLen;
-    private final ReadOnlyColumn txMem;
+    private final ReadOnlyVirtualMemory txMem;
     private final TableReaderMetadata metadata;
     private final LongList partitionRowCounts;
     private final PartitionPathGenerator partitionPathGenerator;
@@ -67,7 +71,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final IntList symbolCountSnapshot = new IntList();
     private final LongHashSet removedPartitions = new LongHashSet();
     private LongList columnTops;
-    private ObjList<ReadOnlyColumn> columns;
+    private ObjList<MappedReadOnlyMemory> columns;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountBits;
@@ -167,7 +171,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartition(i);
             final int base = getColumnBase(i);
             final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
+            final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     final long a = column.getPageAddress(pageIndex);
@@ -241,7 +245,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return reader == null ? createBitmapIndexReaderAt(index, columnBase, columnIndex, direction) : reader;
     }
 
-    public ReadOnlyColumn getColumn(int absoluteIndex) {
+    public ReadOnlyVirtualMemory getColumn(int absoluteIndex) {
         return columns.getQuick(absoluteIndex);
     }
 
@@ -317,7 +321,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartition(i);
             final int base = getColumnBase(i);
             final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
+            final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
@@ -338,7 +342,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartition(i);
             final int base = getColumnBase(i);
             final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
+            final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
@@ -446,7 +450,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartition(i);
             final int base = getColumnBase(i);
             final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
+            final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
@@ -470,7 +474,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return true;
     }
 
-    private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
+    private static void growColumn(ReadOnlyVirtualMemory mem1, ReadOnlyVirtualMemory mem2, int type, long rowCount) {
         if (rowCount > 0) {
             // subtract column top
             switch (type) {
@@ -487,18 +491,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private static void growStr(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
+    private static void growStr(ReadOnlyVirtualMemory mem1, ReadOnlyVirtualMemory mem2, long rowCount) {
         assert mem2 != null;
         mem2.grow(rowCount * 8);
         final long offset = mem2.getLong((rowCount - 1) * 8);
         mem1.grow(offset + 4);
-        final long len = mem1.getInt(offset);
+        final int len = mem1.getInt(offset);
         if (len > 0) {
-            mem1.grow(offset + len * 2 + 4);
+            mem1.grow(offset + VmUtils.getStorageLength(len));
         }
     }
 
-    private static void growBin(ReadOnlyColumn mem1, ReadOnlyColumn mem2, long rowCount) {
+    private static void growBin(ReadOnlyVirtualMemory mem1, ReadOnlyVirtualMemory mem2, long rowCount) {
         assert mem2 != null;
         mem2.grow(rowCount * 8);
         final long offset = mem2.getLong((rowCount - 1) * 8);
@@ -604,15 +608,15 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void copyColumnsTo(
-            ObjList<ReadOnlyColumn> columns,
+            ObjList<MappedReadOnlyMemory> columns,
             LongList columnTops,
             ObjList<BitmapIndexReader> indexReaders,
             int columnBase,
             int columnIndex,
             long partitionRowCount,
             boolean lastPartition) {
-        ReadOnlyColumn mem1 = tempCopyStruct.mem1;
-        final boolean reload = (mem1 instanceof ExtendableOnePageMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
+        MappedReadOnlyMemory mem1 = tempCopyStruct.mem1;
+        final boolean reload = (mem1 instanceof SinglePageMappedReadOnlyPageMemory || mem1 instanceof NullColumn) && mem1.isDeleted();
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         tempCopyStruct.mem1 = columns.getAndSetQuick(index, mem1);
         tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, tempCopyStruct.mem2);
@@ -637,7 +641,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             throw CairoException.instance(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
         }
 
-        ReadOnlyColumn col = columns.getQuick(globalIndex);
+        ReadOnlyVirtualMemory col = columns.getQuick(globalIndex);
         if (col instanceof NullColumn) {
             if (direction == BitmapIndexReader.DIR_BACKWARD) {
                 reader = new BitmapIndexBwdNullReader();
@@ -665,7 +669,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void createNewColumnList(int columnCount, long pTransitionIndex, int columnBits) {
         int capacity = partitionCount << columnBits;
-        final ObjList<ReadOnlyColumn> columns = new ObjList<>(capacity);
+        final ObjList<MappedReadOnlyMemory> columns = new ObjList<>(capacity);
         final LongList columnTops = new LongList(capacity / 2);
         final ObjList<BitmapIndexReader> indexReaders = new ObjList<>(capacity);
         columns.setPos(capacity + 2);
@@ -719,7 +723,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void fetchColumnsFrom(ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex) {
+    private void fetchColumnsFrom(ObjList<MappedReadOnlyMemory> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex) {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         tempCopyStruct.mem1 = columns.getAndSetQuick(index, null);
         tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, null);
@@ -776,7 +780,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartition(i);
             final int base = getColumnBase(i);
             final int index = getPrimaryColumnIndex(base, columnIndex);
-            final ReadOnlyColumn column = columns.getQuick(index);
+            final ReadOnlyVirtualMemory column = columns.getQuick(index);
             if (column != null) {
                 for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
                     long a = column.getPageAddress(pageIndex);
@@ -809,14 +813,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     @NotNull
-    private ReadOnlyColumn openOrCreateMemory(Path path, ObjList<ReadOnlyColumn> columns, boolean lastPartition, int primaryIndex, ReadOnlyColumn mem) {
+    private MappedReadOnlyMemory openOrCreateMemory(Path path, ObjList<MappedReadOnlyMemory> columns, boolean lastPartition, int primaryIndex, MappedReadOnlyMemory mem) {
         if (mem != null && mem != NullColumn.INSTANCE) {
             mem.of(ff, path, ff.getMapPageSize(), ff.length(path));
         } else {
             if (lastPartition) {
-                mem = new ExtendableOnePageMemory(ff, path, ff.getMapPageSize());
+                mem = new SinglePageMappedReadOnlyPageMemory(ff, path, ff.getMapPageSize());
             } else {
-                mem = new OnePageMemory(ff, path, ff.length(path));
+                mem = new SinglePageMappedReadOnlyPageMemory(ff, path, ff.length(path));
             }
             columns.setQuick(primaryIndex, mem);
         }
@@ -891,9 +895,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private ReadOnlyColumn openTxnFile() {
+    private ReadOnlyVirtualMemory openTxnFile() {
         try {
-            return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), TableUtils.getSymbolWriterIndexOffset(0));
+            MappedReadOnlyMemory mem = new SinglePageMappedReadOnlyPageMemory();
+                    mem.of(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), TableUtils.getSymbolWriterIndexOffset(0));
+            return mem;
         } finally {
             path.trimTo(rootLen);
         }
@@ -1028,7 +1034,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void reloadColumnAt(
             Path path,
-            ObjList<ReadOnlyColumn> columns,
+            ObjList<MappedReadOnlyMemory> columns,
             LongList columnTops,
             ObjList<BitmapIndexReader> indexReaders,
             int columnBase,
@@ -1042,8 +1048,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
-            ReadOnlyColumn mem1 = columns.getQuick(primaryIndex);
-            ReadOnlyColumn mem2 = columns.getQuick(secondaryIndex);
+            MappedReadOnlyMemory mem1 = columns.getQuick(primaryIndex);
+            MappedReadOnlyMemory mem2 = columns.getQuick(secondaryIndex);
 
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
 
@@ -1322,8 +1328,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                             //    on Windows before column can be deleted. In this case we must check for marker
                             //    instance and the column from disk
                             // 3. Column hasn't been altered and we can skip to next column.
-                            ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if ((col instanceof ExtendableOnePageMemory && col.isDeleted()) || col instanceof NullColumn) {
+                            MappedReadOnlyMemory col = columns.getQuick(getPrimaryColumnIndex(base, i));
+                            if ((col instanceof SinglePageMappedReadOnlyPageMemory && col.isDeleted()) || col instanceof NullColumn) {
                                 reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount, lastPartition);
                             }
                             continue;
@@ -1382,8 +1388,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private static class ColumnCopyStruct {
-        ReadOnlyColumn mem1;
-        ReadOnlyColumn mem2;
+        MappedReadOnlyMemory mem1;
+        MappedReadOnlyMemory mem2;
         BitmapIndexReader backwardReader;
         BitmapIndexReader forwardReader;
         long top;

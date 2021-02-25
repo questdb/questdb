@@ -1,7 +1,33 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -116,7 +142,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
             for (int i = 0; i < columnCount; i++) {
                 int columnIndex = columnIndexes.get(i);
                 final long columnTop = columnTops.getQuick(i);
-                final ReadOnlyColumn col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex));
+                final ReadOnlyVirtualMemory col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex));
 
                 if (columnTop <= frameFirstRow && col.getPageCount() > 0) {
                     assert col.getPageCount() == 1;
@@ -130,7 +156,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                     int columnType = reader.getMetadata().getColumnType(columnIndex);
                     switch (columnType) {
                         case ColumnType.STRING: {
-                            final ReadOnlyColumn strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
+                            final ReadOnlyVirtualMemory strLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
                             columnPageLength = calculateStringPagePosition(col, strLenCol, colFrameLastRow, colMaxRow);
 
                             if (colFrameFirstRow > 0) {
@@ -143,7 +169,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
                         }
 
                         case ColumnType.BINARY: {
-                            final ReadOnlyColumn binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
+                            final ReadOnlyVirtualMemory binLenCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, columnIndex) + 1);
                             columnPageLength = calculateBinaryPagePosition(col, binLenCol, colFrameLastRow, colMaxRow);
 
                             if (colFrameFirstRow > 0) {
@@ -192,7 +218,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         return null;
     }
 
-    private long calculateBinaryPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn binLenCol, long row, long maxRows) {
+    private long calculateBinaryPagePosition(final ReadOnlyVirtualMemory col, final ReadOnlyVirtualMemory binLenCol, long row, long maxRows) {
     	assert row > 0 && row <= maxRows;
 
         if (row < maxRows) {
@@ -213,7 +239,7 @@ public class TablePageFrameCursor implements PageFrameCursor {
         return prevBinOffset + sz;
     }
 
-    private long calculateStringPagePosition(final ReadOnlyColumn col, final ReadOnlyColumn strLenCol, long row, long maxRows) {
+    private long calculateStringPagePosition(final ReadOnlyVirtualMemory col, final ReadOnlyVirtualMemory strLenCol, long row, long maxRows) {
         assert row > 0 && row <= maxRows;
 
         if (row < maxRows) {
@@ -226,9 +252,9 @@ public class TablePageFrameCursor implements PageFrameCursor {
         long strLen = col.getInt(prevStrOffset);
         long sz;
         if (strLen == TableUtils.NULL_LEN) {
-            sz = VirtualMemory.STRING_LENGTH_BYTES;
+            sz = VmUtils.STRING_LENGTH_BYTES;
         } else {
-            sz = VirtualMemory.STRING_LENGTH_BYTES + 2 * strLen;
+            sz = VmUtils.STRING_LENGTH_BYTES + 2 * strLen;
         }
 
         return prevStrOffset + sz;

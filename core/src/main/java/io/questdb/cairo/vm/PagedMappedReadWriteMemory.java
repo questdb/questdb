@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -31,16 +33,16 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
-public class ReadWriteMemory extends VirtualMemory {
-    private static final Log LOG = LogFactory.getLog(ReadWriteMemory.class);
+public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements MappedReadWriteMemory {
+    private static final Log LOG = LogFactory.getLog(PagedMappedReadWriteMemory.class);
     private FilesFacade ff;
     private long fd = -1;
 
-    public ReadWriteMemory(FilesFacade ff, LPSZ name, long maxPageSize) {
+    public PagedMappedReadWriteMemory(FilesFacade ff, LPSZ name, long maxPageSize) {
         of(ff, name, maxPageSize);
     }
 
-    public ReadWriteMemory() {
+    public PagedMappedReadWriteMemory() {
     }
 
     @Override
@@ -49,11 +51,16 @@ public class ReadWriteMemory extends VirtualMemory {
         super.close();
         if (isOpen()) {
             try {
-                AppendMemory.bestEffortClose(ff, LOG, fd, true, size, getMapPageSize());
+                VmUtils.bestEffortClose(ff, LOG, fd, true, size, getMapPageSize());
             } finally {
                 fd = -1;
             }
         }
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
     }
 
     @Override
@@ -90,11 +97,34 @@ public class ReadWriteMemory extends VirtualMemory {
         return fd != -1;
     }
 
+    @Override
     public final void of(FilesFacade ff, LPSZ name, long pageSize) {
         close();
         this.ff = ff;
         fd = TableUtils.openFileRWOrFail(ff, name);
         final long size = ff.length(fd);
+        setPageSize(pageSize);
+        ensurePagesListCapacity(size);
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+        try {
+            // we may not be able to map page here
+            // make sure we close file before bailing out
+            jumpTo(size);
+        } catch (CairoException e) {
+            ff.close(fd);
+            fd = -1;
+            throw e;
+        }
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        close();
+        this.ff = ff;
+        fd = TableUtils.openFileRWOrFail(ff, name);
+        if (!ff.allocate(fd, size)) {
+            throw CairoException.instance(ff.errno()).put("Not enough space left on device");
+        }
         setPageSize(pageSize);
         ensurePagesListCapacity(size);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();

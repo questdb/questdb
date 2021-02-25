@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -32,9 +34,12 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public class VirtualMemory implements BigMem {
-    static final int STRING_LENGTH_BYTES = 4;
-    private static final Log LOG = LogFactory.getLog(VirtualMemory.class);
+import java.io.Closeable;
+
+import static io.questdb.cairo.vm.VmUtils.STRING_LENGTH_BYTES;
+
+public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
+    private static final Log LOG = LogFactory.getLog(PagedVirtualMemory.class);
     protected final LongList pages = new LongList(4, 0);
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
@@ -55,21 +60,13 @@ public class VirtualMemory implements BigMem {
     private long roOffsetHi = 0;
     private long absolutePointer;
 
-    public VirtualMemory(long pageSize, int maxPages) {
+    public PagedVirtualMemory(long pageSize, int maxPages) {
         setPageSize(pageSize);
         this.maxPages = maxPages;
     }
 
-    protected VirtualMemory() {
+    protected PagedVirtualMemory() {
         maxPages = Integer.MAX_VALUE;
-    }
-
-    public static int getStorageLength(CharSequence s) {
-        if (s == null) {
-            return STRING_LENGTH_BYTES;
-        }
-
-        return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
@@ -121,6 +118,11 @@ public class VirtualMemory implements BigMem {
 
     public final long getAppendOffset() {
         return baseOffset + appendPointer;
+    }
+
+    @Override
+    public long size() {
+        return getAppendOffset();
     }
 
     public final BinarySequence getBin(long offset) {
@@ -812,7 +814,7 @@ public class VirtualMemory implements BigMem {
         return value;
     }
 
-    protected long getMapPageSize() {
+    public long getMapPageSize() {
         return pageSize;
     }
 
@@ -826,7 +828,7 @@ public class VirtualMemory implements BigMem {
         return pages.getQuick(page);
     }
 
-    protected long getPageSize(int page) {
+    public long getPageSize(int page) {
         return getMapPageSize();
     }
 
@@ -877,6 +879,11 @@ public class VirtualMemory implements BigMem {
             h = (h << 5) - h + getByte(offset + n);
         }
         return h;
+    }
+
+    @Override
+    public void grow(long size) {
+        jumpTo(size);
     }
 
     private void jumpTo0(long offset) {
@@ -1131,7 +1138,7 @@ public class VirtualMemory implements BigMem {
 
         @Override
         public char charAt(int index) {
-            return VirtualMemory.this.getChar(offset + index * 2L);
+            return PagedVirtualMemory.this.getChar(offset + index * 2L);
         }
 
         CharSequenceView of(long offset, int len) {
@@ -1162,7 +1169,7 @@ public class VirtualMemory implements BigMem {
 
         @Override
         public void copyTo(long address, final long start, final long length) {
-            VirtualMemory.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
+            PagedVirtualMemory.this.copyTo(address, this.offset + start, Math.min(length, this.len - start));
         }
 
         @Override

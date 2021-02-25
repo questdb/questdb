@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -33,7 +36,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
     private int symbolMapCount;
     private int version;
 
-    public TableWriterMetadata(FilesFacade ff, ReadOnlyMemory metaMem) {
+    public TableWriterMetadata(FilesFacade ff, MappedReadOnlyMemory metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
@@ -61,7 +64,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             if (type == ColumnType.SYMBOL) {
                 symbolMapCount++;
             }
-            offset += ReadOnlyMemory.getStorageLength(name);
+            offset += VmUtils.getStorageLength(name);
         }
     }
 

@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -39,7 +42,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
-    private final SlidingWindowMemory mem = new SlidingWindowMemory();
+    private final PagedSlidingReadOnlyMemory mem = new PagedSlidingReadOnlyMemory();
     private long columnTop;
     @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
@@ -73,7 +76,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
-    public void index(VirtualMemory mem, long loRow, long hiRow) {
+    public void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         for (long lo = loRow - columnTop; lo < hiRow; lo++) {
@@ -91,7 +94,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
-            AppendMemory columnMem,
+            AppendOnlyVirtualMemory columnMem,
             long columnTop
     ) {
         this.columnTop = columnTop;

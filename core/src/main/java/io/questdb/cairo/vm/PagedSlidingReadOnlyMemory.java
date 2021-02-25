@@ -22,21 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 
-public class SlidingWindowMemory extends VirtualMemory {
-    private static final Log LOG = LogFactory.getLog(SlidingWindowMemory.class);
+public class PagedSlidingReadOnlyMemory extends PagedVirtualMemory {
+    private static final Log LOG = LogFactory.getLog(PagedSlidingReadOnlyMemory.class);
     private FilesFacade ff;
     private long fd = -1;
     private long size = 0;
     private long pageAddress;
     private int pageIndex;
-    private AppendMemory parent;
+    private AppendOnlyVirtualMemory parent;
 
     @Override
     public void close() {
@@ -51,7 +52,7 @@ public class SlidingWindowMemory extends VirtualMemory {
     }
 
     @Override
-    protected long getPageSize(int page) {
+    public long getPageSize(int page) {
         return getMapPageSize();
     }
 
@@ -64,7 +65,7 @@ public class SlidingWindowMemory extends VirtualMemory {
         return fd;
     }
 
-    public void of(AppendMemory parent) {
+    public void of(AppendOnlyVirtualMemory parent) {
         close();
         this.ff = parent.getFilesFacade();
         this.fd = parent.getFd();

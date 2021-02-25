@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -30,9 +30,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public interface BigMem extends Closeable {
-    @Override
-    void close();
+public interface WriteOnlyVirtualMemory {
 
     long putBin(BinarySequence value);
 

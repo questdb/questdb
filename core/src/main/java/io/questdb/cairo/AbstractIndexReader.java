@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
@@ -35,8 +37,8 @@ import java.util.concurrent.locks.LockSupport;
 
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
-    protected final ReadOnlyMemory keyMem = new ReadOnlyMemory();
-    protected final ReadOnlyMemory valueMem = new ReadOnlyMemory();
+    protected final MappedReadOnlyMemory keyMem = new SinglePageMappedReadOnlyPageMemory();
+    protected final MappedReadOnlyMemory valueMem = new SinglePageMappedReadOnlyPageMemory();
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;

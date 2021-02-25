@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -74,7 +75,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
             try (Path path = new Path();
                  TableReader reader = new TableReader(configuration, "x");
-                 ReadWriteMemory mem = new ReadWriteMemory()) {
+                 PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
 
                 final Rnd rnd = new Rnd();
                 final int N = 1000;

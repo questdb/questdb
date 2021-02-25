@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
@@ -69,7 +70,7 @@ public class SqlCompiler implements Closeable {
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final Path renamePath = new Path();
-    private final AppendMemory mem = new AppendMemory();
+    private final AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final MessageBus messageBus;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();

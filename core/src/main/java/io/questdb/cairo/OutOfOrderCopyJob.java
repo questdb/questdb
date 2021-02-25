@@ -1003,6 +1003,33 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         }
     }
 
+    static void copyIdleQuick(OutOfOrderCopyTask task) {
+        copyIdleQuick(
+                task.getColumnCounter(),
+                task.getFf(),
+                task.getTimestampMergeIndexAddr(),
+                task.getSrcDataFixFd(),
+                task.getSrcDataFixAddr(),
+                task.getSrcDataFixSize(),
+                task.getSrcDataVarFd(),
+                task.getSrcDataVarAddr(),
+                task.getSrcDataVarSize(),
+                task.getDstFixFd(),
+                task.getDstFixAddr(),
+                task.getDstFixSize(),
+                task.getDstVarFd(),
+                task.getDstVarAddr(),
+                task.getDstVarSize(),
+                task.getSrcTimestampFd(),
+                task.getSrcTimestampAddr(),
+                task.getSrcTimestampSize(),
+                task.getDstKFd(),
+                task.getDstVFd(),
+                task.getTableWriter(),
+                task.getDoneLatch()
+        );
+    }
+
     private void copy(OutOfOrderCopyTask task, long cursor, Sequence subSeq) {
         copy(
                 configuration,

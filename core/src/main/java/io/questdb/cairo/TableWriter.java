@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -68,7 +69,7 @@ public class TableWriter implements Closeable {
     private final static OutOfOrderNativeSortMethod SHUFFLE_16 = Vect::indexReshuffle16Bit;
     private final static OutOfOrderNativeSortMethod SHUFFLE_32 = Vect::indexReshuffle32Bit;
     private final static OutOfOrderNativeSortMethod SHUFFLE_64 = Vect::indexReshuffle64Bit;
-    final ObjList<AppendMemory> columns;
+    final ObjList<AppendOnlyVirtualMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<ColumnIndexer> indexers;
@@ -78,8 +79,8 @@ public class TableWriter implements Closeable {
     private final LongList refs = new LongList();
     private final Row row = new Row();
     private final int rootLen;
-    private final ReadWriteMemory txMem;
-    private final ReadOnlyMemory metaMem;
+    private final PagedMappedReadWriteMemory txMem;
+    private final MappedReadOnlyMemory metaMem;
     private final ContiguousVirtualMemory txPendingPartitionSizes;
     private final int partitionBy;
     private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
@@ -90,7 +91,7 @@ public class TableWriter implements Closeable {
     private final LongList columnTops;
     private final FilesFacade ff;
     private final DateFormat partitionDirFmt;
-    private final AppendMemory ddlMem;
+    private final AppendOnlyVirtualMemory ddlMem;
     private final int mkDirMode;
     private final int fileOperationRetryCount;
     private final CharSequence name;
@@ -237,8 +238,8 @@ public class TableWriter implements Closeable {
             if (todo != -1L && (int) (todo & 0xff) == TODO_RESTORE_META) {
                 repairMetaRename((int) (todo >> 8));
             }
-            this.ddlMem = new AppendMemory();
-            this.metaMem = new ReadOnlyMemory();
+            this.ddlMem = new AppendOnlyVirtualMemory();
+            this.metaMem = new SinglePageMappedReadOnlyPageMemory();
             openMetaFile();
             this.metadata = new TableWriterMetadata(ff, metaMem);
 
@@ -1039,7 +1040,7 @@ public class TableWriter implements Closeable {
         writeTodo(TODO_TRUNCATE);
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
-            AppendMemory mem = getSecondaryColumn(i);
+            AppendOnlyVirtualMemory mem = getSecondaryColumn(i);
             if (mem != null) {
                 mem.truncate();
             }
@@ -1170,8 +1171,8 @@ public class TableWriter implements Closeable {
 
     private static void setColumnSize(
             FilesFacade ff,
-            AppendMemory mem1,
-            AppendMemory mem2,
+            AppendOnlyVirtualMemory mem1,
+            AppendOnlyVirtualMemory mem2,
             int type,
             long actualPosition,
             long buf,
@@ -1235,23 +1236,23 @@ public class TableWriter implements Closeable {
      * @param name to check
      * @return 0 based column index.
      */
-    private static int getColumnIndexQuiet(ReadOnlyMemory metaMem, CharSequence name, int columnCount) {
+    private static int getColumnIndexQuiet(MappedReadOnlyMemory metaMem, CharSequence name, int columnCount) {
         long nameOffset = getColumnNameOffset(columnCount);
         for (int i = 0; i < columnCount; i++) {
             CharSequence col = metaMem.getStr(nameOffset);
             if (Chars.equalsIgnoreCase(col, name)) {
                 return i;
             }
-            nameOffset += ContiguousVirtualMemory.getStorageLength(col);
+            nameOffset += VmUtils.getStorageLength(col);
         }
         return -1;
     }
 
-    private static void readOffsetBytes(FilesFacade ff, AppendMemory mem, long position, long buf) {
+    private static void readOffsetBytes(FilesFacade ff, AppendOnlyVirtualMemory mem, long position, long buf) {
         readBytes(ff, mem, buf, 8, (position - 1) * 8, "could not read offset, fd=");
     }
 
-    private static void readBytes(FilesFacade ff, AppendMemory mem, long buf, int byteCount, long offset, CharSequence errorMsg) {
+    private static void readBytes(FilesFacade ff, AppendOnlyVirtualMemory mem, long buf, int byteCount, long offset, CharSequence errorMsg) {
         if (ff.read(mem.getFd(), buf, byteCount, offset) != byteCount) {
             throw CairoException.instance(ff.errno()).put(errorMsg).put(mem.getFd()).put(", offset=").put(offset);
         }
@@ -1265,7 +1266,7 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int type, BigMem mem1, BigMem mem2) {
+    private static void configureNullSetters(ObjList<Runnable> nullers, int type, WriteOnlyVirtualMemory mem1, WriteOnlyVirtualMemory mem2) {
         switch (type) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
@@ -1349,7 +1350,7 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
                 ddlMem.putStr(columnName);
-                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
+                nameOffset += VmUtils.getStorageLength(columnName);
             }
             ddlMem.putStr(name);
         } finally {
@@ -1451,7 +1452,7 @@ public class TableWriter implements Closeable {
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
                     getPrimaryColumn(i).setSize(0);
-                    AppendMemory mem = getSecondaryColumn(i);
+                    AppendOnlyVirtualMemory mem = getSecondaryColumn(i);
                     if (mem != null) {
                         mem.setSize(0);
                     }
@@ -1513,7 +1514,7 @@ public class TableWriter implements Closeable {
 
     private void closeAppendMemoryNoTruncate(boolean truncate) {
         for (int i = 0, n = columns.size(); i < n; i++) {
-            AppendMemory m = columns.getQuick(i);
+            AppendOnlyVirtualMemory m = columns.getQuick(i);
             if (m != null) {
                 m.close(truncate);
             }
@@ -1590,8 +1591,8 @@ public class TableWriter implements Closeable {
     }
 
     private void configureColumn(int type, boolean indexFlag) {
-        final AppendMemory primary = new AppendMemory();
-        final AppendMemory secondary;
+        final AppendOnlyVirtualMemory primary = new AppendOnlyVirtualMemory();
+        final AppendOnlyVirtualMemory secondary;
         final ContiguousVirtualMemory oooPrimary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
         final ContiguousVirtualMemory oooSecondary;
         final ContiguousVirtualMemory oooPrimary2 = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
@@ -1599,7 +1600,7 @@ public class TableWriter implements Closeable {
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                secondary = new AppendMemory();
+                secondary = new AppendOnlyVirtualMemory();
                 oooSecondary = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
                 oooSecondary2 = new ContiguousVirtualMemory(16 * Numbers.SIZE_1MB, Integer.MAX_VALUE);
                 break;
@@ -1694,7 +1695,7 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
                 ddlMem.putStr(columnName);
-                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
+                nameOffset += VmUtils.getStorageLength(columnName);
             }
             return index;
         } finally {
@@ -1722,7 +1723,7 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
                 ddlMem.putStr(columnName);
-                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
+                nameOffset += VmUtils.getStorageLength(columnName);
             }
             return index;
         } finally {
@@ -1919,7 +1920,7 @@ public class TableWriter implements Closeable {
         return columns.get(getPrimaryColumnIndex(columnIndex)).getAppendOffset();
     }
 
-    private AppendMemory getPrimaryColumn(int column) {
+    private AppendOnlyVirtualMemory getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
     }
@@ -1936,7 +1937,7 @@ public class TableWriter implements Closeable {
         return columns.get(getSecondaryColumnIndex(columnIndex)).getAppendOffset();
     }
 
-    private AppendMemory getSecondaryColumn(int column) {
+    private AppendOnlyVirtualMemory getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
@@ -1961,7 +1962,7 @@ public class TableWriter implements Closeable {
         final long maxTimestamp = timestampFloorMethod.floor(this.maxTimestamp);
         long timestamp = minTimestamp;
 
-        try (indexer; final ReadOnlyMemory roMem = new ReadOnlyMemory()) {
+        try (indexer; final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory()) {
 
             while (timestamp < maxTimestamp) {
 
@@ -2231,19 +2232,22 @@ public class TableWriter implements Closeable {
             RingQueue<OutOfOrderCopyTask> copyQueue,
             long cursor
     ) {
+        final OutOfOrderCopyTask task = copyQueue.get(cursor);
         try {
             OutOfOrderCopyJob.copy(
                     configuration,
                     updSizeQueue,
                     updSizePubSeq,
-                    copyQueue.get(cursor),
+                    task,
                     cursor,
                     copySubSeq
             );
         } catch (CairoException | CairoError e) {
             LOG.error().$((Sinkable) e).$();
+            OutOfOrderCopyJob.copyIdleQuick(task);
         } catch (Throwable e) {
             LOG.error().$(e).$();
+            OutOfOrderCopyJob.copyIdleQuick(task);
         }
     }
 
@@ -2271,7 +2275,9 @@ public class TableWriter implements Closeable {
             );
         } catch (CairoException | CairoError e) {
             LOG.error().$((Sinkable) e).$();
+            OutOfOrderOpenColumnJob.openColumnIdle(openColumnTask);
         } catch (Throwable e) {
+            OutOfOrderOpenColumnJob.openColumnIdle(openColumnTask);
             LOG.error().$(e).$();
         }
     }
@@ -2477,7 +2483,11 @@ public class TableWriter implements Closeable {
             );
         } catch (CairoException | CairoError e) {
             LOG.error().$((Sinkable) e).$();
+            bumpPartitionUpdateCount();
+            oooLatch.countDown();
         } catch (Throwable e) {
+            bumpPartitionUpdateCount();
+            oooLatch.countDown();
             LOG.error().$(e).$();
         }
     }
@@ -2528,9 +2538,9 @@ public class TableWriter implements Closeable {
         final ContiguousVirtualMemory mem = oooColumns.getQuick(columnOffset);
         final ContiguousVirtualMemory mem2 = oooColumns2.getQuick(columnOffset);
         final long src = mem.addressOf(0);
-        final long srcSize = mem.getAllocatedSize();
+        final long srcSize = mem.size();
         final long tgtDataAddr = mem2.resize(valueCount << shl);
-        final long tgtDataSize = mem2.getAllocatedSize();
+        final long tgtDataSize = mem2.size();
         shuffleFunc.shuffle(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
         mem.replacePage(tgtDataAddr, tgtDataSize);
         mem2.replacePage(src, srcSize);
@@ -2656,13 +2666,13 @@ public class TableWriter implements Closeable {
         final long dataSize = dataMem.getAppendOffset();
         // ensure we have enough memory allocated
         final long srcDataAddr = dataMem.addressOf(0);
-        final long srcDataSize = dataMem.getAllocatedSize();
+        final long srcDataSize = dataMem.size();
         final long srcIndxAddr = indexMem.addressOf(0);
-        final long srcIndxSize = indexMem.getAllocatedSize();
+        final long srcIndxSize = indexMem.size();
         final long tgtDataAddr = dataMem2.resize(dataSize);
-        final long tgtDataSize = dataMem2.getAllocatedSize();
+        final long tgtDataSize = dataMem2.size();
         final long tgtIndxAddr = indexMem2.resize(valueCount * Long.BYTES);
-        final long tgtIndxSize = indexMem2.getAllocatedSize();
+        final long tgtIndxSize = indexMem2.size();
         // add max offset so that we do not have conditionals inside loop
         indexMem.putLong(valueCount * Long.BYTES, dataSize);
         long offset = 0;
@@ -2756,8 +2766,8 @@ public class TableWriter implements Closeable {
     }
 
     private void openColumnFiles(CharSequence name, int i, int plen) {
-        AppendMemory mem1 = getPrimaryColumn(i);
-        AppendMemory mem2 = getSecondaryColumn(i);
+        AppendOnlyVirtualMemory mem1 = getPrimaryColumn(i);
+        AppendOnlyVirtualMemory mem2 = getSecondaryColumn(i);
 
         mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getAppendPageSize());
 
@@ -2848,7 +2858,7 @@ public class TableWriter implements Closeable {
                 // prepare index writer if column requires indexing
                 if (indexed) {
                     // we have to create files before columns are open
-                    // because we are reusing AppendMemory object from columns list
+                    // because we are reusing AppendOnlyVirtualMemory object from columns list
                     createIndexFiles(name, metadata.getIndexValueBlockCapacity(i), plen, transientRowCount < 1);
                 }
 
@@ -2868,10 +2878,10 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private ReadWriteMemory openTxnFile() {
+    private PagedMappedReadWriteMemory openTxnFile() {
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return new ReadWriteMemory(ff, path, ff.getPageSize());
+                return new PagedMappedReadWriteMemory(ff, path, ff.getPageSize());
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
 
@@ -3046,7 +3056,7 @@ public class TableWriter implements Closeable {
                 if (i != index) {
                     ddlMem.putStr(columnName);
                 }
-                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
+                nameOffset += VmUtils.getStorageLength(columnName);
             }
 
             return metaSwapIndex;
@@ -3281,7 +3291,7 @@ public class TableWriter implements Closeable {
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
-                nameOffset += ContiguousVirtualMemory.getStorageLength(columnName);
+                nameOffset += VmUtils.getStorageLength(columnName);
 
                 if (i == index) {
                     columnName = newName;
@@ -3547,9 +3557,9 @@ public class TableWriter implements Closeable {
         if (partitionBy != PartitionBy.NONE && timestampLo > partitionHi) {
             // Need close memory without truncating
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                AppendMemory mem1 = getPrimaryColumn(columnIndex);
+                AppendOnlyVirtualMemory mem1 = getPrimaryColumn(columnIndex);
                 mem1.close(false);
-                AppendMemory mem2 = getSecondaryColumn(columnIndex);
+                AppendOnlyVirtualMemory mem2 = getSecondaryColumn(columnIndex);
                 if (null != mem2) {
                     mem2.close(false);
                 }
@@ -3603,7 +3613,7 @@ public class TableWriter implements Closeable {
         final boolean async = commitMode == CommitMode.ASYNC;
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).sync(async);
-            final AppendMemory m2 = columns.getQuick(i * 2 + 1);
+            final AppendOnlyVirtualMemory m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
                 m2.sync(false);
             }
@@ -3967,7 +3977,7 @@ public class TableWriter implements Closeable {
     }
 
     public class Row {
-        private ObjList<? extends BigMem> activeColumns;
+        private ObjList<? extends WriteOnlyVirtualMemory> activeColumns;
         private ObjList<Runnable> activeNullSetters;
 
         public void append() {
@@ -4107,11 +4117,11 @@ public class TableWriter implements Closeable {
             putTimestamp(index, l);
         }
 
-        private BigMem getPrimaryColumn(int columnIndex) {
+        private WriteOnlyVirtualMemory getPrimaryColumn(int columnIndex) {
             return activeColumns.getQuick(getPrimaryColumnIndex(columnIndex));
         }
 
-        private BigMem getSecondaryColumn(int columnIndex) {
+        private WriteOnlyVirtualMemory getSecondaryColumn(int columnIndex) {
             return activeColumns.getQuick(getSecondaryColumnIndex(columnIndex));
         }
 

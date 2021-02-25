@@ -1,21 +1,19 @@
 package io.questdb.cairo;
 
-import java.io.IOException;
-import java.util.Random;
-
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.Path;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.IOException;
+import java.util.Random;
 
 public class MemRemappedFileTest {
     private static final int NPAGES = 1000;
@@ -33,20 +31,20 @@ public class MemRemappedFileTest {
     @Test
     public void testReadOnlyMemory() {
         LOG.info().$("ReadOnlyMemory starting").$();
-        double micros = test(new ReadOnlyMemory());
+        double micros = test(new SinglePageMappedReadOnlyPageMemory());
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     @Test
     public void testExtendableOnePageMemory() {
         LOG.info().$("ExtendableOnePageMemory starting").$();
-        double micros = test(new ExtendableOnePageMemory());
+        double micros = test(new SinglePageMappedReadOnlyPageMemory());
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 
-    private double test(ReadOnlyColumn readMem) {
+    private double test(MappedReadOnlyMemory readMem) {
         long nanos = 0;
-        try (AppendMemory appMem = new AppendMemory()) {
+        try (AppendOnlyVirtualMemory appMem = new AppendOnlyVirtualMemory()) {
             for (int cycle = 0; cycle < NCYCLES; cycle++) {
                 path.trimTo(0).concat(root).put(Files.SEPARATOR).concat("file" + nFile).$();
                 nFile++;

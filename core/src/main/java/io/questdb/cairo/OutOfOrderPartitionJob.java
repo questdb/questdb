@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -76,7 +78,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             FilesFacade ff,
             CharSequence pathToTable,
             int partitionBy,
-            ObjList<AppendMemory> columns,
+            ObjList<AppendOnlyVirtualMemory> columns,
             ObjList<ContiguousVirtualMemory> oooColumns,
             long srcOooLo,
             long srcOooHi,
@@ -511,7 +513,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         // srcOooHi is index inclusive of value
         final CharSequence pathToTable = task.getPathToTable();
         final int partitionBy = task.getPartitionBy();
-        final ObjList<AppendMemory> columns = task.getColumns();
+        final ObjList<AppendOnlyVirtualMemory> columns = task.getColumns();
         final ObjList<ContiguousVirtualMemory> oooColumns = task.getOooColumns();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
@@ -693,7 +695,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
             MPSequence updPartitionSizePubSeq,
             FilesFacade ff,
             long txn,
-            ObjList<AppendMemory> columns,
+            ObjList<AppendOnlyVirtualMemory> columns,
             ObjList<ContiguousVirtualMemory> oooColumns,
             CharSequence pathToTable,
             long srcOooLo,
@@ -756,8 +758,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 final int columnType = metadata.getColumnType(i);
                 final ContiguousVirtualMemory oooMem1 = oooColumns.getQuick(colOffset);
                 final ContiguousVirtualMemory oooMem2 = oooColumns.getQuick(colOffset + 1);
-                final AppendMemory mem1 = columns.getQuick(colOffset);
-                final AppendMemory mem2 = columns.getQuick(colOffset + 1);
+                final AppendOnlyVirtualMemory mem1 = columns.getQuick(colOffset);
+                final AppendOnlyVirtualMemory mem2 = columns.getQuick(colOffset + 1);
                 final long activeFixFd;
                 final long activeVarFd;
                 final long srcDataTop;

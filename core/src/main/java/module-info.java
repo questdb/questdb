@@ -33,6 +33,7 @@ open module io.questdb {
 
     exports io.questdb;
     exports io.questdb.cairo;
+    exports io.questdb.cairo.vm;
     exports io.questdb.cairo.map;
     exports io.questdb.cairo.sql;
     exports io.questdb.cairo.pool;

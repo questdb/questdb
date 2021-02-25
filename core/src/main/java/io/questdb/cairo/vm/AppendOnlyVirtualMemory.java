@@ -22,26 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class AppendMemory extends VirtualMemory {
-    private static final Log LOG = LogFactory.getLog(AppendMemory.class);
+public class AppendOnlyVirtualMemory extends PagedVirtualMemory {
+    private static final Log LOG = LogFactory.getLog(AppendOnlyVirtualMemory.class);
     private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
 
-    public AppendMemory(FilesFacade ff, LPSZ name, long pageSize) {
+    public AppendOnlyVirtualMemory(FilesFacade ff, LPSZ name, long pageSize) {
         of(ff, name, pageSize);
     }
 
-    public AppendMemory() {
+    public AppendOnlyVirtualMemory() {
     }
 
     @Override
@@ -74,7 +76,7 @@ public class AppendMemory extends VirtualMemory {
         super.close();
         if (fd != -1) {
             try {
-                bestEffortClose(ff, LOG, fd, truncate, sz, getMapPageSize());
+                VmUtils.bestEffortClose(ff, LOG, fd, truncate, sz, getMapPageSize());
             } finally {
                 fd = -1;
             }
@@ -149,20 +151,6 @@ public class AppendMemory extends VirtualMemory {
         }
         updateLimits(0, pageAddress = mapPage(0));
         LOG.debug().$("truncated [fd=").$(fd).$(']').$();
-    }
-
-    static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, long mapPageSize) {
-        try {
-            if (truncate) {
-                bestEffortTruncate(ff, log, fd, size, mapPageSize);
-            } else {
-                log.debug().$("closed [fd=").$(fd).$(']').$();
-            }
-        } finally {
-            if (fd > 0) {
-                ff.close(fd);
-            }
-        }
     }
 
     static void bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, long mapPageSize) {

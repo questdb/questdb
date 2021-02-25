@@ -22,30 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
-import io.questdb.std.str.Path;
+import io.questdb.log.Log;
+import io.questdb.std.FilesFacade;
 
-public interface ColumnIndexer {
-    void distress();
+public class VmUtils {
+    public static final int STRING_LENGTH_BYTES = 4;
 
-    long getFd();
+    public static int getStorageLength(CharSequence s) {
+        if (s == null) {
+            return STRING_LENGTH_BYTES;
+        }
 
-    long getSequence();
+        return STRING_LENGTH_BYTES + s.length() * 2;
+    }
 
-    void refreshSourceAndIndex(long loRow, long hiRow);
+    public static long getStorageLength(int len) {
+        return STRING_LENGTH_BYTES + len * 2L;
+    }
 
-    void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow);
-
-    boolean isDistressed();
-
-    void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, AppendOnlyVirtualMemory columnMem, long columnTop);
-
-    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
-
-    void rollback(long maxRow);
-
-    boolean tryLock(long expectedSequence);
+    public static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, long mapPageSize) {
+        try {
+            if (truncate) {
+                AppendOnlyVirtualMemory.bestEffortTruncate(ff, log, fd, size, mapPageSize);
+            } else {
+                log.debug().$("closed [fd=").$(fd).$(']').$();
+            }
+        } finally {
+            if (fd > 0) {
+                ff.close(fd);
+            }
+        }
+    }
 }

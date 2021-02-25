@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -2655,7 +2657,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 w.commit();
 
                 for (int i = 0, n = w.columns.size(); i < n; i++) {
-                    AppendMemory m = w.columns.getQuick(i);
+                    AppendOnlyVirtualMemory m = w.columns.getQuick(i);
                     if (m != null) {
                         Assert.assertEquals(configuration.getAppendPageSize(), m.getMapPageSize());
                     }

@@ -22,30 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
-import io.questdb.std.str.Path;
-
-public interface ColumnIndexer {
-    void distress();
-
-    long getFd();
-
-    long getSequence();
-
-    void refreshSourceAndIndex(long loRow, long hiRow);
-
-    void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow);
-
-    boolean isDistressed();
-
-    void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, AppendOnlyVirtualMemory columnMem, long columnTop);
-
-    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
-
-    void rollback(long maxRow);
-
-    boolean tryLock(long expectedSequence);
+public interface ReadWriteVirtualMemory extends ReadOnlyVirtualMemory, WriteOnlyVirtualMemory {
 }

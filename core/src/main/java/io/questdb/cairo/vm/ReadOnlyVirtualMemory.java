@@ -22,22 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
 import io.questdb.std.BinarySequence;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.LPSZ;
 
-import java.io.Closeable;
-
-public interface ReadOnlyColumn extends Closeable {
-
-    @Override
-    void close();
-
-    void of(FilesFacade ff, LPSZ name, long pageSize, long size);
+public interface ReadOnlyVirtualMemory {
 
     BinarySequence getBin(long offset);
 
@@ -49,13 +40,17 @@ public interface ReadOnlyColumn extends Closeable {
 
     double getDouble(long offset);
 
-    long getFd();
-
     float getFloat(long offset);
 
     int getInt(long offset);
 
     long getLong(long offset);
+
+    long getPageAddress(int pageIndex);
+
+    int getPageCount();
+
+    long getPageSize(int pageIndex);
 
     short getShort(long offset);
 
@@ -75,13 +70,5 @@ public interface ReadOnlyColumn extends Closeable {
 
     void grow(long size);
 
-    long getGrownLength();
-
-    boolean isDeleted();
-
-    int getPageCount();
-
-    long getPageSize(int pageIndex);
-
-    long getPageAddress(int pageIndex);
+    long size();
 }

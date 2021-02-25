@@ -24,8 +24,8 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.AppendMemory;
-import io.questdb.cairo.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.cairo.vm.ContiguousVirtualMemory;
 import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.FilesFacade;
@@ -35,7 +35,7 @@ public class OutOfOrderPartitionTask {
     private FilesFacade ff;
     private CharSequence pathToTable;
     private int partitionBy;
-    private ObjList<AppendMemory> columns;
+    private ObjList<AppendOnlyVirtualMemory> columns;
     private ObjList<ContiguousVirtualMemory> oooColumns;
     private long srcOooLo;
     private long srcOooHi;
@@ -53,7 +53,7 @@ public class OutOfOrderPartitionTask {
     private TableWriter tableWriter;
     private SOUnboundedCountDownLatch doneLatch;
 
-    public ObjList<AppendMemory> getColumns() {
+    public ObjList<AppendOnlyVirtualMemory> getColumns() {
         return columns;
     }
 
@@ -137,7 +137,7 @@ public class OutOfOrderPartitionTask {
             FilesFacade ff,
             CharSequence path,
             int partitionBy,
-            ObjList<AppendMemory> columns,
+            ObjList<AppendOnlyVirtualMemory> columns,
             ObjList<ContiguousVirtualMemory> oooColumns,
             long srcOooLo,
             long srcOooHi,

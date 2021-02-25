@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -31,10 +33,8 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 
-import java.io.Closeable;
-
-public class OnePageMemory implements ReadOnlyColumn, Closeable {
-    private static final Log LOG = LogFactory.getLog(OnePageMemory.class);
+public class SinglePageMappedReadOnlyPageMemory implements MappedReadOnlyMemory {
+    private static final Log LOG = LogFactory.getLog(SinglePageMappedReadOnlyPageMemory.class);
     private final ByteSequenceView bsview = new ByteSequenceView();
     private final CharSequenceView csview = new CharSequenceView();
     private final CharSequenceView csview2 = new CharSequenceView();
@@ -45,12 +45,17 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     protected long fd = -1;
     protected long size = 0;
     protected long absolutePointer;
+    private long grownLength;
 
-    public OnePageMemory() {
+    public SinglePageMappedReadOnlyPageMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        of(ff, name, pageSize, size);
     }
 
-    public OnePageMemory(FilesFacade ff, LPSZ name, long size) {
+    public SinglePageMappedReadOnlyPageMemory(FilesFacade ff, LPSZ name, long size) {
         of(ff, name, 0, size);
+    }
+
+    public SinglePageMappedReadOnlyPageMemory() {
     }
 
     public long addressOf(long offset) {
@@ -70,10 +75,22 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
+        grownLength = 0;
     }
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        openFile(ff, name);
+        map(ff, name, size);
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long pageSize) {
+        openFile(ff, name);
+        map(ff, name, ff.length(fd));
+    }
+
+    private void openFile(FilesFacade ff, LPSZ name) {
         close();
         this.ff = ff;
         boolean exists = ff.exists(name);
@@ -84,29 +101,16 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         if (fd == -1) {
             throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
         }
-
-        map(ff, name, size);
     }
 
-    public void of(FilesFacade ff, long fd, LPSZ name, long size) {
-        close();
-        this.ff = ff;
-        this.fd = fd;
-        if (fd != -1) {
-            map(ff, name, size);
-        }
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
     }
 
-    public final CharSequence getStr0(long offset, CharSequenceView view) {
-        final int len = getInt(offset);
-        if (len > -1 && offset + len * 2L + Integer.BYTES <= size) {
-            return view.of(offset + VirtualMemory.STRING_LENGTH_BYTES, len);
-        }
-
-        if (len == TableUtils.NULL_LEN) {
-            return null;
-        }
-        throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size).put(", fd=").put(fd).put(']');
+    @Override
+    public long getFd() {
+        return fd;
     }
 
     @Override
@@ -139,11 +143,6 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     }
 
     @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
     public final float getFloat(long offset) {
         return Unsafe.getUnsafe().getFloat(addressOf(offset));
     }
@@ -156,6 +155,21 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     @Override
     public long getLong(long offset) {
         return Unsafe.getUnsafe().getLong(addressOf(offset));
+    }
+
+    @Override
+    public long getPageAddress(int pageIndex) {
+        return absolutePointer;
+    }
+
+    @Override
+    public int getPageCount() {
+        return 1;
+    }
+
+    @Override
+    public long getPageSize(int pageIndex) {
+        return size;
     }
 
     @Override
@@ -206,41 +220,35 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
     }
 
     @Override
-    public void grow(long size) {
-    }
-
-    @Override
-    public long getGrownLength() {
-        return size;
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    @Override
-    public int getPageCount() {
-        return 1;
-    }
-
-    @Override
-    public long getPageSize(int pageIndex) {
-        return size;
-    }
-
-    @Override
-    public long getPageAddress(int pageIndex) {
-        return absolutePointer;
-    }
-
-    public void detach() {
-        if (page != -1) {
-            ff.munmap(page, size);
-            page = -1;
+    public void grow(long newSize) {
+        if (newSize > grownLength) {
+            grownLength = newSize;
         }
-        fd = -1;
-        this.size = 0;
+        final long fileSize = ff.length(fd);
+        newSize = Math.max(newSize, fileSize);
+        if (newSize <= size) {
+            return;
+        }
+
+        long offset = absolutePointer - page;
+        long previousSize = size;
+        if (previousSize > 0) {
+            page = ff.mremap(fd, page, previousSize, newSize, 0, Files.MAP_RO);
+        } else {
+            assert page == -1;
+            page = ff.mmap(fd, newSize, 0, Files.MAP_RO);
+        }
+        if (page == FilesFacade.MAP_FAILED) {
+            long fd = this.fd;
+            close();
+            throw CairoException.instance(ff.errno()).put("Could not remap file [previousSize=").put(previousSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+        }
+        size = newSize;
+        absolutePointer = page + offset;
+    }
+
+    public long getGrownLength() {
+        return grownLength;
     }
 
     public void getLong256(long offset, Long256Sink sink) {
@@ -250,20 +258,46 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
         sink.setLong3(Unsafe.getUnsafe().getLong(addressOf(offset + Long.BYTES * 3)));
     }
 
+    public final CharSequence getStr0(long offset, CharSequenceView view) {
+        final int len = getInt(offset);
+        if (len > -1 && offset + VmUtils.getStorageLength(len) <= size) {
+            return view.of(offset + VmUtils.STRING_LENGTH_BYTES, len);
+        }
+
+        if (len == TableUtils.NULL_LEN) {
+            return null;
+        }
+        throw CairoException.instance(0).put("String is outside of file boundary [offset=").put(offset).put(", len=").put(len).put(", size=").put(size).put(", fd=").put(fd).put(']');
+    }
+
+    public void of(FilesFacade ff, long fd, LPSZ name, long size) {
+        close();
+        this.ff = ff;
+        this.fd = fd;
+        if (fd != -1) {
+            map(ff, name, size);
+        }
+    }
+
+    public long size() {
+        return size;
+    }
+
     protected void map(FilesFacade ff, LPSZ name, long size) {
+        size = Math.min(ff.length(fd), size);
         this.size = size;
         if (size > 0) {
             this.page = ff.mmap(fd, size, 0, Files.MAP_RO);
             if (page == FilesFacade.MAP_FAILED) {
                 long fd = this.fd;
-                long flen = ff.length(fd);
+                long fileLen = ff.length(fd);
                 close();
                 throw CairoException.instance(ff.errno())
                         .put("Could not mmap ").put(name)
                         .put(" [size=").put(size)
                         .put(", fd=").put(fd)
                         .put(", memUsed=").put(Unsafe.getMemUsed())
-                        .put(", fileLen=").put(flen)
+                        .put(", fileLen=").put(fileLen)
                         .put(']');
             }
             this.absolutePointer = page;
@@ -272,10 +306,6 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
             this.absolutePointer = -1;
         }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
-    }
-
-    public long size() {
-        return size;
     }
 
     public class CharSequenceView extends AbstractCharSequence {
@@ -289,7 +319,7 @@ public class OnePageMemory implements ReadOnlyColumn, Closeable {
 
         @Override
         public char charAt(int index) {
-            return OnePageMemory.this.getChar(offset + index * 2L);
+            return SinglePageMappedReadOnlyPageMemory.this.getChar(offset + index * 2L);
         }
 
         CharSequenceView of(long offset, int len) {
