@@ -689,10 +689,7 @@ public final class TableUtils {
                     throw CairoException.instance(ff.errno()).put("Cannot open: ").put(path);
                 }
                 long fileSize = ff.length(fd);
-                long pageSize = ff.getPageSize();
-                long nPages = (fileSize / pageSize) + 1;
-                long mapSize = nPages * pageSize;
-                long mappedMem = ff.mmap(fd, mapSize, 0, Files.MAP_RO);
+                long mappedMem = ff.mmap(fd, fileSize, 0, Files.MAP_RO);
                 if (mappedMem < 0) {
                     throw CairoException.instance(ff.errno()).put("Cannot map: ").put(path);
                 }
@@ -717,7 +714,7 @@ public final class TableUtils {
                     }
                     return size;
                 } finally {
-                    ff.munmap(mappedMem, mapSize);
+                    ff.munmap(mappedMem, fileSize);
                     ff.close(fd);
                 }
             } else {

@@ -1520,10 +1520,10 @@ public class TableReaderTest extends AbstractCairoTest {
         testCloseColumn(PartitionBy.DAY, 1000, 60000L, "sym", BATCH1_ASSERTER_NULL_SYM);
     }
 
-//    @Test
-//    public void testConcurrentReloadByDay() throws Exception {
-//        testConcurrentReloadSinglePartition(PartitionBy.DAY);
-//    }
+    @Test
+    public void testConcurrentReloadByDay() throws Exception {
+        testConcurrentReloadSinglePartition(PartitionBy.DAY);
+    }
 
     @Test
     public void testConcurrentReloadMultipleByDay() throws Exception {
