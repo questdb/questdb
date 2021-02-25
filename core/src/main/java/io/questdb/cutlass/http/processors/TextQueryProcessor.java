@@ -304,8 +304,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.status(200, "text/csv; charset=utf-8");
-        if (state.fineName != null && state.fineName.length() > 0) {
-            socket.headers().put("Content-Disposition: attachment; filename=\"" + state.fineName).put(".csv\"").put(Misc.EOL);
+        if (state.fileName != null && state.fileName.length() > 0) {
+            socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
         } else {
             socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
         }
@@ -381,10 +381,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             return false;
         }
         CharSequence fileName = request.getUrlParam("filename");
+        state.fileName = null;
         if (fileName != null && fileName.length() > 0) {
-            state.fineName = fileName.toString();
-        } else {
-            state.fineName = null;
+            state.fileName = fileName.toString();
         }
         state.skip = skip;
         state.count = 0L;
