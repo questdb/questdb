@@ -75,7 +75,7 @@ public class TxReader implements Closeable {
         path = Misc.free(path);
     }
 
-    public int getAttachedPartitionsCount() {
+    public int getPartitionsCount() {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
@@ -115,6 +115,10 @@ public class TxReader implements Closeable {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
     }
 
+    public long getRowCount() {
+        return transientRowCount + fixedRowCount;
+    }
+
     public long getStructureVersion() {
         return structureVersion;
     }
@@ -125,6 +129,10 @@ public class TxReader implements Closeable {
 
     public long getTxn() {
         return txn;
+    }
+
+    public long getTxEofOffset() {
+        return getTxMemSize(symbolsCount, attachedPartitions.size());
     }
 
     public void initPartitionBy(int partitionBy) {
@@ -250,6 +258,8 @@ public class TxReader implements Closeable {
             if (maxTimestamp != Long.MIN_VALUE) {
                 updateAttachedPartitionSizeByTimestamp(maxTimestamp, transientRowCount);
             }
+        } else {
+            updateAttachedPartitionSizeByTimestamp(0L, transientRowCount);
         }
     }
 

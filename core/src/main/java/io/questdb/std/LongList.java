@@ -43,6 +43,14 @@ public class LongList implements Mutable, LongVec {
         this(capacity, DEFAULT_NO_ENTRY_VALUE);
     }
 
+    public void insert(int index, int length) {
+        ensureCapacity(pos + length);
+        if (pos > index) {
+            System.arraycopy(buffer, index, buffer, index + length, pos - index);
+        }
+        pos += length;
+    }
+
     @Override
     public LongVec newInstance() {
         return new LongList(size());
@@ -219,6 +227,7 @@ public class LongList implements Mutable, LongVec {
      * @return element at the specified position.
      */
     public long getQuick(int index) {
+        assert index < pos : ("index=" + index + ", len=" + pos);
         return buffer[index];
     }
 
@@ -343,11 +352,6 @@ public class LongList implements Mutable, LongVec {
         System.arraycopy(this.buffer, lo, that.buffer, 0, _hi - lo);
         that.pos = _hi - lo;
         return that;
-    }
-
-    public void truncateTo(int size) {
-        assert size <= pos && size > -1;
-        pos = size;
     }
 
     public void zero(int value) {

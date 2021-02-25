@@ -186,14 +186,14 @@ public final class TxWriter extends TxReader implements Closeable {
         }
     }
 
-    public void finishOutOfOrderUpdate(long minTimestamp, long maxTimestamp) {
+    public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
-        assert attachedPartitions.size() > 0;
-        this.transientRowCount = attachedPartitions.getQuick(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET);
+        assert getPartitionsCount() > 0;
+        this.transientRowCount = getPartitionSize(getPartitionsCount() - 1);
         this.fixedRowCount = 0;
-        for (int i = 0, hi = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION; i < hi; i += LONGS_PER_TX_ATTACHED_PARTITION) {
-            this.fixedRowCount += attachedPartitions.getQuick(i + PARTITION_SIZE_OFFSET);
+        for (int i = 0, hi = getPartitionsCount() - 1; i < hi; i ++) {
+            this.fixedRowCount += getPartitionSize(i);
         }
         txPartitionCount++;
     }
@@ -226,7 +226,7 @@ public final class TxWriter extends TxReader implements Closeable {
                 attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, size - index - LONGS_PER_TX_ATTACHED_PARTITION);
                 attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
             }
-            attachedPartitions.truncateTo(size - LONGS_PER_TX_ATTACHED_PARTITION);
+            attachedPartitions.setPos(size - LONGS_PER_TX_ATTACHED_PARTITION);
             partitionTableVersion++;
         }
     }
@@ -316,12 +316,8 @@ public final class TxWriter extends TxReader implements Closeable {
         attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, updateAttachedPartitionSizeByTimestamp(timestamp, rowCount));
     }
 
-    private long getTxEofOffset() {
-        return getTxMemSize(symbolsCount, attachedPartitions.size());
-    }
-
     private void popAttachedPartitions() {
-        attachedPartitions.truncateTo(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
+        attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     private void saveAttachedPartitionsToTx(int symCount) {

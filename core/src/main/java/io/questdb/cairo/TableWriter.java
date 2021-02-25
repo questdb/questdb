@@ -582,7 +582,7 @@ public class TableWriter implements Closeable {
 
                     txFile.beginPartitionSizeUpdate();
                     txFile.updatePartitionSizeByTimestamp(timestamp, partitionSize);
-                    txFile.finishOutOfOrderUpdate(nextMinTimestamp, nextMaxTimestamp);
+                    txFile.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
                     txFile.commit(defaultCommitMode, denseSymbolMapWriters);
 
                     if (appendPartitionAttached) {
@@ -833,7 +833,7 @@ public class TableWriter implements Closeable {
             return false;
         }
         timestamp = getPartitionLo(timestamp);
-        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp || txFile.getAttachedPartitionsCount() < 2) {
+        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp || txFile.getPartitionsCount() < 2) {
             return false;
         }
 
@@ -875,7 +875,7 @@ public class TableWriter implements Closeable {
                 txFile.beginPartitionSizeUpdate();
                 txFile.removeAttachedPartitions(timestamp);
                 txFile.setMinTimestamp(nextMinTimestamp);
-                txFile.finishOutOfOrderUpdate(nextMinTimestamp, txFile.getMaxTimestamp());
+                txFile.finishPartitionSizeUpdate(nextMinTimestamp, txFile.getMaxTimestamp());
                 txFile.commit(defaultCommitMode, denseSymbolMapWriters);
 
                 if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
@@ -987,7 +987,7 @@ public class TableWriter implements Closeable {
     }
 
     public long size() {
-        return txFile.getFixedRowCount() + txFile.getTransientRowCount();
+        return txFile.getRowCount();
     }
 
     @Override
@@ -1967,9 +1967,7 @@ public class TableWriter implements Closeable {
         freeSymbolMapWriters();
         freeIndexers();
         Misc.free(txFile);
-        if (null != blockWriter) {
-            blockWriter.close();
-        }
+        Misc.free(blockWriter);
         Misc.free(metaMem);
         Misc.free(ddlMem);
         Misc.free(other);
@@ -2937,7 +2935,7 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            txFile.finishOutOfOrderUpdate(minTimestamp, maxTimestamp);
+            txFile.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
         } finally {
             path.trimTo(rootLen);
             this.mergeRowCount = 0;
