@@ -158,7 +158,7 @@ public class TxReader implements Closeable {
         this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
         this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
         this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
         loadAttachedPartitions(this.maxTimestamp, this.transientRowCount);
     }
 
@@ -229,6 +229,7 @@ public class TxReader implements Closeable {
         if (index < size) {
             // Insert in the middle
             attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, size - index);
+            partitionTableVersion++;
         }
 
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestamp);

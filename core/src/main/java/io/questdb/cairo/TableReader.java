@@ -368,6 +368,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Insert partition
                 insertPartition(partitionIndex, txPartTs);
                 txPartitionIndex++;
+                partitionIndex++;
             } else {
                 // Refresh partition
                 long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);

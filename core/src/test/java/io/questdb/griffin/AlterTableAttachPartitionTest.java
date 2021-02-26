@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
@@ -66,7 +67,37 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                copyAttachPartition(src, dst, "2020-01-09", "2020-01-10");
+                copyAttachPartition(src, dst, 0, "2020-01-09", "2020-01-10");
+            }
+        });
+    }
+
+    @Test
+    public void testAttachActive2PartitionsOneByOneInDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        "2020-01-01",
+                        10);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                copyAttachPartition(src, dst, 0, "2020-01-10");
+                try {
+                    copyAttachPartition(src, dst, 2, "2020-01-09");
+                    Assert.fail();
+                } catch (CairoException e) {
+                    // Insert row attempt expected to fail.
+                    Assert.assertTrue(e.getMessage().contains("Cannot insert rows out of order"));
+                }
             }
         });
     }
@@ -90,7 +121,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("l", ColumnType.LONG));
 
                 // 3 partitions unordered
-                copyAttachPartition(src, dst, "2020-01-09", "2020-01-10", "2020-01-01");
+                copyAttachPartition(src, dst, 0, "2020-01-09", "2020-01-10", "2020-01-01");
             }
         });
     }
@@ -113,7 +144,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                copyAttachPartition(src, dst, "2020-01-10");
+                copyAttachPartition(src, dst, 0, "2020-01-10");
             }
         });
     }
@@ -188,7 +219,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                copyAttachPartition(src, dst, "2020-01-01");
+                copyAttachPartition(src, dst, 0, "2020-01-01");
             }
         });
     }
@@ -230,7 +261,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 tm.add(dst);
 
                 CairoTestUtils.create(dst);
-                copyAttachPartition(src, dst, "2020-01-01");
+                copyAttachPartition(src, dst, 0, "2020-01-01");
             }
         });
         tearDownAfterTest();
@@ -249,7 +280,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             CairoTestUtils.create(dst);
 
             try {
-                copyAttachPartition(src, dst, "2020-01-10");
+                copyAttachPartition(src, dst, 0, "2020-01-10");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage().contains("Column file does not exist"));
@@ -258,7 +289,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
     }
 
-    private void copyAttachPartition(TableModel src, TableModel dst, String... partitionList) throws IOException, SqlException, NumericException {
+    private void copyAttachPartition(TableModel src, TableModel dst, int countAjdustment, String... partitionList) throws IOException, SqlException, NumericException {
         StringBuilder partitions = new StringBuilder();
         for (int i = 0; i < partitionList.length; i++) {
             if (i > 0) {
@@ -269,63 +300,87 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             partitions.append("'");
         }
 
-        String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST " + partitions + ";";
+        try (var tableReader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
+            int rowCount = readAllRows(tableReader);
 
-        StringBuilder partitionsIn = new StringBuilder();
-        for (int i = 0; i < partitionList.length; i++) {
-            if (i > 0) {
-                partitionsIn.append(" OR ");
+            String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST " + partitions + ";";
+
+            StringBuilder partitionsIn = new StringBuilder();
+            for (int i = 0; i < partitionList.length; i++) {
+                if (i > 0) {
+                    partitionsIn.append(" OR ");
+                }
+                partitionsIn.append("ts = '");
+                partitionsIn.append(partitionList[i]);
+                partitionsIn.append("'");
             }
-            partitionsIn.append("ts = '");
-            partitionsIn.append(partitionList[i]);
-            partitionsIn.append("'");
-        }
 
-        String withClause = ", t1 as (select 1 as id, count() as cnt from src WHERE " + partitionsIn + ")\n";
-        for (int i = 0; i < partitionList.length; i++) {
-            copyPartitionToBackup(src.getName(), partitionList[i], dst.getName());
-        }
-
-        compiler.compile(alterCommand, sqlExecutionContext);
-        TestUtils.assertEquals(
-                "cnt\n" +
-                        "0\n",
-                executeSql("with " +
-                        "t2 as (select 1 as id, count() as cnt from dst)\n" +
-                        withClause +
-                        "select t1.cnt - t2.cnt as cnt\n" +
-                        "from t2 cross join t1"
-                )
-        );
-
-        long timestamp = 0;
-        for (int i = 0; i < partitionList.length; i++) {
-            long ts = TimestampFormatUtils.parseTimestamp(partitionList[i] + "T23:59:59.999z");
-            if (ts > timestamp) {
-                timestamp = ts;
+            String withClause = ", t1 as (select 1 as id, count() as cnt from src WHERE " + partitionsIn + ")\n";
+            for (int i = 0; i < partitionList.length; i++) {
+                copyPartitionToBackup(src.getName(), partitionList[i], dst.getName());
             }
+
+            // Alter table
+            compiler.compile(alterCommand, sqlExecutionContext);
+
+            // Assert existing reader reloads new partition
+            Assert.assertTrue(tableReader.reload());
+            int newRowCount = readAllRows(tableReader);
+            Assert.assertTrue(newRowCount > rowCount);
+
+            TestUtils.assertEquals(
+                    "cnt\n" +
+                            (-countAjdustment) + "\n",
+                    executeSql("with t2 as (select 1 as id, count() as cnt from dst)\n" +
+                            withClause +
+                            "select t1.cnt - t2.cnt as cnt\n" +
+                            "from t2 cross join t1"
+                    )
+            );
+
+            long timestamp = 0;
+            for (int i = 0; i < partitionList.length; i++) {
+                long ts = TimestampFormatUtils.parseTimestamp(partitionList[i] + "T23:59:59.999z");
+                if (ts > timestamp) {
+                    timestamp = ts;
+                }
+            }
+
+            // Check table is writable after partition attach
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
+
+                var row = writer.newRow(timestamp);
+                row.putLong(0, 1L);
+                row.putInt(1, 1);
+                row.append();
+                writer.commit();
+            }
+
+            TestUtils.assertEquals(
+                    "cnt\n" +
+                            "-1\n",
+                    executeSql("with " +
+                            "t2 as (select 1 as id, count() as cnt from dst)\n" +
+                            withClause +
+                            "select t1.cnt - t2.cnt as cnt\n" +
+                            "from t2 cross join t1"
+                    )
+            );
         }
+    }
 
-        // Check table is writable after partition attach
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
-
-            var row = writer.newRow(timestamp);
-            row.putLong(0, 1L);
-            row.putInt(1, 1);
-            row.append();
-            writer.commit();
+    private int readAllRows(TableReader tableReader) {
+        try (var cursor = new FullFwdDataFrameCursor()) {
+            cursor.of(tableReader);
+            DataFrame frame;
+            int count = 0;
+            while ((frame = cursor.next()) != null) {
+                for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {
+                    count++;
+                }
+            }
+            return count;
         }
-
-        TestUtils.assertEquals(
-                "cnt\n" +
-                        "-1\n",
-                executeSql("with " +
-                        "t2 as (select 1 as id, count() as cnt from dst)\n" +
-                        withClause +
-                        "select t1.cnt - t2.cnt as cnt\n" +
-                        "from t2 cross join t1"
-                )
-        );
     }
 
     private void copyDirectory(Path from, Path to) throws IOException {
