@@ -525,6 +525,24 @@ public class LimitTest extends AbstractGriffinTest {
         testLimit(expected, expected, query);
     }
 
+    @Test
+    public void testLimitMinusOne() throws Exception {
+        compiler.compile("create table t1 (ts Timestamp, id symbol)", sqlExecutionContext);
+
+        var inserts = "insert into t1 values (0L, 'abc')\n" +
+                "insert into t1 values (2L, 'a1')\n" +
+                "insert into t1 values (3L, 'abc')\n" +
+                "insert into t1 values (4L, 'abc')\n" +
+                "insert into t1 values (5L, 'a2')";
+
+        for(var sql: inserts.split("\\r?\\n")) {
+            executeInsert(sql);
+        }
+
+        assertQueryAndCache("ts\tid\n" +
+                "1970-01-01T00:00:00.000004Z\tabc\n", "select * from t1 where id = 'abc' limit -1", null, true, true);
+    }
+
     private void testLimit(String expected1, String expected2, String query) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
