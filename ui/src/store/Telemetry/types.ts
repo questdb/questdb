@@ -22,15 +22,36 @@
  *
  ******************************************************************************/
 
-import { ConsoleAction } from "./Console/types"
-import { QueryAction } from "./Query/types"
-import { TelemetryAction } from "./Telemetry/types"
-import rootReducer from "./reducers"
+export type TelemetryConfigShape = Readonly<{
+  enabled: string
+  id: string
+}>
 
-export type StoreAction = ConsoleAction | QueryAction | TelemetryAction
+export type TelemetryRemoteConfigShape = Readonly<{
+  cta: boolean
+  lastUpdated?: string
+}>
 
-export type StoreShape = ReturnType<typeof rootReducer>
+export type TelemetryStateShape = Readonly<{
+  config?: TelemetryConfigShape
+  remoteConfig?: TelemetryRemoteConfigShape
+}>
 
-export * from "./Console/types"
-export * from "./Query/types"
-export * from "./Telemetry/types"
+export enum TelemetryAT {
+  SET_CONFIG = "TELEMETRY/SET_CONFIG",
+  SET_REMOTE_CONFIG = "TELEMETRY/SET_REMOTE_CONFIG",
+}
+
+export type SetTelemetryConfigAction = Readonly<{
+  payload: TelemetryConfigShape
+  type: TelemetryAT.SET_CONFIG
+}>
+
+export type SetTelemetryRemoteConfigAction = Readonly<{
+  payload: Partial<TelemetryRemoteConfigShape>
+  type: TelemetryAT.SET_REMOTE_CONFIG
+}>
+
+export type TelemetryAction =
+  | SetTelemetryConfigAction
+  | SetTelemetryRemoteConfigAction
