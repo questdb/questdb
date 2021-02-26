@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -43,7 +44,6 @@ import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -126,6 +126,8 @@ public class TableWriter implements Closeable {
     private final AtomicLong oooUpdRemaining = new AtomicLong();
     private final FindVisitor removePartitionDirsCreatedByOOOVisitor = this::removePartitionDirsCreatedByOOO0;
     private final AtomicInteger oooErrorCount = new AtomicInteger();
+    private final MappedReadWriteMemory todoMem = new PagedMappedReadWriteMemory();
+    private long todoTxn;
     private ContiguousVirtualMemory timestampMergeMem;
     private int txPartitionCount = 0;
     private long lockFd;
@@ -183,17 +185,17 @@ public class TableWriter implements Closeable {
     private final FindVisitor removePartitionDirsNewerThanVisitor = this::removePartitionDirsNewerThanTimestamp;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
-        this(configuration, name, null);
+        this(configuration, name, new MessageBusImpl(configuration));
     }
 
-    public TableWriter(CairoConfiguration configuration, CharSequence name, MessageBus messageBus) {
+    public TableWriter(CairoConfiguration configuration, CharSequence name, @NotNull MessageBus messageBus) {
         this(configuration, name, messageBus, true, DefaultLifecycleManager.INSTANCE);
     }
 
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence name,
-            @Nullable MessageBus messageBus,
+            @NotNull MessageBus messageBus,
             boolean lock,
             LifecycleManager lifecycleManager
     ) {
@@ -203,7 +205,7 @@ public class TableWriter implements Closeable {
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence name,
-            @Nullable MessageBus messageBus,
+            @NotNull MessageBus messageBus,
             boolean lock,
             LifecycleManager lifecycleManager,
             CharSequence root
@@ -214,7 +216,7 @@ public class TableWriter implements Closeable {
         this.messageBus = messageBus;
         this.defaultCommitMode = configuration.getCommitMode();
         this.lifecycleManager = lifecycleManager;
-        this.parallelIndexerEnabled = messageBus != null && configuration.isParallelIndexingEnabled();
+        this.parallelIndexerEnabled = configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
@@ -222,11 +224,7 @@ public class TableWriter implements Closeable {
         this.other = new Path().of(root).concat(name);
         this.name = Chars.toString(name);
         this.rootLen = path.length();
-        if (null == messageBus) {
-            this.blockWriter = null;
-        } else {
-            this.blockWriter = new TableBlockWriter(configuration, messageBus);
-        }
+        this.blockWriter = new TableBlockWriter(configuration, messageBus);
         try {
             if (lock) {
                 lock();
@@ -234,9 +232,15 @@ public class TableWriter implements Closeable {
                 this.lockFd = -1L;
             }
             this.txMem = openTxnFile();
-            long todo = readTodoTaskCode();
-            if (todo != -1L && (int) (todo & 0xff) == TODO_RESTORE_META) {
-                repairMetaRename((int) (todo >> 8));
+            long todoCount = openTodoMem();
+            int todo;
+            if (todoCount > 0) {
+                todo = (int) todoMem.getLong(40);
+            } else {
+                todo = -1;
+            }
+            if (todo == TODO_RESTORE_META) {
+                repairMetaRename((int) todoMem.getLong(48));
             }
             this.ddlMem = new AppendOnlyVirtualMemory();
             this.metaMem = new SinglePageMappedReadOnlyPageMemory();
@@ -245,17 +249,16 @@ public class TableWriter implements Closeable {
 
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
-            if (todo != -1L) {
-                switch ((int) (todo & 0xff)) {
-                    case TODO_TRUNCATE:
-                        repairTruncate();
-                        break;
-                    case TODO_RESTORE_META:
-                        break;
-                    default:
-                        LOG.error().$("ignoring unknown *todo* [code=").$(todo).$(']').$();
-                        break;
-                }
+            switch (todo) {
+                case TODO_TRUNCATE:
+                    repairTruncate();
+                    break;
+                case TODO_RESTORE_META:
+                case -1:
+                    break;
+                default:
+                    LOG.error().$("ignoring unknown *todo* [code=").$(todo).$(']').$();
+                    break;
             }
             this.columnCount = metadata.getColumnCount();
             if (metadata.getTimestampIndex() > -1) {
@@ -308,6 +311,7 @@ public class TableWriter implements Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
             loadRemovedPartitions();
+            clearTodoLog();
         } catch (CairoException e) {
             LOG.error().$("could not open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             doClose(false);
@@ -458,7 +462,7 @@ public class TableWriter implements Closeable {
             openMetaFile();
 
             // remove _todo
-            removeTodoFile();
+            clearTodoLog();
 
         } catch (CairoException err) {
             throwDistressException(err);
@@ -554,7 +558,7 @@ public class TableWriter implements Closeable {
             openMetaFile();
 
             // remove _todo
-            removeTodoFile();
+            clearTodoLog();
 
         } catch (CairoException err) {
             throwDistressException(err);
@@ -799,7 +803,7 @@ public class TableWriter implements Closeable {
             openMetaFile();
 
             // remove _todo
-            removeTodoFile();
+            clearTodoLog();
 
             // remove column files has to be done after _todo is removed
             removeColumnFiles(name, type, REMOVE_OR_LOG);
@@ -969,7 +973,7 @@ public class TableWriter implements Closeable {
             openMetaFile();
 
             // remove _todo
-            removeTodoFile();
+            clearTodoLog();
 
             // rename column files has to be done after _todo is removed
             renameColumnFiles(currentName, newName, type);
@@ -1037,7 +1041,17 @@ public class TableWriter implements Closeable {
             return;
         }
 
-        writeTodo(TODO_TRUNCATE);
+        // this is a crude block to test things for now
+        todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+        todoMem.putLong(8, configuration.getInstanceHashLo()); // write out our instance hashes
+        todoMem.putLong(16, configuration.getInstanceHashHi());
+        Unsafe.getUnsafe().storeFence();
+        todoMem.putLong(24, todoTxn);
+        todoMem.putLong(32, 1);
+        todoMem.putLong(40, TODO_TRUNCATE);
+        todoMem.setSize(48);
+
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
             AppendOnlyVirtualMemory mem = getSecondaryColumn(i);
@@ -1069,7 +1083,7 @@ public class TableWriter implements Closeable {
 
         resetTxn(txMem, metadata.getSymbolMapCount(), txn, ++dataVersion);
         try {
-            removeTodoFile();
+            clearTodoLog();
         } catch (CairoException err) {
             throwDistressException(err);
         }
@@ -1799,6 +1813,7 @@ public class TableWriter implements Closeable {
             Misc.free(txPendingPartitionSizes);
             Misc.free(ddlMem);
             Misc.free(other);
+            Misc.free(todoMem);
             try {
                 releaseLock(!truncate | tx | performRecovery | distressed);
             } finally {
@@ -2305,6 +2320,7 @@ public class TableWriter implements Closeable {
             final long sortedTimestampsAddr = timestampMergeMem.addressOf(0);
             Vect.sortLongIndexAscInPlace(sortedTimestampsAddr, oooRowCount);
             // reshuffle all variable length columns
+            // todo: writer must be aware of worker count
             if (this.messageBus == null) {
                 oooSort(sortedTimestampsAddr, timestampIndex);
             } else {
@@ -2757,14 +2773,6 @@ public class TableWriter implements Closeable {
         );
     }
 
-    private long openAppend(LPSZ name) {
-        long fd = ff.openAppend(name);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open for append: ").put(name);
-        }
-        return fd;
-    }
-
     private void openColumnFiles(CharSequence name, int i, int plen) {
         AppendOnlyVirtualMemory mem1 = getPrimaryColumn(i);
         AppendOnlyVirtualMemory mem2 = getSecondaryColumn(i);
@@ -2878,6 +2886,37 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private long openTodoMem() {
+        path.concat(TODO_FILE_NAME).$();
+        try {
+            if (ff.exists(path)) {
+                long fileLen = ff.length(path);
+                if (fileLen < 32) {
+                    throw CairoException.instance(0).put("corrupt ").put(path);
+                }
+
+                todoMem.of(ff, path, ff.getPageSize(), fileLen);
+                this.todoTxn = todoMem.getLong(0);
+                // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
+                if (todoMem.getLong(24) != todoTxn) {
+                    todoMem.putLong(8, configuration.getInstanceHashLo());
+                    todoMem.putLong(16, configuration.getInstanceHashHi());
+                    Unsafe.getUnsafe().storeFence();
+                    todoMem.putLong(24, todoTxn);
+                    return 0;
+                }
+
+                return todoMem.getLong(32);
+            } else {
+                TableUtils.resetTodoLog(ff, path, rootLen, todoMem);
+                todoTxn = 0;
+                return 0;
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private PagedMappedReadWriteMemory openTxnFile() {
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
@@ -2914,34 +2953,13 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private long readTodoTaskCode() {
-        try {
-            if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
-                long todoFd = ff.openRO(path);
-                if (todoFd == -1) {
-                    throw CairoException.instance(ff.errno()).put("Cannot open *todo*: ").put(path);
-                }
-                long len = ff.read(todoFd, tempMem8b, 8, 0);
-                ff.close(todoFd);
-                if (len != 8L) {
-                    LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring. [file=").$(path).$(']').$();
-                    return -1;
-                }
-                return Unsafe.getUnsafe().getLong(tempMem8b);
-            }
-            return -1;
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private void recoverFromMetaRenameFailure(CharSequence columnName) {
         openMetaFile();
     }
 
     private void recoverFromSwapRenameFailure(CharSequence columnName) {
         recoverFrommTodoWriteFailure(columnName);
-        removeTodoFile();
+        clearTodoLog();
     }
 
     private void recoverFromSymbolMapWriterFailure(CharSequence columnName) {
@@ -3196,11 +3214,17 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void removeTodoFile() {
+    private void clearTodoLog() {
         try {
-            if (!ff.remove(path.concat(TODO_FILE_NAME).$())) {
-                throw CairoException.instance(ff.errno()).put("Recovery operation completed successfully but I cannot remove todo file: ").put(path).put(". Please remove manually before opening table again,");
-            }
+            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+            todoMem.putLong(8, 0); // write out our instance hashes
+            todoMem.putLong(16, 0);
+            Unsafe.getUnsafe().storeFence();
+            todoMem.putLong(32, 0);
+            Unsafe.getUnsafe().storeFence();
+            todoMem.putLong(24, todoTxn);
+            todoMem.setSize(40);
         } finally {
             path.trimTo(rootLen);
         }
@@ -3450,7 +3474,7 @@ public class TableWriter implements Closeable {
             other.trimTo(rootLen);
         }
 
-        removeTodoFile();
+        clearTodoLog();
     }
 
     private void repairTruncate() {
@@ -3463,7 +3487,7 @@ public class TableWriter implements Closeable {
                 metadata.getSymbolMapCount(),
                 txMem.getLong(TX_OFFSET_TXN) + 1,
                 txMem.getLong(TX_OFFSET_DATA_VERSION) + 1);
-        removeTodoFile();
+        clearTodoLog();
     }
 
     private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
@@ -3835,25 +3859,20 @@ public class TableWriter implements Closeable {
 
     private void writeRestoreMetaTodo(CharSequence columnName) {
         try {
-            writeTodo(((long) metaPrevIndex << 8) | TODO_RESTORE_META);
+            todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
+            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+            todoMem.putLong(8, configuration.getInstanceHashLo()); // write out our instance hashes
+            todoMem.putLong(16, configuration.getInstanceHashHi());
+            Unsafe.getUnsafe().storeFence();
+            todoMem.putLong(32, 1);
+            todoMem.putLong(40, TODO_RESTORE_META);
+            todoMem.putLong(48, metaPrevIndex);
+            Unsafe.getUnsafe().storeFence();
+            todoMem.putLong(24, todoTxn);
+            todoMem.setSize(56);
+
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, columnName, e);
-        }
-    }
-
-    private void writeTodo(long code) {
-        try {
-            long fd = openAppend(path.concat(TODO_FILE_NAME).$());
-            try {
-                Unsafe.getUnsafe().putLong(tempMem8b, code);
-                if (ff.append(fd, tempMem8b, 8) != 8) {
-                    throw CairoException.instance(ff.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
-                }
-            } finally {
-                ff.close(fd);
-            }
-        } finally {
-            path.trimTo(rootLen);
         }
     }
 

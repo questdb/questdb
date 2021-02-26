@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
 import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -138,11 +139,6 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnAndOpenWriterNonPartitioned() throws Exception {
         testAddColumnAndOpenWriter(PartitionBy.NONE, 100000);
-    }
-
-    @Test
-    public void testAddColumnCannotOpenTodo() throws Exception {
-        testAddColumnRecoverableFault(new TodoAppendDenyingFacade());
     }
 
     @Test
@@ -392,23 +388,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnMetaSwapRenameFail2() throws Exception {
-        testUnrecoverableAddColumn(new FilesFacadeImpl() {
-            int count = 1;
-
-            @Override
-            public boolean remove(LPSZ name) {
-                return !(Chars.endsWith(name, TableUtils.TODO_FILE_NAME) && --count == 0) && super.remove(name);
-            }
-
-            @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME) && super.rename(from, to);
-            }
-        });
-    }
-
-    @Test
     public void testAddColumnNonPartitioned() throws Exception {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
@@ -581,20 +560,20 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "abc.top")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
             public long write(long fd, long address, long len, long offset) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
                 return super.write(fd, address, len, offset);
-            }
-
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "abc.top")) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
             }
         });
     }
@@ -749,6 +728,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAppendOutOfOrderPartitionedNewerFirst() throws Exception {
+        OutOfOrderUtils.initBuf();
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         testOutOfOrderRecordsNewerThanOlder(N, new DefaultCairoConfiguration(root) {
@@ -1317,9 +1297,14 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotOpenTodo() throws Exception {
         // trick constructor into thinking "_todo" file exists
         testConstructor(new FilesFacadeImpl() {
+            int counter = 2;
+
             @Override
-            public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableUtils.TODO_FILE_NAME) || super.exists(path);
+            public long openRW(LPSZ path) {
+                if (Chars.endsWith(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
+                    return -1;
+                }
+                return super.openRW(path);
             }
         });
     }
@@ -1540,32 +1525,25 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testConstructorTruncatedTodo() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
-            long fd = 7686876823L;
-
             @Override
-            public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableUtils.TODO_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
+            public long length(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
-                    return this.fd;
+                    return 12;
                 }
-                return super.openRO(name);
-            }
-
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    return -1;
-                }
-                return super.read(fd, buf, len, offset);
+                return super.length(name);
             }
         };
 
-        populateTable(ff);
+        TestUtils.assertMemoryLeak(() -> {
+                    create(ff, PartitionBy.DAY, 10000);
+                    try {
+                        populateTable0(ff, 10000);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "corrupt");
+                    }
+                }
+        );
     }
 
     @Test
@@ -1710,18 +1688,18 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testIncorrectTodoCode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
-            long buf = Unsafe.malloc(8);
-            try {
-                Unsafe.getUnsafe().putLong(buf, 89808823424L);
-
-                try (Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()) {
-                    long fd = Files.openRW(path);
-                    Assert.assertTrue(fd != -1);
-                    Assert.assertEquals(8, Files.write(fd, buf, 8, 0));
-                    Files.close(fd);
-                }
-            } finally {
-                Unsafe.free(buf, 8);
+            try (
+                    PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory();
+                    Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()
+                    ) {
+                mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
+                mem.putLong(32, 1);
+                mem.putLong(40, 9990001L);
+                mem.setSize(48);
+            }
+            try (TableWriter writer = new TableWriter(configuration, "all")) {
+                Assert.assertNotNull(writer);
+                Assert.assertTrue(writer.isOpen());
             }
 
             try (TableWriter writer = new TableWriter(configuration, "all")) {
@@ -1854,11 +1832,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveColumnCannotAppendTodo() throws Exception {
-        testRemoveColumnRecoverableFailure(new TodoAppendDenyingFacade());
-    }
-
-    @Test
     public void testRemoveColumnCannotMMapSwap() throws Exception {
         class X extends TestFilesFacade {
 
@@ -1912,11 +1885,6 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         }
         testRemoveColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRemoveColumnCannotOpenTodo() throws Exception {
-        testRemoveColumnRecoverableFailure(new TodoOpenDenyingFacade());
     }
 
     @Test
@@ -2055,19 +2023,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveColumnUnrecoverableRemoveTodoFailure() throws Exception {
-        class X extends FilesFacadeImpl {
-            int count = 1;
-
-            @Override
-            public boolean remove(LPSZ name) {
-                return (!Chars.endsWith(name, TableUtils.TODO_FILE_NAME) || --count != 0) && super.remove(name);
-            }
-        }
-        testUnrecoverableRemoveColumn(new X());
-    }
-
-    @Test
     public void testRemoveColumnUnrecoverableRenameFailure() throws Exception {
         class X extends FilesFacadeImpl {
             int count = 2;
@@ -2168,11 +2123,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameColumnCannotAppendTodo() throws Exception {
-        testRenameColumnRecoverableFailure(new TodoAppendDenyingFacade());
-    }
-
-    @Test
     public void testRenameColumnCannotMMapSwap() throws Exception {
         class X extends TestFilesFacade {
 
@@ -2226,11 +2176,6 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         }
         testRenameColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRenameColumnCannotOpenTodo() throws Exception {
-        testRenameColumnRecoverableFailure(new TodoOpenDenyingFacade());
     }
 
     @Test
@@ -2345,19 +2290,6 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testRenameColumnCannotRenameMetaSwap() throws Exception {
         testRenameColumnRecoverableFailure(new SwapMetaRenameDenyingFacade());
-    }
-
-    @Test
-    public void testRenameColumnUnrecoverableRemoveTodoFailure() throws Exception {
-        class X extends FilesFacadeImpl {
-            int count = 1;
-
-            @Override
-            public boolean remove(LPSZ name) {
-                return (!Chars.endsWith(name, TableUtils.TODO_FILE_NAME) || --count != 0) && super.remove(name);
-            }
-        }
-        testUnrecoverableRenameColumn(new X());
     }
 
     @Test
@@ -2674,54 +2606,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals("TableWriter{name=product}", writer.toString());
             }
         });
-    }
-
-    @Test
-    public void testTruncateCannotAppendTodo() throws Exception {
-        testTruncateRecoverableFailure(new TodoAppendDenyingFacade());
-    }
-
-    @Test
-    public void testTruncateCannotCreateTodo() throws Exception {
-        testTruncateRecoverableFailure(new TodoOpenDenyingFacade());
-    }
-
-    @Test
-    public void testTruncateCannotRemoveTodo() throws Exception {
-        class X extends FilesFacadeImpl {
-            @Override
-            public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableUtils.TODO_FILE_NAME) && super.remove(name);
-            }
-        }
-
-        X ff = new X();
-        final int N = 1000;
-        create(ff, PartitionBy.DAY, N);
-        Rnd rnd = new Rnd();
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-        try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        }, PRODUCT)) {
-            ts = populateProducts(writer, rnd, ts, N, 60 * 60000 * 1000L);
-            writer.commit();
-
-            try {
-                writer.truncate();
-                Assert.fail();
-            } catch (CairoError ignore) {
-            }
-            Assert.assertEquals(0, writer.size());
-        }
-
-        try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            populateProducts(writer, rnd, ts, N, 60 * 60000 * 1000L);
-            writer.commit();
-            Assert.assertEquals(N, writer.size());
-        }
     }
 
     @Test
@@ -3372,6 +3256,45 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
+    private void testOutOfOrderRecords(int N) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+
+                long ts;
+                long ts1 = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                long ts2 = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+
+                Rnd rnd = new Rnd();
+                int i = 0;
+                while (i < N) {
+                    TableWriter.Row r;
+                    boolean fail = rnd.nextBoolean();
+                    if (fail) {
+                        ts2 += 60 * 6000L * 1000L;
+                        ts = ts2;
+                    } else {
+                        ts1 += 60 * 6000L * 1000L;
+                        ts = ts1;
+                    }
+                    r = writer.newRow(ts);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.append();
+                    i++;
+                }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N, writer.size());
+            }
+        });
+    }
+
     private void testOutOfOrderRecordsFail(int N) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
@@ -3407,45 +3330,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
                 Assert.assertTrue(failureCount > 0);
-            }
-
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-                Assert.assertEquals(N, writer.size());
-            }
-        });
-    }
-
-    private void testOutOfOrderRecords(int N) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-
-                long ts;
-                long ts1 = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-                long ts2 = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-
-                Rnd rnd = new Rnd();
-                int i = 0;
-                while (i < N) {
-                    TableWriter.Row r;
-                    boolean fail = rnd.nextBoolean();
-                    if (fail) {
-                        ts2 += 60 * 6000L * 1000L;
-                        ts = ts2;
-                    } else {
-                        ts1 += 60 * 6000L * 1000L;
-                        ts = ts1;
-                    }
-                    r = writer.newRow(ts);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putSym(2, rnd.nextString(4));
-                    r.putSym(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    r.append();
-                    i++;
-                }
-                writer.commit();
-                Assert.assertEquals(N, writer.size());
             }
 
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
@@ -3850,36 +3734,6 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testTruncateRecoverableFailure(FilesFacade ff) throws NumericException {
-        final int N = 1000;
-        create(ff, PartitionBy.DAY, N * 2);
-        Rnd rnd = new Rnd();
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
-            }
-        };
-        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-        try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            ts = populateProducts(writer, rnd, ts, N, 60 * 60000L * 1000L);
-            writer.commit();
-
-            try {
-                writer.truncate();
-                Assert.fail();
-            } catch (CairoException ignore) {
-            }
-            Assert.assertEquals(N, writer.size());
-        }
-
-        try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-            populateProducts(writer, rnd, ts, N, 60 * 60000L * 1000L);
-            writer.commit();
-            Assert.assertEquals(N * 2, writer.size());
-        }
-    }
-
     private void testUnrecoverableAddColumn(FilesFacade ff) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             long ts = populateTable(FF);
@@ -4018,55 +3872,6 @@ public class TableWriterTest extends AbstractCairoTest {
         public boolean wasCalled() {
             return hit;
         }
-    }
-
-    private static class TodoOpenDenyingFacade extends TestFilesFacade {
-
-        boolean hit = false;
-
-        @Override
-        public long openAppend(LPSZ name) {
-            if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
-                hit = true;
-                return -1;
-            }
-            return super.openAppend(name);
-        }
-
-        @Override
-        public boolean wasCalled() {
-            return hit;
-        }
-    }
-
-    private static class TodoAppendDenyingFacade extends TestFilesFacade {
-        long fd = -1;
-        boolean hit = false;
-
-        @Override
-        public long append(long fd, long buf, int len) {
-            if (fd == this.fd) {
-                this.fd = -1;
-                this.hit = true;
-                return -1;
-            }
-            return super.append(fd, buf, len);
-        }
-
-        @Override
-        public long openAppend(LPSZ name) {
-            if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
-                return fd = super.openAppend(name);
-            }
-            return super.openAppend(name);
-        }
-
-        @Override
-        public boolean wasCalled() {
-            return hit;
-        }
-
-
     }
 
     static class CountingFilesFacade extends FilesFacadeImpl {

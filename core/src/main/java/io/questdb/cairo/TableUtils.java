@@ -99,7 +99,7 @@ public final class TableUtils {
     static final long META_OFFSET_COLUMN_TYPES = 128;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
-    static final String TODO_FILE_NAME = "_todo";
+    static final String TODO_FILE_NAME = "_todo_";
     private static final int MIN_SYMBOL_CAPACITY = 2;
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
@@ -196,6 +196,7 @@ public final class TableUtils {
                 }
                 mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
                 TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN);
+                resetTodoLog(ff, path, rootLen, mem);
             } finally {
                 if (dirFd > 0) {
                     if (ff.fsync(dirFd) != 0) {
@@ -210,6 +211,18 @@ public final class TableUtils {
         } else {
             throw CairoException.instance(ff.errno()).put("Could not open dir [path=").put(path).put(']');
         }
+    }
+
+    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MappedReadWriteMemory mem) {
+        mem.of(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), ff.getPageSize());
+        mem.putLong(24, 0); // txn check
+        Unsafe.getUnsafe().storeFence();
+        mem.putLong(8, 0); // hashLo
+        mem.putLong(16, 0); // hashHi
+        Unsafe.getUnsafe().storeFence();
+        mem.putLong(0, 0); // txn
+        mem.putLong(32, 0); // count
+        mem.setSize(40);
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {

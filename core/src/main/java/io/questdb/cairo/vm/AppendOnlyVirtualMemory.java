@@ -32,7 +32,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-public class AppendOnlyVirtualMemory extends PagedVirtualMemory {
+public class AppendOnlyVirtualMemory extends PagedVirtualMemory implements MappedReadWriteMemory {
     private static final Log LOG = LogFactory.getLog(AppendOnlyVirtualMemory.class);
     private FilesFacade ff;
     private long fd = -1;
@@ -108,6 +108,17 @@ public class AppendOnlyVirtualMemory extends PagedVirtualMemory {
         }
         mappedPage = -1;
         throw CairoException.instance(ff.errno()).put("Could not mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        // size of file does not mapper for mapping file for append
+        of(ff, name, pageSize);
     }
 
     public final void of(FilesFacade ff, LPSZ name, long pageSize) {

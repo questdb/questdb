@@ -1154,7 +1154,6 @@ public class SqlCompiler implements Closeable {
             CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
             try (TableReader reader = engine.getReader(securityContext, tableName)) {
                 cloneMetaData(tableName, cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
-
                 try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
                     RecordMetadata writerMetadata = backupWriter.getMetadata();
                     path.of(tableName).put(Files.SEPARATOR).put(reader.getVersion()).$();

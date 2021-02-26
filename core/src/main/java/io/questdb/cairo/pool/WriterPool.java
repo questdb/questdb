@@ -35,6 +35,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Iterator;
@@ -69,7 +70,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private final Path path = new Path();
     private final MicrosecondClock clock;
     private final CharSequence root;
-    @Nullable
+    @NotNull
     private final MessageBus messageBus;
 
     /**
@@ -78,7 +79,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * @param configuration configuration parameters.
      * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
      */
-    public WriterPool(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
+    public WriterPool(CairoConfiguration configuration, @NotNull MessageBus messageBus) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.messageBus = messageBus;

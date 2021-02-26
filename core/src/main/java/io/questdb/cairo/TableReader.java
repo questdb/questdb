@@ -89,6 +89,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long prevMinTimestamp = Long.MAX_VALUE;
     private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
+    private final MappedReadOnlyMemory todoMem = new SinglePageMappedReadOnlyPageMemory();
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         LOG.debug().$("open '").utf8(tableName).$('\'').$();
@@ -197,6 +198,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(path);
             Misc.free(metadata);
             Misc.free(txMem);
+            Misc.free(todoMem);
             freeColumns();
             freeTempMem();
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
@@ -715,8 +717,27 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void failOnPendingTodo() {
         try {
-            if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
-                throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
+            path.concat(TableUtils.TODO_FILE_NAME).$();
+            if (ff.exists(path)) {
+                todoMem.of(ff, path, ff.getPageSize());
+                long instanceHashLo;
+                long instanceHashHi;
+                long todoTxn;
+                long attemptsLeft = 10;
+                do {
+                    todoTxn = todoMem.getLong(24);
+                    Unsafe.getUnsafe().loadFence();
+                    instanceHashLo = todoMem.getLong(8);
+                    instanceHashHi = todoMem.getLong(16);
+                    Unsafe.getUnsafe().loadFence();
+                } while (todoTxn != todoMem.getLong(0) && --attemptsLeft > 0);
+
+                if (
+                        (instanceHashHi != 0 && instanceHashHi != configuration.getInstanceHashHi())
+                                || (instanceHashLo != 0 && instanceHashLo != configuration.getInstanceHashLo())
+                ) {
+                    throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
+                }
             }
         } finally {
             path.trimTo(rootLen);

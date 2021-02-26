@@ -187,9 +187,11 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
+        Path.clearThreadLocals();
         long mem = Unsafe.getMemUsed();
         long fileCount = Files.getOpenFileCount();
         runnable.run();
+        Path.clearThreadLocals();
         Assert.assertEquals(fileCount, Files.getOpenFileCount());
         Assert.assertEquals(mem, Unsafe.getMemUsed());
     }

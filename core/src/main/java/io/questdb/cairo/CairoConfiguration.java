@@ -222,4 +222,8 @@ public interface CairoConfiguration {
     default boolean isOutOfOrderEnabled() {
         return false;
     }
+
+    long getInstanceHashLo();
+
+    long getInstanceHashHi();
 }

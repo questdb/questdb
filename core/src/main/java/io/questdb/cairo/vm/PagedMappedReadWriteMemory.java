@@ -59,11 +59,6 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
     }
 
     @Override
-    public boolean isDeleted() {
-        return !ff.exists(fd);
-    }
-
-    @Override
     protected long allocateNextPage(int page) {
         final long offset = pageOffset(page);
         final long pageSize = getMapPageSize();
@@ -89,32 +84,8 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         ff.munmap(address, getPageSize(page));
     }
 
-    public long getFd() {
-        return fd;
-    }
-
     public boolean isOpen() {
         return fd != -1;
-    }
-
-    @Override
-    public final void of(FilesFacade ff, LPSZ name, long pageSize) {
-        close();
-        this.ff = ff;
-        fd = TableUtils.openFileRWOrFail(ff, name);
-        final long size = ff.length(fd);
-        setPageSize(pageSize);
-        ensurePagesListCapacity(size);
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
-        try {
-            // we may not be able to map page here
-            // make sure we close file before bailing out
-            jumpTo(size);
-        } catch (CairoException e) {
-            ff.close(fd);
-            fd = -1;
-            throw e;
-        }
     }
 
     @Override
@@ -139,6 +110,35 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
         }
     }
 
+    @Override
+    public final void of(FilesFacade ff, LPSZ name, long pageSize) {
+        close();
+        this.ff = ff;
+        fd = TableUtils.openFileRWOrFail(ff, name);
+        final long size = ff.length(fd);
+        setPageSize(pageSize);
+        ensurePagesListCapacity(size);
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+        try {
+            // we may not be able to map page here
+            // make sure we close file before bailing out
+            jumpTo(size);
+        } catch (CairoException e) {
+            ff.close(fd);
+            fd = -1;
+            throw e;
+        }
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
+    }
+
+    public long getFd() {
+        return fd;
+    }
+
     public final void of(FilesFacade ff, long fd, long pageSize) {
         close();
         this.ff = ff;
@@ -155,6 +155,11 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
             this.fd = -1;
             throw e;
         }
+    }
+
+    @Override
+    public void setSize(long size) {
+        jumpTo(size);
     }
 
     public void sync(int pageIndex, boolean async) {
@@ -188,7 +193,7 @@ public class PagedMappedReadWriteMemory extends PagedVirtualMemory implements Ma
             }
 
             // we could not truncate the file; we have to clear it via memory mapping
-            long mem = ff.mmap(fd, fileSize, 0,  Files.MAP_RW);
+            long mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW);
             Unsafe.getUnsafe().setMemory(mem + pageSize, fileSize - pageSize, (byte) 0);
             ff.munmap(mem, fileSize);
             LOG.debug().$("could not truncate, zeroed [fd=").$(fd).$(']').$();

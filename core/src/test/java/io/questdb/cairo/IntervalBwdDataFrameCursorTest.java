@@ -449,8 +449,6 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }
-            } finally {
-                Path.clearThreadLocals();
             }
         });
     }

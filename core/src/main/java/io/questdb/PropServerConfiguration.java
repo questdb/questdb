@@ -192,6 +192,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int outOfOrderOpenColumnQueueCapacity;
     private final int outOfOrderCopyQueueCapacity;
     private final int outOfOrderUpdPartitionSizeQueueCapacity;
+    private final long instanceHashLo;
+    private final long instanceHashHi;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -645,6 +647,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         this.buildInformation = buildInformation;
+
+        Rnd rnd = new Rnd(cairoConfiguration.getNanosecondClock().getTicks(), cairoConfiguration.getMicrosecondClock().getTicks());
+        this.instanceHashLo = rnd.nextLong();
+        this.instanceHashHi = rnd.nextLong();
     }
 
     @Override
@@ -1298,11 +1304,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
-        public long getTxPendingPartitionAreaSize() {
-            return sqlTxPendingPartitionAreaSize;
-        }
-
-        @Override
         public int getBindVariablePoolSize() {
             return sqlBindVariablePoolSize;
         }
@@ -1603,6 +1604,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getTxPendingPartitionAreaSize() {
+            return sqlTxPendingPartitionAreaSize;
+        }
+
+        @Override
         public long getWorkStealTimeoutNanos() {
             return workStealTimeoutNanos;
         }
@@ -1735,6 +1741,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public BuildInformation getBuildInformation() {
             return buildInformation;
+        }
+
+        @Override
+        public long getInstanceHashLo() {
+            return instanceHashLo;
+        }
+
+        @Override
+        public long getInstanceHashHi() {
+            return instanceHashHi;
         }
     }
 
