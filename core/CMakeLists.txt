@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.5)
 project(questdb)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # deal with windows slashes in JAVA_HOME
 if ($ENV{JAVA_HOME})
     FILE(TO_CMAKE_PATH $ENV{JAVA_HOME} JAVA_HOME)
@@ -31,6 +35,7 @@ set(
         src/main/c/share/os.h
         src/main/c/share/vec_agg_vanilla.h
         src/main/c/share/util.cpp
+        src/main/c/share/ooo.cpp
 )
 
 # JNI includes
@@ -111,6 +116,25 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT})
 
+# Your-external "mylib", add GLOBAL if the imported library is located in directories above the current.
+# add_library( asmlib SHARED IMPORTED GLOBAL)
+# You can define two import-locations: one for debug and one for release.
+# set_target_properties(asmlib PROPERTIES IMPORTED_LOCATION src/main/resources/libaelf64.a)
+
+
+# set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/src/main)
+# find_library(FOO_LIB 
+#         a
+#         HINTS "${CMAKE_PREFIX_PATH}/resources")
+
+set(ASMLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asm)
+include(${ASMLIB_SOURCE_DIR}/CMakeLists.txt)
+
+# add_library(libasm STATIC IMPORTED)
+# set_target_properties(libasm PROPERTIES 
+#         IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asm/build/libasm.a)
+
+
 #zlib
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 
@@ -132,7 +156,7 @@ if (AARCH64)
     add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
     set_target_properties(
             questdb-aarch64 PROPERTIES
-            COMPILE_FLAGS "-O3 -std=c++17"
+            COMPILE_FLAGS "-O3"
     )
 
     target_link_libraries(
@@ -159,21 +183,21 @@ else ()
     add_library(questdb-sse4 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-sse4 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -msse4.1 -fPIC -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -msse4.1 -fPIC"
     )
 
     # AVX2 lib
-    add_library(questdb-avx2 OBJECT ${VCL_FILES} src/main/c/share/ooo.cpp)
+    add_library(questdb-avx2 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-avx2 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -mavx2 -fPIC -mfma"
     )
 
     #AVX512 lib
     add_library(questdb-avx512 OBJECT ${VCL_FILES})
     set_target_properties(
             questdb-avx512 PROPERTIES
-            COMPILE_FLAGS "-m64 -O3 -mavx512f -fPIC -mfma -mavx512vl -mavx512bw -mavx512dq -std=c++17"
+            COMPILE_FLAGS "-m64 -O3 -mavx512f -fPIC -mfma -mavx512vl -mavx512bw -mavx512dq"
     )
 
     #SSE2 lib
@@ -188,12 +212,12 @@ else ()
     if (WIN32)
         set_target_properties(
                 questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -std=c++17 -Wno-attributes"
+                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -Wno-attributes"
         )
     else ()
         set_target_properties(
                 questdb-sse2 PROPERTIES
-                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -fPIC -std=c++17"
+                COMPILE_FLAGS "-m64 -O3 -march=core2 -msse2 -fPIC"
         )
     endif (WIN32)
 
@@ -203,11 +227,12 @@ else ()
     )
 
     target_link_libraries(
-            questdb
+            questdb      
             questdb-sse2
             questdb-sse4
             questdb-avx2
             questdb-avx512
+            asm            
     )
 endif (AARCH64)
 

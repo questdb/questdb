@@ -26,6 +26,7 @@
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
+#include "asmlib.h"
 
 typedef struct {
     uint64_t c8[256];
@@ -501,7 +502,7 @@ inline void merge_copy_var_column(
         auto len = *reinterpret_cast<T *>(src_var_ptr);
         auto char_count = len > 0 ? len * mult : 0;
         reinterpret_cast<T *>(dst_var + dst_var_offset)[0] = len;
-        memcpy(dst_var + dst_var_offset + sizeof(T), src_var_ptr + sizeof(T), char_count);
+        A_memcpy(dst_var + dst_var_offset + sizeof(T), src_var_ptr + sizeof(T), char_count);
         dst_var_offset += char_count + sizeof(T);
     }
 }
@@ -535,7 +536,7 @@ inline void merge_copy_var_column_top(
         auto len = *reinterpret_cast<T *>(src_var_ptr);
         auto char_count = len > 0 ? len * mult : 0;
         reinterpret_cast<T *>(dst_var + dst_var_offset)[0] = len;
-        memcpy(dst_var + dst_var_offset + sizeof(T), src_var_ptr + sizeof(T), char_count);
+        A_memcpy(dst_var + dst_var_offset + sizeof(T), src_var_ptr + sizeof(T), char_count);
         dst_var_offset += char_count + sizeof(T);
     }
 }
