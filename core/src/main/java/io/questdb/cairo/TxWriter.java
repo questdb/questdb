@@ -121,8 +121,8 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     @Override
-    public void read() {
-        super.read();
+    public void readUnchecked() {
+        super.readUnchecked();
         this.prevTransientRowCount = this.transientRowCount;
         this.prevMaxTimestamp = maxTimestamp;
         this.prevMinTimestamp = minTimestamp;
@@ -257,7 +257,8 @@ public final class TxWriter extends TxReader implements Closeable {
                 txMem,
                 symbolsCount,
                 txMem.getLong(TX_OFFSET_TXN) + 1,
-                txMem.getLong(TX_OFFSET_DATA_VERSION) + 1);
+                txMem.getLong(TX_OFFSET_DATA_VERSION) + 1,
+                txMem.getLong(TX_OFFSET_PARTITION_TABLE_VERSION) + 1);
     }
 
     public void resetTimestamp() {
@@ -303,8 +304,9 @@ public final class TxWriter extends TxReader implements Closeable {
         fixedRowCount = 0;
         txn++;
         txPartitionCount = 1;
+        attachedPositionDirtyIndex = 0;
         attachedPartitions.clear();
-        resetTxn(txMem, symbolsCount, txn, ++dataVersion);
+        resetTxn(txMem, symbolsCount, txn, ++dataVersion, ++partitionTableVersion);
     }
 
     public void updateMaxTimestamp(long timestamp) {

@@ -128,9 +128,9 @@ public class EngineMigration {
             path.of(configuration.getRoot());
             final int rootLen = path.length();
 
+            final NativeLPSZ nativeLPSZ = new NativeLPSZ();
             ff.iterateDir(path.$(), (name, type) -> {
                 if (type == Files.DT_DIR) {
-                    final NativeLPSZ nativeLPSZ = new NativeLPSZ();
                     nativeLPSZ.of(name);
                     if (Chars.notDots(nativeLPSZ)) {
                         path.trimTo(rootLen);
@@ -162,7 +162,7 @@ public class EngineMigration {
                                                 LOG.error().$("failed to upgrade table path=")
                                                         .$(path.trimTo(plen))
                                                         .$(", exception: ")
-                                                        .$((Sinkable) e).$();
+                                                        .$(e).$();
 
                                                 if (getMigrationToVersionCriticality(i) != 0) {
                                                     throw e;
@@ -180,7 +180,8 @@ public class EngineMigration {
                                                         .put("failed to write updated version to table Metadata file [path=")
                                                         .put(path.trimTo(plen))
                                                         .put(",latestVersion=")
-                                                        .put(i);
+                                                        .put(i)
+                                                        .put(']');
                                             }
                                         }
                                     }

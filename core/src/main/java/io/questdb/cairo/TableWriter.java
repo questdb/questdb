@@ -225,7 +225,7 @@ public class TableWriter implements Closeable {
             this.metaMem = new ReadOnlyMemory();
             this.txFile = new TxWriter(this.ff, this.path);
             this.txFile.open();
-            this.txFile.read();
+            this.txFile.readUnchecked();
             openMetaFile();
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
@@ -526,27 +526,19 @@ public class TableWriter implements Closeable {
     }
 
     public int attachPartition(long timestamp) {
-        if (partitionBy == PartitionBy.NONE) {
-            return TABLE_NOT_PARTITIONED;
-        }
-
         // Partitioned table must have a timestamp
-        if (metadata.getTimestampIndex() < 0) {
-            LOG.error()
-                    .$("partitioned table does not have timestamp column [path=").$(path)
-                    .$(']').$();
-            return TABLE_NOT_PARTITIONED;
-        }
-        if (inTransaction()) {
-            return CANNOT_ATTACH_IN_TRANSACTION;
-        }
+        // SQL compiler will check that table is partitioned
+        assert metadata.getTimestampIndex() > -1;
 
         CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
         if (txFile.attachedPartitionsContains(timestamp)) {
             LOG.info().$("partition is already attached [path=").$(path).$(']').$();
+            return PARTITION_ALREADY_ATTACHED;
         }
 
         if (metadata.getSymbolMapCount() > 0) {
+            LOG.error().$("attaching partitions on table with symbols not yet supported [table=").$(name)
+                    .$(",partition=").$ts(timestamp).I$();
             return TABLE_HAS_SYMBOLS;
         }
 
@@ -561,15 +553,21 @@ public class TableWriter implements Closeable {
                         LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
                     } else {
                         throw CairoException.instance(ff.errno()).put("File system error on trying to rename [from=")
-                                .put(other).put(",to=").put(path);
+                                .put(other).put(",to=").put(path).put(']');
                     }
                 }
             }
 
             if (ff.exists(path.$())) {
-                // find out lo, hi ranges of partition attached
+                // find out lo, hi ranges of partition attached as well as size
                 final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
                 if (partitionSize > 0) {
+                    if (inTransaction()) {
+                        LOG.info().$("committing open transaction before applying attach partition command [table=").$(name)
+                                .$(",partition=").$ts(timestamp).I$();
+                        commit();
+                    }
+
                     attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
@@ -593,6 +591,7 @@ public class TableWriter implements Closeable {
                     LOG.info().$("partition attached [path=").$(path).$(']').$();
                 } else {
                     LOG.error().$("cannot detect partition size [path=").$(path).$(",timestampColumn=").$(timestampCol).$(']').$();
+                    return PARTITION_EMPTY;
                 }
             } else {
                 LOG.error().$("cannot attach missing partition [path=").$(path).$(']').$();
@@ -603,7 +602,6 @@ public class TableWriter implements Closeable {
             path.trimTo(rootLen);
             other.trimTo(rootLen);
         }
-
 
         return StatusCode.OK;
     }
@@ -833,7 +831,7 @@ public class TableWriter implements Closeable {
             return false;
         }
         timestamp = getPartitionLo(timestamp);
-        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp || txFile.getPartitionsCount() < 2) {
+        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
             return false;
         }
 
@@ -1545,7 +1543,7 @@ public class TableWriter implements Closeable {
     }
 
     private void configureAppendPosition() {
-        this.txFile.read();
+        this.txFile.readUnchecked();
         if (this.txFile.getMaxTimestamp() > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.txFile.getMaxTimestamp());
             if (partitionBy == PartitionBy.NONE) {

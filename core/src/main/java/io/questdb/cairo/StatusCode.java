@@ -26,8 +26,8 @@ package io.questdb.cairo;
 
 public final class StatusCode {
     public final static int OK = 0;
-    public final static int TABLE_NOT_PARTITIONED = 1;
+    public final static int PARTITION_EMPTY = 1;
     public final static int TABLE_HAS_SYMBOLS = 2;
-    public final static int CANNOT_ATTACH_IN_TRANSACTION = 3;
     public final static int CANNOT_ATTACH_MISSING_PARTITION = 4;
+    public final static int PARTITION_ALREADY_ATTACHED = 5;
 }

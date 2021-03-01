@@ -1098,16 +1098,16 @@ public class SqlCompiler implements Closeable {
                     switch (statusCode) {
                         case StatusCode.OK:
                             break;
-                        case StatusCode.CANNOT_ATTACH_IN_TRANSACTION:
-                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach partition '").put(unquoted).put("' commit transaction first");
                         case StatusCode.CANNOT_ATTACH_MISSING_PARTITION:
-                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach missing partition folder '").put(unquoted).put('\'');
-                        case StatusCode.TABLE_NOT_PARTITIONED:
-                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach partitions to non-partitioned table");
+                            throw SqlException.$(lexer.lastTokenPosition(), "attach partition failed, folder '").put(unquoted).put("' does not exist");
                         case StatusCode.TABLE_HAS_SYMBOLS:
-                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach partitions to table with symbols");
+                            throw SqlException.$(lexer.lastTokenPosition(), "attaching partitions to tables with symbol columns not supported");
+                        case StatusCode.PARTITION_EMPTY:
+                            throw SqlException.$(lexer.lastTokenPosition(), "failed to attach partition '").put(unquoted).put("', data does not correspond to the partition folder or partition is empty");
+                        case StatusCode.PARTITION_ALREADY_ATTACHED:
+                            throw SqlException.$(lexer.lastTokenPosition(), "failed to attach partition '").put(unquoted).put("', partition already attached to the table");
                         default:
-                            throw SqlException.$(lexer.lastTokenPosition(), "cannot attach partition '").put(unquoted).put("', error ").put(statusCode);
+                            throw SqlException.$(lexer.lastTokenPosition(), "attach partition '").put(unquoted).put("', failed with error ").put(statusCode);
                     }
                     break;
                 default:
@@ -1267,7 +1267,7 @@ public class SqlCompiler implements Closeable {
                 }
             }
             mem.of(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN);
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L);
         } finally {
             mem.close();
         }

@@ -31,10 +31,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
-import io.questdb.std.NumericException;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -96,7 +95,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (CairoException e) {
                     // Insert row attempt expected to fail.
-                    Assert.assertTrue(e.getMessage().contains("Cannot insert rows out of order"));
+                    TestUtils.assertContains(e.getMessage(), "Cannot insert rows out of order");
                 }
             }
         });
@@ -162,7 +161,57 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compiler.compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[38] cannot attach missing partition folder '2020-01-01'", e.getMessage());
+                    Assert.assertEquals("[38] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachNonExisting() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
+
+                try {
+                    compiler.compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionInWrongDirectoryName() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        "2020-01-01",
+                        1);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                copyPartitionToBackup(src.getName(), "2020-01-01", dst.getName(), "2020-01-02");
+                try {
+                    String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-02'";
+                    compiler.compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (io.questdb.griffin.SqlException e) {
+                    TestUtils.assertEquals("[38] failed to attach partition '2020-01-02', data does not correspond to the partition folder or partition is empty", e.getMessage());
                 }
             }
         });
@@ -170,35 +219,33 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAttachPartitionMissingColumnType() throws Exception {
-        assertMemoryLeak(() -> {
-            assertMemoryLeak(() -> {
-                try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
+        assertMemoryLeak(() -> assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
 
-                    createPopulateTable(
-                            src.col("l", ColumnType.LONG)
-                                    .col("i", ColumnType.INT)
-                                    .timestamp("ts"),
-                            10000,
-                            "2020-01-01",
-                            10);
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        "2020-01-01",
+                        10);
 
-                    assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING));
-                    assertSchemaMismatch(src, dst -> dst.col("sym", ColumnType.SYMBOL));
-                    assertSchemaMismatch(src, dst -> dst.col("l1", ColumnType.LONG));
-                    assertSchemaMismatch(src, dst -> dst.col("i1", ColumnType.INT));
-                    assertSchemaMismatch(src, dst -> dst.col("b", ColumnType.BOOLEAN));
-                    assertSchemaMismatch(src, dst -> dst.col("db", ColumnType.DOUBLE));
-                    assertSchemaMismatch(src, dst -> dst.col("fl", ColumnType.FLOAT));
-                    assertSchemaMismatch(src, dst -> dst.col("dt", ColumnType.DATE));
-                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.TIMESTAMP));
-                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.LONG256));
-                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.BINARY));
-                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.BYTE));
-                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.CHAR));
-                    assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.SHORT));
-                }
-            });
-        });
+                assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING));
+                assertSchemaMismatch(src, dst -> dst.col("sym", ColumnType.SYMBOL));
+                assertSchemaMismatch(src, dst -> dst.col("l1", ColumnType.LONG));
+                assertSchemaMismatch(src, dst -> dst.col("i1", ColumnType.INT));
+                assertSchemaMismatch(src, dst -> dst.col("b", ColumnType.BOOLEAN));
+                assertSchemaMismatch(src, dst -> dst.col("db", ColumnType.DOUBLE));
+                assertSchemaMismatch(src, dst -> dst.col("fl", ColumnType.FLOAT));
+                assertSchemaMismatch(src, dst -> dst.col("dt", ColumnType.DATE));
+                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.TIMESTAMP));
+                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.LONG256));
+                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.BINARY));
+                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.BYTE));
+                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.CHAR));
+                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.SHORT));
+            }
+        }));
     }
 
     @Test
@@ -238,6 +285,258 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         assertSchemaMatch(dst -> dst.col("byt", ColumnType.BYTE));
         assertSchemaMatch(dst -> dst.col("ch", ColumnType.CHAR));
         assertSchemaMatch(dst -> dst.col("sh", ColumnType.SHORT));
+    }
+
+    @Test
+    public void testAttachPartitionsNonPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.NONE)) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        "2020-01-01",
+                        10);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                try {
+                    copyAttachPartition(src, dst, 0, "2020-01-09");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertEquals("[38] table is not partitioned[errno=0]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionsTableInTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+
+                int partitionRowCount = 111;
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        partitionRowCount,
+                        "2020-01-09",
+                        1);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                long timestamp = TimestampFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
+                copyPartitionToBackup(src.getName(), "2020-01-09", dst.getName());
+
+                // Add 1 row without commit
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
+                    long insertTs = TimestampFormatUtils.parseTimestamp("2020-01-10T23:59:59.999z");
+                    var row = writer.newRow(insertTs);
+                    row.putLong(0, 1L);
+                    row.putInt(1, 1);
+                    row.append();
+
+                    Assert.assertTrue(writer.inTransaction());
+
+                    // This commits the append before attacheing
+                    writer.attachPartition(timestamp);
+                    Assert.assertEquals(partitionRowCount + 1, writer.size());
+
+                    Assert.assertFalse(writer.inTransaction());
+                }
+
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionsWithSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL)
+                                .timestamp("ts"),
+                        10000,
+                        "2020-01-01",
+                        10);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .col("s", ColumnType.SYMBOL));
+
+                try {
+                    copyAttachPartition(src, dst, 0, "2020-01-09");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertEquals("[38] attaching partitions to tables with symbol columns not supported", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachSamePartitionTwice() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        "2020-01-01",
+                        10);
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                copyAttachPartition(src, dst, 0, "2020-01-09");
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-09'";
+
+                try {
+                    compiler.compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] failed to attach partition '2020-01-09', partition already attached to the table", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCannotMapTimestampColumn() throws Exception {
+        var ff = new FilesFacadeImpl() {
+            private long tsdFd;
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (tsdFd != fd) {
+                    return super.mmap(fd, len, offset, mode);
+                }
+                return -1;
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                var fd = super.openRO(name);
+                if (Chars.endsWith(name, "ts.d")) {
+                    this.tsdFd = fd;
+                }
+                return fd;
+            }
+        };
+
+        testSqlFailedOnFsOperation(ff, "Cannot map", false);
+    }
+
+    @Test
+    public void testCannotReadTimestampColumn() throws Exception {
+        var ff = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, "ts.d")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [2]: Cannot open:", false);
+    }
+
+    @Test
+    public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
+        var ff = new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ name) {
+                if (Chars.endsWith(name, "ts.d")) {
+                    return false;
+                }
+                return super.exists(name);
+            }
+        };
+
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [0]: Doesn't exist:", false);
+    }
+
+    @Test
+    public void testCannotRenameDetachedFolderOnAttach() throws Exception {
+        var ff = new FilesFacadeImpl() {
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(to, "2020-01-01")) {
+                    return false;
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [2]: File system error on trying to rename [from=", true);
+    }
+
+    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String errorContains, boolean reCopy) throws Exception {
+        var config = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(config, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(config, "dst", PartitionBy.DAY)) {
+                try (var engine2 = new CairoEngine(config); var compiler2 = new SqlCompiler(engine2)) {
+                    var tempEngine = engine;
+                    var tempCompiler = compiler;
+                    engine = engine2;
+                    compiler = compiler2;
+
+                    createPopulateTable(
+                            src.col("l", ColumnType.LONG)
+                                    .col("i", ColumnType.INT)
+                                    .timestamp("ts"),
+                            100,
+                            "2020-01-01",
+                            1);
+
+                    CairoTestUtils.create(dst.timestamp("ts")
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG));
+
+                    try {
+                        copyAttachPartition(src, dst, 0, "2020-01-01");
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getMessage(), errorContains);
+                    } finally {
+                        engine2.releaseAllWriters();
+                        engine2.releaseAllReaders();
+                        engine = tempEngine;
+                        compiler = tempCompiler;
+                    }
+                }
+
+                // second attempt without FilesFacade override should work ok
+                copyAttachPartition(src, dst, 0, !reCopy, "2020-01-01");
+            }
+        });
     }
 
     private void assertSchemaMatch(AddColumn tm) throws Exception {
@@ -283,13 +582,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyAttachPartition(src, dst, 0, "2020-01-10");
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("Column file does not exist"));
+                TestUtils.assertContains(e.getMessage(), "Column file does not exist");
             }
             Files.rmdir(path.concat(root).concat("dst").concat("2020-01-10").$());
         }
     }
 
-    private void copyAttachPartition(TableModel src, TableModel dst, int countAjdustment, String... partitionList) throws IOException, SqlException, NumericException {
+    private void copyAttachPartition(TableModel src, TableModel dst, int countAjdustment, String... partitionList) throws SqlException, NumericException, IOException {
+        copyAttachPartition(src, dst, countAjdustment, false, partitionList);
+    }
+
+    private void copyAttachPartition(TableModel src, TableModel dst, int countAjdustment, boolean skipCopy, String... partitionList) throws IOException, SqlException, NumericException {
         StringBuilder partitions = new StringBuilder();
         for (int i = 0; i < partitionList.length; i++) {
             if (i > 0) {
@@ -316,8 +619,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             String withClause = ", t1 as (select 1 as id, count() as cnt from src WHERE " + partitionsIn + ")\n";
-            for (int i = 0; i < partitionList.length; i++) {
-                copyPartitionToBackup(src.getName(), partitionList[i], dst.getName());
+
+            if (!skipCopy) {
+                for (int i = 0; i < partitionList.length; i++) {
+                    copyPartitionToBackup(src.getName(), partitionList[i], dst.getName());
+                }
             }
 
             // Alter table
@@ -369,20 +675,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
     }
 
-    private int readAllRows(TableReader tableReader) {
-        try (var cursor = new FullFwdDataFrameCursor()) {
-            cursor.of(tableReader);
-            DataFrame frame;
-            int count = 0;
-            while ((frame = cursor.next()) != null) {
-                for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {
-                    count++;
-                }
-            }
-            return count;
-        }
-    }
-
     private void copyDirectory(Path from, Path to) throws IOException {
         LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
         if (Files.mkdir(to, DIR_MODE) != 0) {
@@ -403,10 +695,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void copyPartitionToBackup(String src, String partitionFolder, String dst) throws IOException {
-        try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(partitionFolder).$();
+        copyPartitionToBackup(src, partitionFolder, dst, partitionFolder);
+    }
+
+    private void copyPartitionToBackup(String src, String srcDir, String dst, String dstDir) throws IOException {
+        try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(srcDir).$();
              Path backup = new Path().of(configuration.getRoot())) {
 
-            copyDirectory(p1, backup.concat(dst).concat(partitionFolder).$());
+            copyDirectory(p1, backup.concat(dst).concat(dstDir).$());
         }
     }
 
@@ -418,6 +714,20 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 printer.print(cursor, rcf.getMetadata(), true);
                 return sink;
             }
+        }
+    }
+
+    private int readAllRows(TableReader tableReader) {
+        try (var cursor = new FullFwdDataFrameCursor()) {
+            cursor.of(tableReader);
+            DataFrame frame;
+            int count = 0;
+            while ((frame = cursor.next()) != null) {
+                for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {
+                    count++;
+                }
+            }
+            return count;
         }
     }
 

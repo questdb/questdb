@@ -149,7 +149,7 @@ public class TxReader implements Closeable {
         }
     }
 
-    public void read() {
+    public void readUnchecked() {
         this.txn = roTxMem.getLong(TX_OFFSET_TXN);
         this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);

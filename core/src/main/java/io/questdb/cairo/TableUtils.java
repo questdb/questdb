@@ -187,7 +187,7 @@ public final class TableUtils {
                     }
                 }
                 mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-                TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN);
+                TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
             } finally {
                 if (dirFd > 0) {
                     if (ff.fsync(dirFd) != 0) {
@@ -309,7 +309,7 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
     }
 
-    public static void resetTxn(VirtualMemory txMem, int symbolMapCount, long txn, long dataVersion) {
+    public static void resetTxn(VirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
@@ -326,6 +326,8 @@ public final class TableUtils {
         txMem.putLong(TX_OFFSET_STRUCT_VERSION, 0);
         // data version
         txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
+        // partition table version
+        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
 
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
@@ -687,33 +689,36 @@ public final class TableUtils {
                 if (fd == -1) {
                     throw CairoException.instance(ff.errno()).put("Cannot open: ").put(path);
                 }
-                long fileSize = ff.length(fd);
-                long mappedMem = ff.mmap(fd, fileSize, 0, Files.MAP_RO);
-                if (mappedMem < 0) {
-                    throw CairoException.instance(ff.errno()).put("Cannot map: ").put(path);
-                }
                 try {
-                    long minTimestamp;
-                    long maxTimestamp = timestamp;
-                    long size = 0L;
+                    long fileSize = ff.length(fd);
+                    long mappedMem = ff.mmap(fd, fileSize, 0, Files.MAP_RO);
+                    if (mappedMem < 0) {
+                        throw CairoException.instance(ff.errno()).put("Cannot map: ").put(path);
+                    }
+                    try {
+                        long minTimestamp;
+                        long maxTimestamp = timestamp;
+                        long size = 0L;
 
-                    for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
-                        long ts = Unsafe.getUnsafe().getLong(ptr);
-                        if (ts >= maxTimestamp) {
-                            maxTimestamp = ts;
-                            size++;
-                        } else {
-                            break;
+                        for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
+                            long ts = Unsafe.getUnsafe().getLong(ptr);
+                            if (ts >= maxTimestamp) {
+                                maxTimestamp = ts;
+                                size++;
+                            } else {
+                                break;
+                            }
                         }
+                        if (size > 0) {
+                            minTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
+                            Unsafe.getUnsafe().putLong(tempMem16b, minTimestamp);
+                            Unsafe.getUnsafe().putLong(tempMem16b + Long.BYTES, maxTimestamp);
+                        }
+                        return size;
+                    } finally {
+                        ff.munmap(mappedMem, fileSize);
                     }
-                    if (size > 0) {
-                        minTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
-                        Unsafe.getUnsafe().putLong(tempMem16b, minTimestamp);
-                        Unsafe.getUnsafe().putLong(tempMem16b + Long.BYTES, maxTimestamp);
-                    }
-                    return size;
                 } finally {
-                    ff.munmap(mappedMem, fileSize);
                     ff.close(fd);
                 }
             } else {
