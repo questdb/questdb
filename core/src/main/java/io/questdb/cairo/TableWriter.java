@@ -2150,6 +2150,7 @@ public class TableWriter implements Closeable {
                     final OutOfOrderPartitionTask partitionTask = partitionQueue.get(cursor);
                     if (oooErrorCount.get() > 0) {
                         // do we need to free anything on the task?
+                        bumpPartitionUpdateCount();
                         partitionSubSeq.done(cursor);
                         partitionTask.getDoneLatch().countDown();
                     } else {
@@ -2259,10 +2260,8 @@ public class TableWriter implements Closeable {
             );
         } catch (CairoException | CairoError e) {
             LOG.error().$((Sinkable) e).$();
-            OutOfOrderCopyJob.copyIdleQuick(task);
         } catch (Throwable e) {
             LOG.error().$(e).$();
-            OutOfOrderCopyJob.copyIdleQuick(task);
         }
     }
 
@@ -2290,9 +2289,7 @@ public class TableWriter implements Closeable {
             );
         } catch (CairoException | CairoError e) {
             LOG.error().$((Sinkable) e).$();
-            OutOfOrderOpenColumnJob.openColumnIdle(openColumnTask);
         } catch (Throwable e) {
-            OutOfOrderOpenColumnJob.openColumnIdle(openColumnTask);
             LOG.error().$(e).$();
         }
     }
@@ -2499,11 +2496,7 @@ public class TableWriter implements Closeable {
             );
         } catch (CairoException | CairoError e) {
             LOG.error().$((Sinkable) e).$();
-            bumpPartitionUpdateCount();
-            oooLatch.countDown();
         } catch (Throwable e) {
-            bumpPartitionUpdateCount();
-            oooLatch.countDown();
             LOG.error().$(e).$();
         }
     }

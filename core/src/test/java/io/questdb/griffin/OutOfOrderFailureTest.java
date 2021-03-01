@@ -268,9 +268,75 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopLastDataOOODataFailRetryCantWriteTop() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailRetryMapRoContended() throws Exception {
+        counter.set(1);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
+
+            long theFd = 0;
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (fd == theFd && mode == Files.MAP_RO) {
+                    theFd = 0;
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+        });
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailRetryMapRo() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
+
+            long theFd = 0;
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (fd == theFd && mode == Files.MAP_RO) {
+                    theFd = 0;
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+        });
+    }
+
+    @Test
     public void testColumnTopLastDataOOODataFailRetryRename1Contended() throws Exception {
         counter.set(0);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
+    }
+
+    @Test
+    public void testColumnTopLastDataOOODataFailRetryRename1() throws Exception {
+        counter.set(0);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Backup);
     }
 
     @Test
@@ -286,61 +352,17 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testColumnTopLastDataOOODataFailRetryMapRoContended() throws Exception {
-        counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, new FilesFacadeImpl() {
-
-            long theFd = 0;
-            @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
-                }
-                return fd;
-            }
-
-            @Override
-            public long mmap(long fd, long len, long offset, int mode) {
-                if (fd == theFd && mode == Files.MAP_RO) {
-                    theFd = 0;
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, mode);
-            }
-        });
+    public void testColumnTopLastDataOOODataFailRetryRename2() throws Exception {
+        counter.set(0);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastDataOOODataFailRetry0, ff19700107Fwd);
     }
 
     @Test
-    public void testColumnTopLastOOOPrefixContendedReadStrLen() throws Exception {
+    public void testColumnTopLastOOOPrefixReadBinLenContended() throws Exception {
         counter.set(1);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             long theFd;
-            @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
-                    theFd = fd;
-                }
-                return fd;
-            }
 
-            @Override
-            public long read(long fd, long buf, long len, long offset) {
-                if (fd == theFd && len == Integer.BYTES) {
-                    theFd = 0;
-                    return 2;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-        });
-    }
-
-    @Test
-    public void testColumnTopLastOOOPrefixContendedReadBinLen() throws Exception {
-        counter.set(1);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
-            long theFd;
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
@@ -362,6 +384,84 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopLastOOOPrefixReadBinLen() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+            long theFd;
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (fd == theFd && len == Long.BYTES) {
+                    theFd = 0;
+                    return 2;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnTopLastOOOPrefixReadStrLenContended() throws Exception {
+        counter.set(1);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+            long theFd;
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (fd == theFd && len == Integer.BYTES) {
+                    theFd = 0;
+                    return 2;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnTopLastOOOPrefixReadStrLen() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
+            long theFd;
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-08" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (fd == theFd && len == Integer.BYTES) {
+                    theFd = 0;
+                    return 2;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        });
+    }
+
+    @Test
     public void testColumnTopMidAppendBlankContended() throws Exception {
         // todo: deficient rollback process, empty top file could be left behind
         counter.set(1);
@@ -369,9 +469,30 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopMidAppendBlank() throws Exception {
+        // todo: deficient rollback process, empty top file could be left behind
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
+    }
+
+    @Test
     public void testColumnTopMidAppendContended() throws Exception {
         counter.set(3);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnTopMidAppend() throws Exception {
+        counter.set(3);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
@@ -409,9 +530,41 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopMidDataMergeDataFailRetryReadTop() throws Exception {
+        counter.set(2);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
+            long theFd;
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v2.top") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long address, long len, long offset) {
+                if (fd == theFd) {
+                    theFd = 0;
+                    return 5;
+                }
+                return super.read(fd, address, len, offset);
+            }
+        });
+    }
+
+    @Test
     public void testColumnTopMidDataMergeDataFailRetryRename1Contended() throws Exception {
         counter.set(0);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
+    }
+
+    @Test
+    public void testColumnTopMidDataMergeDataFailRetryRename1() throws Exception {
+        counter.set(0);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Backup);
     }
 
     @Test
@@ -427,6 +580,12 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopMidDataMergeDataFailRetryRename2() throws Exception {
+        counter.set(0);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
+    }
+
+    @Test
     public void testColumnTopMidDataMergeDataFailRetryRename2Parallel() throws Exception {
         counter.set(0);
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidDataMergeDataFailRetry0, ff19700107Fwd);
@@ -439,50 +598,30 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopMidMergeBlankFailRetryMapRW() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMapRW);
+    }
+
+    @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRWContended() throws Exception {
         counter.set(1);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffOpenRW);
     }
 
     @Test
-    public void testColumnTopMidMergeBlankFailRetryOpenRwContended() throws Exception {
-        counter.set(3);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
-                    return -1;
-                }
-                return super.openRW(name);
-            }
-        });
+    public void testColumnTopMidMergeBlankFailRetryOpenRW() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffOpenRW);
     }
 
-    @Test
-    public void testColumnTopMidMergeBlankFailRetryRename1Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
-    }
-
-    @Test
-    public void testColumnTopMidMergeBlankFailRetryRename1Parallel() throws Exception {
-        counter.set(0);
-        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
-    }
-
-    @Test
-    public void testColumnTopMidMergeBlankFailRetryRename2Contended() throws Exception {
-        counter.set(0);
-        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
-    }
-
-/*
     @Test
     public void testColumnTopMidMergeBlankFailRetryMergeFixMapRWContended() throws Exception {
         counter.set(1);
         executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
 
             long theFd = 0;
+
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
@@ -504,7 +643,34 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         });
     }
 
-*/
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryMergeFixMapRW() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+
+            long theFd = 0;
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-06-n-14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (fd != theFd) {
+                    return super.mmap(fd, len, offset, mode);
+                }
+
+                theFd = 0;
+                return -1;
+            }
+        });
+    }
+
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRw2Contended() throws Exception {
         counter.set(3);
@@ -520,6 +686,78 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testColumnTopMidMergeBlankFailRetryOpenRw2() throws Exception {
+        counter.set(3);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryOpenRwContended() throws Exception {
+        counter.set(3);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryOpenRw() throws Exception {
+        counter.set(3);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryRename1Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryRename1() throws Exception {
+        counter.set(0);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryRename1Parallel() throws Exception {
+        counter.set(0);
+        executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Backup);
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryRename2Contended() throws Exception {
+        counter.set(0);
+        executeWithPool(0, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
+    }
+
+    @Test
+    public void testColumnTopMidMergeBlankFailRetryRename2() throws Exception {
+        counter.set(0);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
+    }
+
+    @Test
     public void testColumnTopMidMergeBlankFailRetryRename2Parallel() throws Exception {
         counter.set(0);
         executeWithPool(4, OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ff19700106Fwd);
@@ -532,9 +770,43 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionedCreateDirFail() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testColumnTopMidMergeBlankColumnFailRetry0, ffMkDirFailure);
+    }
+
+    @Test
     public void testPartitionedDataAppendOODataContended() throws Exception {
         counter.set(4);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataFailRetry0, new FilesFacadeImpl() {
+
+            private final AtomicInteger mapCounter = new AtomicInteger(2);
+            private long theFd = 0;
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (theFd == fd && mapCounter.decrementAndGet() == 0) {
+                    theFd = 0;
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionedDataAppendOOData() throws Exception {
+        counter.set(4);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataFailRetry0, new FilesFacadeImpl() {
 
             private final AtomicInteger mapCounter = new AtomicInteger(2);
             private long theFd = 0;
@@ -574,15 +846,41 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionedDataAppendOODataIndexed() throws Exception {
+        counter.set(3);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
     public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
         counter.set(103);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
+    public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
+        counter.set(103);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
+    }
+
+    @Test
     public void testPartitionedDataAppendOODataNotNullStrTailIndexAllocateFailContended() throws Exception {
         counter.set(2);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
+    }
+
+    @Test
+    public void testPartitionedDataAppendOODataNotNullStrTailIndexAllocateFail() throws Exception {
+        counter.set(2);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
     }
 
     @Test
@@ -598,9 +896,42 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionedDataAppendOOPrependOOData() throws Exception {
+        counter.set(150);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
+    }
+
+    @Test
     public void testPartitionedDataAppendOOPrependOODataMapVarContended() throws Exception {
         counter.set(3);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
+
+            private long theFd = 0;
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (theFd == fd) {
+                    theFd = 0;
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
+                    theFd = fd;
+                }
+                return fd;
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionedDataAppendOOPrependOODataMapVar() throws Exception {
+        counter.set(3);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new FilesFacadeImpl() {
 
             private long theFd = 0;
 
@@ -637,6 +968,12 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionedOOPrefixesExistingPartitions() throws Exception {
+        counter.set(1);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, ffOpenIndexFailure);
+    }
+
+    @Test
     public void testPartitionedOOPrefixesExistingPartitionsCreateDirsContended() throws Exception {
         counter.set(2);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
@@ -651,9 +988,29 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionedOOPrefixesExistingPartitionsCreateDirs() throws Exception {
+        counter.set(2);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
+            @Override
+            public int mkdirs(LPSZ path, int mode) {
+                if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        });
+    }
+
+    @Test
     public void testPartitionedOpenTimestampFailContended() throws Exception {
         counter.set(3);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
+    }
+
+    @Test
+    public void testPartitionedOpenTimestampFail() throws Exception {
+        counter.set(3);
+        executeWithoutPool(OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
     }
 
     private static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
@@ -800,7 +1157,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         } catch (CairoException ignored) {
         }
 
-        System.out.println("next");
         assertOutOfOrderDataConsistency(
                 engine,
                 compiler,
@@ -1928,7 +2284,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     private void executeWithPool(int workerCount, OutOfOrderCode runnable, FilesFacade ff) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -2029,6 +2385,35 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
                         final SqlCompiler compiler = new SqlCompiler(engine);
                         final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 ) {
+                    runnable.run(engine, compiler, sqlExecutionContext);
+                } finally {
+                    OutOfOrderUtils.freeBuf();
+                }
+            }
+        });
+    }
+
+    private void executeWithoutPool(OutOfOrderCode runnable, FilesFacade ff) throws Exception {
+        executeVanilla(() -> {
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+
+                @Override
+                public boolean isOutOfOrderEnabled() {
+                    return true;
+                }
+            };
+
+            try (
+                    final CairoEngine engine = new CairoEngine(configuration);
+                    final SqlCompiler compiler = new SqlCompiler(engine);
+                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                OutOfOrderUtils.initBuf(1);
+                try {
                     runnable.run(engine, compiler, sqlExecutionContext);
                 } finally {
                     OutOfOrderUtils.freeBuf();

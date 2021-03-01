@@ -122,6 +122,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 createDirsOrFail(ff, path, configuration.getMkDirMode());
             } catch (Throwable e) {
                 LOG.debug().$("idle new").$();
+                tableWriter.bumpOooErrorCount();
                 tableWriter.bumpPartitionUpdateCount();
                 doneLatch.countDown();
                 throw e;
@@ -442,6 +443,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 LOG.debug().$("idle existing").$();
                 OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 OutOfOrderUtils.close(ff, srcTimestampFd);
+                tableWriter.bumpOooErrorCount();
                 tableWriter.bumpPartitionUpdateCount();
                 doneLatch.countDown();
                 throw e;
