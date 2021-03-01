@@ -327,6 +327,13 @@ public class EngineMigration {
         }
     }
 
+    static int readIntAtOffset(FilesFacade ff, Path path, long tempMem4b, long offset, long fd) {
+        if (ff.read(fd, tempMem4b, Integer.BYTES, offset) != Integer.BYTES) {
+            throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
+        }
+        return Unsafe.getUnsafe().getInt(tempMem4b);
+    }
+
     class MigrationContext {
         private final long tempMemory;
         private final int tempMemoryLen;

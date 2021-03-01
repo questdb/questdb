@@ -569,9 +569,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         reloadSymbolMapCounts();
         partitionCount = calculatePartitionCount();
-//        if (partitionCount > 0) {
-//            updateCapacities();
-//        }
     }
 
     private int calculatePartitionCount() {
@@ -809,7 +806,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         partitionCount++;
         LOG.info().$("inserted partition [path=").$(path).$(",timestamp=").$ts(timestamp).I$();
-        // updateCapacities();
     }
 
     boolean isColumnCached(int columnIndex) {
@@ -1223,13 +1219,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
     }
-
-//    private void updateCapacities() {
-//        int capacity = getColumnBase(partitionCount);
-//        columns.setPos(capacity + 2);
-//        bitmapIndexes.setPos(capacity + 2);
-//        this.columnTops.setPos(capacity / 2);
-//    }
 
     @FunctionalInterface
     private interface ReloadMethod {
