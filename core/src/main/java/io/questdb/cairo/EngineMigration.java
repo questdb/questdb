@@ -137,6 +137,7 @@ public class EngineMigration {
                     if (Chars.notDots(nativeLPSZ)) {
                         path.trimTo(rootLen);
                         path.concat(nativeLPSZ);
+                        copyPath.trimTo(rootLen);
                         copyPath.concat(nativeLPSZ);
                         final int plen = path.length();
                         path.concat(TableUtils.META_FILE_NAME);

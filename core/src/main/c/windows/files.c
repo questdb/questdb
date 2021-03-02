@@ -37,7 +37,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
     const char* from = (const char *) lpszFrom;
     const char* to = (const char *) lpszTo;
-    if (!CopyFile(from, to, true)) {
+    if (CopyFile(from, to, TRUE) == FALSE) {
         return -1;
     }
     return 1;
