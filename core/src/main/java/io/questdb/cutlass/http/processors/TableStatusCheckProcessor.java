@@ -79,8 +79,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
                 r.sendHeader();
 
                 r.put('{').putQuoted("status").put(':').putQuoted(toResponse(check)).put('}');
-                r.sendChunk();
-                r.done();
+                r.sendChunk(true);
             } else {
                 context.simpleResponse().sendStatus(200, toResponse(check));
             }

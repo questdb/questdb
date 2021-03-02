@@ -264,7 +264,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 }
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (socket.resetToBookmark()) {
-                    socket.sendChunk();
+                    socket.sendChunk(false);
                 } else {
                     // what we have here is out unit of data, column value or query
                     // is larger that response content buffer
@@ -464,8 +464,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
-        socket.sendChunk();
-        socket.done();
+        socket.sendChunk(true);
     }
 
     private void sendDone(
@@ -474,7 +473,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.count > -1) {
             state.count = -1;
-            socket.sendChunk();
+            socket.sendChunk(true);
+            return;
         }
         socket.done();
     }

@@ -220,7 +220,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (socket.resetToBookmark()) {
-                    socket.sendChunk();
+                    socket.sendChunk(false);
                 } else {
                     // what we have here is out unit of data, column value or query
                     // is larger that response content buffer
@@ -266,8 +266,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         header(socket, keepAliveHeader);
         socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
-        socket.sendChunk();
-        socket.done();
+        socket.sendChunk(true);
         readyForNextRequest(context);
     }
 
