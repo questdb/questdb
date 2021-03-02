@@ -231,9 +231,9 @@ public class EngineMigration {
             int pathDirLen = path.length();
 
             path.concat(TXN_FILE_NAME).$();
-            var txMem = migrationContext.getRwMemory();
+
             LOG.debug().$("opening for rw [path=").$(path).I$();
-            txMem.of(ff, path.$(), ff.getPageSize());
+            var txMem = migrationContext.creteRwMemoryOf(ff, path.$(), ff.getPageSize());
             var tempMem8b = migrationContext.getTempMemory(8);
 
             var txFileUpdate = migrationContext.getTempVirtualMem();
@@ -361,7 +361,10 @@ public class EngineMigration {
             return (int) engine.getNextTableId();
         }
 
-        public ReadWriteMemory getRwMemory() {
+        public ReadWriteMemory creteRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
+            // re-use same rwMemory
+            // assumption that it is re-usable after the close() and then of()  methods called.
+            rwMemory.of(ff, path, pageSize);
             return rwMemory;
         }
 

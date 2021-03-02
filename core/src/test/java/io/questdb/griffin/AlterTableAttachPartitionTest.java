@@ -443,7 +443,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "Cannot map", false);
+        testSqlFailedOnFsOperation(ff, false, "Cannot map");
     }
 
     @Test
@@ -458,7 +458,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [2]: Cannot open:", false);
+        testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [", "]: Cannot open:");
     }
 
     @Test
@@ -473,7 +473,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [0]: Doesn't exist:", false);
+        testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [0]: Doesn't exist:");
     }
 
     @Test
@@ -488,10 +488,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "[12] table 'dst' could not be altered: [2]: File system error on trying to rename [from=", true);
+        testSqlFailedOnFsOperation(ff, true, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
     }
 
-    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String errorContains, boolean reCopy) throws Exception {
+    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, boolean reCopy, String... errorContains) throws Exception {
         var config = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -524,7 +524,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         copyAttachPartition(src, dst, 0, "2020-01-01");
                         Assert.fail();
                     } catch (SqlException e) {
-                        TestUtils.assertContains(e.getMessage(), errorContains);
+                        for (String error : errorContains) {
+                            TestUtils.assertContains(e.getMessage(), error);
+                        }
                     } finally {
                         engine2.releaseAllWriters();
                         engine2.releaseAllReaders();
@@ -621,8 +623,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             String withClause = ", t1 as (select 1 as id, count() as cnt from src WHERE " + partitionsIn + ")\n";
 
             if (!skipCopy) {
-                for (int i = 0; i < partitionList.length; i++) {
-                    copyPartitionToBackup(src.getName(), partitionList[i], dst.getName());
+                for (String s : partitionList) {
+                    copyPartitionToBackup(src.getName(), s, dst.getName());
                 }
             }
 
@@ -645,8 +647,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             );
 
             long timestamp = 0;
-            for (int i = 0; i < partitionList.length; i++) {
-                long ts = TimestampFormatUtils.parseTimestamp(partitionList[i] + "T23:59:59.999z");
+            for (String s : partitionList) {
+                long ts = TimestampFormatUtils.parseTimestamp(s + "T23:59:59.999z");
                 if (ts > timestamp) {
                     timestamp = ts;
                 }
