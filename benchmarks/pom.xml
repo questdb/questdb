@@ -68,6 +68,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <benchmarks.outputPath>target</benchmarks.outputPath>
 
         <!--
             JMH version to use with this project.
@@ -86,6 +87,7 @@
     </properties>
 
     <build>
+        <directory>${benchmarks.outputPath}</directory>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
