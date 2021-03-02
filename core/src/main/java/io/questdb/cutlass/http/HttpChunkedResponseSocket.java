@@ -37,7 +37,7 @@ public interface HttpChunkedResponseSocket extends CharSink {
 
     boolean resetToBookmark();
 
-    void sendChunk() throws PeerDisconnectedException, PeerIsSlowToReadException;
+    void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException;
 
     void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
