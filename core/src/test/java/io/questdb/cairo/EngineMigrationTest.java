@@ -406,6 +406,11 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         // Second run of migration should not do anything
         new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
         TestUtils.assertEquals(expected, executeSql(queryNew));
+
+        // Third time, downgrade and migrate
+        downgradeTxFile(src, removedPartitions);
+        new EngineMigration(engine, configuration).migrateEngineTo(ColumnType.VERSION);
+        TestUtils.assertEquals(expected, executeSql(queryNew));
     }
 
     private void downgradeTxFile(TableModel src, LongList removedPartitions) {
@@ -468,6 +473,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     sink.clear();
                     partitionFmt.format(partitionTs, null, null, sink);
                     path.trimTo(0).concat(root).concat(src.getName()).concat(sink).concat("_archive");
+                    if (ff.exists(path.$())) {
+                        ff.remove(path);
+                    }
                     try (var rwAr = new ReadWriteMemory(ff, path.$(), 8)) {
                         rwAr.putLong(partitionSize);
                     }

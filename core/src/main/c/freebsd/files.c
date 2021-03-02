@@ -27,7 +27,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
- 
+
 inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     int prot = 0;

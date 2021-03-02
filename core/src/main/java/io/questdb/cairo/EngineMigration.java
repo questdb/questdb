@@ -43,6 +43,7 @@ public class EngineMigration {
     public static final long TX_STRUCT_UPDATE_1_OFFSET_MIN_TIMESTAMP = 24;
     public static final long TX_STRUCT_UPDATE_1_OFFSET_MAX_TIMESTAMP = 32;
     public static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
+    public static final String TX_STRUCT_UPDATE_1_BACKUP_NAME = TXN_FILE_NAME + ".v" + (VERSION_TX_STRUCT_UPDATE_1 - 1);
 
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final ObjList<MigrationAction> MIGRATIONS = new ObjList<>();
@@ -124,8 +125,9 @@ public class EngineMigration {
         long mem = context.getTempMemory(8);
         updateSuccess = true;
 
-        try (Path path = new Path()) {
+        try (Path path = new Path(); Path copyPath = new Path()) {
             path.of(configuration.getRoot());
+            copyPath.of(configuration.getRoot());
             final int rootLen = path.length();
 
             final NativeLPSZ nativeLPSZ = new NativeLPSZ();
@@ -135,6 +137,7 @@ public class EngineMigration {
                     if (Chars.notDots(nativeLPSZ)) {
                         path.trimTo(rootLen);
                         path.concat(nativeLPSZ);
+                        copyPath.concat(nativeLPSZ);
                         final int plen = path.length();
                         path.concat(TableUtils.META_FILE_NAME);
 
@@ -149,7 +152,8 @@ public class EngineMigration {
                                                 .$(",toVersion=").$(latestVersion).I$();
 
                                         path.trimTo(plen);
-                                        context.of(path, fd);
+                                        copyPath.trimTo(plen);
+                                        context.of(path, copyPath, fd);
 
                                         for (int i = currentTableVersion + 1; i <= latestVersion; i++) {
                                             var migration = getMigrationToVersion(i);
@@ -192,6 +196,7 @@ public class EngineMigration {
                             } finally {
                                 ff.close(fd);
                                 path.trimTo(plen);
+                                copyPath.trimTo(plen);
                             }
                         }
                     }
@@ -231,6 +236,26 @@ public class EngineMigration {
             int pathDirLen = path.length();
 
             path.concat(TXN_FILE_NAME).$();
+            if (!ff.exists(path)) {
+                LOG.error().$("tx file does not exist, nothing to migrate [path=").$(path).I$();
+                return;
+            }
+
+            // make a copy
+            var copyPath = migrationContext.getTablePath2();
+            copyPath.concat(TX_STRUCT_UPDATE_1_BACKUP_NAME).$();
+            if (ff.exists(copyPath)) {
+                LOG.info().$("back up coping tx file exists, [path=").$(copyPath).I$();
+                int copyPathLen = copyPath.length();
+                for (int i = 1; ff.exists(copyPath.$()); i++) {
+                    copyPath.trimTo(copyPathLen);
+                    copyPath.put(".").put(i);
+                }
+            }
+            LOG.info().$("back up coping tx file [from=").$(path).$(",to=").$(copyPath).I$();
+            if (ff.copy(path, copyPath) < 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(copyPath).put(']');
+            }
 
             LOG.debug().$("opening for rw [path=").$(path).I$();
             var txMem = migrationContext.creteRwMemoryOf(ff, path.$(), ff.getPageSize());
@@ -341,6 +366,7 @@ public class EngineMigration {
         private final ReadWriteMemory rwMemory;
         private Path tablePath;
         private long metadataFd;
+        private Path tablePath2;
 
         public MigrationContext(long mem, int tempMemSize, VirtualMemory tempVirtualMem, ReadWriteMemory rwMemory) {
             this.tempMemory = mem;
@@ -372,6 +398,10 @@ public class EngineMigration {
             return tablePath;
         }
 
+        public Path getTablePath2() {
+            return tablePath2;
+        }
+
         public long getTempMemory(int size) {
             if (size <= tempMemoryLen) {
                 return tempMemory;
@@ -387,8 +417,9 @@ public class EngineMigration {
             return tempVirtualMem;
         }
 
-        public MigrationContext of(Path path, long metadataFd) {
+        public MigrationContext of(Path path, Path pathCopy, long metadataFd) {
             this.tablePath = path;
+            this.tablePath2 = pathCopy;
             this.metadataFd = metadataFd;
             return this;
         }

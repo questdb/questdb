@@ -34,6 +34,8 @@ public interface FilesFacade {
 
     boolean close(long fd);
 
+    int copy(LPSZ from, LPSZ to);
+
     int errno();
 
     boolean exists(LPSZ path);
