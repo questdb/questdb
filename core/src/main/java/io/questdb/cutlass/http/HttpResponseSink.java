@@ -24,10 +24,23 @@
 
 package io.questdb.cutlass.http;
 
+import java.io.Closeable;
+import java.io.IOException;
+
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Chars;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
@@ -35,8 +48,6 @@ import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.StdoutSink;
-
-import java.io.Closeable;
 
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
@@ -65,6 +76,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(500, "Internal server error");
     }
 
+    private final Buffer buffer;
     private final long out;
     private final long outPtr;
     private final long limit;
@@ -99,7 +111,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.nf = configuration.getNetworkFacade();
         this.out = Unsafe.calloc(responseBufferSize);
-        this.headerImpl = new HttpResponseHeaderImpl(configuration.getResponseHeaderBufferSize(), configuration.getClock());
+        this.buffer = new Buffer(responseBufferSize);
+        this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());
         // size is 32bit int, as hex string max 8 bytes
         this.chunkHeaderBuf = Unsafe.calloc(8 + 2L * Misc.EOL.length());
         this.chunkSink = new DirectUnboundedByteSink(chunkHeaderBuf);
@@ -130,7 +143,6 @@ public class HttpResponseSink implements Closeable, Mutable {
     public void close() {
         Unsafe.free(out, responseBufferSize);
         Unsafe.free(chunkHeaderBuf, 8 + 2L * Misc.EOL.length());
-        headerImpl.close();
         if (pzout != 0) {
             Unsafe.free(pzout, responseBufferSize);
         }
@@ -138,6 +150,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             Zip.deflateEnd(z_streamp);
             z_streamp = 0;
         }
+        buffer.close();
     }
 
     public void setDeflateBeforeSend(boolean deflateBeforeSend) {
@@ -156,7 +169,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         while (true) {
 
             if (flushBufSize > 0) {
-                send();
+                send(true);
             }
 
             switch (state) {
@@ -273,7 +286,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     private void flushSingle() throws PeerDisconnectedException, PeerIsSlowToReadException {
         state = DONE;
-        send();
+        send(true);
     }
 
     HttpResponseHeader getHeader() {
@@ -332,7 +345,11 @@ public class HttpResponseSink implements Closeable, Mutable {
         resumeSend();
     }
 
-    private void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void send(boolean flush) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (flushBuf == 1) {
+            sendBuffer(flush);
+            return;
+        }
         int sent = 0;
         while (sent < flushBufSize) {
             int n = nf.send(fd, flushBuf + sent, flushBufSize - sent);
@@ -357,6 +374,32 @@ public class HttpResponseSink implements Closeable, Mutable {
         totalBytesSent += sent;
     }
 
+    private void sendBuffer(boolean flush) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        int nSend = (int) buffer.getReadNAvailable();
+        while (nSend > 0) {
+            int n = nf.send(fd, buffer.getReadAddress(), nSend);
+            if (n < 0) {
+                // disconnected
+                LOG.error()
+                        .$("disconnected [errno=").$(nf.errno())
+                        .$(", fd=").$(fd)
+                        .$(']').$();
+                throw PeerDisconnectedException.INSTANCE;
+            }
+            if (n == 0) {
+                // test how many times we tried to send before parking up
+                throw PeerIsSlowToReadException.INSTANCE;
+            } else {
+                dumpBuffer('<', buffer.getReadAddress(), n);
+                buffer.onRead(n);
+                nSend -= n;
+                totalBytesSent += n;
+            }
+        }
+        assert buffer.getReadNAvailable() == 0;
+        flushBufSize = 0;
+    }
+
     private void dumpBuffer(char direction, long buffer, int size) {
         if (dumpNetworkTraffic && size > 0) {
             StdoutSink.INSTANCE.put(direction);
@@ -368,31 +411,19 @@ public class HttpResponseSink implements Closeable, Mutable {
         return totalBytesSent;
     }
 
-    public class HttpResponseHeaderImpl extends AbstractCharSink implements Closeable, Mutable, HttpResponseHeader {
-        private final long headerPtr;
-        private final long limit;
+    public class HttpResponseHeaderImpl extends AbstractCharSink implements Mutable, HttpResponseHeader {
         private final MillisecondClock clock;
-        private long _wptr;
         private boolean chunky;
         private int code;
 
-        public HttpResponseHeaderImpl(int bufferSize, MillisecondClock clock) {
+        public HttpResponseHeaderImpl(MillisecondClock clock) {
             this.clock = clock;
-            int sz = Numbers.ceilPow2(bufferSize);
-            this.headerPtr = _wptr = Unsafe.calloc(sz);
-            this.limit = headerPtr + sz;
         }
 
         @Override
         public void clear() {
-            Unsafe.getUnsafe().setMemory(headerPtr, limit - headerPtr, (byte) 0);
-            _wptr = headerPtr;
+            buffer.clear();
             chunky = false;
-        }
-
-        @Override
-        public void close() {
-            Unsafe.free(headerPtr, limit - headerPtr);
         }
 
         // this is used for HTTP access logging
@@ -403,10 +434,9 @@ public class HttpResponseSink implements Closeable, Mutable {
         @Override
         public CharSink put(CharSequence cs) {
             int len = cs.length();
-            long p = _wptr;
-            if (p + len < limit) {
-                Chars.asciiStrCpy(cs, len, p);
-                _wptr += len;
+            if (len < buffer.getWriteNAvailable()) {
+                Chars.asciiStrCpy(cs, len, buffer.getWriteAddress());
+                buffer.onWrite(len);
             } else {
                 throw NoSpaceLeftInResponseBufferException.INSTANCE;
             }
@@ -415,8 +445,9 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public CharSink put(char c) {
-            if (_wptr < limit) {
-                Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
+            if (buffer.getWriteNAvailable() > 0) {
+                Unsafe.getUnsafe().putByte(buffer.getWriteAddress(), (byte) c);
+                buffer.onWrite(1);
                 return this;
             }
             throw NoSpaceLeftInResponseBufferException.INSTANCE;
@@ -471,8 +502,8 @@ public class HttpResponseSink implements Closeable, Mutable {
             if (!chunky) {
                 put(Misc.EOL);
             }
-            flushBuf = headerPtr;
-            flushBufSize = (int) (_wptr - headerPtr);
+            flushBuf = 1;
+            flushBufSize = (int) buffer.getReadNAvailable();
         }
 
     }
@@ -684,6 +715,70 @@ public class HttpResponseSink implements Closeable, Mutable {
             super.status(status, contentType);
             if (deflateBeforeSend) {
                 headerImpl.put("Content-Encoding: gzip").put(Misc.EOL);
+            }
+        }
+    }
+
+    private static class Buffer implements Closeable {
+        private long bufStart;
+        private long bufEnd;
+        private long _wptr;
+        private long _rptr;
+
+        private Buffer(int sz) {
+            bufStart = Unsafe.malloc(sz);
+            bufEnd = bufStart + sz;
+            clear();
+        }
+
+        void clear() {
+            _wptr = bufStart;
+            _rptr = bufStart;
+        }
+
+        @Override
+        public void close() {
+            if (0 != bufStart) {
+                Unsafe.free(bufStart, bufEnd - bufStart);
+                bufStart = bufEnd = _wptr = _rptr = 0;
+            }
+        }
+
+        long getReadAddress() {
+            return _rptr;
+        }
+
+        long getReadNAvailable() {
+            return _wptr - _rptr;
+        }
+
+        void onRead(int nRead) {
+            assert nRead >= 0 && nRead <= getReadNAvailable();
+            _rptr += nRead;
+            if (_rptr == _wptr) {
+                _rptr = _wptr = bufStart;
+            }
+        }
+
+        long getWriteAddress() {
+            return _wptr;
+        }
+
+        long getWriteNAvailable() {
+            return bufEnd - _wptr;
+        }
+
+        void onWrite(int nWrite) {
+            assert nWrite >= 0 && nWrite <= getWriteNAvailable();
+            _wptr += nWrite;
+        }
+
+        void compact() {
+            int nMove = (int) getReadNAvailable();
+            if (nMove > 0 && _rptr > bufStart) {
+                Unsafe.getUnsafe().copyMemory(_rptr, bufStart, nMove);
+                _wptr = bufStart + nMove;
+                _rptr = bufStart;
             }
         }
     }
