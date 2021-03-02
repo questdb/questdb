@@ -22,15 +22,22 @@
  *
  ******************************************************************************/
 
-import { ConsoleAction } from "./Console/types"
-import { QueryAction } from "./Query/types"
-import { TelemetryAction } from "./Telemetry/types"
-import rootReducer from "./reducers"
+import {
+  TelemetryConfigShape,
+  TelemetryRemoteConfigShape,
+  StoreShape,
+} from "types"
 
-export type StoreAction = ConsoleAction | QueryAction | TelemetryAction
+const getConfig: (store: StoreShape) => TelemetryConfigShape | undefined = (
+  store,
+) => store.telemetry.config
 
-export type StoreShape = ReturnType<typeof rootReducer>
+const getRemoteConfig: (
+  store: StoreShape,
+) => TelemetryRemoteConfigShape | undefined = (store) =>
+  store.telemetry.remoteConfig
 
-export * from "./Console/types"
-export * from "./Query/types"
-export * from "./Telemetry/types"
+export default {
+  getConfig,
+  getRemoteConfig,
+}

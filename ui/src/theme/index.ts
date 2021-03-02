@@ -1,9 +1,34 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 import type { DefaultTheme as DefaultThemeShape } from "styled-components"
 
 import type { ColorShape, FontSizeShape } from "types"
 
 const color: ColorShape = {
   black: "#191a21",
+  blackAlpha40: "rgba(25, 26, 33, 0.4)",
   gray1: "#585858",
   gray2: "#bbbbbb",
   draculaBackgroundDarker: "#21222c",
@@ -23,12 +48,13 @@ const color: ColorShape = {
 }
 
 const fontSize: FontSizeShape = {
-  lg: "1.5rem",
-  md: "1.4rem",
-  sm: "1.3rem",
-  xl: "1.7rem",
-  xs: "1.2rem",
   ms: "1rem",
+  xs: "1.2rem",
+  sm: "1.3rem",
+  md: "1.4rem",
+  lg: "1.5rem",
+  xl: "1.7rem",
+  hg: "3rem",
 }
 
 export const theme: DefaultThemeShape = {

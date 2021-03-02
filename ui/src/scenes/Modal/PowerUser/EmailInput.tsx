@@ -22,15 +22,43 @@
  *
  ******************************************************************************/
 
-import { ConsoleAction } from "./Console/types"
-import { QueryAction } from "./Query/types"
-import { TelemetryAction } from "./Telemetry/types"
-import rootReducer from "./reducers"
+import React, { ChangeEvent, useCallback, useState } from "react"
 
-export type StoreAction = ConsoleAction | QueryAction | TelemetryAction
+import { Input } from "components"
 
-export type StoreShape = ReturnType<typeof rootReducer>
+type Props = Readonly<{
+  dirty: boolean
+  onInit: () => void
+}>
 
-export * from "./Console/types"
-export * from "./Query/types"
-export * from "./Telemetry/types"
+const EmailInput = ({ dirty, onInit }: Props) => {
+  const [email, setEmail] = useState("")
+
+  const handleChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      setEmail(event.target?.value)
+
+      if (!dirty) {
+        onInit()
+      }
+    },
+    [dirty, onInit],
+  )
+
+  return (
+    <Input
+      name="email"
+      onChange={handleChange}
+      pattern={
+        "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
+      }
+      required
+      size="lg"
+      title="email"
+      type="email"
+      value={email}
+    />
+  )
+}
+
+export default EmailInput

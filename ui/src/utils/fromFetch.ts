@@ -15,13 +15,19 @@ type SuccessShape<T> = Readonly<{
 export const fromFetch = <T extends Record<string, any>>(
   uri: string,
   init: RequestInit = {},
+  self = true,
 ): Observable<SuccessShape<T> | ErrorShape> => {
   const separator = uri[0] === "/" ? "" : "/"
+  const url = self ? `${window.location.origin}${separator}${uri}` : uri
 
-  return rxFromFetch(`${window.location.origin}${separator}${uri}`, init).pipe(
+  return rxFromFetch(url, init).pipe(
     switchMap((response) => {
       if (response.ok) {
-        return response.json()
+        if (response.headers.get("content-type") === "application/json") {
+          return response.json()
+        }
+
+        return Promise.resolve({})
       }
 
       // Server is returning a status requiring the client to try something else

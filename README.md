@@ -59,12 +59,12 @@ The interactive console to import data (drag and drop) and start querying right
 away. Check our Web Console guide to get started:
 
 <div align="center">
-  <a href="https://questdb.io/docs/reference/client/web-console/">
+  <a href="https://questdb.io/docs/reference/web-console/">
     <img alt="Screenshot of the Web Console showing various SQL statements and the result of one as a chart" src=".github/console.png" width="400" />
   </a>
 </div>
 <div align="center">
-  <a href="https://questdb.io/docs/reference/client/web-console/">
+  <a href="https://questdb.io/docs/reference/web-console/">
     Web Console guide
   </a>
 </div>
@@ -114,7 +114,7 @@ You can find more information about Docker usage on the
 
 You can interact with QuestDB using:
 
-- [Web Console](https://questdb.io/docs/reference/client/web-console/) listening
+- [Web Console](https://questdb.io/docs/reference/web-console/) listening
   on port `9000`: [localhost:9000](http://localhost:9000)
 - [Postgres](https://questdb.io/docs/reference/api/postgres/) on port `8812`
 - [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
