@@ -24,7 +24,34 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.*;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+
+import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTestUtils;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecordCursorPrinter;
+import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
@@ -40,28 +67,36 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IOContext;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
-
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
@@ -3408,7 +3443,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128,
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256,
                     false, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -3455,16 +3490,27 @@ public class IODispatcherTest {
 
                 final AtomicBoolean clientClosed = new AtomicBoolean(false);
                 final AtomicBoolean serverClosed = new AtomicBoolean(false);
+                final int minClientReceivedBytesBeforeDisconnect = 180;
+                final AtomicLong refClientFd = new AtomicLong(-1);
                 HttpClientStateListener clientStateListener = new HttpClientStateListener() {
+                    private int nBytesReceived = 0;
+
                     @Override
                     public void onClosed() {
                         clientClosed.set(true);
-
                     }
 
                     @Override
                     public void onReceived(int nBytes) {
                         LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
+                        nBytesReceived += nBytes;
+                        if (nBytesReceived >= minClientReceivedBytesBeforeDisconnect) {
+                            long fd = refClientFd.get();
+                            if (fd != -1) {
+                                refClientFd.set(-1);
+                                nf.close(fd);
+                            }
+                        }
                     }
                 };
                 workerPool.start(LOG);
@@ -3483,11 +3529,6 @@ public class IODispatcherTest {
                             + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n"
                             + "Accept-Encoding: gzip, deflate, br\r\n"
                             + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
-
-                    String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
-                            + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
-                            + "Content-Type: application/json; charset=utf-8\r\n"
-                            + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s";
                     TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
                         @Override
                         public boolean onGet(Record record, int count) {
@@ -3505,22 +3546,25 @@ public class IODispatcherTest {
                         }
                     });
                     long fd = nf.socketTcp(true);
+                    String response;
                     try {
                         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
                         try {
                             Assert.assertTrue(fd > -1);
                             Assert.assertEquals(0, nf.connect(fd, sockAddr));
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+                            refClientFd.set(fd);
+                            nf.configureNonBlocking(fd);
 
                             long bufLen = request.length();
                             long ptr = Unsafe.malloc(bufLen);
                             try {
-                                new SendAndReceiveRequestBuilder()
+                                response = new SendAndReceiveRequestBuilder()
                                         .withNetworkFacade(nf)
                                         .withPauseBetweenSendAndReceive(0)
                                         .withPrintOnly(false)
                                         .withExpectDisconnect(true)
-                                        .executeExplicit(request, fd, expectedResponse, 200, ptr, clientStateListener);
+                                        .executeUntilDisconnect(request, fd, 200, ptr, clientStateListener);
                             } finally {
                                 Unsafe.free(ptr, bufLen);
                             }
@@ -3528,8 +3572,7 @@ public class IODispatcherTest {
                             nf.freeSockAddr(sockAddr);
                         }
                     } finally {
-                        nf.close(fd);
-                        clientStateListener.onClosed();
+                        LOG.info().$("Closing client connection").$();
                     }
                     while (!serverClosed.get()) {
                         LockSupport.parkNanos(1);
@@ -4306,7 +4349,6 @@ public class IODispatcherTest {
                     }
                 });
 
-                QueryCache.configure(httpConfiguration);
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
@@ -5304,7 +5346,7 @@ public class IODispatcherTest {
             boolean serverKeepAlive,
             String httpProtocolVersion
     ) {
-        return new HttpServerConfigurationBuilder()
+        DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                 .withNetwork(nf)
                 .withBaseDir(baseDir)
                 .withSendBufferSize(sendBufferSize)
@@ -5313,6 +5355,8 @@ public class IODispatcherTest {
                 .withServerKeepAlive(serverKeepAlive)
                 .withHttpProtocolVersion(httpProtocolVersion)
                 .build();
+        QueryCache.configure(httpConfiguration);
+        return httpConfiguration;
     }
 
     private static void sendAndReceive(
