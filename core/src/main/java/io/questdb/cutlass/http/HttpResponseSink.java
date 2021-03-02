@@ -662,7 +662,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public void sendChunk() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (outPtr != _wPtr) {
                 if (deflateBeforeSend) {
                     flushBufSize = 0;
@@ -670,6 +670,9 @@ public class HttpResponseSink implements Closeable, Mutable {
                     prepareChunk((int) (_wPtr - outPtr));
                 }
                 resumeSend(MULTI_CHUNK);
+            }
+            if (done) {
+                done();
             }
         }
 
