@@ -24,15 +24,10 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 
@@ -180,6 +175,23 @@ public final class TestUtils {
                     Assert.fail("Failed comparison at [" + l + "], expected: " + b1 + ", actual: " + b2);
                 }
                 Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
+            }
+        }
+    }
+
+    public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
+        try (var expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
+             var actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
+            int byte1, byte2;
+            long length = 0;
+            do {
+                length++;
+                byte1 = expectedStream.read();
+                byte2 = actualStream.read();
+            } while (byte1 == byte2 && byte1 > 0 && byte2 > 0);
+
+            if (byte1 != byte2) {
+                Assert.fail("Files are different at offset " + (length - 1));
             }
         }
     }

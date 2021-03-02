@@ -35,15 +35,6 @@
 #else
 
 #include <utime.h>
-
-#endif
-
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD)
-
-#include <copyfile.h>
-
-#else
-
 #include <sys/sendfile.h>
 
 #endif
@@ -120,37 +111,34 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
     return close((int) fd);
 }
 
+#ifndef __APPLE__
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
     const char* from = (const char *) lpszFrom;
     const char* to = (const char *) lpszTo;
     const int input = open(from, O_RDONLY);
-    if (-1 ==  (input )) {
+    if (-1 ==  (input)) {
         return -1;
     }
 
     const int output = creat(to, 0644);
-    if (-1 == (output )) {
+    if (-1 == (output)) {
         close(input);
         return -1;
     }
 
-    // On Apple and FreeBSD there is fcopyfile
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD)
-    int result = fcopyfile(input, output, 0, COPYFILE_ALL);
-#else
     // On linux sendfile can accept file as well as sockets
     off_t offset = 0;
     struct stat fileStat = {0};
     fstat(input, &fileStat);
     int result = sendfile(output, input, &offset, fileStat.st_size);
-#endif
 
     close(input);
     close(output);
 
     return result;
 }
+#endif
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
