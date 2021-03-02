@@ -27,7 +27,6 @@
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
-#include <sys/sendfile.h>
 
 #ifdef __APPLE__
 
@@ -42,6 +41,10 @@
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD)
 
 #include <copyfile.h>
+
+#else
+
+#include <sys/sendfile.h>
 
 #endif
 

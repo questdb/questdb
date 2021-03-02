@@ -246,7 +246,7 @@ public class EngineMigration {
             var copyPath = migrationContext.getTablePath2();
             copyPath.concat(TX_STRUCT_UPDATE_1_BACKUP_NAME).$();
             if (ff.exists(copyPath)) {
-                LOG.info().$("back up coping tx file exists, [path=").$(copyPath).I$();
+                LOG.info().$("back tx file exists, [path=").$(copyPath).I$();
                 int copyPathLen = copyPath.length();
                 for (int i = 1; ff.exists(copyPath.$()); i++) {
                     copyPath.trimTo(copyPathLen);
