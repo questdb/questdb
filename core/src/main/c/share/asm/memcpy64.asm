@@ -27,6 +27,7 @@
 ;
 ; Copyright (c) 2008-2016 GNU General Public License www.gnu.org/licenses
 ;******************************************************************************
+%include "piccall.asi"
 
 default rel
 
@@ -1339,15 +1340,15 @@ memcpyCPUDispatch:   ; CPU dispatcher, check for instruction sets and which meth
         bt      ecx, 9                 ; Test bit for SupplSSE3
         jnc     Q100
         lea     rbx, [memcpySSSE3@]
-        call    UnalignedIsFaster   WRT ..plt
+        callW   UnalignedIsFaster
         test    eax, eax
         jz      Q100
         lea     rbx, [memcpyU@]
-        call    Store256BitIsFaster WRT ..plt
+        callW   Store256BitIsFaster
         test    eax, eax
         jz      Q100
         lea     rbx, [memcpyU256@]
-        call    InstructionSet      WRT ..plt
+        callW   InstructionSet
         cmp     eax, 15
         jb      Q100
         lea     rbx, [memcpyAVX512F@]
@@ -1379,7 +1380,7 @@ GetMemcpyCacheLimit@:  ; local limit
 %else
         xor     edi, edi               ; 0 means largest level cache
 %endif
-        call    DataCacheSize          WRT ..plt ; get cache size
+        callW   DataCacheSize          ; get cache size
         shr     rax, 1                 ; half the size
         jnz     U100
         mov     eax, 400000H           ; cannot determine cache size. use 4 Mbytes

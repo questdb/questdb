@@ -116,24 +116,9 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT})
 
-# Your-external "mylib", add GLOBAL if the imported library is located in directories above the current.
-# add_library( asmlib SHARED IMPORTED GLOBAL)
-# You can define two import-locations: one for debug and one for release.
-# set_target_properties(asmlib PROPERTIES IMPORTED_LOCATION src/main/resources/libaelf64.a)
-
-
-# set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/src/main)
-# find_library(FOO_LIB 
-#         a
-#         HINTS "${CMAKE_PREFIX_PATH}/resources")
-
-set(ASMLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asm)
-include(${ASMLIB_SOURCE_DIR}/CMakeLists.txt)
-
-# add_library(libasm STATIC IMPORTED)
-# set_target_properties(libasm PROPERTIES 
-#         IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asm/build/libasm.a)
-
+#assembler subroutines by Agner Fog
+set(ASMLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asm/)
+include(${ASMLIB_SOURCE_DIR}CMakeLists.txt)
 
 #zlib
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)

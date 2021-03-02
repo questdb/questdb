@@ -15,6 +15,7 @@
 ; www.agner.org/optimize/asmexamples.zip
 ; Copyright (c) 2011-2013 GNU General Public License www.gnu.org/licenses
 ;******************************************************************************
+%include "piccall.asi"
 
 default rel
 
@@ -146,7 +147,7 @@ DataCacheSize:
         xor     esi, esi
         xor     edx, edx
 %endif        
-        call    CpuType  WRT ..plt
+        callW   CpuType
         lea     r9, [dataref]
         pop     rax                    ; eax = vendor
         dec     eax

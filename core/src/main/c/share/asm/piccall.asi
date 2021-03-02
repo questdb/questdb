@@ -1,0 +1,7 @@
+%macro callW 1
+%ifdef  WINDOWS
+    call %1
+%else
+    call %1 WRT ..plt
+%endif
+%endmacro
