@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -80,8 +79,6 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final long out;
     private final long outPtr;
     private final long limit;
-    private final long chunkHeaderBuf;
-    private final DirectUnboundedByteSink chunkSink;
     private final HttpResponseHeaderImpl headerImpl;
     private final SimpleResponseImpl simple = new SimpleResponseImpl();
     private final ResponseSinkImpl sink = new ResponseSinkImpl();
@@ -113,10 +110,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.out = Unsafe.calloc(responseBufferSize);
         this.buffer = new Buffer(responseBufferSize);
         this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());
-        // size is 32bit int, as hex string max 8 bytes
-        this.chunkHeaderBuf = Unsafe.calloc(8 + 2L * Misc.EOL.length());
-        this.chunkSink = new DirectUnboundedByteSink(chunkHeaderBuf);
-        this.chunkSink.put(Misc.EOL);
         this.outPtr = this._wPtr = out;
         this.limit = outPtr + responseBufferSize;
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
@@ -142,7 +135,6 @@ public class HttpResponseSink implements Closeable, Mutable {
     @Override
     public void close() {
         Unsafe.free(out, responseBufferSize);
-        Unsafe.free(chunkHeaderBuf, 8 + 2L * Misc.EOL.length());
         if (pzout != 0) {
             Unsafe.free(pzout, responseBufferSize);
         }
@@ -308,11 +300,14 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private void prepareChunk(int len) {
-        chunkSink.clear(Misc.EOL.length());
-        Numbers.appendHex(chunkSink, len);
-        chunkSink.put(Misc.EOL);
-        flushBuf = chunkHeaderBuf;
-        flushBufSize = chunkSink.length();
+        if (buffer.getWriteNAvailable() < 14) {
+            buffer.compact();
+        }
+        buffer.put(Misc.EOL);
+        Numbers.appendHex(buffer, len);
+        buffer.put(Misc.EOL);
+        flushBuf = 1;
+        flushBufSize = (int) buffer.getReadNAvailable();
     }
 
     private void prepareCompressedBody() {
@@ -719,7 +714,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private static class Buffer implements Closeable {
+    private static class Buffer extends AbstractCharSink implements Closeable {
         private long bufStart;
         private long bufEnd;
         private long _wptr;
@@ -780,6 +775,32 @@ public class HttpResponseSink implements Closeable, Mutable {
                 _wptr = bufStart + nMove;
                 _rptr = bufStart;
             }
+        }
+
+        @Override
+        public CharSink put(CharSequence cs) {
+            int len = cs.length();
+            assert getWriteNAvailable() >= len;
+            Chars.asciiStrCpy(cs, len, _wptr);
+            onWrite(len);
+            return this;
+        }
+
+        @Override
+        public CharSink put(char c) {
+            assert c > 0 && c < 128;
+            assert getWriteNAvailable() > 0;
+            Unsafe.getUnsafe().putByte(_wptr, (byte) c);
+            onWrite(1);
+            return this;
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            assert getWriteNAvailable() >= len;
+            Chars.asciiCopyTo(chars, start, len, _wptr);
+            onWrite(len);
+            return this;
         }
     }
 }
