@@ -79,9 +79,11 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     public void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
-        for (long lo = loRow - columnTop; lo < hiRow; lo++) {
-            writer.add(TableUtils.toIndexKey(mem.getInt(lo * Integer.BYTES)), lo + columnTop);
+        final long lim = hiRow + columnTop;
+        for (long lo = loRow; lo < lim; lo++) {
+            writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
         }
+        writer.setMaxValue(lim - 1);
     }
 
     @Override

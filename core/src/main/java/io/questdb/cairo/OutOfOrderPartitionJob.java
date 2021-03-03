@@ -753,6 +753,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
         int columnsInFlight = columnCount;
 
+        if (suffixHi < suffixLo) {
+            System.out.println("ooooooops");
+        }
         try {
             for (int i = 0; i < columnCount; i++) {
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);

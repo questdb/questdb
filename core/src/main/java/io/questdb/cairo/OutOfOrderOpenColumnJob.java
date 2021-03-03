@@ -1218,6 +1218,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
+        if (srcDataHi - srcDataLo + 1 < 0) {
+            System.out.println("oopoooooops");
+        }
         long cursor = outboundPubSeq.next();
         if (cursor > -1) {
             publishCopyTaskHarmonized(
@@ -2234,8 +2237,9 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             CharSequence columnName,
             long srcDataMax
     ) {
+        boolean dFileExists = ff.exists(dFile(path.trimTo(plen), columnName));
         topFile(path.trimTo(plen), columnName);
-        if (ff.exists(path)) {
+        if (dFileExists && ff.exists(path)) {
             long buf = get8ByteBuf(workerId);
             long topFd = OutOfOrderUtils.openRW(ff, path);
             try {
@@ -2247,7 +2251,7 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
                 ff.close(topFd);
             }
         }
-        if (ff.exists(dFile(path.trimTo(plen), columnName))) {
+        if (dFileExists) {
             return 0;
         }
         return srcDataMax;
@@ -3510,33 +3514,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             default:
                 break;
         }
-    }
-
-    static void openColumnIdle(OutOfOrderOpenColumnTask task) {
-        OutOfOrderCopyJob.copyIdleQuick(
-                task.getColumnCounter(),
-                task.getFf(),
-                task.getTimestampMergeIndexAddr(),
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                task.getSrcTimestampFd(),
-                task.getSrcTimestampAddr(),
-                task.getSrcTimestampSize(),
-                0,
-                0,
-                task.getTableWriter(),
-                task.getDoneLatch()
-        );
     }
 
     @Override
