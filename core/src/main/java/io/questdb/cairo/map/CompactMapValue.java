@@ -131,6 +131,16 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public CharSequence getStr(int index) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(int index) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean isNew() {
         return _new;
     }
@@ -183,6 +193,26 @@ public class CompactMapValue implements MapValue {
     @Override
     public void putTimestamp(int index, long value) {
         putLong(index, value);
+    }
+
+    @Override
+    public void putStr(int index, CharSequence value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putNullStr(int index) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void appendChar(int index, char value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void appendStr(int index, CharSequence value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

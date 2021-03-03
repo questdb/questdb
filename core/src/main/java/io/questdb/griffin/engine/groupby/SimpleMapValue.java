@@ -24,14 +24,34 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.std.Chars;
+import io.questdb.std.str.StringSink;
 
 public class SimpleMapValue implements MapValue {
 
     private final long[] values;
+    private final StringSink[] sinks;
 
-    public SimpleMapValue(int columnCount) {
-        this.values = new long[columnCount];
+    public SimpleMapValue(ArrayColumnTypes valueTypes) {
+        int columnCount = valueTypes.getColumnCount();
+        values = new long[columnCount];
+        int stringColumns = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (valueTypes.getColumnType(i) == ColumnType.STRING) {
+                stringColumns++;
+            }
+        }
+        sinks = new StringSink[stringColumns];
+        for (int i = 0; stringColumns > 0 && i <  columnCount; i++) {
+            if (valueTypes.getColumnType(i) == ColumnType.STRING) {
+                sinks[stringColumns - 1] = new StringSink();
+                values[i] = -stringColumns;
+                stringColumns--;
+            }
+        }
     }
 
     @Override
@@ -87,6 +107,20 @@ public class SimpleMapValue implements MapValue {
     @Override
     public long getTimestamp(int index) {
         return values[index];
+    }
+
+    @Override
+    public CharSequence getStr(int index) {
+        long sinkIndex = values[index];
+        if (sinkIndex > 0) {
+            return Chars.toString(getSink(sinkIndex));
+        }
+        return null;
+    }
+
+    @Override
+    public CharSequence getStrB(int index) {
+        return getStr(index);
     }
 
     @Override
@@ -177,7 +211,52 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public void putStr(int index, CharSequence value) {
+        long sinkIndex = initAndGetSinkIndex(index);
+        StringSink sink = getSink(sinkIndex);
+        sink.clear();
+        sink.put(value);
+    }
+
+    @Override
+    public void putNullStr(int index) {
+        long sinkIndex = values[index];
+        if (sinkIndex > 0) {
+            StringSink sink = getSink(sinkIndex);
+            sink.clear();
+            values[index] = -sinkIndex;
+        }
+    }
+
+    @Override
+    public void appendChar(int index, char value) {
+        long sinkIndex = initAndGetSinkIndex(index);
+        StringSink sink = getSink(sinkIndex);
+        sink.put(value);
+    }
+
+    @Override
+    public void appendStr(int index, CharSequence value) {
+        long sinkIndex = initAndGetSinkIndex(index);
+        StringSink sink = getSink(sinkIndex);
+        sink.put(value);
+    }
+
+    @Override
     public void setMapRecordHere() {
         throw new UnsupportedOperationException();
+    }
+
+    private long initAndGetSinkIndex(int index) {
+        long sinkIndex = values[index];
+        if (sinkIndex < 0) {
+            sinkIndex = -sinkIndex;
+            values[index] = sinkIndex;
+        }
+        return sinkIndex;
+    }
+
+    private StringSink getSink(long sinkIndex) {
+        return sinks[(int) sinkIndex - 1];
     }
 }

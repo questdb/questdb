@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -50,14 +51,14 @@ public class SampleByFillNullNotKeyedRecordCursorFactory implements RecordCursor
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
-            int valueCount,
+            ArrayColumnTypes valueTypes,
             int timestampIndex
     ) throws SqlException {
         try {
             this.base = base;
             this.metadata = groupByMetadata;
             this.recordFunctions = recordFunctions;
-            final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
+            final SimpleMapValue simpleMapValue = new SimpleMapValue(valueTypes);
             this.cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,
                     recordFunctions,

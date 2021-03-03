@@ -82,11 +82,15 @@ public class FunctionFactoryDescriptor {
             if ((c | 32) == c) {
                 type |= (1 << 30);
             }
-            types[arrayIndex] |= (((long) type) << (32 - arrayValueOffset));
+            types[arrayIndex] |= (toUnsignedLong(type) << (32 - arrayValueOffset));
             typeIndex++;
         }
         this.argTypes = types;
         this.sigArgCount = typeCount;
+    }
+
+    private static long toUnsignedLong(int type) {
+        return ((long) type) & 0xffffffffL;
     }
 
     public static int getArgType(char c) {
