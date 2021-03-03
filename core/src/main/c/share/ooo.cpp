@@ -21,8 +21,14 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
+#ifdef _LP64
+#undef _LP64
 #include "jni.h"
+#define _LP64
+#else
+#include "jni.h"
+#endif
+
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
@@ -508,6 +514,7 @@ inline void merge_copy_var_column(
 }
 
 template<class T>
+__attribute__((target_clones("avx2","avx","default")))
 inline void merge_copy_var_column_top(
         index_t *merge_index,
         int64_t merge_index_size,
