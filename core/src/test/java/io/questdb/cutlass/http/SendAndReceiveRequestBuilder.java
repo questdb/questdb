@@ -34,6 +34,10 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.BrokenBarrierException;
 
@@ -69,7 +73,7 @@ public class SendAndReceiveRequestBuilder {
 
     public void execute(
             String request,
-            String response
+            CharSequence response
     ) throws InterruptedException {
         final long fd = nf.socketTcp(true);
         nf.configureNoLinger(fd);
@@ -95,9 +99,15 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    private void executeWithSocket(String request, String response, long fd) throws InterruptedException {
-        byte[] expectedResponse = response.getBytes();
-        final int len = Math.max(expectedResponse.length, request.length()) * 2;
+    private void executeWithSocket(String request, CharSequence response, long fd) throws InterruptedException {
+        final int len;
+        if (response instanceof String) {
+            byte[] expectedResponse = ((String) response).getBytes();
+            len = Math.max(expectedResponse.length, request.length()) * 2;
+        } else {
+            // TODO
+            throw new UnsupportedOperationException();
+        }
         long ptr = Unsafe.malloc(len);
         try {
             for (int j = 0; j < requestCount; j++) {
@@ -108,7 +118,7 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    public void executeExplicit(String request, long fd, String expectedResponse, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
+    public void executeExplicit(String request, long fd, CharSequence expectedResponse, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
         long timestamp = System.currentTimeMillis();
         int sent = 0;
         int reqLen = request.length();
@@ -136,9 +146,6 @@ public class SendAndReceiveRequestBuilder {
         while (received < expectedToReceive) {
             int n = nf.recv(fd, ptr + received, len - received);
             if (n > 0) {
-                for (int i = 0; i < n; i++) {
-                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
-                }
                 received += n;
                 if (null != listener) {
                     listener.onReceived(received);
@@ -163,7 +170,7 @@ public class SendAndReceiveRequestBuilder {
 
         String actual = new String(receivedBytes, StandardCharsets.UTF_8);
         if (!printOnly) {
-            String expected = expectedResponse;
+            String expected = expectedResponse.toString();
             if (compareLength > 0) {
                 expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
                 actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
