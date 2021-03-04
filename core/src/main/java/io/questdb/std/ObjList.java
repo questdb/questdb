@@ -171,6 +171,14 @@ public class ObjList<T> implements Mutable, Sinkable {
         return this == that || that instanceof ObjList && equals((ObjList<?>) that);
     }
 
+    public void insert(int index, int length) {
+        ensureCapacity(pos + length);
+        if (pos > index) {
+            System.arraycopy(buffer, index, buffer, index + length, pos - index);
+        }
+        pos += length;
+    }
+
     /**
      * {@inheritDoc}
      */

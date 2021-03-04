@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
-import io.questdb.std.Transient;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     static final int SCAN_UP = -1;
@@ -268,9 +267,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         } else {
             intervalLo = reader.floorToPartitionTimestamp(lo);
         }
-        this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalLo) : 0;
+        this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
-        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalHi) + 1);
+        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
     }
 
     protected class IntervalDataFrame implements DataFrame {

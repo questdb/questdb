@@ -24,75 +24,53 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.MessageBus;
+import java.io.Closeable;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.WorkerPoolAwareConfiguration.ServerFactory;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJobImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
-import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatchers;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
 
 public class LineTcpServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpServer.class);
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
+    private final ObjList<WorkerPool> dedicatedPools;
 
     public LineTcpServer(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool workerPool,
-            @Nullable MessageBus messageBus
+            WorkerPool ioWorkerPool,
+            WorkerPool writerWorkerPool,
+            ObjList<WorkerPool> dedicatedPools
     ) {
         this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
                 lineConfiguration.getNetDispatcherConfiguration(),
-                contextFactory
-        );
-        workerPool.assign(dispatcher);
-        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, workerPool, messageBus);
-        workerPool.assign(new SynchronizedJob() {
-            // Context blocked on LineTcpMeasurementScheduler queue
-            private LineTcpConnectionContext busyContext;
-            private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
-
-            private void onRequest(int operation, LineTcpConnectionContext context) {
-                assert busyContext == null;
-                if (handleIO(context)) {
-                    busyContext = context;
-                }
-            }
-
-            @Override
-            protected boolean runSerially() {
-                if (null == busyContext) {
-                    return dispatcher.processIOQueue(onRequest);
-                }
-
-                if (!handleIO(busyContext)) {
-                    busyContext = null;
-                    return true;
-                }
-
-                return false;
-            }
-        });
+                contextFactory);
+        this.dedicatedPools = dedicatedPools;
+        ioWorkerPool.assign(dispatcher);
+        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
 
         final Closeable cleaner = contextFactory::closeContextPool;
-        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
+        for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            workerPool.assign(i, cleaner);
+            ioWorkerPool.assign(i, cleaner);
         }
     }
 
@@ -107,53 +85,33 @@ public class LineTcpServer implements Closeable {
             return null;
         }
 
-        ServerFactory<LineTcpServer, WorkerPoolAwareConfiguration> factory = (
-                netWorkerPoolConfiguration,
-                engine,
-                workerPool,
-                local,
-                bus,
-                functionFactory
-        ) -> new LineTcpServer(
-                lineConfiguration,
-                cairoEngine,
-                workerPool,
-                bus
-        );
-        return WorkerPoolAwareConfiguration.create(
-                lineConfiguration.getWorkerPoolConfiguration(),
-                sharedWorkerPool,
-                log,
-                cairoEngine,
-                factory,
-                null
-        );
+        ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
+        WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool);
+        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool);
+        if (ioWorkerPool != sharedWorkerPool) {
+            dedicatedPools.add(ioWorkerPool);
+        }
+        if (writerWorkerPool != sharedWorkerPool) {
+            dedicatedPools.add(writerWorkerPool);
+        }
+        LineTcpServer lineTcpServer = new LineTcpServer(lineConfiguration, cairoEngine, ioWorkerPool, writerWorkerPool, dedicatedPools);
+        if (ioWorkerPool != sharedWorkerPool) {
+            ioWorkerPool.start(LOG);
+        }
+        if (writerWorkerPool != sharedWorkerPool) {
+            writerWorkerPool.start(LOG);
+        }
+        return lineTcpServer;
     }
 
     @Override
     public void close() {
+        for (int n = 0, sz = dedicatedPools.size(); n < sz; n++) {
+            dedicatedPools.get(n).halt();
+        }
         Misc.free(scheduler);
         Misc.free(contextFactory);
         Misc.free(dispatcher);
-    }
-
-    private boolean handleIO(LineTcpConnectionContext context) {
-        if (!context.invalid()) {
-            switch (context.handleIO()) {
-                case NEEDS_READ:
-                    context.getDispatcher().registerChannel(context, IOOperation.READ);
-                    return false;
-                case NEEDS_WRITE:
-                    context.getDispatcher().registerChannel(context, IOOperation.WRITE);
-                    return false;
-                case NEEDS_CPU:
-                    return true;
-                case NEEDS_DISCONNECT:
-                    context.getDispatcher().disconnect(context);
-                    return false;
-            }
-        }
-        return false;
     }
 
     private class LineTcpConnectionContextFactory implements IOContextFactory<LineTcpConnectionContext>, Closeable, EagerThreadSetup {
@@ -163,7 +121,11 @@ public class LineTcpServer implements Closeable {
         public LineTcpConnectionContextFactory(LineTcpReceiverConfiguration configuration) {
             ObjectFactory<LineTcpConnectionContext> factory;
             if (null == configuration.getAuthDbPath()) {
-                factory = () -> new LineTcpConnectionContext(configuration, scheduler);
+                if (configuration.isIOAggressiveRecv()) {
+                    factory = () -> new AggressiveRecvLineTcpConnectionContext(configuration, scheduler);
+                } else {
+                    factory = () -> new LineTcpConnectionContext(configuration, scheduler);
+                }
             } else {
                 AuthDb authDb = new AuthDb(configuration);
                 factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler);

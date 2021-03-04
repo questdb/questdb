@@ -44,6 +44,9 @@ public class WorkerPool {
     private final ObjList<ObjList<Closeable>> cleaners;
     private final boolean haltOnError;
     private final boolean daemons;
+    private final String poolName;
+    private final long yieldThreshold;
+    private final long sleepThreshold;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
@@ -51,6 +54,9 @@ public class WorkerPool {
         this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
         this.daemons = configuration.isDaemonPool();
+        this.poolName = configuration.getPoolName();
+        this.yieldThreshold = configuration.getYieldThreshold();
+        this.sleepThreshold = configuration.getSleepThreshold();
 
         assert workerAffinity.length == workerCount;
 
@@ -124,7 +130,10 @@ public class WorkerPool {
                             }
                         },
                         haltOnError,
-                        i
+                        i,
+                        poolName,
+                        yieldThreshold,
+                        sleepThreshold
                 );
                 worker.setDaemon(daemons);
                 workers.add(worker);

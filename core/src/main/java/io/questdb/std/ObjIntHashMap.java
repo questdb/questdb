@@ -51,7 +51,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     }
 
     @SuppressWarnings("unchecked")
-    private ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
+    public ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
         assert loadFactor > 0 && loadFactor < 1.0;
         this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
         this.loadFactor = loadFactor;
@@ -62,6 +62,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         clear();
     }
 
+    @Override
     public final void clear() {
         free = capacity;
         Arrays.fill(keys, noEntryValue);

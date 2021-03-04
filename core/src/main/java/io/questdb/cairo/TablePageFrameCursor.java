@@ -66,9 +66,9 @@ public class TablePageFrameCursor implements PageFrameCursor {
         this.columnSizes = columnSizes;
         columnCount = columnIndexes.size();
         this.timestampColumnIndex = timestampColumnIndex;
-        columnFrameAddresses.ensureCapacity(columnCount);
-        columnFrameLengths.ensureCapacity(columnCount);
-        columnTops.ensureCapacity(columnCount);
+        columnFrameAddresses.seed(columnCount, 0);
+        columnFrameLengths.seed(columnCount, 0);
+        columnTops.seed(columnCount, 0);
         toTop();
         return this;
     }

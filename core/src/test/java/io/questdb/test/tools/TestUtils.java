@@ -153,7 +153,7 @@ public final class TestUtils {
         if (expected.length() != actual.length()) {
             Assert.assertEquals(message, expected, actual);
         }
-        Assert.assertEquals(expected.length(), actual.length());
+
         for (int i = 0; i < expected.length(); i++) {
             if (expected.charAt(i) != actual.charAt(i)) {
                 Assert.assertEquals(message, expected, actual);
@@ -175,6 +175,23 @@ public final class TestUtils {
                     Assert.fail("Failed comparison at [" + l + "], expected: " + b1 + ", actual: " + b2);
                 }
                 Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
+            }
+        }
+    }
+
+    public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
+        try (var expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
+             var actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
+            int byte1, byte2;
+            long length = 0;
+            do {
+                length++;
+                byte1 = expectedStream.read();
+                byte2 = actualStream.read();
+            } while (byte1 == byte2 && byte1 > 0 && byte2 > 0);
+
+            if (byte1 != byte2) {
+                Assert.fail("Files are different at offset " + (length - 1));
             }
         }
     }

@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Transient;
 
 public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
 

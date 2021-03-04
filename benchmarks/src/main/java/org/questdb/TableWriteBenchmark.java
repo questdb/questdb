@@ -46,7 +46,10 @@ import java.util.concurrent.TimeUnit;
 public class TableWriteBenchmark {
 
     private static TableWriter writer;
+    private static TableWriter writer2;
+    private static TableWriter writer3;
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
+    private long ts;
 
     private final Rnd rnd = new Rnd();
 
@@ -54,7 +57,9 @@ public class TableWriteBenchmark {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1, null).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                compiler.compile("create table test1(f long)", sqlExecutionContext);
+                compiler.compile("create table if not exists test1(f long) ", sqlExecutionContext);
+                compiler.compile("create table if not exists test2(f timestamp) timestamp (f)", sqlExecutionContext);
+                compiler.compile("create table if not exists test3(f timestamp) timestamp (f) PARTITION BY DAY", sqlExecutionContext);
             } catch (SqlException e) {
                 e.printStackTrace();
             }
@@ -73,15 +78,27 @@ public class TableWriteBenchmark {
 
     @TearDown(Level.Iteration)
     public void tearDown() {
-        System.out.println("writer size = " + writer.size());
+        System.out.println("writer size = " + Math.max(writer.size(), writer2.size()));
         writer.commit();
         writer.truncate();
         writer.close();
+
+        writer2.commit();
+        writer2.truncate();
+        writer2.close();
+
+        writer3.commit();
+        writer3.truncate();
+        writer3.close();
+
+        ts = 0;
     }
 
     @Setup(Level.Iteration)
     public void reset() {
         writer = new TableWriter(configuration, "test1");
+        writer2 = new TableWriter(configuration, "test2");
+        writer3 = new TableWriter(configuration, "test3");
         rnd.reset();
     }
 
@@ -106,6 +123,32 @@ public class TableWriteBenchmark {
     }
 
     @Benchmark
+    public void testWriteTimestampAsync() {
+        TableWriter.Row r = writer2.newRow(ts++ << 8);
+        r.append();
+        writer2.commit(CommitMode.ASYNC);
+    }
+
+    @Benchmark
+    public void testWriteTimestampNoCommit() {
+        TableWriter.Row r = writer2.newRow(ts++ << 8);
+        r.append();
+    }
+
+    @Benchmark
+    public void testWritePartitionedTimestampNoCommit() {
+        TableWriter.Row r = writer3.newRow(ts++ << 8);
+        r.append();
+    }
+
+    @Benchmark
+    public void testWritePartitionedTimestampAsync() {
+        TableWriter.Row r = writer3.newRow(ts++ << 8);
+        r.append();
+        writer3.commit(CommitMode.ASYNC);
+    }
+
+    @Benchmark
     public void testWriteNoSync() {
         TableWriter.Row r = writer.newRow();
         r.putLong(0, rnd.nextLong());
@@ -120,5 +163,4 @@ public class TableWriteBenchmark {
         r.append();
         writer.commit(CommitMode.SYNC);
     }
-
 }

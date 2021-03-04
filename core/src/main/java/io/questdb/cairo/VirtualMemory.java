@@ -823,7 +823,10 @@ public class VirtualMemory implements BigMem {
      * @return native address of page
      */
     public long getPageAddress(int page) {
-        return pages.getQuick(page);
+        if (page < pages.size()) {
+            return pages.getQuick(page);
+        }
+        return 0L;
     }
 
     protected long getPageSize(int page) {

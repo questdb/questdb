@@ -38,8 +38,8 @@ public class IntLongPriorityQueue {
     public void add(int index, long value) {
         int p = binSearch(value);
         if (p < size) {
-            buf.ensureCapacity(size + 1);
-            src.ensureCapacity(size + 1);
+            buf.setPos(size + 1);
+            src.setPos(size + 1);
             buf.arrayCopy(p, p + 1, size - p);
             src.arrayCopy(p, p + 1, size - p);
         }
