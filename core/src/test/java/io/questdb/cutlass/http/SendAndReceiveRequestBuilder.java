@@ -146,6 +146,9 @@ public class SendAndReceiveRequestBuilder {
         while (received < expectedToReceive) {
             int n = nf.recv(fd, ptr + received, len - received);
             if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i) & 0xff);
+                }
                 received += n;
                 if (null != listener) {
                     listener.onReceived(received);
