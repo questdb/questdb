@@ -22,15 +22,40 @@
  *
  ******************************************************************************/
 
-import { ConsoleAction } from "./Console/types"
-import { QueryAction } from "./Query/types"
-import { TelemetryAction } from "./Telemetry/types"
-import rootReducer from "./reducers"
+import { TelemetryAction, TelemetryAT, TelemetryStateShape } from "types"
 
-export type StoreAction = ConsoleAction | QueryAction | TelemetryAction
+const yearOffset = 24 * 60 * 60 * 1000 * 31 * 12
 
-export type StoreShape = ReturnType<typeof rootReducer>
+export const initialState: TelemetryStateShape = {}
 
-export * from "./Console/types"
-export * from "./Query/types"
-export * from "./Telemetry/types"
+const telemetry = (
+  state = initialState,
+  action: TelemetryAction,
+): TelemetryStateShape => {
+  switch (action.type) {
+    case TelemetryAT.SET_CONFIG: {
+      return {
+        ...state,
+        config: action.payload,
+      }
+    }
+
+    case TelemetryAT.SET_REMOTE_CONFIG: {
+      return {
+        ...state,
+        remoteConfig: {
+          cta: false,
+          lastUpdated: new Date(
+            new Date().getTime() - yearOffset,
+          ).toISOString(),
+          ...action.payload,
+        },
+      }
+    }
+
+    default:
+      return state
+  }
+}
+
+export default telemetry

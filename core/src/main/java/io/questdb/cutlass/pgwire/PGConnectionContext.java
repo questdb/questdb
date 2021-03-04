@@ -1707,7 +1707,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         this.username = e.toImmutable();
                     }
 
-                    LOG.info().$("propertry [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+                    LOG.info().$("property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
                 }
 
                 characterStore.clear();
