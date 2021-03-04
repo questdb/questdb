@@ -48,8 +48,10 @@ public class SymbolMapWriter implements Closeable {
     private final DirectCharSequence tmpSymbol;
     private final int maxHash;
     private boolean nullValue = false;
+    private final TransientSymbolCountChangeHandler transientSymbolCountChangeHandler;
 
-    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
+    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount, TransientSymbolCountChangeHandler transientSymbolCountChangeHandler) {
+        this.transientSymbolCountChangeHandler = transientSymbolCountChangeHandler;
         final int plen = path.length();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
@@ -177,6 +179,7 @@ public class SymbolMapWriter implements Closeable {
         indexWriter.rollbackValues(keyToOffset(symbolCount));
         offsetMem.jumpTo(keyToOffset(symbolCount));
         jumpCharMemToSymbolCount(symbolCount);
+        transientSymbolCountChangeHandler.handleTansientymbolCountChange(symbolCount);
         if (cache != null) {
             cache.clear();
         }
@@ -235,7 +238,9 @@ public class SymbolMapWriter implements Closeable {
         long offsetOffset = offsetMem.getAppendOffset();
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
-        return offsetToKey(offsetOffset);
+        int symIndex = offsetToKey(offsetOffset);
+        transientSymbolCountChangeHandler.handleTansientymbolCountChange(symIndex + 1);
+        return symIndex;
     }
 
     public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
@@ -280,5 +285,9 @@ public class SymbolMapWriter implements Closeable {
         charMem.jumpTo(0);
         indexWriter.truncate();
         cache.clear();
+    }
+
+    public interface TransientSymbolCountChangeHandler {
+        void handleTansientymbolCountChange(int symbolCount);
     }
 }

@@ -35,10 +35,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.ServerDisconnectException;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.ComparisonFailure;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
@@ -291,6 +288,50 @@ public class RetryIODispatcherTest {
             temp.delete();
             temp.create();
         }
+    }
+
+    // TODO: fix HTTP server to deliver failed response before aborting connection on failed csv uploads
+    @Test
+    @Ignore
+    public void testImportsCreateAsSelectAndDrop() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(4)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    for (int i = 0; i < 10; i++) {
+                        System.out.println("*************************************************************************************");
+                        System.out.println("**************************         Run " + i + "            ********************************");
+                        System.out.println("*************************************************************************************");
+                        SendAndReceiveRequestBuilder sendAndReceiveRequestBuilder = new SendAndReceiveRequestBuilder()
+                                .withNetworkFacade(getSendDelayNetworkFacade(0))
+                                .withCompareLength(ValidImportResponse.length());
+                        sendAndReceiveRequestBuilder.execute(ValidImportRequest, ValidImportResponse);
+
+                        if (i == 0) {
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /query?query=create+table+copy+as+(select+*+from+%22fhv_tripdata_2017-02.csv%22)&count=true HTTP/1.1\r\n",
+                                    "0c\r\n" +
+                                            "{\"ddl\":\"OK\"}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n");
+                        } else {
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /query?query=insert+into+copy+select+*+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                                    "0c\r\n" +
+                                            "{\"ddl\":\"OK\"}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n");
+                        }
+
+                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                "GET /query?query=drop+table+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
+                                "0c\r\n" +
+                                        "{\"ddl\":\"OK\"}\r\n" +
+                                        "00\r\n");
+                    }
+                });
     }
 
     private void assertImportProcessedWhenClientDisconnected() throws Exception {

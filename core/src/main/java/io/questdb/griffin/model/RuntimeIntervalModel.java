@@ -88,7 +88,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     private boolean allIntervalsHitOnePartition(Timestamps.TimestampFloorMethod floorMethod) {
-        if (!isStatic()) return false;
+        if (!isStatic()) {
+            return false;
+        }
+        if (intervals.size() == 0) {
+            return true;
+        }
 
         long floor = floorMethod.floor(intervals.getQuick(0));
         for (int i = 1, n = intervals.size(); i < n; i++) {

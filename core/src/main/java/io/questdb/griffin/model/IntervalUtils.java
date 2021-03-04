@@ -115,7 +115,7 @@ public final class IntervalUtils {
         char periodType = getEncodedPeriodType(intervals, index);
         int count = getEncodedPeriodCount(intervals, index);
 
-        intervals.truncateTo(index);
+        intervals.setPos(index);
         if (periodType == 0) {
             intervals.extendAndSet(index + 1, hi);
             intervals.setQuick(index, lo);
@@ -442,7 +442,7 @@ public final class IntervalUtils {
             }
         }
 
-        concatenatedIntervals.truncateTo(2 * writePoint);
+        concatenatedIntervals.setPos(2 * writePoint);
     }
 
     static int append(LongList list, int writePoint, long lo, long hi) {
@@ -583,7 +583,7 @@ public final class IntervalUtils {
             writeIndex += 2;
         }
 
-        intervals.truncateTo(writeIndex);
+        intervals.setPos(writeIndex);
     }
 
     public static boolean isInIntervals(LongList intervals, long timestamp) {

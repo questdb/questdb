@@ -443,9 +443,9 @@ public class NumbersTest {
 
     @Test
     public void testEncodeDecodeShortInInt() throws NumericException {
-        short[] testCases = new short[] {Short.MIN_VALUE, Short.MAX_VALUE, 0, -1, 1024, -1024, 0xfff, -0xfff};
-        for(int i = 0; i < testCases.length; i++) {
-            for(int j = 0; j < testCases.length; j++) {
+        short[] testCases = new short[]{Short.MIN_VALUE, Short.MAX_VALUE, 0, -1, 1024, -1024, 0xfff, -0xfff};
+        for (int i = 0; i < testCases.length; i++) {
+            for (int j = 0; j < testCases.length; j++) {
                 short hi = testCases[i];
                 short lo = testCases[j];
                 int encoded = Numbers.encodeLowHighShorts(lo, hi);

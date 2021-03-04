@@ -46,6 +46,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private int symbolCapacity;
     private boolean nullValue;
 
+    public SymbolMapReaderImpl() {
+    }
+
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         of(configuration, path, name, symbolCount);
     }
@@ -165,6 +168,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return SymbolTable.VALUE_IS_NULL;
     }
 
+    @Override
     public boolean containsNullValue() {
         return nullValue;
     }

@@ -74,6 +74,12 @@ public class CairoTestUtils {
         }
     }
 
+    public static void createAllTableWithTimestamp(CairoConfiguration configuration, int partitionBy) {
+        try (TableModel model = getAllTypesModel(configuration, partitionBy).col("ts", ColumnType.TIMESTAMP).timestamp()) {
+            createTableWithVersionAndId(model, ColumnType.VERSION, 1);
+        }
+    }
+
     public static void createAllTableWithNewTypes(CairoConfiguration configuration, int partitionBy) {
         try (TableModel model = getAllTypesModelWithNewTypes(configuration, partitionBy)) {
             create(model);
