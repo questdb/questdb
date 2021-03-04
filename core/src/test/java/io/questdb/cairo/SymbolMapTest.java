@@ -24,6 +24,12 @@
 
 package io.questdb.cairo;
 
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import io.questdb.cairo.SymbolMapWriter.TransientSymbolCountChangeHandler;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.std.Chars;
@@ -31,10 +37,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Test;
 
 public class SymbolMapTest extends AbstractCairoTest {
+    private static final TransientSymbolCountChangeHandler TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER = (symCount) -> {
+    };
 
     public static void create(Path path, CharSequence name, int symbolCapacity, boolean useCache) {
         int plen = path.length();
@@ -60,7 +66,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                 create(path, "x", N, true);
                 Rnd rnd = new Rnd();
 
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
@@ -71,7 +77,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
                 }
 
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", N)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", N, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
                     long prev = N - 1;
                     // append second batch and check that symbol keys start with N
                     for (int i = 0; i < N; i++) {
@@ -105,7 +111,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             ObjList<String> symbols = new ObjList<>();
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", symbolCount, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
                     for (int i = 0; i < symbolCount; i++) {
@@ -132,7 +138,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
                 try {
-                    new SymbolMapWriter(configuration, path, "x", 0);
+                    new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER);
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
@@ -192,7 +198,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int N = 1024;
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {
@@ -226,7 +232,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                 int plen = path.length();
                 Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
                 try {
-                    new SymbolMapWriter(configuration, path.trimTo(plen), "x", 0);
+                    new SymbolMapWriter(configuration, path.trimTo(plen), "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER);
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "too short"));
@@ -241,7 +247,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int N = 1000000;
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, false);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {
@@ -263,7 +269,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, false);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
@@ -296,7 +302,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, false);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
@@ -336,7 +342,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int N = 1024;
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0, TRANSIENT_SYMBOL_COUNT_CHANGE_HANDLER)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {

@@ -27,10 +27,12 @@ package io.questdb.griffin;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.TimeZone;
@@ -602,7 +604,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                     compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros, true);
                 }
 
-                for (currentMicros = 0; currentMicros < count * hour; currentMicros += 5 * hour) {
+                for (currentMicros = 0; currentMicros < count * hour + 4 * day; currentMicros += 5 * hour) {
                     compareNowRange("select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
                             datesArr,
                             ts -> ts >= (currentMicros - 2 * day) && (ts <= currentMicros - day), true);
@@ -611,6 +613,57 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 currentMicros = 100L * hour;
                 compareNowRange("WITH temp AS (SELECT ts FROM xts WHERE ts > dateadd('y', -1, now())) " +
                         "SELECT ts FROM temp WHERE ts < now()", datesArr, ts -> ts < currentMicros, true);
+            });
+        } finally {
+            currentMicros = -1;
+        }
+    }
+
+    @Test
+    public void testNonContinuousPartitions() throws Exception {
+        try {
+            currentMicros = 0;
+            assertMemoryLeak(() -> {
+                // Create table
+                // One hour step timestamps from epoch for 32 then skip 48 etc for 10 iterations
+                final int count = 32;
+                final int skip = 48;
+                final int iterations = 10;
+                final long hour = Timestamps.HOUR_MICROS;
+                final long day = 24 * hour;
+
+                String createStmt = "create table xts (ts Timestamp) timestamp(ts) partition by DAY";
+                compiler.compile(createStmt, sqlExecutionContext);
+                long start = 0;
+                List<Object[]> datesArr = new ArrayList<>();
+                SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
+                formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
+
+                for (int i = 0; i < iterations; i++) {
+                    String insert = "insert into xts " +
+                            "select timestamp_sequence(" + start + "L, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")";
+                    compiler.compile(insert, sqlExecutionContext);
+                    for (long ts = 0; ts < count; ts++) {
+                        long nextTs = start + ts * hour;
+                        datesArr.add(new Object[]{nextTs, formatter.format(nextTs / 1000L)});
+                    }
+                    start += (count + skip) * hour;
+                }
+                final long end = start;
+
+                // Search with 3 hour window every 22 hours
+                int min = Integer.MAX_VALUE;
+                int max = Integer.MIN_VALUE;
+                for (currentMicros = 0; currentMicros < end; currentMicros += 22 * hour) {
+                    int results = compareNowRange("select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
+                            datesArr,
+                            ts -> ts >= (currentMicros - hour) && (ts <= currentMicros + 2 * hour), true);
+                    min = Math.min(min, results);
+                    max = Math.max(max, results);
+                }
+
+                Assert.assertEquals(0, min);
+                Assert.assertEquals(4, max);
             });
         } finally {
             currentMicros = -1;
@@ -662,12 +715,14 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         });
     }
 
-    private void compareNowRange(String query, List<Object[]> dates, LongPredicate filter, boolean expectSize) throws SqlException {
+    private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter, boolean expectSize) throws SqlException {
         String queryPlan = "{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":{\"name\":\"IntervalFwdDataFrameCursorFactory\", \"table\":\"xts\"}}";
+        long expectedCount = dates.stream().filter(arr -> filter.test((long) arr[0])).collect(Collectors.counting());
         String expected = "ts\n"
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
         printSqlResult(expected, query, "ts", null, null, true, true, expectSize, false, queryPlan);
+        return (int) expectedCount;
     }
 }

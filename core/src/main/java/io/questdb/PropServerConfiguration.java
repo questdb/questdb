@@ -24,16 +24,34 @@
 
 package io.questdb;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Properties;
+
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.MimeTypesCache;
+import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.LineProtoHourTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMicroTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMilliTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoMinuteTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoSecondTimestampAdapter;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
@@ -42,8 +60,25 @@ import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.SqlInterruptorConfiguration;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.SelectFacadeImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -55,12 +90,6 @@ import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.File;
-import java.util.Arrays;
-import java.util.Map;
-import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -129,6 +158,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
+    private final long sharedWorkerYieldThreshold;
+    private final long sharedWorkerSleepThreshold;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
@@ -165,7 +196,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
     private final boolean lineTcpEnabled;
-    private final WorkerPoolAwareConfiguration lineTcpWorkerPoolConfiguration = new PropLineTcpWorkerPoolConfiguration();
+    private final WorkerPoolAwareConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
+    private final WorkerPoolAwareConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
     private final Log log;
     private final PropHttpMinServerConfiguration httpMinServerConfiguration = new PropHttpMinServerConfiguration();
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
@@ -206,6 +238,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int responseHeaderBufferSize;
     private int httpWorkerCount;
     private boolean httpWorkerHaltOnError;
+    private long httpWorkerYieldThreshold;
+    private long httpWorkerSleepThreshold;
     private boolean httpServerKeepAlive;
     private int sendBufferSize;
     private CharSequence indexFileName;
@@ -271,6 +305,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int[] pgWorkerAffinity;
     private int pgWorkerCount;
     private boolean pgHaltOnError;
+    private long pgWorkerYieldThreshold;
+    private long pgWorkerSleepThreshold;
     private boolean pgDaemonPool;
     private int pgInsertCacheBlockCount;
     private int pgInsertCacheRowCount;
@@ -291,18 +327,30 @@ public class PropServerConfiguration implements ServerConfiguration {
     private LineProtoTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpMsgBufferSize;
     private int lineTcpMaxMeasurementSize;
-    private int lineTcpWriterQueueSize;
-    private int lineTcpWorkerCount;
-    private int[] lineTcpWorkerAffinity;
-    private boolean lineTcpWorkerPoolHaltOnError;
+    private int lineTcpWriterQueueCapacity;
+    private int lineTcpWriterWorkerCount;
+    private int[] lineTcpWriterWorkerAffinity;
+    private boolean lineTcpWriterWorkerPoolHaltOnError;
+    private long lineTcpWriterWorkerYieldThreshold;
+    private long lineTcpWriterWorkerSleepThreshold;
+    private int lineTcpIOWorkerCount;
+    private int[] lineTcpIOWorkerAffinity;
+    private boolean lineTcpIOWorkerPoolHaltOnError;
+    private long lineTcpIOWorkerYieldThreshold;
+    private long lineTcpIOWorkerSleepThreshold;
     private int lineTcpNUpdatesPerLoadRebalance;
     private double lineTcpMaxLoadRatio;
     private int lineTcpMaxUncommittedRows;
     private long lineTcpMaintenanceJobHysteresisInMs;
     private String lineTcpAuthDbPath;
+    private int lineDefaultPartitionBy;
+    private boolean lineTcpAggressiveRecv;
+    private long minIdleMsBeforeWriterRelease;
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
+    private long httpMinWorkerYieldThreshold;
+    private long httpMinWorkerSleepThreshold;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
     private int httpMinEventCapacity;
@@ -324,6 +372,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
         this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
         this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
+        this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 10);
+        this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10000);
 
         final String databaseRoot = getString(properties, env, "cairo.root", "db");
         if (new File(databaseRoot).isAbsolute()) {
@@ -337,6 +387,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpMinWorkerAffinity = getAffinity(properties, env, "http.min.worker.affinity", httpWorkerCount);
             this.httpMinWorkerHaltOnError = getBoolean(properties, env, "http.min.worker.haltOnError", false);
             this.httpMinWorkerCount = getInt(properties, env, "http.min.worker.count", 0);
+            this.httpMinWorkerYieldThreshold = getLong(properties, env, "http.min.worker.yield.threshold", 10);
+            this.httpMinWorkerSleepThreshold = getLong(properties, env, "http.min.worker.sleep.threshold", 10000);
 
             parseBindTo(properties, env, "http.min.bind.to", "0.0.0.0:9003", (a, p) -> {
                 httpMinBindIPv4Address = a;
@@ -364,6 +416,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerCount = getInt(properties, env, "http.worker.count", 0);
             this.httpWorkerAffinity = getAffinity(properties, env, "http.worker.affinity", httpWorkerCount);
             this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
+            this.httpWorkerYieldThreshold = getLong(properties, env, "http.worker.yield.threshold", 10);
+            this.httpWorkerSleepThreshold = getLong(properties, env, "http.worker.sleep.threshold", 10000);
             this.sendBufferSize = getIntSize(properties, env, "http.send.buffer.size", 2 * 1024 * 1024);
             this.indexFileName = getString(properties, env, "http.static.index.file.name", "index.html");
             this.httpFrozenClock = getBoolean(properties, env, "http.frozen.clock", false);
@@ -474,6 +528,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.pgWorkerCount = getInt(properties, env, "pg.worker.count", 0);
             this.pgWorkerAffinity = getAffinity(properties, env, "pg.worker.affinity", pgWorkerCount);
             this.pgHaltOnError = getBoolean(properties, env, "pg.halt.on.error", false);
+            this.pgWorkerYieldThreshold = getLong(properties, env, "pg.worker.yield.threshold", 10);
+            this.pgWorkerSleepThreshold = getLong(properties, env, "pg.worker.sleep.threshold", 10000);
             this.pgDaemonPool = getBoolean(properties, env, "pg.daemon.pool", true);
             this.pgInsertCacheBlockCount = getInt(properties, env, "pg.insert.cache.block.count", 8);
             this.pgInsertCacheRowCount = getInt(properties, env, "pg.insert.cache.row.count", 8);
@@ -632,18 +688,33 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new IllegalArgumentException(
                         "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
             }
-            this.lineTcpWriterQueueSize = getIntSize(properties, env, "line.tcp.writer.queue.size", 128);
-            this.lineTcpWorkerCount = getInt(properties, env, "line.tcp.worker.count", 0);
-            this.lineTcpWorkerAffinity = getAffinity(properties, env, "line.tcp.worker.affinity", lineTcpWorkerCount);
-            this.lineTcpWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.halt.on.error", false);
+            this.lineTcpWriterQueueCapacity = getInt(properties, env, "line.tcp.writer.queue.capacity", 128);
+            this.lineTcpWriterWorkerCount = getInt(properties, env, "line.tcp.writer.worker.count", 0);
+            this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, "line.tcp.writer.worker.affinity", lineTcpWriterWorkerCount);
+            this.lineTcpWriterWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.writer.halt.on.error", false);
+            this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, "line.tcp.writer.worker.yield.threshold", 10);
+            this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, "line.tcp.writer.worker.sleep.threshold", 10000);
+            this.lineTcpIOWorkerCount = getInt(properties, env, "line.tcp.io.worker.count", 0);
+            this.lineTcpIOWorkerAffinity = getAffinity(properties, env, "line.tcp.io.worker.affinity", lineTcpIOWorkerCount);
+            this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.io.halt.on.error", false);
+            this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, "line.tcp.io.worker.yield.threshold", 10);
+            this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, "line.tcp.io.worker.sleep.threshold", 10000);
             this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000);
             this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
             this.lineTcpMaxUncommittedRows = getInt(properties, env, "line.tcp.max.uncommitted.rows", 1000);
             this.lineTcpMaintenanceJobHysteresisInMs = getInt(properties, env, "line.tcp.maintenance.job.hysteresis.in.ms", 250);
             this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
+            String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
+            this.lineDefaultPartitionBy = PartitionBy.fromString(defaultPartitionByProperty);
+            if (this.lineDefaultPartitionBy == -1) {
+                log.info().$("invalid partition by ").$(defaultPartitionByProperty).$("), will use DAY").$();
+                this.lineDefaultPartitionBy = PartitionBy.DAY;
+            }
             if (null != lineTcpAuthDbPath) {
                 this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
             }
+            this.lineTcpAggressiveRecv = getBoolean(properties, env, "line.tcp.io.aggressive.recv", false);
+            this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 30_000);
         }
 
         this.buildInformation = buildInformation;
@@ -1299,6 +1370,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean haltOnError() {
             return httpWorkerHaltOnError;
         }
+
+        @Override
+        public long getYieldThreshold() {
+            return httpWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return httpWorkerSleepThreshold;
+        }
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
@@ -1914,25 +1995,77 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropLineTcpWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+    private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
         @Override
         public int[] getWorkerAffinity() {
-            return lineTcpWorkerAffinity;
+            return lineTcpWriterWorkerAffinity;
         }
 
         @Override
         public int getWorkerCount() {
-            return lineTcpWorkerCount;
+            return lineTcpWriterWorkerCount;
         }
 
         @Override
         public boolean haltOnError() {
-            return lineTcpWorkerPoolHaltOnError;
+            return lineTcpWriterWorkerPoolHaltOnError;
         }
 
         @Override
         public boolean isEnabled() {
             return true;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "ilpwriter";
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return lineTcpWriterWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return lineTcpWriterWorkerSleepThreshold;
+        }
+    }
+
+    private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
+        @Override
+        public int[] getWorkerAffinity() {
+            return lineTcpIOWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return lineTcpIOWorkerCount;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return lineTcpIOWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "ilpio";
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return lineTcpIOWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return lineTcpIOWorkerSleepThreshold;
         }
     }
 
@@ -1978,8 +2111,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getWriterQueueSize() {
-            return lineTcpWriterQueueSize;
+        public int getWriterQueueCapacity() {
+            return lineTcpWriterQueueCapacity;
         }
 
         @Override
@@ -1993,8 +2126,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
-            return lineTcpWorkerPoolConfiguration;
+        public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
+            return lineTcpWriterWorkerPoolConfiguration;
+        }
+
+        @Override
+        public WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration() {
+            return lineTcpIOWorkerPoolConfiguration;
         }
 
         @Override
@@ -2020,6 +2158,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getAuthDbPath() {
             return lineTcpAuthDbPath;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return lineDefaultPartitionBy;
+        }
+
+        @Override
+        public boolean isIOAggressiveRecv() {
+            return lineTcpAggressiveRecv;
+        }
+
+        @Override
+        public long getMinIdleMsBeforeWriterRelease() {
+            return minIdleMsBeforeWriterRelease;
         }
     }
 
@@ -2079,6 +2232,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return sharedWorkerHaltOnError;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return sharedWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return sharedWorkerSleepThreshold;
         }
     }
 
@@ -2321,6 +2484,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getYieldThreshold() {
+            return pgWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return pgWorkerSleepThreshold;
+        }
+
+        @Override
         public boolean isDaemonPool() {
             return pgDaemonPool;
         }
@@ -2379,6 +2552,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return httpMinServerEnabled;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return httpMinWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return httpMinWorkerSleepThreshold;
         }
     }
 }
