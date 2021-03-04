@@ -908,7 +908,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(102);
+        counter.set(104);
         executeWithPool(2, OutOfOrderFailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -920,6 +920,13 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
+        counter.set(150);
+        executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
+    }
+
+    // todo: after OOO fails, perform regular append and see if indexes are in consistent state
+    @Test
+    public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
         counter.set(150);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }

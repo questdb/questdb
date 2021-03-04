@@ -549,12 +549,14 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     ff.close(srcTimestampFd);
                 }
 
-                renamePartition(
-                        ff,
-                        pathToTable,
-                        oooTimestampHi,
-                        tableWriter
-                );
+                if (tableWriter.getOooErrorCount() == 0) {
+                    renamePartition(
+                            ff,
+                            pathToTable,
+                            oooTimestampHi,
+                            tableWriter
+                    );
+                }
 
             } else if (srcTimestampFd > 0) {
                 ff.close(srcTimestampFd);
@@ -701,6 +703,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         if (ff.rename(path, other.$())) {
             TableUtils.newPartitionName(other.trimTo(plen), txn);
             if (ff.rename(other.$(), path)) {
+                LOG.info().$("renamed").$();
                 return;
             }
             throw CairoException.instance(ff.errno())
@@ -998,7 +1001,6 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
             w.rollbackConditionally(row);
             final long count = dstFixSize / Integer.BYTES;
             for (; row < count; row++) {
-                assert row * Integer.BYTES < dstFixSize;
                 w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row);
             }
             w.setMaxValue(count- 1);

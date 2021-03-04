@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.PagedVirtualMemory;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.PagedVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -320,13 +320,6 @@ public class BitmapIndexWriter implements Closeable {
         updateValueMemSize();
     }
 
-    void rollbackConditionally(long row) {
-        long currentMaxRow =getMaxValue();
-        if (row > 0 && (currentMaxRow < 1 || currentMaxRow > row)) {
-            rollbackValues(row - 1);
-        }
-    }
-
     private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
         long newValueBlockOffset = allocateValueBlockAndStore(value);
 
@@ -415,6 +408,13 @@ public class BitmapIndexWriter implements Closeable {
 
     private long keyMemSize() {
         return this.keyCount * BitmapIndexUtils.KEY_ENTRY_SIZE + BitmapIndexUtils.KEY_FILE_RESERVED;
+    }
+
+    void rollbackConditionally(long row) {
+        final long currentMaxRow;
+        if (row > 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow > row)) {
+            rollbackValues(row - 1);
+        }
     }
 
     private void seek(long count, long offset) {

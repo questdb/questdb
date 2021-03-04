@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -79,6 +79,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     public void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
+        writer.rollbackConditionally(loRow);
         final long lim = hiRow + columnTop;
         for (long lo = loRow; lo < lim; lo++) {
             writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);

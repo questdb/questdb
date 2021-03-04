@@ -1385,6 +1385,10 @@ public class TableWriter implements Closeable {
         oooErrorCount.incrementAndGet();
     }
 
+    long getOooErrorCount() {
+        return oooErrorCount.get();
+    }
+
     void bumpPartitionUpdateCount() {
         oooUpdRemaining.decrementAndGet();
     }
