@@ -202,7 +202,7 @@ public final class TxWriter extends TxReader implements Closeable {
         return txPartitionCount == 1 ? transientRowCount - prevTransientRowCount : transientRowCount;
     }
 
-    public int getTxPartitionCount() {
+    public int getAppendedPartitionCount() {
         return txPartitionCount;
     }
 

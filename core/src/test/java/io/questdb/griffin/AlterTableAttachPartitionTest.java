@@ -91,7 +91,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 copyAttachPartition(src, dst, 0, "2020-01-10");
                 try {
-                    copyAttachPartition(src, dst, 2, "2020-01-09");
+                    copyAttachPartition(src, dst, 1001, "2020-01-09");
                     Assert.fail();
                 } catch (CairoException e) {
                     // Insert row attempt expected to fail.

@@ -1339,6 +1339,7 @@ public class TableReaderTest extends AbstractCairoTest {
             r.putInt(20, rnd.nextInt());
         }
     };
+
     private static final FieldGenerator BATCH9_GENERATOR = (r, rnd, ts, blob) -> {
         if (rnd.nextBoolean()) {
             r.putByte(1, rnd.nextByte());
@@ -1540,7 +1541,7 @@ public class TableReaderTest extends AbstractCairoTest {
         testConcurrentReloadMultiplePartitions(PartitionBy.MONTH, 12 * 3000000);
     }
 
-    public void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
+    private void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // model data
             LongList list = new LongList();

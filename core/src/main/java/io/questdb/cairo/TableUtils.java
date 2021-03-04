@@ -30,9 +30,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -105,6 +107,7 @@ public final class TableUtils {
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
+    private final static DateFormat fmtDefault;
 
     private TableUtils() {
     }
@@ -639,6 +642,8 @@ public final class TableUtils {
                 return fmtMonth;
             case PartitionBy.YEAR:
                 return fmtYear;
+            case PartitionBy.NONE:
+                return fmtDefault;
             default:
                 throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
         }
@@ -657,7 +662,7 @@ public final class TableUtils {
         }
     }
 
-    static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
+    public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.DAY:
                 return Timestamps.ADD_DD;
@@ -727,5 +732,21 @@ public final class TableUtils {
         fmtDay = compiler.compile("yyyy-MM-dd");
         fmtMonth = compiler.compile("yyyy-MM");
         fmtYear = compiler.compile("yyyy");
+        fmtDefault = new DateFormat() {
+            @Override
+            public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+                sink.put(DEFAULT_PARTITION_NAME);
+            }
+
+            @Override
+            public long parse(CharSequence in, DateLocale locale) {
+                return 0;
+            }
+
+            @Override
+            public long parse(CharSequence in, int lo, int hi, DateLocale locale) {
+                return 0;
+            }
+        };
     }
 }

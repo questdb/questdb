@@ -127,7 +127,13 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             String startDate,
             int partitionCount) throws NumericException, SqlException {
         long fromTimestamp = TimestampFormatUtils.parseTimestamp(startDate + "T00:00:00.000Z");
-        long increment = totalRows > 0 ? Math.max((Timestamps.addDays(fromTimestamp, partitionCount - 1) - fromTimestamp) / totalRows, 1) : 0;
+
+        long increment = 0;
+        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
+            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
 
         StringBuilder sql = new StringBuilder();
         sql.append("create table ").append(tableModel.getName()).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
