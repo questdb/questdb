@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.Mappable;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -41,7 +43,7 @@ public final class TxWriter extends TxReader implements Closeable {
     private long prevMinTimestamp;
     private long prevTransientRowCount;
 
-    private ReadWriteMemory txMem;
+    private PagedMappedReadWriteMemory txMem;
 
     public TxWriter(FilesFacade ff, Path path) {
         super(ff, path);
@@ -133,10 +135,10 @@ public final class TxWriter extends TxReader implements Closeable {
     }
 
     @Override
-    protected VirtualMemory openTxnFile(FilesFacade ff, Path path, int rootLen) {
+    protected Mappable openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return txMem = new ReadWriteMemory(ff, path, ff.getPageSize());
+                return txMem = new PagedMappedReadWriteMemory(ff, path, ff.getPageSize());
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
 
@@ -268,8 +270,8 @@ public final class TxWriter extends TxReader implements Closeable {
         minTimestamp = prevMinTimestamp;
     }
 
-    public void setMinTimestamp(long firstTimestamp) {
-        minTimestamp = firstTimestamp;
+    public void setMinTimestamp(long timestamp) {
+        minTimestamp = timestamp;
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
         }

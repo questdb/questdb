@@ -233,6 +233,13 @@ public class ContiguousVirtualMemory implements ReadWriteVirtualMemory, Mutable,
     }
 
     @Override
+    public void putBlockOfBytes(long from, long len) {
+        checkLimits(len);
+        Unsafe.getUnsafe().copyMemory(from, appendAddress, len);
+        appendAddress += len;
+    }
+
+    @Override
     public final long putBin(BinarySequence value) {
         final long offset = getAppendOffset();
         if (value != null) {

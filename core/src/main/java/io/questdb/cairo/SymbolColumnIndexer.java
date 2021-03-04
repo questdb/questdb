@@ -36,11 +36,6 @@ import java.io.Closeable;
 class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     private static final long SEQUENCE_OFFSET;
-
-    static {
-        SEQUENCE_OFFSET = Unsafe.getFieldOffset(SymbolColumnIndexer.class, "sequence");
-    }
-
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
     private final PagedSlidingReadOnlyMemory mem = new PagedSlidingReadOnlyMemory();
     private long columnTop;
@@ -129,5 +124,9 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     @Override
     public boolean tryLock(long expectedSequence) {
         return Unsafe.cas(this, SEQUENCE_OFFSET, expectedSequence, expectedSequence + 1);
+    }
+
+    static {
+        SEQUENCE_OFFSET = Unsafe.getFieldOffset(SymbolColumnIndexer.class, "sequence");
     }
 }

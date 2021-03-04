@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.MappedReadWriteMemory;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.PagedVirtualMemory;
+import io.questdb.cairo.vm.ReadWriteVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -63,9 +67,9 @@ public class EngineMigration {
         int tempMemSize = 8;
         long mem = Unsafe.malloc(tempMemSize);
 
-        try (var virtualMem = new VirtualMemory(ff.getPageSize(), 8);
+        try (var virtualMem = new PagedVirtualMemory(ff.getPageSize(), 8);
              var path = new Path();
-             var rwMemory = new ReadWriteMemory()) {
+             var rwMemory = new PagedMappedReadWriteMemory()) {
 
             var context = new MigrationContext(mem, tempMemSize, virtualMem, rwMemory);
             path.of(configuration.getRoot());
@@ -308,10 +312,10 @@ public class EngineMigration {
                 FilesFacade ff,
                 long tempMem8b,
                 Path path,
-                ReadWriteMemory txMem,
+                MappedReadWriteMemory txMem,
                 int partitionBy,
                 int symbolsCount,
-                VirtualMemory writeTo) {
+                PagedVirtualMemory writeTo) {
             int rootLen = path.length();
 
             long minTimestamp = txMem.getLong(TX_STRUCT_UPDATE_1_OFFSET_MIN_TIMESTAMP);
@@ -338,7 +342,7 @@ public class EngineMigration {
             }
         }
 
-        private static boolean removedPartitionsIncludes(long ts, ReadWriteMemory txMem, int symbolsCount) {
+        private static boolean removedPartitionsIncludes(long ts, ReadWriteVirtualMemory txMem, int symbolsCount) {
             long removedPartitionLo = TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + (symbolsCount + 1L) * Integer.BYTES;
             long removedPartitionCount = txMem.getInt(removedPartitionLo);
             long removedPartitionsHi = removedPartitionLo + Long.BYTES * removedPartitionCount;
@@ -363,13 +367,13 @@ public class EngineMigration {
     class MigrationContext {
         private final long tempMemory;
         private final int tempMemoryLen;
-        private final VirtualMemory tempVirtualMem;
-        private final ReadWriteMemory rwMemory;
+        private final PagedVirtualMemory tempVirtualMem;
+        private final MappedReadWriteMemory rwMemory;
         private Path tablePath;
         private long metadataFd;
         private Path tablePath2;
 
-        public MigrationContext(long mem, int tempMemSize, VirtualMemory tempVirtualMem, ReadWriteMemory rwMemory) {
+        public MigrationContext(long mem, int tempMemSize, PagedVirtualMemory tempVirtualMem, MappedReadWriteMemory rwMemory) {
             this.tempMemory = mem;
             this.tempMemoryLen = tempMemSize;
             this.tempVirtualMem = tempVirtualMem;
@@ -388,7 +392,7 @@ public class EngineMigration {
             return (int) engine.getNextTableId();
         }
 
-        public ReadWriteMemory creteRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
+        public MappedReadWriteMemory creteRwMemoryOf(FilesFacade ff, Path path, long pageSize) {
             // re-use same rwMemory
             // assumption that it is re-usable after the close() and then of()  methods called.
             rwMemory.of(ff, path, pageSize);
@@ -414,7 +418,7 @@ public class EngineMigration {
                     + " is available");
         }
 
-        public VirtualMemory getTempVirtualMem() {
+        public PagedVirtualMemory getTempVirtualMem() {
             return tempVirtualMem;
         }
 

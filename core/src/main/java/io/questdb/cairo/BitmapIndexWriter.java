@@ -318,6 +318,7 @@ public class BitmapIndexWriter implements Closeable {
         }
         valueMemSize = maxValueBlockOffset + blockCapacity;
         updateValueMemSize();
+        setMaxValue(maxValue);
     }
 
     private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {

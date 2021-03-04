@@ -81,7 +81,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final Path path = new Path();
-    private final AppendMemory mem = new AppendMemory();
+    private final AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory();
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,

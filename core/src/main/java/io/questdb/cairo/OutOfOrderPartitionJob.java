@@ -199,8 +199,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
                     srcTimestampAddr = OutOfOrderUtils.mapRO(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
-                    long tempMem8b = OutOfOrderUtils.get8ByteBuf(workerId);
-                    srcDataMax = readPartitionSize(ff, path, tempMem8b);
+//                    long tempMem8b = OutOfOrderUtils.get8ByteBuf(workerId);
+                    srcDataMax = tableWriter.getPartitionSizeByTimestamp(oooTimestampLo);
+//                            readPartitionSize(ff, path, tempMem8b);
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp

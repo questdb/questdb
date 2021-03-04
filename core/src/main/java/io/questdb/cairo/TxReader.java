@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.Mappable;
+import io.questdb.cairo.vm.MappedReadOnlyMemory;
+import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -54,8 +57,7 @@ public class TxReader implements Closeable {
     protected long transientRowCount;
     protected int partitionBy = -1;
     protected long partitionTableVersion;
-    private VirtualMemory roTxMem;
-    private ReadOnlyMemory readOnlyTxMem;
+    private MappedReadOnlyMemory roTxMem;
     private Timestamps.TimestampFloorMethod timestampFloorMethod;
 
     public TxReader(FilesFacade ff, Path path) {
@@ -73,10 +75,6 @@ public class TxReader implements Closeable {
     public void close() {
         roTxMem = Misc.free(roTxMem);
         path = Misc.free(path);
-    }
-
-    public int getPartitionsCount() {
-        return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
     public long getDataVersion() {
@@ -115,6 +113,10 @@ public class TxReader implements Closeable {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
     }
 
+    public int getPartitionsCount() {
+        return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
+    }
+
     public long getRowCount() {
         return transientRowCount + fixedRowCount;
     }
@@ -127,12 +129,12 @@ public class TxReader implements Closeable {
         return transientRowCount;
     }
 
-    public long getTxn() {
-        return txn;
-    }
-
     public long getTxEofOffset() {
         return getTxMemSize(symbolsCount, attachedPartitions.size());
+    }
+
+    public long getTxn() {
+        return txn;
     }
 
     public void initPartitionBy(int partitionBy) {
@@ -142,24 +144,7 @@ public class TxReader implements Closeable {
 
     public void open() {
         assert this.roTxMem == null;
-        roTxMem = openTxnFile(ff, path, rootLen);
-        if (roTxMem instanceof ReadOnlyMemory) {
-            // In readonly mode Tx file has to call grow sometimes
-            this.readOnlyTxMem = (ReadOnlyMemory) roTxMem;
-        }
-    }
-
-    public void readUnchecked() {
-        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
-        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
-        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
-        this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-        loadAttachedPartitions(this.maxTimestamp, this.transientRowCount);
+        roTxMem = (MappedReadOnlyMemory) openTxnFile(ff, path, rootLen);
     }
 
     public long readFixedRowCount() {
@@ -191,6 +176,19 @@ public class TxReader implements Closeable {
 
     public long readTxnCheck() {
         return roTxMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK);
+    }
+
+    public void readUnchecked() {
+        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
+        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
+        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
+        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
+        this.symbolsCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+        loadAttachedPartitions(this.maxTimestamp, this.transientRowCount);
     }
 
     public int readWriterCount() {
@@ -242,17 +240,12 @@ public class TxReader implements Closeable {
     private void loadAttachedPartitions(long maxTimestamp, long transientRowCount) {
         attachedPartitions.clear();
         if (partitionBy != PartitionBy.NONE) {
-            int symbolWriterCount = symbolsCount;
-            if (this.readOnlyTxMem != null) {
-                this.readOnlyTxMem.grow(getPartitionTableIndexOffset(symbolWriterCount, 0));
-            }
-            int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolWriterCount)) / Long.BYTES;
+            roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, 0));
+            int partitionTableSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolsCount)) / Long.BYTES;
             if (partitionTableSize > 0) {
-                if (this.readOnlyTxMem != null) {
-                    this.readOnlyTxMem.grow(getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
-                }
+                roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, partitionTableSize));
                 for (int i = 0; i < partitionTableSize; i++) {
-                    attachedPartitions.add(roTxMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
+                    attachedPartitions.add(roTxMem.getLong(getPartitionTableIndexOffset(symbolsCount, i)));
                 }
             }
 
@@ -260,14 +253,15 @@ public class TxReader implements Closeable {
                 updateAttachedPartitionSizeByTimestamp(maxTimestamp, transientRowCount);
             }
         } else {
+            roTxMem.grow(getPartitionTableIndexOffset(symbolsCount, 0));
             updateAttachedPartitionSizeByTimestamp(0L, transientRowCount);
         }
     }
 
-    protected VirtualMemory openTxnFile(FilesFacade ff, Path path, int rootLen) {
+    protected Mappable openTxnFile(FilesFacade ff, Path path, int rootLen) {
         try {
             if (this.ff.exists(this.path.concat(TXN_FILE_NAME).$())) {
-                return new ReadOnlyMemory(ff, path, this.ff.getPageSize(), getPartitionTableIndexOffset(0, 0));
+                return new SinglePageMappedReadOnlyPageMemory(ff, path, this.ff.getPageSize(), getPartitionTableIndexOffset(0, 0));
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(this.path);
         } finally {

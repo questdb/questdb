@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -266,7 +267,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             assertRemoveUpgradeFile();
 
             var config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_VERSION, "meta");
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_VERSION, "meta");
 
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -295,7 +296,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             assertRemoveUpgradeFile();
 
             var config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, "meta");
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, "meta");
 
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -324,7 +325,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             assertRemoveUpgradeFile();
 
             var config = new DefaultCairoConfiguration(root) {
-                private FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, TableUtils.UPGRADE_FILE_NAME);
+                private final FilesFacadeImpl ff = failToWriteMetaOffset(META_OFFSET_TABLE_ID, TableUtils.UPGRADE_FILE_NAME);
 
                 @Override
                 public FilesFacade getFilesFacade() {
@@ -420,7 +421,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         try (var path = new Path()) {
             path.concat(root).concat(src.getName()).concat(TableUtils.META_FILE_NAME);
             var ff = configuration.getFilesFacade();
-            try (var rwTx = new ReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (var rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
                 if (rwTx.getInt(META_OFFSET_VERSION) >= VERSION_TX_STRUCT_UPDATE_1 - 1) {
                     rwTx.putInt(META_OFFSET_VERSION, VERSION_TX_STRUCT_UPDATE_1 - 1);
                 }
@@ -443,7 +444,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             }
 
             path.trimTo(0).concat(root).concat(src.getName()).concat(TXN_FILE_NAME);
-            try (var rwTx = new ReadWriteMemory(ff, path.$(), ff.getPageSize())) {
+            try (var rwTx = new PagedMappedReadWriteMemory(ff, path.$(), ff.getPageSize())) {
                 rwTx.putInt(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT, symbolCounts.size());
                 rwTx.jumpTo(TX_STRUCT_UPDATE_1_OFFSET_MAP_WRITER_COUNT + 4);
 
@@ -476,7 +477,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                     if (ff.exists(path.$())) {
                         ff.remove(path);
                     }
-                    try (var rwAr = new ReadWriteMemory(ff, path.$(), 8)) {
+                    try (var rwAr = new PagedMappedReadWriteMemory(ff, path.$(), 8)) {
                         rwAr.putLong(partitionSize);
                     }
                 }

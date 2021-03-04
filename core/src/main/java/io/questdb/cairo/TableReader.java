@@ -927,7 +927,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 this.symbolCountSnapshot.clear();
                 this.txFile.readSymbolCounts(this.symbolCountSnapshot);
 
-
                 Unsafe.getUnsafe().loadFence();
                 // ok, we have snapshot, check if our snapshot is stable
                 if (txn == txFile.getTxn()) {

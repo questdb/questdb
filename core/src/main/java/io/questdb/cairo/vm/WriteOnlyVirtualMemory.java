@@ -28,9 +28,11 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
-
 public interface WriteOnlyVirtualMemory {
+
+    void jumpTo(long offset);
+
+    void putBlockOfBytes(long from, long len);
 
     long putBin(BinarySequence value);
 

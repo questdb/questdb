@@ -684,6 +684,19 @@ public final class TableUtils {
         }
     }
 
+    static Timestamps.TimestampCeilMethod getPartitionCeil(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.CEIL_DD;
+            case PartitionBy.MONTH:
+                return Timestamps.CEIL_MM;
+            case PartitionBy.YEAR:
+                return Timestamps.CEIL_YYYY;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have ceil method");
+        }
+    }
+
     public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.DAY:
