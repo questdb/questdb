@@ -1797,7 +1797,8 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(tableName.position, "literal expected");
         }
 
-        if (model.getColumnSet().size() > 0 && model.getColumnSet().size() != model.getColumnValues().size()) {
+        int columnSetSize = model.getColumnSet().size();
+        if (columnSetSize > 0 && columnSetSize != model.getColumnValues().size()) {
             throw SqlException.$(model.getColumnPosition(0), "value count does not match column count");
         }
 

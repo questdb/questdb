@@ -1707,7 +1707,7 @@ public class TableWriterTest extends AbstractCairoTest {
         populateTable(new FilesFacadeImpl() {
             @Override
             public long getPageSize() {
-                return super.getPageSize() * super.getPageSize();
+                return super.getPageSize() * 500;
             }
         }, PartitionBy.MONTH);
     }

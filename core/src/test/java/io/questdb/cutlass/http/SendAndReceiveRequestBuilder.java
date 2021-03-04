@@ -186,6 +186,69 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
+    public String executeUntilDisconnect(String request, long fd, final int len, long ptr, HttpClientStateListener listener) throws InterruptedException {
+        withExpectDisconnect(true);
+        long timestamp = System.currentTimeMillis();
+        int sent = 0;
+        int reqLen = request.length();
+        Chars.asciiStrCpy(request, reqLen, ptr);
+        while (sent < reqLen) {
+            int n = nf.send(fd, ptr + sent, reqLen - sent);
+            Assert.assertTrue(n > -1);
+            sent += n;
+        }
+
+        if (pauseBetweenSendAndReceive > 0) {
+            Thread.sleep(pauseBetweenSendAndReceive);
+        }
+
+        boolean disconnected = false;
+        boolean timeoutExpired = false;
+        int received = 0;
+        IntList receivedByteList = new IntList();
+        while (!disconnected) {
+            int n = nf.recv(fd, ptr + received, len - received);
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i));
+                }
+                received += n;
+                if (null != listener) {
+                    listener.onReceived(received);
+                }
+            } else if (n < 0) {
+                LOG.error().$("server disconnected").$();
+                disconnected = true;
+                listener.onClosed();
+                break;
+            } else {
+                if (System.currentTimeMillis() - timestamp > maxWaitTimeoutMs) {
+                    timeoutExpired = true;
+                    break;
+                } else {
+                    Thread.sleep(10);
+                }
+            }
+        }
+        byte[] receivedBytes = new byte[receivedByteList.size()];
+        for (int i = 0; i < receivedByteList.size(); i++) {
+            receivedBytes[i] = (byte) receivedByteList.getQuick(i);
+        }
+
+        String actual = new String(receivedBytes, StandardCharsets.UTF_8);
+        if (printOnly) {
+            System.out.println("actual");
+            System.out.println(actual);
+        }
+
+        if (timeoutExpired) {
+            LOG.error().$("timeout expired").$();
+            Assert.fail();
+        }
+
+        return actual;
+    }
+
     public void executeWithStandardHeaders(
             String request,
             String response
