@@ -1,0 +1,44 @@
+LIBRARY libad32
+
+VERSION 2013.0913
+
+EXPORTS 
+        InstructionSet
+        ProcessorName
+        ReadTSC
+        RoundF
+        RoundD
+        A_strcmp
+        A_stricmp
+        A_strstr
+        A_strtolower
+        A_strtoupper
+        A_strspn
+        A_strcspn
+        strCountInSet
+        strcount_UTF8
+        CpuType
+        A_DebugBreak
+        cpuid_ex
+        setdivisori32
+        setdivisoru32
+        dividefixedi32
+        dividefixedu32
+        PhysicalSeedD
+        MersenneRandomInitD
+        MersenneRandomInitByArrayD
+        MersenneRandomD
+        MersenneIRandomD
+        MersenneIRandomXD
+        MersenneBRandomD
+        MotherRandomInitD
+        MotherIRandomD
+        MotherRandomD
+        MotherBRandomD        
+        SFMTgenRandomInitD
+        SFMTgenRandomInitByArrayD
+        SFMTgenIRandomD
+        SFMTgenIRandomXD
+        SFMTgenRandomD
+        SFMTgenBRandomD
+        
