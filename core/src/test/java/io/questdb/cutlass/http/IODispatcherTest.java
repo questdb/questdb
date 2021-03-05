@@ -26,6 +26,8 @@ package io.questdb.cutlass.http;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
+import java.io.BufferedInputStream;
+import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -36,6 +38,7 @@ import java.util.concurrent.locks.LockSupport;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -92,8 +95,11 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -1681,6 +1687,186 @@ public class IODispatcherTest {
                             +
                             "00\r\n\r\n";
 
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryWithCompressedResults1() throws Exception {
+        Zip.init();
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[] { -1, -1 };
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            30,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    ByteArrayResponse expectedResponse;
+                    try (BufferedInputStream is = new BufferedInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults1.bin"))) {
+                        byte bytes[] = new byte[20 * 1024];
+                        int len = is.read(bytes);
+                        expectedResponse = new ByteArrayResponse(bytes, len);
+                    }
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryWithCompressedResults2() throws Exception {
+        Zip.init();
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[] { -1, -1 };
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            1000,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    ByteArrayResponse expectedResponse;
+                    try (BufferedInputStream is = new BufferedInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults2.bin"))) {
+                        byte bytes[] = new byte[100 * 1024];
+                        int len = is.read(bytes);
+                        expectedResponse = new ByteArrayResponse(bytes, len);
+                    }
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
                     workerPool.halt();
@@ -5338,7 +5524,7 @@ public class IODispatcherTest {
     private static void sendAndReceive(
             NetworkFacade nf,
             String request,
-            String response,
+            CharSequence response,
             int requestCount,
             long pauseBetweenSendAndReceive,
             boolean print
@@ -5357,7 +5543,7 @@ public class IODispatcherTest {
     private static void sendAndReceive(
             NetworkFacade nf,
             String request,
-            String response,
+            CharSequence response,
             int requestCount,
             long pauseBetweenSendAndReceive,
             boolean print,
@@ -5473,5 +5659,37 @@ public class IODispatcherTest {
 
     static class Status {
         boolean valid;
+    }
+
+    private static class ByteArrayResponse extends AbstractCharSequence implements ByteSequence {
+        private final byte[] bytes;
+        private final int len;
+
+        private ByteArrayResponse(byte[] bytes, int len) {
+            super();
+            this.bytes = bytes;
+            this.len = len;
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (index >= len) {
+                throw new IndexOutOfBoundsException();
+            }
+            return (char) bytes[index];
+        }
+
+        @Override
+        public byte byteAt(int index) {
+            if (index >= len) {
+                throw new IndexOutOfBoundsException();
+            }
+            return bytes[index];
+        }
+
+        @Override
+        public int length() {
+            return len;
+        }
     }
 }
