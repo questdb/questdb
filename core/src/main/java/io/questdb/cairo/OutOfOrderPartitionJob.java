@@ -122,6 +122,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 createDirsOrFail(ff, path, configuration.getMkDirMode());
             } catch (Throwable e) {
                 LOG.debug().$("idle new").$();
+                tableWriter.bumpOooErrorCount();
                 tableWriter.bumpPartitionUpdateCount();
                 doneLatch.countDown();
                 throw e;
@@ -198,8 +199,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
                     srcTimestampAddr = OutOfOrderUtils.mapRO(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
-                    long tempMem8b = OutOfOrderUtils.get8ByteBuf(workerId);
-                    srcDataMax = readPartitionSize(ff, path, tempMem8b);
+//                    long tempMem8b = OutOfOrderUtils.get8ByteBuf(workerId);
+                    srcDataMax = tableWriter.getPartitionSizeByTimestamp(oooTimestampLo);
+//                            readPartitionSize(ff, path, tempMem8b);
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
@@ -442,6 +444,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                 LOG.debug().$("idle existing").$();
                 OutOfOrderUtils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 OutOfOrderUtils.close(ff, srcTimestampFd);
+                tableWriter.bumpOooErrorCount();
                 tableWriter.bumpPartitionUpdateCount();
                 doneLatch.countDown();
                 throw e;
@@ -751,6 +754,9 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
         int columnsInFlight = columnCount;
 
+        if (suffixHi < suffixLo) {
+            System.out.println("ooooooops");
+        }
         try {
             for (int i = 0; i < columnCount; i++) {
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);

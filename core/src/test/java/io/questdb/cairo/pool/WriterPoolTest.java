@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.EntryUnavailableException;
@@ -451,7 +452,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             Assert.assertTrue(pool.lock("x"));
 
-            TableWriter writer = new TableWriter(configuration, "x", null, false, DefaultLifecycleManager.INSTANCE);
+            TableWriter writer = new TableWriter(configuration, "x", messageBus, false, DefaultLifecycleManager.INSTANCE);
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putDate(0, i);
@@ -768,7 +769,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, null)) {
+            try (WriterPool pool = new WriterPool(configuration, new MessageBusImpl(configuration))) {
                 code.run(pool);
             }
         });

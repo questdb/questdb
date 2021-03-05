@@ -21,14 +21,6 @@ declare module "docsearch.js" {
   export default function docsearch(config: Config): void
 }
 
-declare module "*.worker.ts" {
-  class TestWorker extends Worker {
-    constructor()
-  }
-
-  export default TestWorker
-}
-
 // eslint-disable-next-line no-var
 declare var bus: {
   on: (event: string, callback: (event: null, payload: any) => void) => void

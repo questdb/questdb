@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -36,11 +36,6 @@ import java.io.Closeable;
 class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     private static final long SEQUENCE_OFFSET;
-
-    static {
-        SEQUENCE_OFFSET = Unsafe.getFieldOffset(SymbolColumnIndexer.class, "sequence");
-    }
-
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
     private final PagedSlidingReadOnlyMemory mem = new PagedSlidingReadOnlyMemory();
     private long columnTop;
@@ -79,9 +74,12 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     public void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
-        for (long lo = loRow - columnTop; lo < hiRow; lo++) {
-            writer.add(TableUtils.toIndexKey(mem.getInt(lo * Integer.BYTES)), lo + columnTop);
+        writer.rollbackConditionally(loRow);
+        final long lim = hiRow + columnTop;
+        for (long lo = loRow; lo < lim; lo++) {
+            writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
         }
+        writer.setMaxValue(lim - 1);
     }
 
     @Override
@@ -126,5 +124,9 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     @Override
     public boolean tryLock(long expectedSequence) {
         return Unsafe.cas(this, SEQUENCE_OFFSET, expectedSequence, expectedSequence + 1);
+    }
+
+    static {
+        SEQUENCE_OFFSET = Unsafe.getFieldOffset(SymbolColumnIndexer.class, "sequence");
     }
 }

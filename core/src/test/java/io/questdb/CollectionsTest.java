@@ -115,6 +115,29 @@ public class CollectionsTest {
         Assert.assertEquals(-201, list.binarySearch(2010));
     }
 
+    @Test
+    public void testLongBinaryBlockSearch() {
+        LongList list = new LongList();
+
+        for (int blockSizeHint = 0; blockSizeHint < 5; blockSizeHint++) {
+            list.clear();
+            Rnd rnd = new Rnd();
+
+            for (int i = 7; i < 2000; i += 10) {
+                list.add(i + (rnd.nextPositiveInt() & 9));
+                int blockFullLen = 1 << blockSizeHint;
+
+                for(int j = 1; j < blockFullLen; j++) {
+                    list.add(0L);
+                }
+            }
+
+            // Assert.assertEquals("Block hint " + blockSizeHint, 18 << blockSizeHint, list.binarySearchBlock(0, list.size(), blockSizeHint, 188));
+            Assert.assertEquals("Block hint " + blockSizeHint,-1, list.binarySearchBlock(0, list.size(), blockSizeHint,6));
+            Assert.assertEquals("Block hint " + blockSizeHint, -((24 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint,240));
+            Assert.assertEquals("Block hint " + blockSizeHint,-((200 << blockSizeHint) + 1), list.binarySearchBlock(0, list.size(), blockSizeHint,2010));
+        }
+    }
 
     @Test
     public void testObjIntHashMap() {

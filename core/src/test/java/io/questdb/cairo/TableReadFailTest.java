@@ -175,10 +175,15 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testTodoPresentConstructor() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
+
             @Override
-            public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableUtils.TODO_FILE_NAME) || super.exists(path);
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRO(name);
             }
+
         };
 
         assertConstructorFail(ff);

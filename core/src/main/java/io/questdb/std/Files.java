@@ -44,6 +44,19 @@ public final class Files {
 
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
 
+    public static native int copy(long from, long to);
+
+    public static int copy(LPSZ from, LPSZ to) {
+        return copy(from.address(), to.address());
+    }
+
+    static {
+        Os.init();
+        UTF_8 = StandardCharsets.UTF_8;
+        PAGE_SIZE = getPageSize();
+        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
+    }
+
     private Files() {
     } // Prevent construction.
 
@@ -295,11 +308,4 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     private static native boolean rename(long lpszOld, long lpszNew);
-
-    static {
-        Os.init();
-        UTF_8 = StandardCharsets.UTF_8;
-        PAGE_SIZE = getPageSize();
-        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
-    }
 }

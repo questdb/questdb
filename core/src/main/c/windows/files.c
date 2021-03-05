@@ -33,6 +33,17 @@
 #include "../share/files.h"
 #include "errno.h"
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
+        (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
+    const char* from = (const char *) lpszFrom;
+    const char* to = (const char *) lpszTo;
+    if (CopyFile(from, to, TRUE) == FALSE) {
+        SaveLastError();
+        return -1;
+    }
+    return 1;
+}
+
 int set_file_pos(HANDLE fd, jlong offset) {
     if (offset < 0) {
         return 1;

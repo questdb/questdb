@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
@@ -51,6 +53,7 @@ public class AbstractCairoTest {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
+    protected static MessageBus messageBus;
     protected static long currentMicros = -1;
     protected static MicrosecondClock testMicrosClock =
             () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
@@ -69,6 +72,7 @@ public class AbstractCairoTest {
                 return testMicrosClock;
             }
         };
+        messageBus = new MessageBusImpl(configuration);
     }
 
     @Before

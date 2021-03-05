@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.PagedVirtualMemory;
 import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
+import io.questdb.cairo.vm.PagedVirtualMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -71,6 +71,7 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.putLong(0); // KEY COUNT
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(1); // SEQUENCE CHECK
+        keyMem.putLong(0); // maxRow
         keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
 
@@ -143,64 +144,16 @@ public class BitmapIndexWriter implements Closeable {
         return EmptyRowCursor.INSTANCE;
     }
 
-    final public void of(CairoConfiguration configuration, Path path, CharSequence name) {
-        close();
-        long pageSize = configuration.getFilesFacade().getMapPageSize();
-        int plen = path.length();
+    public int getKeyCount() {
+        return keyCount;
+    }
 
-        try {
-            boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
-            this.keyMem.of(configuration.getFilesFacade(), path, pageSize);
-            if (!exists) {
-                LOG.error().$(path).$(" not found").$();
-                throw CairoException.instance(0).put("Index does not exist: ").put(path);
-            }
+    public long getMaxValue() {
+        return keyMem.getLong(38L);
+    }
 
-            long keyMemSize = this.keyMem.getAppendOffset();
-            // check if key file header is present
-            if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
-                LOG.error().$("file too short [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Index file too short (w): ").put(path);
-            }
-
-            // verify header signature
-            if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {
-                LOG.error().$("unknown format [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Unknown format: ").put(path);
-            }
-
-            // verify key count
-            this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-            if (keyMemSize < keyMemSize()) {
-                LOG.error().$("key count does not match file length [corrupt] of ").$(path).$(" [keyCount=").$(this.keyCount).$(']').$();
-                throw CairoException.instance(0).put("Key count does not match file length of ").put(path);
-            }
-
-            // check if sequence is intact
-            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
-                LOG.error().$("sequence mismatch [corrupt] at ").$(path).$();
-                throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
-            }
-
-            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
-            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-
-            if (this.valueMem.getAppendOffset() < this.valueMemSize) {
-                LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
-                throw CairoException.instance(0).put("Incorrect file size of ").put(path);
-            }
-
-            // block value count is always a power of two
-            // to calculate remainder we use faster 'x & (count-1)', which is equivalent to (x % count)
-            this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
-            assert blockValueCountMod > 0;
-            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-        } catch (CairoException e) {
-            this.close();
-            throw e;
-        } finally {
-            path.trimTo(plen);
-        }
+    public void setMaxValue(long maxValue) {
+        keyMem.putLong(38L, maxValue);
     }
 
     final public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init) {
@@ -268,6 +221,66 @@ public class BitmapIndexWriter implements Closeable {
         }
     }
 
+    final public void of(CairoConfiguration configuration, Path path, CharSequence name) {
+        close();
+        long pageSize = configuration.getFilesFacade().getMapPageSize();
+        int plen = path.length();
+
+        try {
+            boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
+            this.keyMem.of(configuration.getFilesFacade(), path, pageSize);
+            if (!exists) {
+                LOG.error().$(path).$(" not found").$();
+                throw CairoException.instance(0).put("Index does not exist: ").put(path);
+            }
+
+            long keyMemSize = this.keyMem.getAppendOffset();
+            // check if key file header is present
+            if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
+                LOG.error().$("file too short [corrupt] ").$(path).$();
+                throw CairoException.instance(0).put("Index file too short (w): ").put(path);
+            }
+
+            // verify header signature
+            if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {
+                LOG.error().$("unknown format [corrupt] ").$(path).$();
+                throw CairoException.instance(0).put("Unknown format: ").put(path);
+            }
+
+            // verify key count
+            this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+            if (keyMemSize < keyMemSize()) {
+                LOG.error().$("key count does not match file length [corrupt] of ").$(path).$(" [keyCount=").$(this.keyCount).$(']').$();
+                throw CairoException.instance(0).put("Key count does not match file length of ").put(path);
+            }
+
+            // check if sequence is intact
+            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
+                LOG.error().$("sequence mismatch [corrupt] at ").$(path).$();
+                throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
+            }
+
+            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
+            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+
+            if (this.valueMem.getAppendOffset() < this.valueMemSize) {
+                LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
+                throw CairoException.instance(0).put("Incorrect file size of ").put(path);
+            }
+
+            // block value count is always a power of two
+            // to calculate remainder we use faster 'x & (count-1)', which is equivalent to (x % count)
+            this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
+            assert blockValueCountMod > 0;
+            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+        } catch (CairoException e) {
+            this.close();
+            throw e;
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     /**
      * Rolls values back. Removes values that are strictly greater than given maximum. Empty value blocks
      * will also be removed as well as blank space at end of value memory.
@@ -305,6 +318,7 @@ public class BitmapIndexWriter implements Closeable {
         }
         valueMemSize = maxValueBlockOffset + blockCapacity;
         updateValueMemSize();
+        setMaxValue(maxValue);
     }
 
     private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
@@ -397,6 +411,13 @@ public class BitmapIndexWriter implements Closeable {
         return this.keyCount * BitmapIndexUtils.KEY_ENTRY_SIZE + BitmapIndexUtils.KEY_FILE_RESERVED;
     }
 
+    void rollbackConditionally(long row) {
+        final long currentMaxRow;
+        if (row > 0 && ((currentMaxRow = getMaxValue()) < 1 || currentMaxRow > row)) {
+            rollbackValues(row - 1);
+        }
+    }
+
     private void seek(long count, long offset) {
         this.seekValueCount = count;
         this.seekValueBlockOffset = offset;
@@ -408,10 +429,6 @@ public class BitmapIndexWriter implements Closeable {
         initKeyMemory(keyMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
         keyCount = 0;
         valueMemSize = TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE;
-    }
-
-    public int getKeyCount() {
-        return keyCount;
     }
 
     void updateKeyCount(int key) {

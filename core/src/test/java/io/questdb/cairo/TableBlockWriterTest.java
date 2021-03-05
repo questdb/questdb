@@ -1,14 +1,28 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.cairo;
-
-import java.io.IOException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
-import java.util.function.Function;
-
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
 
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -27,6 +41,14 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
 
 public class TableBlockWriterTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(TableBlockWriterTest.class);
@@ -35,8 +57,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     private static Function<LPSZ, Long> FF_openRW_INTERCEPTOR;
 
     @BeforeClass
-    public static void setUp() throws IOException {
-        AbstractCairoTest.setUp();
+    public static void setUp5() {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long getMapPageSize() {
@@ -53,7 +74,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             }
         };
         FF_openRW_INTERCEPTOR = (name) -> null;
-        
+
         configuration = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -210,13 +231,13 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     for (boolean cancel : bools) {
                         for (boolean partitioned : bools) {
                             // for (boolean commitAllAtOnce : bools) {
-                                for (long maxRowsPerFrame : maxRowsPerFrameList) {
-                                    if (!retry && cancel) {
-                                        continue;
-                                    }
-                                    testAllTypesResumeBlock(nTest++, maxRowsPerFrame, true, nThreads, partitioned, retry, cancel);
+                            for (long maxRowsPerFrame : maxRowsPerFrameList) {
+                                if (!retry && cancel) {
+                                    continue;
                                 }
-                                // }
+                                testAllTypesResumeBlock(nTest++, maxRowsPerFrame, true, nThreads, partitioned, retry, cancel);
+                            }
+                            // }
                         }
                     }
                 }
@@ -380,8 +401,8 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     public void testPartitioned2() throws Exception {
         runTest("testPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
-                    ") TIMESTAMP (ts) PARTITION BY DAY;",
+                            "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                            ") TIMESTAMP (ts) PARTITION BY DAY;",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 2);
@@ -406,8 +427,8 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     public void testSimple2() throws Exception {
         runTest("testSimple", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
-                    ") TIMESTAMP (ts);",
+                            "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                            ") TIMESTAMP (ts);",
                     sqlExecutionContext);
             String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 2);
@@ -479,8 +500,8 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         };
         runTest("testPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                    "SELECT timestamp_sequence(5000000000000, 5000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
-                    ") TIMESTAMP (ts) PARTITION BY MONTH;",
+                            "SELECT timestamp_sequence(5000000000000, 5000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                            ") TIMESTAMP (ts) PARTITION BY MONTH;",
                     sqlExecutionContext);
             compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY MONTH",
                     sqlExecutionContext);
@@ -750,7 +771,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             nRowsWritten += nBatchRows;
             tsStart += nBatchRows * tsIncrement;
         }
-        
+
         compiler.compile("DROP TABLE " + sourceTableName, sqlExecutionContext);
         compiler.compile("DROP TABLE " + destTableName, sqlExecutionContext);
     }

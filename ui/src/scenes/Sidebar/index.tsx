@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2020 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 import React, { useCallback, useEffect, useState } from "react"
 import { useSelector } from "react-redux"
 import styled from "styled-components"
@@ -14,6 +38,7 @@ const Wrapper = styled.div`
   flex: 0 0 4.5rem;
   flex-direction: column;
   border-right: 1px solid rgba(0, 0, 0, 0.1);
+  background: ${color("draculaBackgroundDarker")};
 `
 
 const Logo = styled.div`
@@ -50,6 +75,10 @@ const DisabledNavigation = styled.div`
   flex: 0 0 5rem;
   align-items: center;
   justify-content: center;
+
+  &:disabled {
+    pointer-events: none;
+  }
 `
 
 type Tab = "console" | "import"
@@ -62,7 +91,7 @@ const Sidebar = () => {
   const handleImportClick = useCallback(() => {
     setSelected("import")
   }, [])
-  const { readOnly } = useSelector(selectors.console.getConfiguration)
+  const { readOnly } = useSelector(selectors.console.getConfig)
 
   useEffect(() => {
     const consolePanel = document.querySelector<HTMLElement>(".js-sql-panel")

@@ -281,6 +281,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
      *
      * @param offset position from 0 in virtual memory.
      */
+    @Override
     public void jumpTo(long offset) {
         assert offset > -1;
         final long p = offset - baseOffset;
@@ -555,6 +556,7 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
         putInt(offset, TableUtils.NULL_LEN);
     }
 
+    @Override
     public final void putBlockOfBytes(long from, long len) {
         if (len < pageHi - appendPointer) {
             Unsafe.getUnsafe().copyMemory(from, appendPointer, len);
@@ -825,7 +827,10 @@ public class PagedVirtualMemory implements ReadWriteVirtualMemory, Closeable {
      * @return native address of page
      */
     public long getPageAddress(int page) {
-        return pages.getQuick(page);
+        if (page < pages.size()) {
+            return pages.getQuick(page);
+        }
+        return 0L;
     }
 
     public long getPageSize(int page) {

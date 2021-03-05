@@ -435,7 +435,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testSimpleCopy() throws Exception {
         assertMemoryLeak(() -> {
 
-            compiler.compile("copy x from '/target/test-classes/csv/test-import.csv'", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-import.csv'", sqlExecutionContext);
 
             final String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                     "CMP1\t1\t6992\t2.12060110410675\t2015-01-05T19:15:09.000Z\t2015-01-05T19:15:09.000Z\t2015-01-05T00:00:00.000Z\t6992\ttrue\t4952743\n" +
@@ -581,7 +581,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testSimpleCopyForceHeader() throws Exception {
         assertMemoryLeak(() -> {
 
-            compiler.compile("copy x from '/target/test-classes/csv/test-numeric-headers.csv' with header true", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true", sqlExecutionContext);
 
             final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
                     "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
@@ -601,7 +601,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testSimpleCopyForceHeader2() throws Exception {
         assertMemoryLeak(() -> {
 
-            compiler.compile("copy x from '/target/test-classes/csv/test-numeric-headers.csv' with header false", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header false", sqlExecutionContext);
 
             final String expected = "f0\tf1\tf2\tf3\tf4\n" +
                     "type\tvalue\tactive\tdesc\t1\n" +

@@ -63,23 +63,22 @@ public final class BitmapIndexUtils {
      * <p>
      * List of value blocks is assumed to be ordered by value in ascending order.
      *
-     * @param initialCount         total count of values in all blocks.
-     * @param lastValueBlockOffset offset of last value block in chain of blocks.
+     * @param valueCount         total count of values in all blocks.
+     * @param blockOffset offset of last value block in chain of blocks.
      * @param valueMem             value block memory
      * @param maxValue             upper limit for block values.
      * @param blockValueCountMod   number of values in single block - 1
      * @param seeker               interface that collects results of the search
      */
     static void seekValueBlockRTL(
-            long initialCount,
-            long lastValueBlockOffset,
+            long valueCount,
+            long blockOffset,
             ReadOnlyVirtualMemory valueMem,
             long maxValue,
             long blockValueCountMod,
             ValueBlockSeeker seeker
     ) {
-        long valueCount = initialCount;
-        long valueBlockOffset = lastValueBlockOffset;
+        long valueBlockOffset = blockOffset;
         if (valueCount > 0) {
             long prevBlockOffset = (blockValueCountMod + 1) * 8;
             long cellCount;

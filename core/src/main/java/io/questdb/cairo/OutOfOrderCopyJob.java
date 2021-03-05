@@ -549,12 +549,14 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
                     ff.close(srcTimestampFd);
                 }
 
-                renamePartition(
-                        ff,
-                        pathToTable,
-                        oooTimestampHi,
-                        tableWriter
-                );
+                if (tableWriter.getOooErrorCount() == 0) {
+                    renamePartition(
+                            ff,
+                            pathToTable,
+                            oooTimestampHi,
+                            tableWriter
+                    );
+                }
 
             } else if (srcTimestampFd > 0) {
                 ff.close(srcTimestampFd);
@@ -701,6 +703,7 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         if (ff.rename(path, other.$())) {
             TableUtils.newPartitionName(other.trimTo(plen), txn);
             if (ff.rename(other.$(), path)) {
+                LOG.info().$("renamed").$();
                 return;
             }
             throw CairoException.instance(ff.errno())
@@ -995,39 +998,13 @@ public class OutOfOrderCopyJob extends AbstractQueueConsumerJob<OutOfOrderCopyTa
         try (BitmapIndexWriter w = new BitmapIndexWriter()) {
             long row = dstIndexOffset / Integer.BYTES;
             w.of(configuration, dstKFd, dskVFd, row == 0);
+            w.rollbackConditionally(row);
             final long count = dstFixSize / Integer.BYTES;
             for (; row < count; row++) {
-                assert row * Integer.BYTES < dstFixSize;
                 w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row);
             }
+            w.setMaxValue(count- 1);
         }
-    }
-
-    static void copyIdleQuick(OutOfOrderCopyTask task) {
-        copyIdleQuick(
-                task.getColumnCounter(),
-                task.getFf(),
-                task.getTimestampMergeIndexAddr(),
-                task.getSrcDataFixFd(),
-                task.getSrcDataFixAddr(),
-                task.getSrcDataFixSize(),
-                task.getSrcDataVarFd(),
-                task.getSrcDataVarAddr(),
-                task.getSrcDataVarSize(),
-                task.getDstFixFd(),
-                task.getDstFixAddr(),
-                task.getDstFixSize(),
-                task.getDstVarFd(),
-                task.getDstVarAddr(),
-                task.getDstVarSize(),
-                task.getSrcTimestampFd(),
-                task.getSrcTimestampAddr(),
-                task.getSrcTimestampSize(),
-                task.getDstKFd(),
-                task.getDstVFd(),
-                task.getTableWriter(),
-                task.getDoneLatch()
-        );
     }
 
     private void copy(OutOfOrderCopyTask task, long cursor, Sequence subSeq) {

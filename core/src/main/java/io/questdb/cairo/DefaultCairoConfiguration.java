@@ -49,8 +49,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final BuildInformation buildInformation = new BuildInformationHolder();
 
+    private final long instanceHashLo;
+    private final long instanceHashHi;
+
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
+        Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
+        this.instanceHashLo = rnd.nextLong();
+        this.instanceHashHi = rnd.nextLong();
     }
 
     @Override
@@ -493,5 +499,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return buildInformation;
+    }
+
+    @Override
+    public long getInstanceHashLo() {
+        return instanceHashLo;
+    }
+
+    @Override
+    public long getInstanceHashHi() {
+        return instanceHashHi;
     }
 }

@@ -194,6 +194,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 return;
             }
 
+            nf.setTcpNoDelay(fd, true);
+
             if (sndBufSize > 0) {
                 nf.setSndBuf(fd, sndBufSize);
             }

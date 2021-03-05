@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
@@ -62,8 +63,24 @@ public class CairoLineProtoParserSupport {
                 case ColumnType.DOUBLE:
                     row.putDouble(columnIndex, Numbers.parseDouble(value));
                     break;
+                case ColumnType.FLOAT:
+                    row.putFloat(columnIndex, Numbers.parseFloat(value));
+                    break;
+                case ColumnType.INT:
+                    row.putInt(columnIndex, Numbers.parseInt(value, 0, value.length() - 1));
+                    break;
                 case ColumnType.SHORT:
                     row.putShort(columnIndex, Numbers.parseShort(value, 0, value.length() - 1));
+                    break;
+                case ColumnType.BYTE:
+                    long v = Numbers.parseLong(value, 0, value.length() - 1);
+                    if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
+                        throw CairoException.instance(0).put("line protocol integer is out of byte bounds [columnIndex=").put(columnIndex).put(", v=").put(v).put(']');
+                    }
+                    row.putByte(columnIndex, (byte) v);
+                    break;
+                case ColumnType.DATE:
+                    row.putDate(columnIndex, Numbers.parseLong(value, 0, value.length() - 1));
                     break;
                 case ColumnType.LONG256:
                     if (value.charAt(0) == '0' && value.charAt(1) == 'x') {
@@ -92,6 +109,9 @@ public class CairoLineProtoParserSupport {
         int len = token.length();
         switch (token.charAt(len - 1)) {
             case 'i':
+                if (token.charAt(1) == 'x') {
+                    return ColumnType.LONG256;
+                }
                 return ColumnType.LONG;
             case 'e':
                 // tru(e)
