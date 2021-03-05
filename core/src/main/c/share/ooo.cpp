@@ -507,7 +507,6 @@ inline void merge_copy_var_column(
 }
 
 template<class T>
-__attribute__((target_clones("avx2","avx","default")))
 inline void merge_copy_var_column_top(
         index_t *merge_index,
         int64_t merge_index_size,

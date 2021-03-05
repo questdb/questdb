@@ -70,17 +70,29 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
 
     @Override
     public CharSink put(CharSequence cs) {
-        int l = cs.length();
-        int l2 = l * 2;
+        if (cs != null) {
+            int l = cs.length();
+            int l2 = l * 2;
 
-        if (lo + l2 >= hi) {
-            resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
-        }
+            if (lo + l2 >= hi) {
+                resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
+            }
 
-        for (int i = 0; i < l; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2, cs.charAt(i));
+            for (int i = 0; i < l; i++) {
+                Unsafe.getUnsafe().putChar(lo + i * 2L, cs.charAt(i));
+            }
+            this.lo += l2;
         }
-        this.lo += l2;
+        return this;
+    }
+
+    @Override
+    public CharSink put(char c) {
+        if (lo == hi) {
+            resize(this.capacity * 2);
+        }
+        Unsafe.getUnsafe().putChar(lo, c);
+        lo += 2;
         return this;
     }
 
@@ -93,20 +105,10 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
         }
 
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(lo + i * 2, chars[i + start]);
+            Unsafe.getUnsafe().putChar(lo + i * 2L, chars[i + start]);
         }
 
         this.lo += l2;
-        return this;
-    }
-
-    @Override
-    public CharSink put(char c) {
-        if (lo == hi) {
-            resize(this.capacity * 2);
-        }
-        Unsafe.getUnsafe().putChar(lo, c);
-        lo += 2;
         return this;
     }
 

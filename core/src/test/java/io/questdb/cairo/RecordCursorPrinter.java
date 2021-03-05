@@ -34,37 +34,35 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 
 public class RecordCursorPrinter {
-    private final CharSink sink;
     protected final char delimiter;
 
-    public RecordCursorPrinter(CharSink sink) {
-        this.sink = sink;
+    public RecordCursorPrinter() {
         this.delimiter = '\t';
     }
 
-    public void print(RecordCursor cursor, RecordMetadata metadata, boolean header) {
+    public void print(RecordCursor cursor, RecordMetadata metadata, boolean header, CharSink sink) {
         if (header) {
-            printHeader(metadata);
+            printHeader(metadata, sink);
         }
 
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            print(record, metadata);
+            print(record, metadata, sink);
         }
     }
 
-    public void print(Record r, RecordMetadata m) {
+    public void print(Record r, RecordMetadata m, CharSink sink) {
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(delimiter);
             }
-            printColumn(r, m, i);
+            printColumn(r, m, i, sink);
         }
         sink.put("\n");
         sink.flush();
     }
 
-    public void printHeader(RecordMetadata metadata) {
+    public void printHeader(RecordMetadata metadata, CharSink sink) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (i > 0) {
                 sink.put(delimiter);
@@ -74,19 +72,19 @@ public class RecordCursorPrinter {
         sink.put('\n');
     }
 
-    public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header) {
+    public void printFullColumn(RecordCursor cursor, RecordMetadata metadata, int i, boolean header, CharSink sink) {
         if (header) {
-            printHeader(metadata);
+            printHeader(metadata, sink);
         }
 
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            printColumn(record, metadata, i);
+            printColumn(record, metadata, i, sink);
             sink.put('\n');
         }
     }
 
-    protected void printColumn(Record r, RecordMetadata m, int i) {
+    protected void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
         switch (m.getColumnType(i)) {
             case ColumnType.DATE:
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));

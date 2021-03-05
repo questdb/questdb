@@ -4191,7 +4191,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 compiler.compile("truncate table x", sqlExecutionContext);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
                 }
             }

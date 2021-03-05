@@ -713,7 +713,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 , sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = rcf.getCursor(sqlExecutionContext)) {
                 sink.clear();
-                printer.print(cursor, rcf.getMetadata(), true);
+                printer.print(cursor, rcf.getMetadata(), true, sink);
                 return sink;
             }
         }

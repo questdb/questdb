@@ -62,7 +62,7 @@ public class WithClauseTest extends AbstractGriffinTest {
                 RecordCursorFactory factory = query.getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
-            printer.print(cursor, factory.getMetadata(), true);
+            printer.print(cursor, factory.getMetadata(), true, sink);
         }
         return sink.toString();
     }

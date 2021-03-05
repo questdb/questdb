@@ -173,7 +173,7 @@ public class OutOfOrderUtils {
             LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
-        throw CairoException.instance(ff.errno()).put("could not open for append [file=").put(path).put(']');
+        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
     static void allocateDiskSpace(FilesFacade ff, long fd, long size) {

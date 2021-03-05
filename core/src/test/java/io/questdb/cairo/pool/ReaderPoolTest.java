@@ -262,7 +262,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             sink.clear();
             try (TableReader r = new TableReader(configuration, names[i])) {
-                printer.print(r.getCursor(), r.getMetadata(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
             expectedRows[i] = sink.toString();
             expectedRowMap.put(names[i], expectedRows[i]);
@@ -278,7 +278,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                     final ObjHashSet<TableReader> readers = new ObjHashSet<>();
                     final StringSink sink = new StringSink();
-                    final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
 
                     @Override
                     public void run() {
@@ -313,7 +312,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                                 // read rows
                                 sink.clear();
-                                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                                 TestUtils.assertEquals(expectedRowMap.get(reader.getTableName()), sink);
 
                                 Thread.yield();
@@ -531,7 +530,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final int iterations = 10000;
         Rnd dataRnd = new Rnd();
         StringSink sink = new StringSink();
-        RecordCursorPrinter printer = new RecordCursorPrinter(sink);
 
 
         final String[] names = new String[readerCount];
@@ -554,7 +552,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             sink.clear();
             try (TableReader r = new TableReader(configuration, names[i])) {
-                printer.print(r.getCursor(), r.getMetadata(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
             expectedRows[i] = sink.toString();
         }
@@ -602,7 +600,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         String name = names[index];
                         try (TableReader r = pool.get(name)) {
                             sink.clear();
-                            printer.print(r.getCursor(), r.getMetadata(), true);
+                            printer.print(r.getCursor(), r.getMetadata(), true, sink);
                             TestUtils.assertEquals(expectedRows[index], sink);
 
                             if (name.equals(names[readerCount - 1]) && barrier.getNumberWaiting() > 0) {

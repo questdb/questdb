@@ -49,7 +49,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 sink.clear();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
             }
 
@@ -68,7 +68,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 sink.clear();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
             }
             TestUtils.assertEquals("avg\n1.0\n", sink);
@@ -84,7 +84,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 sink.clear();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
             }
             TestUtils.assertEquals("sum\tavg\tmax\tmin\tksum\tnsum\n" +

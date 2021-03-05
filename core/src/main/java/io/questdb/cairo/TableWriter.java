@@ -1876,6 +1876,10 @@ public class TableWriter implements Closeable {
         return timestampFloorMethod.floor(timestamp);
     }
 
+    long getPartitionSizeByTimestamp(long ts) {
+        return txFile.getPartitionSizeByPartitionTimestamp(ts);
+    }
+
     long getPrimaryAppendOffset(long timestamp, int columnIndex) {
         if (txFile.getAppendedPartitionCount() == 0) {
             openFirstPartition(timestamp);
@@ -2227,10 +2231,6 @@ public class TableWriter implements Closeable {
         } catch (Throwable e) {
             LOG.error().$(e).$();
         }
-    }
-
-    long getPartitionSizeByTimestamp(long ts) {
-        return txFile.getPartitionSizeByPartitionTimestamp(ts);
     }
 
     private void oooProcess() {
@@ -2652,30 +2652,36 @@ public class TableWriter implements Closeable {
             long srcOooMax,
             long srcDataMax
     ) {
+        this.txFile.minTimestamp = Math.min(oooTimestampMin, this.txFile.minTimestamp);
+
         final long partitionSize = srcDataMax + srcOooPartitionHi - srcOooPartitionLo + 1;
-        if (srcOooPartitionHi + 1 < srcOooMax || oooTimestampHi < tableFloorOfMaxTimestamp) {
-
-            updatePartitionSize(
-                    oooTimestampHi,
-                    partitionSize,
-                    tableFloorOfMaxTimestamp,
-                    srcDataMax
-            );
-
-            if (srcOooPartitionHi + 1 >= srcOooMax) {
-                // no more out of order data and we just pre-pended data to existing
-                // partitions
-                this.txFile.minTimestamp = Math.min(oooTimestampMin, this.txFile.minTimestamp);
-                // when we exit here we need to rollback transientRowCount we've been incrementing
-                // while adding out-of-order data
-                this.txFile.transientRowCount = this.transientRowCountBeforeOutOfOrder;
+        final long rowDelta = srcOooPartitionHi - srcOooMax;
+        if (rowDelta < -1 || oooTimestampHi < tableFloorOfMaxTimestamp) {
+            if (oooTimestampHi < tableFloorOfMaxTimestamp) {
+                this.txFile.fixedRowCount += partitionSize - srcDataMax;
+                if (rowDelta >= -1) {
+                    // when we exit here we need to rollback transientRowCount we've been incrementing
+                    // while adding out-of-order data
+                    this.txFile.transientRowCount = this.transientRowCountBeforeOutOfOrder;
+                }
+            } else {
+                this.txFile.fixedRowCount += partitionSize;
             }
+            // We just updated non-last partition. It is possible that this partition
+            // has already been updated by transaction or out of order logic was the only
+            // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
+            // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
+            // (it has been incremented before out-of-order logic kicked in) and
+            // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
+
+            txFile.updatePartitionSizeByTimestamp(oooTimestampHi, partitionSize);
         } else {
-            updateActivePartitionDetails(
-                    oooTimestampMin,
-                    Math.max(dataTimestampHi, oooTimestampMax),
-                    partitionSize
-            );
+            // this is last partition
+            this.txFile.transientRowCount = partitionSize;
+            // Compute max timestamp as maximum of out of order data and
+            // data in existing partition.
+            // When partition is new, the data timestamp is MIN_LONG
+            this.txFile.maxTimestamp = Math.max(dataTimestampHi, oooTimestampMax);
         }
     }
 
@@ -3565,15 +3571,6 @@ public class TableWriter implements Closeable {
         throw new CairoError(cause);
     }
 
-    void updateActivePartitionDetails(long minTimestamp, long maxTimestamp, long transientRowCount) {
-        this.txFile.transientRowCount = transientRowCount;
-        // Compute max timestamp as maximum of out of order data and
-        // data in existing partition.
-        // When partition is new, the data timestamp is MIN_LONG
-        this.txFile.maxTimestamp = maxTimestamp;
-        this.txFile.minTimestamp = Math.min(this.txFile.minTimestamp, minTimestamp);
-    }
-
     private void updateIndexes() {
         if (indexCount == 0 || avoidIndexOnCommit) {
             avoidIndexOnCommit = false;
@@ -3690,22 +3687,6 @@ public class TableWriter implements Closeable {
     private void updateMaxTimestamp(long timestamp) {
         txFile.updateMaxTimestamp(timestamp);
         this.timestampSetter.accept(timestamp);
-    }
-
-    private void updatePartitionSize(long partitionTimestamp, long partitionSize, long tableFloorOfMaxTimestamp, long srcDataMax) {
-        this.txFile.fixedRowCount += partitionSize;
-        if (partitionTimestamp < tableFloorOfMaxTimestamp) {
-            this.txFile.fixedRowCount -= srcDataMax;
-        }
-
-        // We just updated non-last partition. It is possible that this partition
-        // has already been updated by transaction or out of order logic was the only
-        // code that updated it. To resolve this fork we need to check if "txPendingPartitionSizes"
-        // contains timestamp of this partition. If it does - we don't increment "txPartitionCount"
-        // (it has been incremented before out-of-order logic kicked in) and
-        // we use partition size from "txPendingPartitionSizes" to subtract from "txPartitionCount"
-
-        txFile.updatePartitionSizeByTimestamp(partitionTimestamp, partitionSize);
     }
 
     private void validateSwapMeta(CharSequence columnName) {

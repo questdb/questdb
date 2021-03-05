@@ -119,7 +119,7 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
 
                 sink.clear();
                 cursor.toTop();
-                printer.print(cursor, r.getMetadata(), true);
+                printer.print(cursor, r.getMetadata(), true, sink);
 
                 String expected = "sequence\tevent\ttimestamp\n" +
                         "400\t\t2020-07-04T00:00:00.000000Z\n" +

@@ -47,7 +47,7 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
 
             try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
                 sink.clear();
-                printer.print(factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
+                printer.print(factory.getCursor(sqlExecutionContext), factory.getMetadata(), true, sink);
                 TestUtils.assertEquals("cust_id\tbalance_ccy\tbalance\tinactive\ttimestamp\n" +
                         "1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z\n", sink);
             }

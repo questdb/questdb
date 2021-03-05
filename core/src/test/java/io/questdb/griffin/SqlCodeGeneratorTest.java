@@ -211,7 +211,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
                 sink.clear();
                 try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true);
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
                     TestUtils.assertEquals(
                             "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
                                     "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n" +

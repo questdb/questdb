@@ -62,7 +62,7 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(expected, sink);
                 }
             }
@@ -91,7 +91,7 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(expected, sink);
                 }
             }
@@ -117,7 +117,7 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(expected, sink);
                 }
             }
@@ -144,7 +144,7 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(expected, sink);
                 }
             }

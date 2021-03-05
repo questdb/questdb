@@ -239,7 +239,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             }
 
             sink.clear();
-            printer.print(cursor, factory.getMetadata(), true);
+            printer.print(cursor, factory.getMetadata(), true, sink);
 
             TestUtils.assertEquals(expected, sink);
 
@@ -254,11 +254,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             Record record = cursor.getRecord();
             Assert.assertNotNull(record);
             sink.clear();
-            printer.printHeader(metadata);
+            printer.printHeader(metadata, sink);
             long count = 0;
             long cursorSize = cursor.size();
             while (cursor.hasNext()) {
-                printer.print(record, metadata);
+                printer.print(record, metadata, sink);
                 count++;
             }
 
@@ -282,10 +282,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 }
 
                 final Record rec = cursor.getRecordB();
-                printer.printHeader(metadata);
+                printer.printHeader(metadata, sink);
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     cursor.recordAt(rec, rows.getQuick(i));
-                    printer.print(rec, metadata);
+                    printer.print(rec, metadata, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -293,10 +293,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sink.clear();
 
                 final Record factRec = cursor.getRecordB();
-                printer.printHeader(metadata);
+                printer.printHeader(metadata, sink);
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
-                    printer.print(factRec, metadata);
+                    printer.print(factRec, metadata, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -307,9 +307,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                     cursor.toTop();
                     int target = rows.size() / 2;
-                    printer.printHeader(metadata);
+                    printer.printHeader(metadata, sink);
                     while (target-- > 0 && cursor.hasNext()) {
-                        printer.print(record, metadata);
+                        printer.print(record, metadata, sink);
                     }
 
                     // no obliterate record with absolute positioning
@@ -319,7 +319,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                     // not continue normal fetch
                     while (cursor.hasNext()) {
-                        printer.print(record, metadata);
+                        printer.print(record, metadata, sink);
                     }
 
                     TestUtils.assertEquals(expected, sink);

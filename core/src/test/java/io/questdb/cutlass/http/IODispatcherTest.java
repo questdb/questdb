@@ -102,10 +102,7 @@ public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
-
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
-    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -130,6 +127,9 @@ public class IODispatcherTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
+    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -2601,46 +2601,6 @@ public class IODispatcherTest {
                 });
     }
 
-    private static class QueryThread extends Thread {
-        private final String[][] requests;
-        private final int count;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
-        private final AtomicInteger errorCounter;
-
-        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
-            this.requests = requests;
-            this.count = count;
-            this.barrier = barrier;
-            this.latch = latch;
-            this.errorCounter = errorCounter;
-        }
-
-        @Override
-        public void run() {
-            final Rnd rnd = new Rnd();
-            try {
-                new SendAndReceiveRequestBuilder().executeMany(requester -> {
-                    barrier.await();
-                    for (int i = 0; i < count; i++) {
-                        int index = rnd.nextPositiveInt() % requests.length;
-                        try {
-                            requester.execute(requests[index][0], requests[index][1]);
-                        } catch (Throwable e) {
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
-                            throw e;
-                        }
-                    }
-                });
-            } catch (Throwable e) {
-                e.printStackTrace();
-                errorCounter.incrementAndGet();
-            } finally {
-                latch.countDown();
-            }
-        }
-    }
-
     @Test
     public void testJsonQueryMultipleRows() throws Exception {
         testJsonQuery(
@@ -3520,7 +3480,6 @@ public class IODispatcherTest {
                         }
                     });
                     long fd = nf.socketTcp(true);
-                    String response;
                     try {
                         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
                         try {
@@ -3533,7 +3492,7 @@ public class IODispatcherTest {
                             long bufLen = request.length();
                             long ptr = Unsafe.malloc(bufLen);
                             try {
-                                response = new SendAndReceiveRequestBuilder()
+                                new SendAndReceiveRequestBuilder()
                                         .withNetworkFacade(nf)
                                         .withPauseBetweenSendAndReceive(0)
                                         .withPrintOnly(false)
@@ -5267,19 +5226,55 @@ public class IODispatcherTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
+    private static void sendAndReceive(
+            NetworkFacade nf,
+            String request,
+            String response,
+            int requestCount,
+            long pauseBetweenSendAndReceive,
+            boolean print
+    ) throws InterruptedException {
+        sendAndReceive(
+                nf,
+                request,
+                response,
+                requestCount,
+                pauseBetweenSendAndReceive,
+                print,
+                false
+        );
+    }
+
+    private static void sendAndReceive(
+            NetworkFacade nf,
+            String request,
+            String response,
+            int requestCount,
+            long pauseBetweenSendAndReceive,
+            boolean print,
+            boolean expectDisconnect
+    ) throws InterruptedException {
+        new SendAndReceiveRequestBuilder()
+                .withNetworkFacade(nf)
+                .withExpectDisconnect(expectDisconnect)
+                .withPrintOnly(print)
+                .withRequestCount(requestCount)
+                .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
+                .execute(request, response);
+    }
+
     private void assertColumn(CharSequence expected, int index) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
 
         try (TableReader reader = new TableReader(configuration, "telemetry")) {
             final StringSink sink = new StringSink();
-            final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
             sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);
             reader.getCursor().toTop();
             sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -5331,43 +5326,6 @@ public class IODispatcherTest {
                 .build();
         QueryCache.configure(httpConfiguration);
         return httpConfiguration;
-    }
-
-    private static void sendAndReceive(
-            NetworkFacade nf,
-            String request,
-            String response,
-            int requestCount,
-            long pauseBetweenSendAndReceive,
-            boolean print
-    ) throws InterruptedException {
-        sendAndReceive(
-                nf,
-                request,
-                response,
-                requestCount,
-                pauseBetweenSendAndReceive,
-                print,
-                false
-        );
-    }
-
-    private static void sendAndReceive(
-            NetworkFacade nf,
-            String request,
-            String response,
-            int requestCount,
-            long pauseBetweenSendAndReceive,
-            boolean print,
-            boolean expectDisconnect
-    ) throws InterruptedException {
-        new SendAndReceiveRequestBuilder()
-                .withNetworkFacade(nf)
-                .withExpectDisconnect(expectDisconnect)
-                .withPrintOnly(print)
-                .withRequestCount(requestCount)
-                .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
-                .execute(request, response);
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
@@ -5433,6 +5391,46 @@ public class IODispatcherTest {
         Files.close(fd);
         Files.setLastModified(path, lastModified);
         Unsafe.free(buf, bufLen);
+    }
+
+    private static class QueryThread extends Thread {
+        private final String[][] requests;
+        private final int count;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final AtomicInteger errorCounter;
+
+        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
+            this.requests = requests;
+            this.count = count;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.errorCounter = errorCounter;
+        }
+
+        @Override
+        public void run() {
+            final Rnd rnd = new Rnd();
+            try {
+                new SendAndReceiveRequestBuilder().executeMany(requester -> {
+                    barrier.await();
+                    for (int i = 0; i < count; i++) {
+                        int index = rnd.nextPositiveInt() % requests.length;
+                        try {
+                            requester.execute(requests[index][0], requests[index][1]);
+                        } catch (Throwable e) {
+                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            throw e;
+                        }
+                    }
+                });
+            } catch (Throwable e) {
+                e.printStackTrace();
+                errorCounter.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        }
     }
 
     private static class HelloContext implements IOContext {

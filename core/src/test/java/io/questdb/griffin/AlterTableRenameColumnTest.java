@@ -170,8 +170,8 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 Assert.assertEquals("b", reader.getMetadata().getColumnName(4));
                 //check cursor before renaming column
                 sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                Assert.assertEquals(expectedBefore, sink.toString());
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
+                TestUtils.assertEquals(expectedBefore, sink);
 
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     writer.renameColumn("b", "bb");
@@ -182,13 +182,13 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 Assert.assertTrue(reader.reload());
                 //check cursor after reload
                 sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                Assert.assertEquals(expectedAfter, sink.toString());
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
+                TestUtils.assertEquals(expectedAfter, sink);
 
                 try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     sink.clear();
-                    printer.print(reader2.getCursor(), reader.getMetadata(), true);
-                    Assert.assertEquals(expectedAfter, sink.toString());
+                    printer.print(reader2.getCursor(), reader.getMetadata(), true, sink);
+                    TestUtils.assertEquals(expectedAfter, sink);
                 }
 
                 Assert.assertEquals("bb", reader.getMetadata().getColumnName(4));
@@ -231,8 +231,8 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 Assert.assertEquals("timestamp", reader.getMetadata().getColumnName(3));
                 //check cursor before renaming column
                 sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                Assert.assertEquals(expectedBefore, sink.toString());
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
+                TestUtils.assertEquals(expectedBefore, sink);
 
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     writer.renameColumn("timestamp", "ts");
@@ -242,13 +242,13 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 Assert.assertTrue(reader.reload());
                 //check cursor after reload
                 sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
-                Assert.assertEquals(expectedAfter, sink.toString());
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
+                TestUtils.assertEquals(expectedAfter, sink);
 
                 try (TableReader reader2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
                     sink.clear();
-                    printer.print(reader2.getCursor(), reader.getMetadata(), true);
-                    Assert.assertEquals(expectedAfter, sink.toString());
+                    printer.print(reader2.getCursor(), reader.getMetadata(), true, sink);
+                    TestUtils.assertEquals(expectedAfter, sink);
                 }
 
                 Assert.assertEquals("ts", reader.getMetadata().getColumnName(3));

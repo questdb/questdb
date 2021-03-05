@@ -1218,9 +1218,6 @@ public class OutOfOrderOpenColumnJob extends AbstractQueueConsumerJob<OutOfOrder
             TableWriter tableWriter,
             SOUnboundedCountDownLatch doneLatch
     ) {
-        if (srcDataHi - srcDataLo + 1 < 0) {
-            System.out.println("oopoooooops");
-        }
         long cursor = outboundPubSeq.next();
         if (cursor > -1) {
             publishCopyTaskHarmonized(

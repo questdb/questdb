@@ -1731,7 +1731,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             try (TableReader r = new TableReader(configuration, "x")) {
                 sink.clear();
-                printer.print(r.getCursor(), r.getMetadata(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true, sink);
             }
 
             TestUtils.assertEquals("a\n" +
@@ -1766,7 +1766,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             try (TableReader r = new TableReader(configuration, "all")) {
                 sink.clear();
-                printer.print(r.getCursor(), r.getMetadata(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });

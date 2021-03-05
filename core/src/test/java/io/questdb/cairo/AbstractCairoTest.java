@@ -47,7 +47,7 @@ import java.io.IOException;
 public class AbstractCairoTest {
 
     protected static final StringSink sink = new StringSink();
-    protected static final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
+    protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
@@ -94,20 +94,19 @@ public class AbstractCairoTest {
     protected void assertColumn(CharSequence expected, CharSequence tableName, int index) {
         try (TableReader reader = new TableReader(configuration, tableName)) {
             final StringSink sink = new StringSink();
-            final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
             sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);
             reader.getCursor().toTop();
             sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
             TestUtils.assertEquals(expected, sink);
         }
     }
 
     protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
         sink.clear();
-        printer.print(cursor, metadata, header);
+        printer.print(cursor, metadata, header, sink);
         TestUtils.assertEquals(expected, sink);
     }
 

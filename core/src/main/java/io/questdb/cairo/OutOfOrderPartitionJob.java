@@ -98,6 +98,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
     ) {
         final Path path = Path.getThreadLocal(pathToTable);
         final long oooTimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+        final long partitionSize = tableWriter.getPartitionSizeByTimestamp(oooTimestampLo);
         TableUtils.setPathForPartition(path, partitionBy, oooTimestampLo);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
@@ -110,7 +111,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and and write to existing file descriptors
 
-        if (oooTimestampHi > tableCeilOfMaxTimestamp || oooTimestampHi < tableFloorOfMinTimestamp) {
+        if (partitionSize == -1) {
 
             // this has to be a brand new partition for either of two cases:
             // - this partition is above min partition of the table
@@ -191,6 +192,8 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
 
             try {
                 // out of order is hitting existing partition
+                // oooTimestampHi is in fact a ceil of ooo timestamp value for the given partition
+                // so this check is for matching ceilings
                 if (oooTimestampHi == tableCeilOfMaxTimestamp) {
                     dataTimestampHi = tableMaxTimestamp;
                     srcDataMax = lastPartitionSize;
@@ -199,9 +202,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     srcTimestampFd = -columns.getQuick(getPrimaryColumnIndex(timestampIndex)).getFd();
                     srcTimestampAddr = OutOfOrderUtils.mapRO(ff, -srcTimestampFd, srcTimestampSize);
                 } else {
-//                    long tempMem8b = OutOfOrderUtils.get8ByteBuf(workerId);
-                    srcDataMax = tableWriter.getPartitionSizeByTimestamp(oooTimestampLo);
-//                            readPartitionSize(ff, path, tempMem8b);
+                    srcDataMax = partitionSize;
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
@@ -210,10 +211,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
                     dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
 
                     // also track the fd that we need to eventually close
-                    srcTimestampFd = ff.openRW(path);
-                    if (srcTimestampFd == -1) {
-                        throw CairoException.instance(ff.errno()).put("could not open `").put(pathToTable).put('`');
-                    }
+                    srcTimestampFd = OutOfOrderUtils.openRW(ff, path);
                     srcTimestampAddr = OutOfOrderUtils.mapRW(ff, srcTimestampFd, srcTimestampSize);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }
@@ -751,12 +749,7 @@ public class OutOfOrderPartitionJob extends AbstractQueueConsumerJob<OutOfOrderP
         final int columnCount = metadata.getColumnCount();
         // todo: cache
         final AtomicInteger columnCounter = new AtomicInteger(columnCount);
-
         int columnsInFlight = columnCount;
-
-        if (suffixHi < suffixLo) {
-            System.out.println("ooooooops");
-        }
         try {
             for (int i = 0; i < columnCount; i++) {
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);

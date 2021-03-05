@@ -72,7 +72,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -125,7 +125,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext).getRecordCursorFactory()) {
                 sink.clear();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -163,7 +163,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -201,7 +201,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -238,7 +238,7 @@ public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);

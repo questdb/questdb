@@ -2292,7 +2292,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "миллионы", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
-            printer.print(reader.getCursor(), reader.getMetadata(), true);
+            printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
         }
 
         final String expected = "экспорт\n" +
@@ -2441,7 +2441,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("xy", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(expected, sink);
                 }
             }
@@ -3009,7 +3009,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     try (RecordCursorFactory factory = compiler.compile("select * from x", sqlExecutionContext).getRecordCursorFactory()) {
                         sink.clear();
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
+                            printer.print(cursor, factory.getMetadata(), true, sink);
                         }
                         TestUtils.assertEquals(expected, sink);
                     }
@@ -3197,7 +3197,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             TestUtils.assertEquals(expectedMeta, sink);
 
             sink.clear();
-            printer.print(reader.getCursor(), reader.getMetadata(), true);
+            printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
             TestUtils.assertEquals(expectedData, sink);
         }
     }
@@ -3495,7 +3495,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 try (RecordCursorFactory factory = compiler.compile(select, sqlExecutionContext).getRecordCursorFactory()) {
                     sink.clear();
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        printer.print(cursor, factory.getMetadata(), true);
+                        printer.print(cursor, factory.getMetadata(), true, sink);
                     }
                     TestUtils.assertEquals(expectedData, sink);
                 }

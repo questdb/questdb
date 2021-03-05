@@ -90,62 +90,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionNameMissing() throws Exception {
-        assertFailure("alter table x drop partition list ,", 34, "partition name missing");
-    }
-
-    @Test
-    public void testDropPartitionWhereExpressionMissing() throws Exception {
-        assertFailure("alter table x drop partition where ", 34, "boolean expression expected");
-    }
-
-    @Test
     public void testDropPartitionInvalidTimestampColumn() throws Exception {
         assertFailure("alter table x drop partition where a > 1", 35, "Invalid column: a");
-    }
-
-    @Test
-    public void testDropTwoPartitionsByDay() throws Exception {
-        assertMemoryLeak(() -> {
-                    createX("DAY", 720000000);
-
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
-
-                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
-                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
-
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
-
-                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
-                    assertPartitionResult(expectedAfterDrop, "2018-01-07");
-                }
-        );
-    }
-
-    @Test
-    public void testDropTwoPartitionsByDayUpperCase() throws Exception {
-        assertMemoryLeak(() -> {
-                    createX("DAY", 720000000);
-
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
-
-                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
-                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
-
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x DROP partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
-
-                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
-                    assertPartitionResult(expectedAfterDrop, "2018-01-07");
-                }
-        );
     }
 
     @Test
@@ -170,96 +116,35 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         );
     }
 
-
     @Test
-    public void testDropTwoPartitionsByMonth() throws Exception {
-        assertMemoryLeak(() -> {
-                    createX("MONTH", 3 * 7200000000L);
-
-                    assertPartitionResult("count\n" +
-                                    "112\n",
-                            "2018-02");
-
-                    assertPartitionResult("count\n" +
-                            "120\n", "2018-04");
-
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-02', '2018-04'", sqlExecutionContext).getType());
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
-
-                    assertPartitionResult(expectedAfterDrop, "2018-02");
-                    assertPartitionResult(expectedAfterDrop, "2018-04");
-                }
-        );
+    public void testDropPartitionNameMissing() throws Exception {
+        assertFailure("alter table x drop partition list ,", 34, "partition name missing");
     }
 
     @Test
-    public void testDropTwoPartitionsByYear() throws Exception {
-        assertMemoryLeak(() -> {
-                    createX("YEAR", 3 * 72000000000L);
-
-                    assertPartitionResult("count\n" +
-                                    "147\n",
-                            "2020");
-
-                    assertPartitionResult("count\n" +
-                            "146\n", "2022");
-
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2020', '2022'", sqlExecutionContext).getType());
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
-
-                    assertPartitionResult(expectedAfterDrop, "2020");
-                    assertPartitionResult(expectedAfterDrop, "2022");
-                }
-        );
+    public void testDropPartitionWhereExpressionMissing() throws Exception {
+        assertFailure("alter table x drop partition where ", 34, "boolean expression expected");
     }
 
     @Test
-    public void testSimpleWhere() throws Exception {
+    public void testDropPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-                    createX("YEAR", 3 * 72000000000L);
+                    createXWithDifferentTimestampName("YEAR", 3 * 72000000000L);
 
-                    assertPartitionResult("count\n" +
+                    assertPartitionResultForTimestampColumnNameTs("count\n" +
                                     "145\n",
                             "2018");
 
-                    assertPartitionResult("count\n" +
+                    assertPartitionResultForTimestampColumnNameTs("count\n" +
                             "147\n", "2020");
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where ts < dateadd('d', -1, now() ) AND ts < now()", sqlExecutionContext).getType());
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
 
-                    assertPartitionResult(expectedAfterDrop, "2018");
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
-                }
-        );
-    }
-
-    @Test
-    public void testDropPartitionWhereTimestampGreaterThanZero() throws Exception {
-        assertMemoryLeak(() -> {
-                    createX("YEAR", 3 * 72000000000L);
-
-                    assertPartitionResult("count\n" +
-                                    "145\n",
-                            "2018");
-
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
-
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp > 0", sqlExecutionContext).getType());
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
-
-                    assertPartitionResult(expectedAfterDrop, "2018");
-                    assertPartitionResult(expectedAfterDrop, "2020");
+                    assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2018");
+                    assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2020");
                 }
         );
     }
@@ -290,7 +175,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionWhereTimestampsIsNotActivePartition() throws Exception {
+    public void testDropPartitionWhereTimestampGreaterThanZero() throws Exception {
         assertMemoryLeak(() -> {
                     createX("YEAR", 3 * 72000000000L);
 
@@ -301,36 +186,13 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp < dateadd('d', -1, now() ) AND timestamp < now()", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp > 0", sqlExecutionContext).getType());
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
 
                     assertPartitionResult(expectedAfterDrop, "2018");
                     assertPartitionResult(expectedAfterDrop, "2020");
-                }
-        );
-    }
-
-    @Test
-    public void testDropPartitionWhereTimestampColumnNameIsOtherThanTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-                    createXWithDifferentTimestampName("YEAR", 3 * 72000000000L);
-
-                    assertPartitionResultForTimestampColumnNameTs("count\n" +
-                                    "145\n",
-                            "2018");
-
-                    assertPartitionResultForTimestampColumnNameTs("count\n" +
-                            "147\n", "2020");
-
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where ts < dateadd('d', -1, now() ) AND ts < now()", sqlExecutionContext).getType());
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
-
-                    assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2018");
-                    assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2020");
                 }
         );
     }
@@ -355,6 +217,29 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
+                }
+        );
+    }
+
+    @Test
+    public void testDropPartitionWhereTimestampsIsNotActivePartition() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("YEAR", 3 * 72000000000L);
+
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
+
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp < dateadd('d', -1, now() ) AND timestamp < now()", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018");
+                    assertPartitionResult(expectedAfterDrop, "2020");
                 }
         );
     }
@@ -446,6 +331,122 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropTwoPartitionsByDay() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 720000000);
+
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
+
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
+                    assertPartitionResult(expectedAfterDrop, "2018-01-07");
+                }
+        );
+    }
+
+    @Test
+    public void testDropTwoPartitionsByDayUpperCase() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("DAY", 720000000);
+
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
+
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-07");
+                    assertPartitionResult(expectedBeforeDrop, "2018-01-05");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x DROP partition list '2018-01-05', '2018-01-07'", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018-01-05");
+                    assertPartitionResult(expectedAfterDrop, "2018-01-07");
+                }
+        );
+    }
+
+    @Test
+    public void testDropTwoPartitionsByMonth() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("MONTH", 3 * 7200000000L);
+
+                    assertPartitionResult("count\n" +
+                                    "112\n",
+                            "2018-02");
+
+                    assertPartitionResult("count\n" +
+                            "120\n", "2018-04");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2018-02', '2018-04'", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2018-02");
+                    assertPartitionResult(expectedAfterDrop, "2018-04");
+                }
+        );
+    }
+
+    @Test
+    public void testDropTwoPartitionsByYear() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("YEAR", 3 * 72000000000L);
+
+                    assertPartitionResult("count\n" +
+                                    "147\n",
+                            "2020");
+
+                    assertPartitionResult("count\n" +
+                            "146\n", "2022");
+
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition list '2020', '2022'", sqlExecutionContext).getType());
+
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
+
+                    assertPartitionResult(expectedAfterDrop, "2020");
+                    assertPartitionResult(expectedAfterDrop, "2022");
+                }
+        );
+    }
+
+    @Test
+    public void testPartitionDeletedFromDiskAfterOpening() throws Exception {
+        String expected = "[0] Table 'src' data directory does not exist on the disk at ";
+        String startDate = "2020-01-01";
+        int day = PartitionBy.NONE;
+        int partitionToCheck = -1;
+        String folderToDelete = "default";
+        int deletedPartitionIndex = 0;
+        int rowCount = 10000;
+        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, rowCount / 5);
+    }
+
+    @Test
+    public void testPartitionDeletedFromDiskWithoutDropAfterOpeningByDay() throws Exception {
+        // Cannot run this on Windows - e.g. delete opened files
+        if (!configuration.getFilesFacade().isRestrictedFileSystem()) {
+            String startDate = "2020-01-01";
+            int day = PartitionBy.DAY;
+            int partitionToCheck = 0;
+            String folderToDelete = "2020-01-02";
+            int deletedPartitionIndex = 0;
+            int rowCount = 10000;
+            testPartitionDirDeleted(null, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, rowCount / 5);
+        }
+    }
+
+    @Test
     public void testPartitionDeletedFromDiskWithoutDropByDay() throws Exception {
         String expected = "[0] Partition '2020-01-02' does not exist in table 'src' directory. " +
                 "Run [ALTER TABLE src DROP PARTITION LIST '2020-01-02'] " +
@@ -486,124 +487,27 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPartitionDeletedFromDiskWithoutDropAfterOpeningByDay() throws Exception {
-        // Cannot run this on Windows - e.g. delete opened files
-        if (!configuration.getFilesFacade().isRestrictedFileSystem()) {
-            String startDate = "2020-01-01";
-            int day = PartitionBy.DAY;
-            int partitionToCheck = 0;
-            String folderToDelete = "2020-01-02";
-            int deletedPartitionIndex = 0;
-            int rowCount = 10000;
-            testPartitionDirDeleted(null, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, rowCount / 5);
-        }
-    }
+    public void testSimpleWhere() throws Exception {
+        assertMemoryLeak(() -> {
+                    createX("YEAR", 3 * 72000000000L);
 
-    @Test
-    public void testPartitionDeletedFromDiskAfterOpening() throws Exception {
-        String expected = "[0] Table 'src' data directory does not exist on the disk at ";
-        String startDate = "2020-01-01";
-        int day = PartitionBy.NONE;
-        int partitionToCheck = -1;
-        String folderToDelete = "default";
-        int deletedPartitionIndex = 0;
-        int rowCount = 10000;
-        testPartitionDirDeleted(expected, startDate, day, partitionToCheck, folderToDelete, deletedPartitionIndex, 5, rowCount, rowCount / 5);
-    }
+                    assertPartitionResult("count\n" +
+                                    "145\n",
+                            "2018");
 
-    private void testPartitionDirDeleted(
-            String expected,
-            String startDate,
-            int partitionBy,
-            int partitionToCheck,
-            String folderToDelete,
-            int deletedPartitionIndex,
-            int partitionCount,
-            int rowCount, int partitionRowCount) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            assertMemoryLeak(() -> {
-                try (TableModel src = new TableModel(configuration, "src", partitionBy)) {
-                    createPopulateTable(
-                            src.col("l", ColumnType.LONG)
-                                    .col("i", ColumnType.INT)
-                                    .timestamp("ts"),
-                            rowCount,
-                            startDate,
-                            partitionCount);
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
 
-                    engine.releaseAllReaders();
-                    engine.releaseAllWriters();
+                    Assert.assertEquals(ALTER, compiler.compile("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ", sqlExecutionContext).getType());
 
-                    try (var reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getName())) {
-                        long sum = 0;
-                        int colIndex = 0;
-                        boolean opened = false;
-                        if (partitionToCheck > -1) {
-                            Assert.assertEquals(partitionRowCount, reader.openPartition(partitionToCheck));
-                            opened = true;
+                    String expectedAfterDrop = "count\n" +
+                            "0\n";
 
-                            // read first column on first partition
-                            colIndex = TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionToCheck), 0);
-                            Assert.assertTrue(colIndex > 0); // This can change with refactoring, test has to be updated to get col index correctly
-                            sum = readSumLongColumn(reader, partitionRowCount, colIndex);
-                            long expectedSumFrom0ToPartitionCount = (long) (partitionRowCount * (partitionRowCount + 1.0) / 2.0);
-                            Assert.assertEquals(expectedSumFrom0ToPartitionCount, sum);
-                        }
-
-                        // Delete partition folder
-                        File dir = new File(Paths.get(root.toString(), src.getName(), folderToDelete).toString());
-                        deleteDir(dir);
-
-                        if (opened) {
-                            // Should not affect open partition
-                            reader.reload();
-                            long sum2 = readSumLongColumn(reader, partitionRowCount, colIndex);
-                            Assert.assertEquals(sum, sum2);
-                        }
-
-                        if (expected == null) {
-                            // Don't check that partition open fails if it's already opened
-                            Assert.assertEquals(partitionRowCount, reader.openPartition(deletedPartitionIndex));
-                        } else {
-                            // Should throw something meaningful
-                            try {
-                                reader.openPartition(deletedPartitionIndex);
-                                Assert.fail();
-                            } catch (CairoException ex) {
-                                TestUtils.assertContains(ex.getMessage(), expected);
-                            }
-
-                            if (partitionBy != PartitionBy.NONE) {
-                                compiler.compile("ALTER TABLE " + src.getName() + " DROP PARTITION LIST '" + folderToDelete + "';", sqlExecutionContext);
-                            }
-                        }
-                    }
+                    assertPartitionResult(expectedAfterDrop, "2018");
+                    assertPartitionResult("count\n" +
+                            "147\n", "2020");
                 }
-            });
-        });
-    }
-
-    private long readSumLongColumn(TableReader reader, int partitionRowCount, int colIndex) {
-        long sum = 0L;
-        for (int i = 0; i < partitionRowCount; i++) {
-            long aLong = reader.getColumn(colIndex).getLong(i * Long.BYTES);
-            sum += aLong;
-        }
-        return sum;
-    }
-
-    private void deleteDir(File file) {
-        File[] contents = file.listFiles();
-        if (contents != null) {
-            for (File f : contents) {
-                deleteDir(f);
-            }
-        }
-        if (file.delete()) {
-            System.out.println("Deleted: " + file.getAbsolutePath());
-        } else {
-            Assert.fail("Failed to delete dir: " + file.getAbsolutePath());
-        }
+        );
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
@@ -623,7 +527,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select count() from x where timestamp = '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 sink.clear();
-                printer.print(cursor, factory.getMetadata(), true);
+                printer.print(cursor, factory.getMetadata(), true, sink);
                 TestUtils.assertEquals(expectedBeforeDrop, sink);
             }
         }
@@ -633,7 +537,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
         try (RecordCursorFactory factory = compiler.compile("select count() from x where ts = '" + intervalSearch + "'", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 sink.clear();
-                printer.print(cursor, factory.getMetadata(), true);
+                printer.print(cursor, factory.getMetadata(), true, sink);
                 TestUtils.assertEquals(expectedBeforeDrop, sink);
             }
         }
@@ -717,5 +621,98 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                         ")",
                 sqlExecutionContext
         );
+    }
+
+    private void deleteDir(File file) {
+        File[] contents = file.listFiles();
+        if (contents != null) {
+            for (File f : contents) {
+                deleteDir(f);
+            }
+        }
+        if (file.delete()) {
+            System.out.println("Deleted: " + file.getAbsolutePath());
+        } else {
+            Assert.fail("Failed to delete dir: " + file.getAbsolutePath());
+        }
+    }
+
+    private long readSumLongColumn(TableReader reader, int partitionRowCount, int colIndex) {
+        long sum = 0L;
+        for (int i = 0; i < partitionRowCount; i++) {
+            long aLong = reader.getColumn(colIndex).getLong(i * 8L);
+            sum += aLong;
+        }
+        return sum;
+    }
+
+    private void testPartitionDirDeleted(
+            String expected,
+            String startDate,
+            int partitionBy,
+            int partitionToCheck,
+            String folderToDelete,
+            int deletedPartitionIndex,
+            int partitionCount,
+            int rowCount, int partitionRowCount) throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", partitionBy)) {
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        rowCount,
+                        startDate,
+                        partitionCount);
+
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+
+                try (var reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getName())) {
+                    long sum = 0;
+                    int colIndex = 0;
+                    boolean opened = false;
+                    if (partitionToCheck > -1) {
+                        Assert.assertEquals(partitionRowCount, reader.openPartition(partitionToCheck));
+                        opened = true;
+
+                        // read first column on first partition
+                        colIndex = TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionToCheck), 0);
+                        Assert.assertTrue(colIndex > 0); // This can change with refactoring, test has to be updated to get col index correctly
+                        sum = readSumLongColumn(reader, partitionRowCount, colIndex);
+                        long expectedSumFrom0ToPartitionCount = (long) (partitionRowCount * (partitionRowCount + 1.0) / 2.0);
+                        Assert.assertEquals(expectedSumFrom0ToPartitionCount, sum);
+                    }
+
+                    // Delete partition folder
+                    File dir = new File(Paths.get(root.toString(), src.getName(), folderToDelete).toString());
+                    deleteDir(dir);
+
+                    if (opened) {
+                        // Should not affect open partition
+                        reader.reload();
+                        long sum2 = readSumLongColumn(reader, partitionRowCount, colIndex);
+                        Assert.assertEquals(sum, sum2);
+                    }
+
+                    if (expected == null) {
+                        // Don't check that partition open fails if it's already opened
+                        Assert.assertEquals(partitionRowCount, reader.openPartition(deletedPartitionIndex));
+                    } else {
+                        // Should throw something meaningful
+                        try {
+                            reader.openPartition(deletedPartitionIndex);
+                            Assert.fail();
+                        } catch (CairoException ex) {
+                            TestUtils.assertContains(ex.getMessage(), expected);
+                        }
+
+                        if (partitionBy != PartitionBy.NONE) {
+                            compiler.compile("ALTER TABLE " + src.getName() + " DROP PARTITION LIST '" + folderToDelete + "';", sqlExecutionContext);
+                        }
+                    }
+                }
+            }
+        });
     }
 }

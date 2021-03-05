@@ -46,7 +46,7 @@ import java.io.IOException;
 
 public class TableBackupTest {
     private static final StringSink sink = new StringSink();
-    private static final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private static final int ERRNO_EIO = 5;
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -488,7 +488,7 @@ public class TableBackupTest {
         CompiledQuery compiledQuery = compiler.compile("select * from " + tableName, sqlExecutionContext);
         try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             sink.clear();
-            printer.print(cursor, factory.getMetadata(), true);
+            printer.print(cursor, factory.getMetadata(), true, sink);
         }
         return sink.toString();
     }

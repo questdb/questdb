@@ -107,7 +107,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 sink.clear();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
             }
 

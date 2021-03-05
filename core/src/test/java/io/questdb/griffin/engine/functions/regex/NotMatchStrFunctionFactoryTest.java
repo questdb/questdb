@@ -128,7 +128,7 @@ public class NotMatchStrFunctionFactoryTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("select * from x where name !~ '[ABCDEFGHIJKLMN]'", sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(expected, sink);
                 }
             }

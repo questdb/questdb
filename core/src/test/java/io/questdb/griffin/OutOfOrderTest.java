@@ -36,7 +36,10 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -48,6 +51,7 @@ import java.net.URL;
 
 public class OutOfOrderTest extends AbstractGriffinTest {
 
+    protected static final StringSink sink2 = new StringSink();
     private final static Log LOG = LogFactory.getLog(OutOfOrderTest.class);
 
     @Before
@@ -319,6 +323,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     @Test
     public void testColumnTopMidOOODataParallel() throws Exception {
         executeWithPool(4, OutOfOrderTest::testColumnTopMidOOOData0);
+    }
+
+    @Test
+    public void testColumnTopNewPartitionMiddleOfTableContended() throws Exception {
+        executeWithPool(0, OutOfOrderTest::testColumnTopNewPartitionMiddleOfTable0);
     }
 
     @Test
@@ -610,12 +619,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 w.commit();
             }
 
-            sink.clear();
-            try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
-                }
-            }
+            printSqlResult(compiler, sqlExecutionContext, sink, "x");
 
             final String expected = "a\tb\tc\tts\n" +
                     "NaN\tNaN\t10\t2013-02-10T00:05:00.000000Z\n" +
@@ -950,21 +954,11 @@ public class OutOfOrderTest extends AbstractGriffinTest {
 
         final String sqlTemplate = "select i,sym,amt,timestamp,b,c,d,e,f,g,ik,ts,l,n,t,m from ";
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "y", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, sqlTemplate + "y");
 
         String expected = Chars.toString(sink);
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile(sqlTemplate + "x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, sqlTemplate + "x");
         TestUtils.assertEquals(expected, sink);
 
         assertIndexConsistency(compiler, sqlExecutionContext);
@@ -1058,12 +1052,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
 
         String expected = Chars.toString(sink);
 
@@ -1073,12 +1062,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "x");
 
         TestUtils.assertEquals(expected, sink);
 
@@ -1267,12 +1251,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
 
         String expected = Chars.toString(sink);
 
@@ -1283,24 +1262,14 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "x");
 
         TestUtils.assertEquals(expected, sink);
 
         //
         engine.releaseAllReaders();
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "x");
 
         TestUtils.assertEquals(expected, sink);
 
@@ -1465,12 +1434,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
 
         String expected = Chars.toString(sink);
 
@@ -1480,23 +1444,13 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "x");
 
         TestUtils.assertEquals(expected, sink);
 
         engine.releaseAllReaders();
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "x");
 
         TestUtils.assertEquals(expected, sink);
 
@@ -1589,12 +1543,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
 
 //                    String expected = Chars.toString(sink);
         engine.releaseAllReaders();
@@ -1703,12 +1652,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
 
         final String expected = Chars.toString(sink);
 
@@ -1729,12 +1673,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         // Cached reader will assume smaller partition size for "1970-01-01", which out-of-order insert updated
         engine.releaseAllReaders();
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "x");
 
         TestUtils.assertEquals(expected, sink);
 
@@ -2031,40 +1970,52 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             final String outOfOrderInsertSQL,
             final String assertSQL
     ) throws SqlException {
+        sink.clear();
+        sink2.clear();
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                referenceTableDDL,
+                referenceSQL,
+                outOfOrderInsertSQL,
+                assertSQL,
+                sink,
+                sink2
+        );
+    }
+
+    private static void assertOutOfOrderDataConsistency(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String referenceTableDDL,
+            String referenceSQL,
+            String outOfOrderInsertSQL,
+            String assertSQL,
+            CharSink sink1,
+            CharSink sink2
+    ) throws SqlException {
         // create third table, which will contain both X and 1AM
         compiler.compile(referenceTableDDL, sqlExecutionContext);
 
-        // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile(referenceSQL, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+            // expected outcome
+            printSqlResult0(compiler, sqlExecutionContext, sink1, referenceSQL);
 
-        // uncomment these to look at result comparison from two queries
-        // we are using file comparison here because of ordering issue on the identical timestamps
-        String expected = Chars.toString(sink);
+            // release reader "before" out-of-order is handled
+            // we aim directory rename operations to succeed on Windows
+            // Linux should be fine without closing readers
+            engine.releaseAllReaders();
 
-        // release reader "before" out-of-order is handled
-        // we aim directory rename operations to succeed on Windows
-        // Linux should be fine without closing readers
-        engine.releaseAllReaders();
+            compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
 
-        compiler.compile(outOfOrderInsertSQL, sqlExecutionContext);
+            // todo: ensure reader can pick up out of order stuff
+            // release reader for now because it is unable to reload out-of-order results
+            engine.releaseAllReaders();
 
-        // todo: ensure reader can pick up out of order stuff
-        // release reader for now because it is unable to reload out-of-order results
-        engine.releaseAllReaders();
+            printSqlResult0(compiler, sqlExecutionContext, sink2, assertSQL);
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile(assertSQL, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
-
-        TestUtils.assertEquals(expected, sink);
+            TestUtils.assertEquals((CharSequence) sink1, (CharSequence) sink2);
     }
 
     private static void testPartitionedDataAppendOODataIndexed0(
@@ -3170,23 +3121,26 @@ public class OutOfOrderTest extends AbstractGriffinTest {
     ) throws SqlException {
         // index test
         // expected outcome
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "y where sym = 'googl' order by ts");
 
         String expected = Chars.toString(sink);
 
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("x where sym = 'googl'", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "x where sym = 'googl'");
 
         TestUtils.assertEquals(expected, sink);
+    }
+
+    private static void printSqlResult(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, StringSink sink, String sql) throws SqlException {
+        sink.clear();
+        printSqlResult0(compiler, sqlExecutionContext, sink, sql);
+    }
+
+    private static void printSqlResult0(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSink sink, String sql) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printer.print(cursor, factory.getMetadata(), true, sink);
+            }
+        }
     }
 
     private static void assertIndexResultAgainstFile(
@@ -3194,19 +3148,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             SqlExecutionContext sqlExecutionContext,
             String resourceName
     ) throws SqlException, URISyntaxException {
-        // file contains output of this SQL
-        // we use file comparison because result set containing duplicate timestamps
-        // order of records with duplicate timestamps is non-deterministic
-/*
-                    sink.clear();
-                    try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            printer.print(cursor, factory.getMetadata(), true);
-                        }
-                    }
-
-                    String expected = Chars.toString(sink);
-*/
         assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
     }
 
@@ -3222,12 +3163,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         compiler.compile(referenceTableDDL, sqlExecutionContext);
 
         // expected outcome - output ignored, but useful for debug
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, "y order by ts");
 
         engine.releaseAllReaders();
 
@@ -3245,12 +3181,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             String sql,
             String resourceName
     ) throws URISyntaxException, SqlException {
-        sink.clear();
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-        }
+        printSqlResult(compiler, sqlExecutionContext, sink, sql);
 
         URL url = OutOfOrderTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
@@ -3529,7 +3460,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
             SqlCompiler compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        // create table with roughly 2AM data
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -3585,6 +3515,130 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
                         " timestamp_sequence(518300000000L-1000L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+                        //  ------------------- new columns ------------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // create third table, which will contain both X and 1AM
+        assertOutOfOrderDataConsistency(
+                engine,
+                compiler,
+                executionContext,
+                "create table y as (x union all append)",
+                "y order by ts",
+                "insert into x select * from append",
+                "x"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext);
+    }
+
+    private static void testColumnTopNewPartitionMiddleOfTable0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // 1970-01-06
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // 1970-01-09
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(700000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column v double", sqlExecutionContext);
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
+        compiler.compile("alter table x add column v8 symbol index", sqlExecutionContext);
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+
+        // 1970-01-08
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(610000000000L,100000L) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -3744,17 +3798,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-//         create third table, which will contain both X and 1AM
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                executionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x"
-//        );
-
         assertOutOfOrderDataConsistency(
                 engine,
                 compiler,
@@ -3888,17 +3931,6 @@ public class OutOfOrderTest extends AbstractGriffinTest {
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
-
-//         create third table, which will contain both X and 1AM
-//        assertOutOfOrderDataConsistency(
-//                engine,
-//                compiler,
-//                executionContext,
-//                "create table y as (x union all append)",
-//                "y order by ts",
-//                "insert into x select * from append",
-//                "x"
-//        );
 
         assertOutOfOrderDataConsistency(
                 engine,
@@ -4190,7 +4222,7 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         // create table with 1AM data
 
         compiler.compile(
-                "create table 1am as (" +
+                "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -4215,7 +4247,25 @@ public class OutOfOrderTest extends AbstractGriffinTest {
         );
 
         engine.releaseAllReaders();
-        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
+
+        try (
+                DirectCharSink sink1 = new DirectCharSink(16*1024*1024);
+                DirectCharSink sink2 = new DirectCharSink(16*1024*1024)
+        ) {
+            assertOutOfOrderDataConsistency(
+                    engine,
+                    compiler,
+                    sqlExecutionContext,
+                    "create table y as (x union all append)",
+                    "y order by ts",
+                    "insert into x select * from append",
+                    "x",
+                    sink1,
+                    sink2
+            );
+        }
+
+//        compiler.compile("insert into x select * from 1am", sqlExecutionContext);
     }
 
 }

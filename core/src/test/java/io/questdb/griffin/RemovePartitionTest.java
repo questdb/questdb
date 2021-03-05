@@ -214,7 +214,7 @@ public class RemovePartitionTest extends AbstractGriffinTest {
                         "-227038447\t0.4799415921194079\t1970-01-12T13:30:00.000000Z\n";
 
                 sink.clear();
-                printer.print(cursor, reader.getMetadata(), true);
+                printer.print(cursor, reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expectedAfterPartitionDelete, sink);
             }
         });

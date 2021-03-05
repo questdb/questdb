@@ -1209,7 +1209,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         sink.clear();
         try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
+                printer.print(cursor, factory.getMetadata(), true, sink);
             }
         }
 
@@ -1231,7 +1231,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         sink.clear();
         try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
+                printer.print(cursor, factory.getMetadata(), true, sink);
             }
         }
 
@@ -1745,7 +1745,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         sink.clear();
         try (RecordCursorFactory factory = compiler.compile("y where sym = 'googl' order by ts", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
+                printer.print(cursor, factory.getMetadata(), true, sink);
             }
         }
 
@@ -1754,19 +1754,11 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         sink.clear();
         try (RecordCursorFactory factory = compiler.compile("x where sym = 'googl'", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
+                printer.print(cursor, factory.getMetadata(), true, sink);
             }
         }
 
         TestUtils.assertEquals(expected, sink);
-    }
-
-    private static void assertIndexResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String resourceName
-    ) throws SqlException, URISyntaxException {
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "x where sym = 'googl'", resourceName);
     }
 
     private static void assertOutOfOrderDataConsistency(
@@ -1781,7 +1773,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         sink.clear();
         try (RecordCursorFactory factory = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
+                printer.print(cursor, factory.getMetadata(), true, sink);
             }
         }
 
@@ -1804,7 +1796,7 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         sink.clear();
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
+                printer.print(cursor, factory.getMetadata(), true, sink);
             }
         }
 

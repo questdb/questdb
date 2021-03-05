@@ -82,11 +82,10 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                     " from long_sequence(30)" +
                     ")", sqlExecutionContext);
 
+            sink.clear();
             try (RecordCursorFactory factory = compiler.compile("x where a <> b", sqlExecutionContext).getRecordCursorFactory()) {
-                sink.clear();
-
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -121,7 +120,7 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -155,7 +154,7 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -196,10 +195,10 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
-                TestUtils.assertEquals(expected, sink);
+                TestUtils.assertEquals(expected, sink, sink);
             }
         });
     }
@@ -237,7 +236,7 @@ public class NotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 sink.clear();
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true);
+                    printer.print(cursor, factory.getMetadata(), true, sink);
                 }
 
                 TestUtils.assertEquals(expected, sink);

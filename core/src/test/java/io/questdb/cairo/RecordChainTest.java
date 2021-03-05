@@ -168,7 +168,7 @@ public class RecordChainTest extends AbstractCairoTest {
                 chain.toTop();
                 final Record r = chain.getRecord();
                 while (chain.hasNext()) {
-                    printer.print(r, metadata);
+                    printer.print(r, metadata, AbstractCairoTest.sink);
                 }
 
                 String expected = "100\t55\t200\n" +

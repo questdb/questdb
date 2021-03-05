@@ -282,8 +282,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                         receiver.close();
 
                         StringSink sink = new StringSink();
-                        RecordCursorPrinter printer = new RecordCursorPrinter(sink);
-                        printer.print(reader.getCursor(), reader.getMetadata(), true);
+                        printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                         TestUtils.assertEquals(expected, sink);
                     }
                 }

@@ -212,7 +212,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertStatement.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
             }
 
         });
@@ -258,7 +258,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -281,7 +281,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -332,7 +332,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -402,7 +402,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insert.getTableName())) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -421,7 +421,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "symbols")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -440,7 +440,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -457,7 +457,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected1, sink);
             }
 
@@ -472,7 +472,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected2, sink);
             }
         });
@@ -491,7 +491,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             sink.clear();
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "trades")) {
-                printer.print(reader.getCursor(), reader.getMetadata(), true);
+                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
                 TestUtils.assertEquals(expected, sink);
             }
         });

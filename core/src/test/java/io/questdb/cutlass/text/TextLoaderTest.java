@@ -2649,7 +2649,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             sink.clear();
-            printer.print(cursor, factory.getMetadata(), true);
+            printer.print(cursor, factory.getMetadata(), true, sink);
             TestUtils.assertEquals(expected, sink);
         }
     }
