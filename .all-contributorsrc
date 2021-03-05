@@ -6,6 +6,50 @@
   "commit": false,
   "contributors": [
     {
+      "login": "mpsq",
+      "name": "Méril",
+      "avatar_url": "https://avatars.githubusercontent.com/u/5734722?v=4",
+      "profile": "https://github.com/mpsq",
+      "contributions": [
+        "code",
+        "infra",
+        "maintenance"
+      ]
+    },
+    {
+      "login": "patrickSpaceSurfer",
+      "name": "Patrick",
+      "avatar_url": "https://avatars.githubusercontent.com/u/29952889?v=4",
+      "profile": "https://github.com/patrickSpaceSurfer",
+      "contributions": [
+        "code",
+        "maintenance",
+        "test"
+      ]
+    },
+    {
+      "login": "bsmth",
+      "name": "Brian",
+      "avatar_url": "https://avatars.githubusercontent.com/u/43580235?v=4",
+      "profile": "https://github.com/bsmth",
+      "contributions": [
+        "doc",
+        "tutorial",
+        "example"
+      ]
+    },
+    {
+      "login": "the-sheev",
+      "name": "Francesco",
+      "avatar_url": "https://avatars.githubusercontent.com/u/16069471?v=4",
+      "profile": "https://github.com/the-sheev",
+      "contributions": [
+        "code",
+        "maintenance",
+        "test"
+      ]
+    },
+    {
       "login": "clickingbuttons",
       "name": "clickingbuttons",
       "avatar_url": "https://avatars1.githubusercontent.com/u/43246297?v=4",
