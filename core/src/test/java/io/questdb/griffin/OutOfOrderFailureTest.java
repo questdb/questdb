@@ -39,7 +39,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -65,8 +64,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
         @Override
         public boolean allocate(long fd, long size) {
             if (counter.decrementAndGet() == 0) {
-                System.out.println("fail here:");
-                new Exception().printStackTrace();
                 return false;
             }
             return super.allocate(fd, size);
@@ -926,7 +923,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
         counter.set(150);
         executeWithPool(0, OutOfOrderFailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
@@ -1814,7 +1810,6 @@ public class OutOfOrderFailureTest extends AbstractGriffinTest {
 
         URL url = OutOfOrderFailureTest.class.getResource(resourceName);
         Assert.assertNotNull(url);
-//        System.out.println(sink);
         TestUtils.assertEquals(new File(url.toURI()), sink);
     }
 

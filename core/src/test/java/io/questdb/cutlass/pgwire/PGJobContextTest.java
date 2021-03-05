@@ -998,7 +998,7 @@ nodejs code:
 
     @Test
     public void testInsertTableDoesNotExistPrepared() throws Exception {
-        testInsertTableDoesNotExist(false, "Cannot append. File does not exist");
+        testInsertTableDoesNotExist(false, "Could not open file");
     }
 
     @Test

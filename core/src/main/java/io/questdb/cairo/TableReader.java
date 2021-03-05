@@ -236,10 +236,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getMinTimestamp();
     }
 
-    public long getPageValueCount(int partitionIndex, long rowLo, long rowHi, int columnIndex) {
-        return rowHi - rowLo - getColumnTop(getColumnBase(partitionIndex), columnIndex);
-    }
-
     public int getPartitionCount() {
         return partitionCount;
     }

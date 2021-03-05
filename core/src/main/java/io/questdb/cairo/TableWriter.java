@@ -2399,7 +2399,7 @@ public class TableWriter implements Closeable {
             //
             // We start with ensuring append memory is in ready-to-use state. When max timestamp changes we need to
             // move append memory to new set of files. Otherwise we stay on the same set but advance the append position.
-            avoidIndexOnCommit = true;
+            avoidIndexOnCommit = oooErrorCount.get() == 0;
             rowFunction = switchPartitionFunction;
             row.activeColumns = columns;
             row.activeNullSetters = nullSetters;
