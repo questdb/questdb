@@ -31,6 +31,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
@@ -100,14 +101,7 @@ public class SendAndReceiveRequestBuilder {
     }
 
     private void executeWithSocket(String request, CharSequence response, long fd) throws InterruptedException {
-        final int len;
-        if (response instanceof String) {
-            byte[] expectedResponse = ((String) response).getBytes();
-            len = Math.max(expectedResponse.length, request.length()) * 2;
-        } else {
-            // TODO
-            throw new UnsupportedOperationException();
-        }
+        final int len = Math.max(response.length(), request.length()) * 2;
         long ptr = Unsafe.malloc(len);
         try {
             for (int j = 0; j < requestCount; j++) {
@@ -171,15 +165,28 @@ public class SendAndReceiveRequestBuilder {
             receivedBytes[i] = (byte) receivedByteList.getQuick(i);
         }
 
+        // TODO
+        try (BufferedOutputStream os = new BufferedOutputStream(new FileOutputStream(new File("/tmp/test")))) {
+            os.write(receivedBytes);
+        } catch (IOException ex) {
+
+        }
+
         String actual = new String(receivedBytes, StandardCharsets.UTF_8);
         if (!printOnly) {
-            String expected = expectedResponse.toString();
-            if (compareLength > 0) {
-                expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
-                actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
+            if (expectedResponse instanceof ByteSequence) {
+                Assert.assertEquals(expectedResponse.length(), receivedBytes.length);
+                for (int n = 0; n < receivedBytes.length; n++) {
+                    Assert.assertEquals(receivedBytes[n], ((ByteSequence) expectedResponse).byteAt(n));
+                }
+            } else {
+                String expected = expectedResponse.toString();
+                if (compareLength > 0) {
+                    expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
+                    actual = actual.length() > 0 ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
+                }
+                TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
             }
-            TestUtils.assertEquals(disconnected ? "Server disconnected": null, expected, actual);
-
         } else {
             System.out.println("actual");
             System.out.println(actual);
