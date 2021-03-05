@@ -38,6 +38,8 @@
 ; C++ prototype:
 ; extern "C" int UnalignedIsFaster(void);
 
+%include "piccall.asi"
+
 global UnalignedIsFaster
 global Store256BitIsFaster
 extern CpuType
@@ -63,7 +65,7 @@ UnalignedIsFaster:
         push    0                      ; model
         mov     r8,  rsp
 %endif
-        call    CpuType                ; get vendor, family, model
+        callW   CpuType                ; get vendor, family, model
         pop     rdx                    ; model
         pop     rcx                    ; family
         pop     r8                     ; vendor
@@ -120,7 +122,7 @@ Uend:   ret
 
 
 Store256BitIsFaster:
-        call    InstructionSet
+        callW   InstructionSet
         cmp     eax, 11                ; AVX supported
         jb      S90
 %ifdef  UNIX
@@ -138,7 +140,7 @@ Store256BitIsFaster:
         push    0                      ; model
         mov     r8,  rsp
 %endif
-        call    CpuType                ; get vendor, family, model
+        callW   CpuType                ; get vendor, family, model
         pop     rdx                    ; model
         pop     rcx                    ; family
         pop     rax                    ; vendor

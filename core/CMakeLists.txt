@@ -108,8 +108,7 @@ else ()
             SOURCE_FILES
             ${SOURCE_FILES}
             src/main/c/share/files.c
-            src/main/c/share/os.c
-            src/main/c/share/asm_routines.cpp)
+            src/main/c/share/os.c)
 endif (WIN32)
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})

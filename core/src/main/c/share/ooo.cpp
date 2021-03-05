@@ -21,14 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-#ifdef _LP64
-#undef _LP64
 #include "jni.h"
-#define _LP64
-#else
-#include "jni.h"
-#endif
-
 #include <cstring>
 #include <xmmintrin.h>
 #include "util.h"
