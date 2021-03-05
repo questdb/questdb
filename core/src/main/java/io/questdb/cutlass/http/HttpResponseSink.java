@@ -45,11 +45,8 @@ public class HttpResponseSink implements Closeable, Mutable {
     private static final int CHUNK_DATA = 2;
     private static final int FIN = 3;
     private static final int MULTI_CHUNK = 4;
-    private static final int DEFLATE = 5;
-    private static final int MULTI_BUF_CHUNK = 6;
     private static final int END_CHUNK = 7;
     private static final int DONE = 8;
-    private static final int FLUSH = 9;
     private static final int SEND_DEFLATED_CONT = 10;
     private static final int SEND_DEFLATED_END = 11;
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
@@ -94,6 +91,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private boolean header = true;
     private long totalBytesSent = 0;
     private final boolean connectionCloseHeader;
+    private boolean chunkedRequestDone;
 
     public HttpResponseSink(HttpContextConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -163,14 +161,11 @@ public class HttpResponseSink implements Closeable, Mutable {
                 case MULTI_CHUNK:
                     if (deflateBeforeSend) {
                         prepareCompressedBody();
-                        state = DEFLATE;
+                        state = deflate();
                     } else {
                         prepareBody();
                         state = DONE;
                     }
-                    break;
-                case DEFLATE:
-                    state = deflate(false);
                     break;
                 case SEND_DEFLATED_END:
                     flushBuf = pzout + zpos;
@@ -180,11 +175,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 case SEND_DEFLATED_CONT:
                     flushBuf = pzout + zpos;
                     flushBufSize = zlimit - zpos;
-                    state = DONE;
-                    break;
-                case MULTI_BUF_CHUNK:
-                    flushBuf = out;
-                    state = DONE;
+                    state = MULTI_CHUNK;
                     break;
                 case CHUNK_HEAD:
                     prepareChunk((int) (_wPtr - outPtr));
@@ -203,9 +194,6 @@ public class HttpResponseSink implements Closeable, Mutable {
                     prepareBody();
                     state = DONE;
                     break;
-                case FLUSH:
-                    state = deflate(true);
-                    break;
                 case DONE:
                     return;
                 default:
@@ -214,7 +202,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private int deflate(boolean flush) {
+    private int deflate() {
 
         final int sz = this.responseBufferSize - 8;
         long p = pzout + Zip.gzipHeaderLen;
@@ -224,13 +212,21 @@ public class HttpResponseSink implements Closeable, Mutable {
         int availIn;
         // compress input until we run out of either input or output
         do {
-            ret = Zip.deflate(z_streamp, p, sz, flush);
-            if (ret < 0) {
-                throw HttpException.instance("could not deflate [ret=").put(ret);
-            }
-
+            LOG.info().$("deflate starting [p=").$(p).$(", sz=").$(sz).$(", chunkedRequestDone=").$(chunkedRequestDone).$(']').$();
+            ret = Zip.deflate(z_streamp, p, sz, chunkedRequestDone);
             len = sz - Zip.availOut(z_streamp);
             availIn = Zip.availIn(z_streamp);
+            if (ret < 0) {
+                if (ret == Zip.Z_BUF_ERROR && len == 0) {
+                    // This is not an error, zlib just couldn't do any work with the input/output buffers it was provided.
+                    // This happens often (will depend on output buffer size) when there is no new input and zlib has finished generating
+                    // output from previously provided input
+                } else {
+                throw HttpException.instance("could not deflate [ret=").put(ret);
+                }
+            }
+
+            LOG.info().$("deflate finished [ret=").$(ret).$(", len=").$(len).$(", availIn=").$(availIn).$(']').$();
         } while (len == 0 && availIn > 0);
 
         // zip did not write anything out, nothing to send
@@ -256,7 +252,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         // trailer
-        if (flush && ret == 1) {
+        if (chunkedRequestDone && ret == Zip.Z_STREAM_END) {
             Unsafe.getUnsafe().putInt(p + len, crc); // crc
             Unsafe.getUnsafe().putInt(p + len + 4, (int) total); // total
             zlimit = Zip.gzipHeaderLen + len + 8;
@@ -268,7 +264,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         prepareChunk(zlimit - zpos);
 
         // if there is input remaining, don't change
-        return flush && ret == 1 ? SEND_DEFLATED_END : SEND_DEFLATED_CONT;
+        return chunkedRequestDone && ret == Zip.Z_STREAM_END ? SEND_DEFLATED_END : SEND_DEFLATED_CONT;
     }
 
     private void flushSingle() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -309,10 +305,13 @@ public class HttpResponseSink implements Closeable, Mutable {
             zpos = zlimit = 0;
         }
         int r = (int) (_wPtr - outPtr);
-        Zip.setInput(z_streamp, outPtr, r);
-        this.crc = Zip.crc32(this.crc, outPtr, r);
-        this.total += r;
-        _wPtr = outPtr;
+        if (r > 0) {
+            LOG.info().$("Zip.setInput [outPtr=").$(outPtr).$(", r=").$(r).$(']').$();
+            Zip.setInput(z_streamp, outPtr, r);
+            this.crc = Zip.crc32(this.crc, outPtr, r);
+            this.total += r;
+            _wPtr = outPtr;
+        }
     }
 
     private void prepareHeaderSink() {
@@ -641,9 +640,10 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
+            chunkedRequestDone = true;
             flushBufSize = 0;
             if (deflateBeforeSend) {
-                resumeSend(FLUSH);
+                resumeSend(MULTI_CHUNK);
             } else {
                 resumeSend(END_CHUNK);
                 LOG.debug().$("end chunk sent [fd=").$(fd).$(']').$();
@@ -663,6 +663,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            chunkedRequestDone = false;
             if (outPtr != _wPtr) {
                 if (deflateBeforeSend) {
                     flushBufSize = 0;
@@ -678,6 +679,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
+            chunkedRequestDone = false;
             prepareHeaderSink();
             flushSingle();
         }
