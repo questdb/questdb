@@ -486,7 +486,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, true, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
+        testSqlFailedOnFsOperation(ff, false, "[12] table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
     }
 
     private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, boolean reCopy, String... errorContains) throws Exception {
@@ -584,7 +584,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "Column file does not exist");
             }
-            Files.rmdir(path.concat(root).concat("dst").concat("2020-01-10").$());
+            Files.rmdir(path.concat(root).concat("dst").concat("2020-01-10").put(TableUtils.DETACHED_DIR_MARKER).$());
         }
     }
 
@@ -702,7 +702,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(srcDir).$();
              Path backup = new Path().of(configuration.getRoot())) {
 
-            copyDirectory(p1, backup.concat(dst).concat(dstDir).$());
+            copyDirectory(p1, backup.concat(dst).concat(dstDir).put(TableUtils.DETACHED_DIR_MARKER).$());
         }
     }
 
